@@ -10,7 +10,6 @@ import express from 'express';
  *   sign in with  demo@qase.dev  /  demo1234
  */
 
-const SESSIONS = new Set();
 const CREDENTIALS = { email: 'demo@qase.dev', password: 'demo1234' };
 
 const shell = (title, body) => `<!doctype html>
@@ -39,12 +38,13 @@ const nav = `<header><b>Acme Widgets</b><nav>
 	<a href="/demo/logout">Sign out</a>
 </nav></header>`;
 
-function authed(request) {
-	return SESSIONS.has(request.headers.cookie?.match(/demo_session=([^;]+)/)?.[1]);
+function authed(sessions, request) {
+	return sessions.has(request.headers.cookie?.match(/demo_session=([^;]+)/)?.[1]);
 }
 
 export function mountDemoSite(app) {
 	const demo = express.Router();
+	const sessions = new Set();
 	demo.use(express.urlencoded({ extended: false }));
 
 	demo.get('/', (_request, response) => response.redirect('/demo/login'));
@@ -78,7 +78,7 @@ export function mountDemoSite(app) {
 			return;
 		}
 		const token = Math.random().toString(36).slice(2);
-		SESSIONS.add(token);
+		sessions.add(token);
 		response.setHeader('Set-Cookie', `demo_session=${token}; Path=/demo; HttpOnly`);
 		response.redirect('/demo/app');
 	});
@@ -89,7 +89,7 @@ export function mountDemoSite(app) {
 	});
 
 	demo.use('/app', (request, response, next) => {
-		if (!authed(request)) {
+		if (!authed(sessions, request)) {
 			response.redirect('/demo/login');
 			return;
 		}

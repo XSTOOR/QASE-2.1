@@ -31,8 +31,9 @@ Pick **custom** as the provider for any OpenAI-compatible endpoint. **Test
 connection** probes it and loads the model list before you commit. Settings are
 saved to `.qase/config.json`; `.env` works too, and the file wins over `.env`.
 
-Nothing to test against yet? The server hosts a deliberately broken practice
-site at http://localhost:5173/demo — sign in with `demo@qase.dev` / `demo1234`.
+Nothing to test against yet? Outside production, the server hosts a deliberately
+broken practice site at http://localhost:5173/demo — sign in with
+`demo@qase.dev` / `demo1234`. Production mode always disables this route.
 
 ## The dashboard
 
@@ -71,6 +72,10 @@ a trusted reverse proxy, set `QASE_AUTH_COOKIE_SECURE=true`, and configure a
 one-time `QASE_AUTH_SETUP_TOKEN` before creating the owner. There are
 intentionally no default credentials.
 
+`GET /healthz` is a public process-liveness probe. `GET /readyz` is a public
+readiness probe for the configured storage adapter. Neither endpoint exposes
+configuration or tests the model provider.
+
 ## What the agent may do
 
 It has browser automation and nothing else — no filesystem, no shell, no
@@ -92,6 +97,7 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 | --- | --- | --- |
 | `PORT` | `5173` | Server port |
 | `QASE_HOST` | `127.0.0.1` | Interface to bind. Keep loopback unless you deliberately deploy Qase. |
+| `QASE_ENABLE_DEMO` | `true` outside production | `false` disables the practice site; production always disables it |
 | `QASE_AUTH_SESSION_HOURS` | `12` | Lifetime of a normal authenticated session |
 | `QASE_AUTH_REMEMBER_DAYS` | `30` | Lifetime when **Remember me** is selected |
 | `QASE_AUTH_COOKIE_SECURE` | `auto` | `true` forces HTTPS-only auth cookies; `auto` follows the incoming protocol |

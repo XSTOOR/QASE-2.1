@@ -1,0 +1,325 @@
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import express from 'express';
+import { createAuthentication, securityHeaders } from './auth.js';
+import { assertApplicationServices } from './contracts.js';
+import { mountDemoSite } from './demoSite.js';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const URL_PATTERN = /\bhttps?:\/\/[^\s<>"']+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>"']*)?/i;
+
+/** Pulls the site under test out of whatever the user typed. */
+function extractUrl(text) {
+	const match = text.match(URL_PATTERN);
+	if (!match) {
+		return undefined;
+	}
+	const raw = match[0].replace(/[.,;:)]+$/, '');
+	try {
+		return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).toString();
+	} catch {
+		return undefined;
+	}
+}
+
+function readinessPayload(result) {
+	if (result === true) return { ready: true };
+	if (result === false || result === undefined || result === null) return { ready: false };
+	if (typeof result !== 'object') return { ready: false };
+	return { ready: result.ready === true };
+}
+
+/**
+ * Creates the HTTP application without listening or installing process signal
+ * handlers. Startup stays in index.js; tests can provide in-memory services.
+ */
+export function createApplication(options = {}) {
+	const services = assertApplicationServices(options.services);
+	const environment = options.environment ?? process.env;
+	const authentication = options.authentication ?? createAuthentication();
+	const demoEnabled = environment.NODE_ENV !== 'production'
+		&& (options.demoEnabled ?? String(environment.QASE_ENABLE_DEMO ?? '').toLowerCase() !== 'false');
+	const heartbeatMs = Math.max(1_000, Number(options.sseHeartbeatMs) || 15_000);
+	const publicDirectory = options.publicDirectory ?? path.join(here, '..', 'public');
+	const activeTurns = new Set();
+
+	const app = express();
+	app.disable('x-powered-by');
+	app.locals.qaseDemoEnabled = demoEnabled;
+	if (options.trustProxy ?? String(environment.QASE_TRUST_PROXY ?? '').toLowerCase() === 'true') {
+		app.set('trust proxy', 1);
+	}
+	app.use(securityHeaders);
+
+	app.get('/healthz', (_request, response) => {
+		response.set('Cache-Control', 'no-store');
+		response.json({ status: 'ok' });
+	});
+
+	app.get('/readyz', async (_request, response) => {
+		response.set('Cache-Control', 'no-store');
+		try {
+			const readiness = readinessPayload(await services.readiness.check());
+			response.status(readiness.ready ? 200 : 503).json({
+				status: readiness.ready ? 'ready' : 'not_ready'
+			});
+		} catch {
+			response.status(503).json({ status: 'not_ready' });
+		}
+	});
+
+	app.use(express.json({ limit: '1mb' }));
+	app.use(express.static(publicDirectory));
+	if (demoEnabled) {
+		mountDemoSite(app);
+	}
+
+	// Authentication routes stay public; middleware installed after them protects
+	// every application API route, including reports and event streams.
+	authentication.mount(app);
+
+	function requireSession(request, response) {
+		const session = services.runs.get(request.params.id);
+		if (!session) {
+			response.status(404).json({ error: 'No such session.' });
+			return undefined;
+		}
+		return session;
+	}
+
+	/** Runs a turn detached: HTTP returns immediately and progress arrives by SSE. */
+	function startTurn(session, turnOptions) {
+		let turn;
+		try {
+			turn = Promise.resolve(services.agent.runTurn(session, turnOptions));
+		} catch (error) {
+			turn = Promise.reject(error);
+		}
+		const tracked = turn.catch(error => {
+			const message = error instanceof Error ? error.message : String(error);
+			services.runs.addMessage(session, { role: 'system', text: message, kind: 'error' });
+			services.runs.setStatus(session, 'error', message);
+		});
+		activeTurns.add(tracked);
+		void tracked.finally(() => activeTurns.delete(tracked));
+		return tracked;
+	}
+
+	app.get('/api/config', (_request, response) => {
+		response.json(services.configuration.getPublic());
+	});
+
+	app.put('/api/config', (request, response) => {
+		try {
+			const config = services.configuration.save(request.body ?? {});
+			const kept = services.agent.invalidateIdleRuntimes();
+			response.json({ ...config, runsKeepingOldSettings: kept });
+		} catch (error) {
+			response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+		}
+	});
+
+	app.post('/api/config/test', async (request, response) => {
+		response.json(await services.configuration.testConnection(request.body ?? {}));
+	});
+
+	app.get('/api/sessions', (_request, response) => {
+		response.json(services.runs.list());
+	});
+
+	app.post('/api/sessions', (_request, response) => {
+		response.status(201).json(services.runs.create());
+	});
+
+	app.get('/api/sessions/:id', (request, response) => {
+		const session = requireSession(request, response);
+		if (!session) return;
+		const liveState = services.agent.getLiveState(session.id);
+		response.json({
+			...session,
+			secretNames: services.secrets.names(session.id),
+			running: liveState.running,
+			frame: liveState.frame
+		});
+	});
+
+	app.delete('/api/sessions/:id', (request, response) => {
+		services.secrets.clear(request.params.id);
+		response.json({ deleted: services.runs.delete(request.params.id) });
+	});
+
+	/** A URL starts a run; any other chat message steers the current one. */
+	app.post('/api/sessions/:id/message', (request, response) => {
+		const session = requireSession(request, response);
+		if (!session) return;
+		const text = String(request.body?.text ?? '').trim();
+		if (!text) {
+			response.status(400).json({ error: 'Message is empty.' });
+			return;
+		}
+		if (services.agent.getLiveState(session.id).running) {
+			response.status(409).json({ error: 'The agent is still working. Stop it before sending another instruction.' });
+			return;
+		}
+
+		services.runs.addMessage(session, { role: 'user', text });
+		const url = extractUrl(text);
+		if (url && !session.targetUrl) {
+			session.targetUrl = url;
+			session.title = new URL(url).host;
+			services.events.publish(session, 'session', { targetUrl: url, title: session.title });
+		}
+
+		try {
+			services.agent.ensureRuntime(session);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			services.runs.addMessage(session, { role: 'system', text: message, kind: 'error' });
+			services.runs.setStatus(session, 'error', message);
+			response.status(500).json({ error: message });
+			return;
+		}
+
+		const pending = session.pendingQuestion;
+		startTurn(session, pending ? { resumeAnswer: text } : { task: text });
+		response.json({ ok: true });
+	});
+
+	app.post('/api/sessions/:id/answer', (request, response) => {
+		const session = requireSession(request, response);
+		if (!session) return;
+		if (!session.pendingQuestion) {
+			response.status(409).json({ error: 'Nothing is waiting on an answer.' });
+			return;
+		}
+		const answer = String(request.body?.answer ?? '').trim();
+		if (!answer) {
+			response.status(400).json({ error: 'Answer is empty.' });
+			return;
+		}
+		services.runs.addMessage(session, { role: 'user', text: answer, kind: 'answer' });
+		startTurn(session, { resumeAnswer: answer });
+		response.json({ ok: true });
+	});
+
+	/** Credential answers are stored in the vault; only placeholders reach the agent. */
+	app.post('/api/sessions/:id/credentials', (request, response) => {
+		const session = requireSession(request, response);
+		if (!session) return;
+		if (!session.pendingQuestion) {
+			response.status(409).json({ error: 'Nothing is waiting on an answer.' });
+			return;
+		}
+
+		const fields = request.body?.fields;
+		if (!fields || typeof fields !== 'object' || Object.keys(fields).length === 0) {
+			response.status(400).json({ error: 'No credentials supplied.' });
+			return;
+		}
+
+		const names = services.secrets.store(session.id, fields);
+		if (names.length === 0) {
+			response.status(400).json({ error: 'No usable credentials supplied.' });
+			return;
+		}
+		session.secretNames = services.secrets.names(session.id);
+
+		const note = String(request.body?.note ?? '').trim();
+		const placeholders = names.map(name => `{{${name}}}`).join(', ');
+		const answer = [
+			'The credentials are stored in the host vault. You will not be shown the values.',
+			`Fill the sign-in form using these literal placeholders as the browser_fill value: ${placeholders}.`,
+			'The host substitutes the real secret at the keyboard. Never print, repeat or report a credential value.',
+			note && `Note from the user: ${note}`
+		].filter(Boolean).join(' ');
+
+		services.runs.addMessage(session, {
+			role: 'user',
+			kind: 'credentials',
+			text: `Provided ${names.length} credential${names.length === 1 ? '' : 's'} securely: ${placeholders}`
+		});
+		services.events.publish(session, 'secrets', { secretNames: session.secretNames });
+		startTurn(session, { resumeAnswer: answer });
+		response.json({ ok: true, secretNames: names });
+	});
+
+	app.post('/api/sessions/:id/stop', (request, response) => {
+		const session = requireSession(request, response);
+		if (!session) return;
+		services.agent.stop(session.id);
+		response.json({ ok: true });
+	});
+
+	app.get('/api/sessions/:id/report.md', (request, response) => {
+		const session = requireSession(request, response);
+		if (!session) return;
+		response.type('text/markdown').send(services.reports.buildMarkdown(session));
+	});
+
+	app.get('/api/sessions/:id/events', (request, response) => {
+		const session = requireSession(request, response);
+		if (!session) return;
+
+		response.writeHead(200, {
+			'Content-Type': 'text/event-stream',
+			'Cache-Control': 'no-cache, no-transform',
+			Connection: 'keep-alive',
+			'X-Accel-Buffering': 'no'
+		});
+		response.write(': connected\n\n');
+
+		const send = event => response.write(`data: ${JSON.stringify(event)}\n\n`);
+		const unsubscribe = services.events.subscribe(session.id, send);
+
+		const frame = services.agent.getLiveState(session.id).frame;
+		if (frame) {
+			send({ type: 'frame', sessionId: session.id, frame });
+		}
+
+		let closed = false;
+		const cleanup = () => {
+			if (closed) return;
+			closed = true;
+			clearInterval(heartbeat);
+			unsubscribe();
+		};
+		const heartbeat = setInterval(() => {
+			if (!authentication.isSessionActive(request.auth?.sessionId)) {
+				cleanup();
+				response.end();
+				return;
+			}
+			response.write(': ping\n\n');
+		}, heartbeatMs);
+		request.on('close', cleanup);
+	});
+
+	app.use('/api', (_request, response) => {
+		response.status(404).json({ error: 'API route not found.' });
+	});
+
+	app.use((error, _request, response, next) => {
+		if (response.headersSent) {
+			next(error);
+			return;
+		}
+		if (error?.type === 'entity.too.large') {
+			response.status(413).json({ error: 'Request body is too large.' });
+			return;
+		}
+		if (error instanceof SyntaxError && error?.status === 400) {
+			response.status(400).json({ error: 'Request body is not valid JSON.' });
+			return;
+		}
+		console.error('[Qase server]', error instanceof Error ? error.message : String(error));
+		response.status(500).json({ error: 'Unexpected server error.' });
+	});
+
+	return {
+		app,
+		authentication,
+		demoEnabled,
+		services,
+		whenIdle: () => Promise.allSettled([...activeTurns])
+	};
+}

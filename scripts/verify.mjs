@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Phase-0 verification entry point.
+ * Project verification entry point.
  *
  * This performs syntax checks, confirms private local state is ignored, scans
  * source files for a small set of high-confidence credential signatures, and
@@ -125,4 +125,4 @@ if (testRun.status !== 0) {
 	process.exit(testRun.status ?? 1);
 }
 
-console.log('\nPhase-0 verification passed.');
+console.log('\nProject verification passed.');

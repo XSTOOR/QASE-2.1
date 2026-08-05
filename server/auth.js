@@ -192,7 +192,8 @@ function isSameOrigin(request) {
 
 /** Security headers are deliberately dependency-free and apply to static and API responses. */
 export function securityHeaders(request, response, next) {
-	const demo = request.path === '/demo' || request.path.startsWith('/demo/');
+	const demo = request.app?.locals?.qaseDemoEnabled !== false
+		&& (request.path === '/demo' || request.path.startsWith('/demo/'));
 	const scriptPolicy = demo ? "script-src 'self' 'unsafe-inline'" : "script-src 'self'";
 	response.set({
 		'Content-Security-Policy': `default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; ${scriptPolicy}; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
