@@ -1,0 +1,27 @@
+# Dependencies and generated output
+node_modules/
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+dist/
+tmp/
+temp/
+*.log
+*.zip
+
+# Private runtime state and credentials
+.env
+.env.*
+!.env.example
+.qase/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local editor and operating-system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

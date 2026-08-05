@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#07090d">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="Qase is an autonomous website QA workspace with live browser testing, findings, and reports.">
+<title>Qase — autonomous QA agent</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a84ff'/><path d='M11 8h10M13 8v7L9.5 22a2 2 0 0 0 1.8 3h9.4a2 2 0 0 0 1.8-3L19 15V8' stroke='%23fff' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+</head>
+<body>
+
+<!-- Cinematic entry and owner authentication layer. The QA workspace remains
+     locked until the server confirms a secure local session. -->
+<div class="entry-experience" id="entry-experience" data-view="welcome"
+     role="dialog" aria-modal="true" aria-labelledby="entry-title">
+  <div class="galaxy-scene" aria-hidden="true">
+    <div class="galaxy-nebula galaxy-nebula--violet"></div>
+    <div class="galaxy-nebula galaxy-nebula--blue"></div>
+    <div class="galaxy-stars galaxy-stars--far"></div>
+    <div class="galaxy-stars galaxy-stars--mid"></div>
+    <div class="galaxy-particles" id="galaxy-particles"></div>
+
+    <div class="galaxy-orbit galaxy-orbit--wide"></div>
+    <div class="galaxy-orbit galaxy-orbit--small"></div>
+
+    <div class="galaxy-planet galaxy-planet--indigo">
+      <span class="galaxy-planet-shine"></span>
+    </div>
+    <div class="galaxy-planet galaxy-planet--violet">
+      <span class="galaxy-planet-ring"></span>
+    </div>
+    <div class="galaxy-moon"></div>
+    <div class="galaxy-horizon"></div>
+    <div class="galaxy-grain"></div>
+    <div class="galaxy-vignette"></div>
+  </div>
+
+  <header class="entry-topbar">
+    <div class="entry-mini-brand" aria-label="Qase">
+      <span class="entry-mini-glyph" aria-hidden="true">Q</span>
+      <span>QASE</span>
+    </div>
+    <div class="entry-system-status">
+      <span class="entry-system-dot" aria-hidden="true"></span>
+      <span>System 01</span>
+      <span class="entry-system-divider" aria-hidden="true"></span>
+      <span>Ready</span>
+    </div>
+  </header>
+
+  <main class="entry-stage">
+    <section class="entry-screen entry-welcome" id="entry-welcome">
+      <p class="entry-eyebrow"><span></span> Autonomous quality, reimagined</p>
+      <h1 class="entry-wordmark" id="entry-title" aria-label="Qase">
+        <span aria-hidden="true">Q</span><span aria-hidden="true">A</span><span aria-hidden="true">S</span><span aria-hidden="true">E</span>
+      </h1>
+      <p class="entry-tagline" id="entry-tagline">Quality at the speed of light.</p>
+      <button class="entry-cta" id="entry-begin" type="button">
+        <span>Begin transmission</span>
+        <span class="entry-cta-orb" aria-hidden="true">&#8599;</span>
+      </button>
+      <p class="entry-caption">An autonomous workspace for testing what matters.</p>
+    </section>
+
+    <section class="entry-screen entry-auth" id="entry-auth" aria-hidden="true" inert>
+      <button class="entry-back" id="entry-back" type="button">
+        <span aria-hidden="true">&#8592;</span> Return to orbit
+      </button>
+
+      <div class="auth-card">
+        <div class="auth-card-glow" aria-hidden="true"></div>
+        <div class="auth-brand">
+          <span class="auth-brand-glyph" aria-hidden="true">Q</span>
+          <span>QASE</span>
+        </div>
+
+        <div class="auth-heading">
+          <p class="auth-kicker">Mission control</p>
+          <h2 id="auth-title">Welcome back</h2>
+          <p>Enter your details to continue your journey.</p>
+        </div>
+
+        <form class="auth-form" id="entry-auth-form" autocomplete="on">
+          <label class="auth-field" for="entry-email">
+            <span>Email address</span>
+            <span class="auth-input-shell">
+              <span class="auth-field-mark" aria-hidden="true">@</span>
+              <input id="entry-email" type="email" inputmode="email" autocomplete="username" placeholder="you@company.com" maxlength="254" required>
+            </span>
+          </label>
+
+          <label class="auth-field" for="entry-password">
+            <span>Password</span>
+            <span class="auth-input-shell">
+              <span class="auth-field-mark auth-field-mark--key" aria-hidden="true"></span>
+              <input id="entry-password" type="password" autocomplete="current-password" placeholder="Enter your password" minlength="12" maxlength="256" required>
+            </span>
+          </label>
+
+          <label class="auth-field" id="auth-confirm-field" for="entry-password-confirm" hidden>
+            <span>Confirm password</span>
+            <span class="auth-input-shell">
+              <span class="auth-field-mark auth-field-mark--key" aria-hidden="true"></span>
+              <input id="entry-password-confirm" type="password" autocomplete="new-password" placeholder="Repeat your password" minlength="12" maxlength="256">
+            </span>
+          </label>
+
+          <label class="auth-field" id="auth-setup-token-field" for="entry-setup-token" hidden>
+            <span>Setup token</span>
+            <span class="auth-input-shell">
+              <span class="auth-field-mark auth-field-mark--key" aria-hidden="true"></span>
+              <input id="entry-setup-token" type="password" autocomplete="one-time-code" placeholder="Server setup token" maxlength="256">
+            </span>
+          </label>
+
+          <div class="auth-options">
+            <label class="auth-remember">
+              <input id="entry-remember" type="checkbox">
+              <span class="auth-checkbox" aria-hidden="true"></span>
+              <span>Remember me</span>
+            </label>
+            <span class="auth-session-copy">Private session</span>
+          </div>
+
+          <p class="auth-message" id="auth-message" role="status" aria-live="polite"></p>
+
+          <button class="auth-primary" id="auth-submit" type="submit">
+            <span id="auth-submit-label">Sign in</span>
+            <span aria-hidden="true">&#8594;</span>
+          </button>
+        </form>
+
+        <p class="auth-create" id="auth-account-note">One secure owner account per Qase instance.</p>
+        <p class="auth-demo-note" id="auth-demo-note">
+          <span aria-hidden="true"></span><span id="auth-security-copy">Protected by a secure server-side session.</span>
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="entry-footer">
+    <span class="entry-index" id="entry-index">01 / 02</span>
+    <span class="entry-progress" aria-hidden="true"><i></i></span>
+    <span>Designed for the unknown</span>
+  </footer>
+
+  <div class="entry-warp" aria-hidden="true"><i></i><i></i><i></i></div>
+  <p class="sr-only" id="entry-announcer" aria-live="polite"></p>
+</div>
+
+<a class="skip-link" href="#composer-input" inert aria-hidden="true">Skip to agent input</a>
+
+<div class="app" inert aria-hidden="true">
+
+  <!-- ── Left: runs ─────────────────────────────────────────────── -->
+  <aside class="panel runs" aria-label="QA runs">
+    <header class="panel-head">
+      <div class="brand">
+        <span class="brand-lockup">
+          <span class="brand-glyph" aria-hidden="true">Q</span>
+          <span class="brand-mark">Qase</span>
+        </span>
+        <button class="brand-sub" id="model-badge" title="Model settings">…</button>
+      </div>
+      <button id="new-run" class="btn btn-primary" title="New run (Ctrl/⌘ N)" aria-keyshortcuts="Control+N Meta+N">New run</button>
+    </header>
+    <div class="run-list" id="run-list" role="list" aria-label="Recent runs"></div>
+    <footer class="panel-foot">
+      <span class="dot" id="conn-dot" aria-hidden="true"></span>
+      <span id="conn-label" role="status" aria-live="polite">connecting…</span>
+      <button class="btn btn-ghost btn-sm foot-btn" id="open-settings" title="Model and endpoint settings">Settings</button>
+      <button class="btn btn-ghost btn-sm signout-btn" id="sign-out" title="Sign out of Qase">Sign out</button>
+    </footer>
+  </aside>
+
+  <!-- ── Middle: agent chat ─────────────────────────────────────── -->
+  <main class="panel chat" aria-label="Agent conversation">
+    <header class="panel-head">
+      <div class="chat-id">
+        <h1 id="chat-title">No run selected</h1>
+        <p class="subtle" id="chat-target">Start a run and send a URL to test</p>
+      </div>
+      <div class="head-actions">
+        <span class="status-chip" id="status-chip" data-status="idle" role="status" aria-live="polite" aria-atomic="true">idle</span>
+        <button id="stop-run" class="btn btn-danger btn-sm" hidden>Stop</button>
+      </div>
+    </header>
+
+    <div class="transcript" id="transcript" role="log" aria-label="Agent conversation" aria-live="polite" aria-relevant="additions">
+      <div class="empty-state" id="chat-empty">
+        <h2>Autonomous website QA</h2>
+        <p>Paste the URL of the site you want tested. Qase opens it in a real
+           browser, writes a test plan, works through it, and files what breaks.</p>
+        <p class="empty-note">If the site needs a login, the agent stops and asks.
+           Credentials you provide stay on this machine and are swapped in at the
+           keyboard — the model never sees them.</p>
+      </div>
+    </div>
+
+    <!-- Live state while the agent works; hidden the moment it replies. -->
+    <div class="thinking-strip" id="thinking-strip" role="status" aria-live="polite" hidden>
+      <button class="thinking-head" id="thinking-head" type="button" aria-expanded="false" aria-controls="thinking-body">
+        <span class="thinking-dots"><i></i><i></i><i></i></span>
+        <span class="thinking-label" id="thinking-label">Working</span>
+        <span class="thinking-peek" id="thinking-peek"></span>
+        <span class="thinking-caret" id="thinking-caret" hidden>▸</span>
+      </button>
+      <div class="thinking-body" id="thinking-body"></div>
+    </div>
+
+    <div class="question-slot" id="question-slot" aria-live="assertive"></div>
+
+    <form class="composer" id="composer">
+      <label class="sr-only" for="composer-input">URL or instruction for the QA agent</label>
+      <textarea id="composer-input" rows="1" placeholder="Paste a URL or tell Qase what to test…" autocomplete="off" aria-describedby="composer-hint"></textarea>
+      <span class="sr-only" id="composer-hint">Press Enter to send. Press Shift and Enter for a new line.</span>
+      <button type="submit" class="btn btn-primary" id="send-btn">Send</button>
+    </form>
+  </main>
+
+  <!-- ── Right: live browser + activity ─────────────────────────── -->
+  <aside class="panel viewer" aria-label="Live browser and test results">
+    <header class="panel-head">
+      <div class="urlbar">
+        <span class="dot" id="browser-dot" aria-hidden="true"></span>
+        <span class="url" id="browser-url">about:blank</span>
+      </div>
+      <span class="subtle" id="browser-title"></span>
+    </header>
+
+    <div class="stage" id="stage">
+      <div class="stage-inner" id="stage-inner" hidden>
+        <img id="frame" alt="Live view of the site under test">
+        <div class="overlay" id="overlay">
+          <div class="target-box" id="target-box"></div>
+          <div class="cursor" id="cursor">
+            <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+              <path d="M5 2.5 19 12.2l-6.1.55 3.2 6.6-2.6 1.25-3.2-6.6L5 18.6Z"
+                    fill="#fff" stroke="#0b0d12" stroke-width="1.4" stroke-linejoin="round"/>
+            </svg>
+            <span class="ripple" id="ripple"></span>
+            <span class="cursor-label" id="cursor-label"></span>
+          </div>
+        </div>
+      </div>
+      <div class="stage-empty" id="stage-empty">
+        <svg class="stage-empty-art" viewBox="0 0 48 36" width="44" height="33" aria-hidden="true">
+          <rect x="1" y="1" width="46" height="30" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M1 9h46" stroke="currentColor" stroke-width="1.5"/>
+          <circle cx="6" cy="5" r="1.2" fill="currentColor"/>
+          <circle cx="10.5" cy="5" r="1.2" fill="currentColor"/>
+          <circle cx="15" cy="5" r="1.2" fill="currentColor"/>
+          <path d="M18 35h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <span>No browser yet</span>
+        <small>The live view appears when the agent opens the site</small>
+      </div>
+    </div>
+
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Run details">
+      <button class="tab is-active" id="tab-activity" data-tab="activity" role="tab" aria-selected="true" aria-controls="pane-activity">Activity</button>
+      <button class="tab" id="tab-plan" data-tab="plan" role="tab" aria-selected="false" aria-controls="pane-plan" tabindex="-1">Plan <span class="count" id="count-plan"></span></button>
+      <button class="tab" id="tab-findings" data-tab="findings" role="tab" aria-selected="false" aria-controls="pane-findings" tabindex="-1">Findings <span class="count" id="count-findings"></span></button>
+      <button class="tab" id="tab-report" data-tab="report" role="tab" aria-selected="false" aria-controls="pane-report" tabindex="-1">Report</button>
+    </nav>
+
+    <div class="tab-body">
+      <section class="tab-pane is-active" id="pane-activity" data-pane="activity" role="tabpanel" aria-labelledby="tab-activity"><div class="feed" id="activity-feed" role="list" aria-live="polite" aria-relevant="additions text"></div></section>
+      <section class="tab-pane" id="pane-plan" data-pane="plan" role="tabpanel" aria-labelledby="tab-plan"><div class="feed" id="plan-list" role="list"></div></section>
+      <section class="tab-pane" id="pane-findings" data-pane="findings" role="tabpanel" aria-labelledby="tab-findings"><div class="feed" id="findings-list" role="list"></div></section>
+      <section class="tab-pane" id="pane-report" data-pane="report" role="tabpanel" aria-labelledby="tab-report"><div class="feed" id="report-view"></div></section>
+    </div>
+  </aside>
+
+</div>
+
+<!-- ── Settings ─────────────────────────────────────────────────── -->
+<dialog class="modal" id="settings" aria-labelledby="settings-title" inert aria-hidden="true">
+  <form method="dialog" class="modal-inner">
+    <header class="modal-head">
+      <h2 id="settings-title">Model endpoint</h2>
+      <button class="btn btn-ghost btn-sm" value="cancel" formnovalidate>Close</button>
+    </header>
+
+    <div class="modal-body">
+      <label class="field">
+        <span>Provider</span>
+        <select id="cfg-provider"></select>
+        <small id="cfg-provider-note"></small>
+      </label>
+
+      <label class="field">
+        <span>API key</span>
+        <input id="cfg-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
+        <small id="cfg-key-note"></small>
+      </label>
+
+      <label class="field" id="cfg-baseurl-field">
+        <span>Base URL</span>
+        <input id="cfg-baseurl" autocomplete="off" spellcheck="false" placeholder="https://your-endpoint.example.com/v1">
+        <small>The root the client appends <code>/chat/completions</code> to. Include <code>/v1</code> if your gateway expects it.</small>
+      </label>
+
+      <label class="field">
+        <span>Model name</span>
+        <input id="cfg-model" autocomplete="off" spellcheck="false" placeholder="model-id" list="cfg-model-list">
+        <datalist id="cfg-model-list"></datalist>
+        <small>Exactly the id your endpoint expects. Test the connection to load the list.</small>
+      </label>
+
+      <div class="field-row">
+        <label class="field">
+          <span>Reasoning</span>
+          <select id="cfg-reasoning">
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Max turns</span>
+          <input id="cfg-maxturns" type="number" min="10" max="500" step="10">
+        </label>
+      </div>
+
+      <label class="check">
+        <input id="cfg-headless" type="checkbox">
+        <span>Run Chromium off-screen<small>Uncheck to also open a real browser window on this machine.</small></span>
+      </label>
+
+      <div class="test-result" id="cfg-test" role="status" aria-live="polite"></div>
+    </div>
+
+    <footer class="modal-foot">
+      <button class="btn btn-ghost" type="button" id="cfg-test-btn">Test connection</button>
+      <button class="btn btn-primary" type="button" id="cfg-save">Save</button>
+    </footer>
+  </form>
+</dialog>
+
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false" inert aria-hidden="true"></div>
+
+<script src="entry.js" type="module"></script>
+<script src="app.js" type="module"></script>
+</body>
+</html>
