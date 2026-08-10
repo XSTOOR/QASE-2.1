@@ -1,0 +1,61 @@
+import 'dotenv/config';
+import { createControlPlaneApplication } from './app.js';
+import { runControlPlaneMigrations } from './migrations.js';
+import { createControlPlaneRepository } from './repository.js';
+import { createOperationalControls } from '../operations.js';
+import { createPostgresPool } from '../postgres/pool.js';
+
+const environment = process.env;
+const databaseUrl = String(environment.QASE_CONTROL_DATABASE_URL ?? '').trim();
+if (!databaseUrl) throw new Error('Control plane requires QASE_CONTROL_DATABASE_URL.');
+const operations = createOperationalControls({ environment, mutationPrefixes: ['/internal/'] });
+const databaseEnvironment = {
+	...environment,
+	QASE_DATABASE_URL: databaseUrl,
+	QASE_DATABASE_SSL: environment.QASE_CONTROL_DATABASE_SSL ?? environment.QASE_DATABASE_SSL,
+	QASE_DATABASE_POOL_MIN: environment.QASE_CONTROL_DATABASE_POOL_MIN ?? environment.QASE_DATABASE_POOL_MIN,
+	QASE_DATABASE_POOL_MAX: environment.QASE_CONTROL_DATABASE_POOL_MAX ?? environment.QASE_DATABASE_POOL_MAX
+};
+const pool = createPostgresPool({
+	environment: databaseEnvironment,
+	applicationName: 'qase-control-plane'
+});
+let repository;
+let server;
+try {
+	const migrate = String(environment.QASE_CONTROL_DATABASE_MIGRATE_ON_START
+		?? (environment.NODE_ENV === 'production' ? 'false' : 'true')).toLowerCase() === 'true';
+	if (migrate) await runControlPlaneMigrations(pool);
+	repository = createControlPlaneRepository({
+		pool,
+		staleAfterSeconds: environment.QASE_CONTROL_CELL_STALE_SECONDS
+			? Number(environment.QASE_CONTROL_CELL_STALE_SECONDS) : undefined
+	});
+	const { app } = createControlPlaneApplication({ repository, environment, operations });
+	const host = String(environment.QASE_CONTROL_HOST ?? '127.0.0.1').trim() || '127.0.0.1';
+	const port = Number(environment.QASE_CONTROL_PORT ?? 5180);
+	if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new TypeError('QASE_CONTROL_PORT is invalid.');
+	server = await new Promise((resolve, reject) => {
+		const onError = error => reject(error);
+		const candidate = app.listen(port, host, () => {
+			candidate.off('error', onError);
+			resolve(candidate);
+		});
+		candidate.once('error', onError);
+	});
+	console.log(`Qase control plane listening on http://${host}:${port}.`);
+} catch (error) {
+	await (repository?.close() ?? pool.end()).catch(() => undefined);
+	throw error;
+}
+
+let closing = false;
+for (const signal of ['SIGINT', 'SIGTERM']) {
+	process.on(signal, async () => {
+		if (closing) return;
+		closing = true;
+		await new Promise(resolve => server.close(resolve));
+		await repository.close();
+		process.exit(0);
+	});
+}

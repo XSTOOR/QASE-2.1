@@ -52,6 +52,11 @@ export function createOperationalControls(options = {}) {
 		options.mutationLimit ?? environment.QASE_MUTATION_MAX_IN_FLIGHT,
 		64, 1, 10_000, 'QASE_MUTATION_MAX_IN_FLIGHT'
 	);
+	const mutationPrefixes = options.mutationPrefixes ?? ['/api/'];
+	if (!Array.isArray(mutationPrefixes) || mutationPrefixes.length === 0
+		|| mutationPrefixes.some(prefix => typeof prefix !== 'string' || !prefix.startsWith('/') || !prefix.endsWith('/'))) {
+		throw new TypeError('mutationPrefixes must contain absolute path prefixes ending in /.');
+	}
 	const now = options.now ?? (() => process.hrtime.bigint());
 	const startedAt = options.startedAt ?? Date.now();
 	const requests = new Map();
@@ -80,7 +85,8 @@ export function createOperationalControls(options = {}) {
 		request.qaseRequestId = requestId;
 		response.setHeader('X-Request-Id', requestId);
 		const started = now();
-		const mutation = request.path.startsWith('/api/') && UNSAFE_METHODS.has(request.method);
+		const mutation = mutationPrefixes.some(prefix => request.path.startsWith(prefix))
+			&& UNSAFE_METHODS.has(request.method);
 		const overloaded = mutation && mutationInFlight >= mutationLimit;
 		if (mutation && !overloaded) mutationInFlight += 1;
 		if (overloaded) overloads += 1;

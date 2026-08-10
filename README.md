@@ -116,6 +116,12 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 | `QASE_METRICS_TOKEN` | unset | Enables bearer-protected `/metrics`; must contain at least 32 bytes |
 | `QASE_WORKER_PROBE_HOST` | `127.0.0.1` | Worker liveness/readiness/metrics bind address |
 | `QASE_WORKER_PROBE_PORT` | `9174` | Worker probe listener port; use `0` only for tests |
+| `QASE_CONTROL_DATABASE_URL` | unset | Separate PostgreSQL database for global cell/placement metadata |
+| `QASE_CONTROL_MIGRATION_DATABASE_URL` | unset | Separate DDL credential for `npm run control:db:migrate` |
+| `QASE_CONTROL_API_READ_TOKEN` | unset | Internal Drytis resolver credential; at least 32 bytes |
+| `QASE_CONTROL_API_WRITE_TOKEN` | unset | Distinct deployment-controller credential; at least 32 bytes |
+| `QASE_CONTROL_CELL_STALE_SECONDS` | `90` | Heartbeat age after which placement resolution fails closed |
+| `QASE_CONTROL_HOST` / `QASE_CONTROL_PORT` | `127.0.0.1` / `5180` | Internal control-plane listener |
 | `QASE_AUTH_REMEMBER_DAYS` | `30` | Lifetime when **Remember me** is selected |
 | `QASE_AUTH_COOKIE_SECURE` | `auto` | `true` forces HTTPS-only auth cookies; `auto` follows the incoming protocol |
 | `QASE_AUTH_SETUP_TOKEN` | unset | Required for first-owner setup from a non-loopback address |

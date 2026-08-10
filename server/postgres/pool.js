@@ -24,6 +24,10 @@ function sslSetting(environment) {
 export function createPostgresPool(options = {}) {
 	const environment = options.environment ?? process.env;
 	const PoolClass = options.PoolClass ?? Pool;
+	const applicationName = String(options.applicationName ?? 'qase-api');
+	if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(applicationName)) {
+		throw new TypeError('PostgreSQL application name is invalid.');
+	}
 	const connectionString = String(
 		environment.QASE_DATABASE_URL ?? environment.DATABASE_URL ?? ''
 	).trim();
@@ -49,7 +53,7 @@ export function createPostgresPool(options = {}) {
 			environment.QASE_DATABASE_IDLE_TIMEOUT_MS, 30_000, 1_000, 600_000,
 			'QASE_DATABASE_IDLE_TIMEOUT_MS'
 		),
-		application_name: 'qase-api'
+		application_name: applicationName
 	});
 
 	pool.on?.('error', () => {
