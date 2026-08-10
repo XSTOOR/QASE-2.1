@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "workload": "control-placement",
+  "minimumDurationSeconds": 900,
+  "minimumRequests": 10000,
+  "minimumRequestsPerSecond": 50,
+  "maximumErrorRate": 0.001,
+  "maximumP95Ms": 500,
+  "maximumP99Ms": 1000,
+  "minimumCheckRate": 0.999
+}

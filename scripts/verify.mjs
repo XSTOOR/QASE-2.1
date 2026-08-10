@@ -48,7 +48,8 @@ for (const candidate of required) {
 const sourceFiles = [
 	...filesUnder(path.join(root, 'server'), new Set(['.js'])),
 	...filesUnder(path.join(root, 'public'), new Set(['.js'])),
-	...filesUnder(path.join(root, 'scripts'), new Set(['.js', '.mjs']))
+	...filesUnder(path.join(root, 'scripts'), new Set(['.js', '.mjs'])),
+	...filesUnder(path.join(root, 'load'), new Set(['.js', '.mjs']))
 ].sort();
 
 for (const filePath of sourceFiles) {

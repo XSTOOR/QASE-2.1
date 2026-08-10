@@ -75,4 +75,7 @@ test('release gate repeats read-only readiness and emits sanitized pass/fail evi
 	assert.throws(() => createReleaseGateConfig({
 		QASE_RELEASE_ID: 'unsafe release id', QASE_SMOKE_TARGETS: 'api=https://api.test/readyz'
 	}), /release identifier/);
+	assert.throws(() => createReleaseGateConfig({
+		QASE_RELEASE_ID: 'https://release.example', QASE_SMOKE_TARGETS: 'api=https://api.test/readyz'
+	}), /release identifier/);
 });

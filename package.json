@@ -18,6 +18,7 @@
     "deployment:smoke": "node scripts/smoke-deployment.mjs",
     "deployment:load": "node scripts/load-placement.mjs",
     "deployment:release-gate": "node scripts/release-gate.mjs",
+    "capacity:evaluate": "node scripts/evaluate-capacity.mjs",
     "verify": "node scripts/verify.mjs",
     "install-browser": "playwright install chromium",
     "package": "node scripts/package.mjs"

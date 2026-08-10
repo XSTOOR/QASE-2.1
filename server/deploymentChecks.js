@@ -78,7 +78,7 @@ function percentile(sorted, fraction) {
 
 export function createReleaseGateConfig(environment = process.env) {
 	const releaseId = String(environment.QASE_RELEASE_ID ?? '').trim();
-	if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(releaseId)) {
+	if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(releaseId) || releaseId.includes('://')) {
 		throw new TypeError('QASE_RELEASE_ID must be a safe image digest or release identifier.');
 	}
 	return Object.freeze({

@@ -21,7 +21,7 @@ const EXCLUDED_ROOTS = new Set([
 	'coverage', 'test-results', 'playwright-report', 'dist', 'tmp', 'temp'
 ]);
 const EXCLUDED_EXTENSIONS = new Set(['.zip', '.log', '.pem', '.key', '.p12', '.pfx']);
-const INCLUDED_DIRECTORIES = ['public', 'server', 'scripts', 'docs', 'deploy'];
+const INCLUDED_DIRECTORIES = ['public', 'server', 'scripts', 'docs', 'deploy', 'load'];
 const INCLUDED_FILES = [
 	'package.json', 'package-lock.json', 'README.md', '.env.example',
 	'.gitignore', '.gitattributes', '.dockerignore', 'Dockerfile'
@@ -95,7 +95,10 @@ for (const required of [
 	'deploy/kubernetes/base/qase.yaml', 'deploy/kubernetes/base/migrations.yaml',
 	'deploy/observability/service-monitors.yaml',
 	'deploy/observability/prometheus-rules.yaml',
-	'deploy/observability/grafana-dashboard.json'
+	'deploy/observability/grafana-dashboard.json',
+	'deploy/qualification/capacity-evidence.schema.json',
+	'deploy/qualification/resilience-evidence.schema.json',
+	'load/k6/control-plane-placement.js'
 ]) {
 	if (!listing.includes(required)) {
 		fs.rmSync(output, { force: true });

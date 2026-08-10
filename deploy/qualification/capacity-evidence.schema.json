@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/qase/capacity-evidence-v1.json",
+  "title": "Qase capacity evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "workload", "targetAlias", "releaseId", "startedAt",
+    "durationSeconds", "requests", "successes", "failures", "errorRate",
+    "requestsPerSecond", "latencyMs", "maximumVus", "checksPassed"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "workload": { "const": "control-placement" },
+    "targetAlias": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+    "releaseId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$", "not": { "pattern": "://" } },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "durationSeconds": { "type": "number", "minimum": 1, "maximum": 86400 },
+    "requests": { "type": "integer", "minimum": 1, "maximum": 100000000 },
+    "successes": { "type": "integer", "minimum": 0 },
+    "failures": { "type": "integer", "minimum": 0 },
+    "errorRate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "requestsPerSecond": { "type": "number", "minimum": 0 },
+    "latencyMs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["p50", "p95", "p99", "max"],
+      "properties": {
+        "p50": { "type": "number", "minimum": 0 },
+        "p95": { "type": "number", "minimum": 0 },
+        "p99": { "type": "number", "minimum": 0 },
+        "max": { "type": "number", "minimum": 0 }
+      }
+    },
+    "maximumVus": { "type": "integer", "minimum": 1, "maximum": 100000 },
+    "checksPassed": { "type": "number", "minimum": 0, "maximum": 1 }
+  }
+}

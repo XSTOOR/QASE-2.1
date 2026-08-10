@@ -162,6 +162,11 @@ read-only release gate, see
 `docs/enterprise-migration/phase-8-observability-release.md` and
 `deploy/observability/README.md`.
 
+Capacity cannot be inferred from code or registered-user count. The staging-only
+workload, strict evidence evaluator, resilience schema and qualification method
+are documented in `docs/enterprise-migration/phase-9-capacity-qualification.md`
+and `load/README.md`.
+
 ## How it works
 
 `@cleanslate/sdk` supplies the agent loop, the tool protocol and a Playwright
