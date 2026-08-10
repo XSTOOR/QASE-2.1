@@ -111,9 +111,8 @@ console.log(`Syntax checks passed for ${sourceFiles.length} source files.`);
 console.log('Private-path ignore checks passed.');
 console.log('High-confidence source credential scan passed.');
 
-const tests = fs.readdirSync(path.join(root, 'server'))
-	.filter(name => name.endsWith('.test.js'))
-	.map(name => path.join(root, 'server', name))
+const tests = filesUnder(path.join(root, 'server'), new Set(['.js']))
+	.filter(filePath => filePath.endsWith('.test.js'))
 	.sort();
 
 const testRun = spawnSync(process.execPath, ['--test', ...tests], {

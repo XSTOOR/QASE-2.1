@@ -8,7 +8,9 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node --test server/*.test.js",
+    "test": "node --test server/*.test.js server/postgres/*.test.js",
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:import": "node scripts/import-sessions.mjs",
     "verify": "node scripts/verify.mjs",
     "install-browser": "playwright install chromium",
     "package": "node scripts/package.mjs"
@@ -19,6 +21,7 @@
   "dependencies": {
     "@cleanslate/sdk": "^0.1.0",
     "dotenv": "^17.4.2",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "pg": "^8.22.0"
   }
 }

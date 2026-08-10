@@ -78,8 +78,8 @@ export function createApplication(options = {}) {
 	// every application API route, including reports and event streams.
 	authentication.mount(app);
 
-	function requireSession(request, response) {
-		const session = services.runs.get(request.params.id);
+	async function requireSession(request, response) {
+		const session = await services.runs.get(request.params.id);
 		if (!session) {
 			response.status(404).json({ error: 'No such session.' });
 			return undefined;
@@ -95,10 +95,14 @@ export function createApplication(options = {}) {
 		} catch (error) {
 			turn = Promise.reject(error);
 		}
-		const tracked = turn.catch(error => {
+		const tracked = turn.catch(async error => {
 			const message = error instanceof Error ? error.message : String(error);
-			services.runs.addMessage(session, { role: 'system', text: message, kind: 'error' });
-			services.runs.setStatus(session, 'error', message);
+			try {
+				await services.runs.addMessage(session, { role: 'system', text: message, kind: 'error' });
+				await services.runs.setStatus(session, 'error', message);
+			} catch {
+				console.error('[Qase persistence] Could not record the failed agent turn.');
+			}
 		});
 		activeTurns.add(tracked);
 		void tracked.finally(() => activeTurns.delete(tracked));
@@ -109,10 +113,10 @@ export function createApplication(options = {}) {
 		response.json(services.configuration.getPublic());
 	});
 
-	app.put('/api/config', (request, response) => {
+	app.put('/api/config', async (request, response) => {
 		try {
 			const config = services.configuration.save(request.body ?? {});
-			const kept = services.agent.invalidateIdleRuntimes();
+			const kept = await services.agent.invalidateIdleRuntimes();
 			response.json({ ...config, runsKeepingOldSettings: kept });
 		} catch (error) {
 			response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
@@ -123,16 +127,16 @@ export function createApplication(options = {}) {
 		response.json(await services.configuration.testConnection(request.body ?? {}));
 	});
 
-	app.get('/api/sessions', (_request, response) => {
-		response.json(services.runs.list());
+	app.get('/api/sessions', async (_request, response) => {
+		response.json(await services.runs.list());
 	});
 
-	app.post('/api/sessions', (_request, response) => {
-		response.status(201).json(services.runs.create());
+	app.post('/api/sessions', async (_request, response) => {
+		response.status(201).json(await services.runs.create());
 	});
 
-	app.get('/api/sessions/:id', (request, response) => {
-		const session = requireSession(request, response);
+	app.get('/api/sessions/:id', async (request, response) => {
+		const session = await requireSession(request, response);
 		if (!session) return;
 		const liveState = services.agent.getLiveState(session.id);
 		response.json({
@@ -143,39 +147,45 @@ export function createApplication(options = {}) {
 		});
 	});
 
-	app.delete('/api/sessions/:id', (request, response) => {
-		services.secrets.clear(request.params.id);
-		response.json({ deleted: services.runs.delete(request.params.id) });
+	app.delete('/api/sessions/:id', async (request, response) => {
+		const session = await services.runs.get(request.params.id);
+		if (!session) {
+			response.json({ deleted: false });
+			return;
+		}
+		const deleted = await services.runs.delete(session.id);
+		if (deleted) services.secrets.clear(session.id);
+		response.json({ deleted });
 	});
 
 	/** A URL starts a run; any other chat message steers the current one. */
-	app.post('/api/sessions/:id/message', (request, response) => {
-		const session = requireSession(request, response);
+	app.post('/api/sessions/:id/message', async (request, response) => {
+		const session = await requireSession(request, response);
 		if (!session) return;
 		const text = String(request.body?.text ?? '').trim();
 		if (!text) {
 			response.status(400).json({ error: 'Message is empty.' });
 			return;
 		}
-		if (services.agent.getLiveState(session.id).running) {
+		if (session.status === 'running' || services.agent.getLiveState(session.id).running) {
 			response.status(409).json({ error: 'The agent is still working. Stop it before sending another instruction.' });
 			return;
 		}
 
-		services.runs.addMessage(session, { role: 'user', text });
+		await services.runs.addMessage(session, { role: 'user', text });
 		const url = extractUrl(text);
 		if (url && !session.targetUrl) {
 			session.targetUrl = url;
 			session.title = new URL(url).host;
-			services.events.publish(session, 'session', { targetUrl: url, title: session.title });
+			await services.runs.commit(session, 'session', { targetUrl: url, title: session.title });
 		}
 
 		try {
 			services.agent.ensureRuntime(session);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			services.runs.addMessage(session, { role: 'system', text: message, kind: 'error' });
-			services.runs.setStatus(session, 'error', message);
+			await services.runs.addMessage(session, { role: 'system', text: message, kind: 'error' });
+			await services.runs.setStatus(session, 'error', message);
 			response.status(500).json({ error: message });
 			return;
 		}
@@ -185,8 +195,8 @@ export function createApplication(options = {}) {
 		response.json({ ok: true });
 	});
 
-	app.post('/api/sessions/:id/answer', (request, response) => {
-		const session = requireSession(request, response);
+	app.post('/api/sessions/:id/answer', async (request, response) => {
+		const session = await requireSession(request, response);
 		if (!session) return;
 		if (!session.pendingQuestion) {
 			response.status(409).json({ error: 'Nothing is waiting on an answer.' });
@@ -197,14 +207,14 @@ export function createApplication(options = {}) {
 			response.status(400).json({ error: 'Answer is empty.' });
 			return;
 		}
-		services.runs.addMessage(session, { role: 'user', text: answer, kind: 'answer' });
+		await services.runs.addMessage(session, { role: 'user', text: answer, kind: 'answer' });
 		startTurn(session, { resumeAnswer: answer });
 		response.json({ ok: true });
 	});
 
 	/** Credential answers are stored in the vault; only placeholders reach the agent. */
-	app.post('/api/sessions/:id/credentials', (request, response) => {
-		const session = requireSession(request, response);
+	app.post('/api/sessions/:id/credentials', async (request, response) => {
+		const session = await requireSession(request, response);
 		if (!session) return;
 		if (!session.pendingQuestion) {
 			response.status(409).json({ error: 'Nothing is waiting on an answer.' });
@@ -233,31 +243,32 @@ export function createApplication(options = {}) {
 			note && `Note from the user: ${note}`
 		].filter(Boolean).join(' ');
 
-		services.runs.addMessage(session, {
+		await services.runs.addMessage(session, {
 			role: 'user',
 			kind: 'credentials',
 			text: `Provided ${names.length} credential${names.length === 1 ? '' : 's'} securely: ${placeholders}`
 		});
-		services.events.publish(session, 'secrets', { secretNames: session.secretNames });
+		await services.runs.commit(session, 'secrets', { secretNames: session.secretNames });
 		startTurn(session, { resumeAnswer: answer });
 		response.json({ ok: true, secretNames: names });
 	});
 
-	app.post('/api/sessions/:id/stop', (request, response) => {
-		const session = requireSession(request, response);
+	app.post('/api/sessions/:id/stop', async (request, response) => {
+		const session = await requireSession(request, response);
 		if (!session) return;
+		await services.runs.commit(session, 'run.stop_requested');
 		services.agent.stop(session.id);
 		response.json({ ok: true });
 	});
 
-	app.get('/api/sessions/:id/report.md', (request, response) => {
-		const session = requireSession(request, response);
+	app.get('/api/sessions/:id/report.md', async (request, response) => {
+		const session = await requireSession(request, response);
 		if (!session) return;
 		response.type('text/markdown').send(services.reports.buildMarkdown(session));
 	});
 
-	app.get('/api/sessions/:id/events', (request, response) => {
-		const session = requireSession(request, response);
+	app.get('/api/sessions/:id/events', async (request, response) => {
+		const session = await requireSession(request, response);
 		if (!session) return;
 
 		response.writeHead(200, {
@@ -309,6 +320,12 @@ export function createApplication(options = {}) {
 		}
 		if (error instanceof SyntaxError && error?.status === 400) {
 			response.status(400).json({ error: 'Request body is not valid JSON.' });
+			return;
+		}
+		if (error?.name === 'RunVersionConflictError' || error?.code === 'RUN_VERSION_CONFLICT') {
+			response.status(409).json({
+				error: 'This run changed on another server. Refresh it and try again.'
+			});
 			return;
 		}
 		console.error('[Qase server]', error instanceof Error ? error.message : String(error));

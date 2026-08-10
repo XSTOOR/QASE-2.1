@@ -1,0 +1,324 @@
+import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { createRuntimeApplicationServices } from './localServices.js';
+
+function clone(value) {
+	return structuredClone(value);
+}
+
+function restore(target, snapshot) {
+	for (const key of Object.keys(target)) delete target[key];
+	Object.assign(target, clone(snapshot));
+}
+
+function createSession(title, now) {
+	const timestamp = now();
+	return {
+		id: randomUUID(),
+		title: title || 'New test run',
+		createdAt: timestamp,
+		updatedAt: timestamp,
+		status: 'idle',
+		targetUrl: undefined,
+		messages: [],
+		activities: [],
+		findings: [],
+		todos: [],
+		report: undefined,
+		pendingQuestion: undefined,
+		contextUsage: undefined,
+		secretNames: []
+	};
+}
+
+function summary(session) {
+	return {
+		id: session.id,
+		title: session.title,
+		status: session.status,
+		targetUrl: session.targetUrl,
+		createdAt: session.createdAt,
+		updatedAt: session.updatedAt,
+		findingCount: session.findings.length,
+		messageCount: session.messages.length
+	};
+}
+
+function eventActor(type, payload, tenantContext) {
+	const messageRole = payload?.message?.role;
+	if (messageRole === 'user' || ['run.created', 'session', 'secrets', 'run.stop_requested'].includes(type)) {
+		return { actorType: 'user', actorUserId: tenantContext.actorUserId };
+	}
+	if (messageRole === 'system' || type === 'run.recovered') {
+		return { actorType: 'system', actorUserId: undefined };
+	}
+	return { actorType: 'agent', actorUserId: undefined };
+}
+
+/**
+ * Compatibility adapter for the current single-process browser runtime.
+ *
+ * PostgreSQL is authoritative: every durable mutation is awaited and its SSE
+ * event is published only after the database transaction commits. Hydrated run
+ * objects stay process-local because the CleanSlate runtime closes over them;
+ * worker leases and cross-process runtime ownership are intentionally deferred
+ * to the later distributed-execution phase.
+ */
+export function createPostgresApplicationServices({
+	repository,
+	tenantContext,
+	now = () => Date.now(),
+	recoverActiveRuns = true
+}) {
+	if (!repository || typeof repository !== 'object') {
+		throw new TypeError('A PostgreSQL run repository is required.');
+	}
+	if (!tenantContext || typeof tenantContext !== 'object') {
+		throw new TypeError('A trusted tenant context is required.');
+	}
+
+	const sessions = new Map();
+	const versions = new Map();
+	const snapshots = new Map();
+	const generations = new Map();
+	const failedRuns = new Map();
+	const live = new Map();
+	const queues = new Map();
+	const bus = new EventEmitter();
+	bus.setMaxListeners(0);
+	let initialized = false;
+	let closing;
+	let lastError;
+
+	function liveFor(id) {
+		let record = live.get(id);
+		if (!record) {
+			record = {};
+			live.set(id, record);
+		}
+		return record;
+	}
+
+	function installRecord(record) {
+		if (!record) return undefined;
+		const incoming = record.session;
+		const current = sessions.get(incoming.id);
+		const currentVersion = versions.get(incoming.id);
+		if (current && currentVersion !== undefined && Number(record.version) <= Number(currentVersion)) {
+			return current;
+		}
+		let session = incoming;
+		if (current && live.get(incoming.id)?.runtime) {
+			restore(current, incoming);
+			session = current;
+		}
+		sessions.set(session.id, session);
+		versions.set(session.id, record.version);
+		generations.set(session.id, 0);
+		snapshots.set(session.id, clone(session));
+		failedRuns.delete(session.id);
+		return session;
+	}
+
+	function publish(session, type, payload = {}, timestamp = now()) {
+		bus.emit(session.id, { type, sessionId: session.id, ts: timestamp, ...payload });
+	}
+
+	function enqueue(id, operation) {
+		const previous = queues.get(id) ?? Promise.resolve();
+		const current = previous.then(operation);
+		const tracked = current.then(() => undefined, () => undefined).finally(() => {
+			if (queues.get(id) === tracked) queues.delete(id);
+		});
+		queues.set(id, tracked);
+		return current;
+	}
+
+	async function commit(session, type, payload = {}) {
+		if (sessions.get(session.id) !== session) {
+			throw new Error('Cannot persist a run outside the selected tenant and project.');
+		}
+		const generation = (generations.get(session.id) ?? 0) + 1;
+		generations.set(session.id, generation);
+		const timestamp = now();
+		session.updatedAt = timestamp;
+		const candidate = clone(session);
+		const eventPayload = clone(payload);
+		const actor = eventActor(type, eventPayload, tenantContext);
+		return enqueue(session.id, async () => {
+			if (failedRuns.has(session.id)) throw failedRuns.get(session.id);
+			const previous = snapshots.get(session.id);
+			try {
+				const result = await repository.save(candidate, {
+					expectedVersion: versions.get(session.id),
+					eventType: type,
+					payload: eventPayload,
+					eventTs: timestamp,
+					...actor
+				});
+				candidate.updatedAt = result.updatedAt;
+				if (generations.get(session.id) === generation) {
+					session.updatedAt = result.updatedAt;
+				}
+				versions.set(session.id, result.version);
+				snapshots.set(session.id, candidate);
+				lastError = undefined;
+				publish(session, type, eventPayload, timestamp);
+				return session;
+			} catch (error) {
+				lastError = error;
+				failedRuns.set(session.id, error);
+				if (previous) restore(session, previous);
+				throw error;
+			}
+		});
+	}
+
+	const runStore = {
+		async load() {
+			await repository.bootstrapTenant();
+			const records = await repository.loadAll();
+			for (const { session, version } of records) {
+				sessions.set(session.id, session);
+				versions.set(session.id, version);
+				generations.set(session.id, 0);
+				snapshots.set(session.id, clone(session));
+			}
+			initialized = true;
+
+			// Phase 2 retains one execution owner. A process restart cannot resume
+			// its browser/model handles, so preserve the established interrupted
+			// recovery behavior and clear vault names whose values no longer exist.
+			for (const session of recoverActiveRuns ? sessions.values() : []) {
+				const wasActive = session.status === 'running' || session.status === 'awaiting_input';
+				const hadSecretNames = (session.secretNames?.length ?? 0) > 0;
+				if (!wasActive && !hadSecretNames) continue;
+				if (wasActive) {
+					session.status = 'interrupted';
+					session.pendingQuestion = undefined;
+				}
+				session.secretNames = [];
+				await commit(session, 'run.recovered', {
+					interrupted: wasActive,
+					clearedSecretNames: hadSecretNames
+				});
+			}
+		},
+		async create(title = 'New test run') {
+			const session = createSession(title, now);
+			const result = await repository.create(clone(session), {
+				eventType: 'run.created',
+				payload: { title: session.title },
+				...eventActor('run.created', {}, tenantContext)
+			});
+			session.updatedAt = result.updatedAt;
+			sessions.set(session.id, session);
+			versions.set(session.id, result.version);
+			generations.set(session.id, 0);
+			snapshots.set(session.id, clone(session));
+			publish(session, 'run.created', { title: session.title }, session.createdAt);
+			return session;
+		},
+		async get(id) {
+			// Keep this process's in-flight aggregate visible until its queued
+			// transaction settles. Afterwards PostgreSQL is authoritative again.
+			if (queues.has(id) && sessions.has(id)) return sessions.get(id);
+			const record = typeof repository.get === 'function'
+				? await repository.get(id)
+				: (await repository.loadAll()).find(candidate => candidate.session.id === id);
+			if (record) return installRecord(record);
+			const runtime = live.get(id);
+			if (!runtime?.running) {
+				runtime?.dispose?.();
+				live.delete(id);
+				sessions.delete(id);
+				versions.delete(id);
+				snapshots.delete(id);
+				generations.delete(id);
+				failedRuns.delete(id);
+			}
+			return undefined;
+		},
+		async list() {
+			if (typeof repository.list === 'function') return repository.list();
+			return [...sessions.values()]
+				.sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+				.map(summary);
+		},
+		async delete(id) {
+			const session = sessions.get(id);
+			if (!session) return false;
+			const deleted = await enqueue(id, () => repository.delete(id, {
+				expectedVersion: versions.get(id)
+			}));
+			if (!deleted) return false;
+			const record = live.get(id);
+			record?.dispose?.();
+			live.delete(id);
+			sessions.delete(id);
+			versions.delete(id);
+			snapshots.delete(id);
+			generations.delete(id);
+			failedRuns.delete(id);
+			return true;
+		},
+		commit,
+		async addMessage(session, message) {
+			const entry = { id: randomUUID(), ts: now(), ...message };
+			session.messages.push(entry);
+			await commit(session, 'message', { message: entry });
+			return entry;
+		},
+		async addActivity(session, activity) {
+			const entry = { id: activity.id ?? randomUUID(), ts: now(), status: 'done', ...activity };
+			session.activities.push(entry);
+			if (session.activities.length > 500) {
+				session.activities.splice(0, session.activities.length - 500);
+			}
+			await commit(session, 'activity', { activity: entry });
+			return entry;
+		},
+		async updateActivity(session, id, patch) {
+			const entry = session.activities.find(candidate => candidate.id === id);
+			if (!entry) return undefined;
+			Object.assign(entry, patch);
+			await commit(session, 'activity', { activity: entry });
+			return entry;
+		},
+		async setStatus(session, status, detail) {
+			session.status = status;
+			await commit(session, 'status', { status, detail });
+		},
+		publish,
+		subscribe(sessionId, listener) {
+			bus.on(sessionId, listener);
+			return () => bus.off(sessionId, listener);
+		},
+		liveFor,
+		async check() {
+			if (!initialized || closing || lastError) {
+				return { ready: false, checks: { postgres: lastError ? 'error' : 'initializing' } };
+			}
+			try {
+				await repository.check();
+				return { ready: true, checks: { postgres: 'ready' } };
+			} catch (error) {
+				lastError = error;
+				return { ready: false, checks: { postgres: 'error' } };
+			}
+		},
+		close() {
+			closing ??= (async () => {
+				await Promise.allSettled([...queues.values()]);
+				for (const record of live.values()) record.dispose?.();
+				live.clear();
+				await repository.close();
+			})();
+			return closing;
+		}
+	};
+
+	const services = createRuntimeApplicationServices(runStore);
+	services.tenantContext = tenantContext;
+	return services;
+}

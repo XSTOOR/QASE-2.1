@@ -2,7 +2,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ALL_TOOLS, CleanSlateNodeAgentRuntime, createNodeProviderConfiguration } from '@cleanslate/sdk';
 import { chromium } from 'playwright';
-import { addActivity, addMessage, emit, listSessions, liveFor, setStatus, updateActivity } from './store.js';
 import { attachBrowserBridge } from './browserBridge.js';
 import { getConfig, getPublicConfig } from './config.js';
 import { buildQaContext } from './prompt.js';
@@ -132,8 +131,8 @@ function liveBrowserUrl(record) {
  * relaunches on the next browser tool call, and the bridge replays the session
  * into it.
  */
-export async function closeBrowser(sessionId) {
-	const record = liveFor(sessionId);
+export async function closeBrowser(sessionId, runStore) {
+	const record = runStore.liveFor(sessionId);
 	clearTimeout(record.idleTimer);
 	record.idleTimer = undefined;
 	if (!record.bridge?.hasPage()) {
@@ -145,16 +144,16 @@ export async function closeBrowser(sessionId) {
 }
 
 /** Closes every other session's browser, so only one is ever running. */
-async function closeOtherBrowsers(keepSessionId) {
+async function closeOtherBrowsers(keepSessionId, runStore) {
 	await Promise.all(
-		listSessions()
+		(await runStore.list())
 			.filter(summary => summary.id !== keepSessionId)
-			.map(summary => (liveFor(summary.id).running ? undefined : closeBrowser(summary.id)))
+			.map(summary => (runStore.liveFor(summary.id).running ? undefined : closeBrowser(summary.id, runStore)))
 	);
 }
 
-export function ensureRuntime(session) {
-	const record = liveFor(session.id);
+export function ensureRuntime(session, runStore) {
+	const record = runStore.liveFor(session.id);
 	if (record.runtime) {
 		return record;
 	}
@@ -212,7 +211,7 @@ export function ensureRuntime(session) {
 
 	// The registry is fixed at construction, so the QA tools are registered
 	// afterwards through the headless runtime that actually resolves them.
-	const qaTools = createQaTools(session);
+	const qaTools = createQaTools(session, runStore);
 	const headless = runtime.headlessRuntime;
 	headless.options.tools = [...ALL_TOOLS, ...qaTools];
 	for (const tool of qaTools) {
@@ -229,12 +228,12 @@ export function ensureRuntime(session) {
 	// executor the loop calls.
 	const originalExecute = headless.executeTool.bind(headless);
 	headless.executeTool = async function* (toolName, input, toolCallId, signal) {
-		record.onToolStart?.(toolName, input, toolCallId);
+		await record.onToolStart?.(toolName, input, toolCallId);
 		yield* originalExecute(toolName, input, toolCallId, signal);
 	};
 
 	const service = headless.getToolContext().browserAutomationService;
-	const bridge = attachBrowserBridge(session, service);
+	const bridge = attachBrowserBridge(session, service, runStore);
 
 	record.runtime = runtime;
 	record.bridge = bridge;
@@ -254,8 +253,8 @@ export function ensureRuntime(session) {
  * Returns when the model stops — either because the task is done or because it
  * asked a blocking question.
  */
-export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, incompleteAttempt = 0 }) {
-	const record = ensureRuntime(session);
+export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, incompleteAttempt = 0 }, runStore) {
+	const record = ensureRuntime(session, runStore);
 	const { runtime, bridge } = record;
 
 	if (record.running) {
@@ -268,7 +267,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	clearTimeout(record.idleTimer);
 	record.idleTimer = undefined;
 	session.pendingQuestion = undefined;
-	setStatus(session, 'running');
+	await runStore.setStatus(session, 'running');
 
 	// A turn that paused for credentials or a question stops its frame timer in
 	// finally. Resuming continues on the existing page and may never call
@@ -281,7 +280,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	}
 
 	// Only the session being worked on keeps a browser open.
-	void closeOtherBrowsers(session.id);
+	void closeOtherBrowsers(session.id, runStore).catch(() => undefined);
 
 	// Message-shaped placeholders the streamed text accumulates into. Reasoning
 	// gets its own bubble so the transcript can show the agent's thinking
@@ -291,15 +290,21 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	let retryAfterTimeout = false;
 	let continueIncompleteRun = false;
 
-	const appendText = (content, kind) => {
+	const appendText = async (content, kind) => {
 		if (!content) {
 			return;
 		}
 		if (!assistant) {
-			assistant = addMessage(session, { role: 'agent', text: '', kind });
+			assistant = await runStore.addMessage(session, { role: 'agent', text: '', kind });
 		}
 		assistant.text += content;
-		emit(session, 'message_delta', { id: assistant.id, content, kind });
+		runStore.publish(session, 'message_delta', { id: assistant.id, content, kind });
+	};
+
+	const finalizeAssistant = async () => {
+		if (!assistant) return;
+		await runStore.commit(session, 'message_done', { message: assistant });
+		assistant = undefined;
 	};
 
 	// Reasoning is streamed for the live strip but never stored: it belongs to
@@ -310,23 +315,27 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 			return;
 		}
 		thinking ??= `think-${Date.now()}`;
-		emit(session, 'message_delta', { id: thinking, content, role: 'thinking' });
+		runStore.publish(session, 'message_delta', { id: thinking, content, role: 'thinking' });
 	};
 
 	const closeThinking = () => {
 		if (!thinking) {
 			return;
 		}
-		emit(session, 'message_done', { id: thinking, role: 'thinking' });
+		runStore.publish(session, 'message_done', { id: thinking, role: 'thinking' });
 		thinking = undefined;
 	};
 
 	const openActivities = new Map();
 
-	const beginActivity = (toolName, input, toolCallId) => {
+	const beginActivity = async (toolName, input, toolCallId) => {
+		await finalizeAssistant();
 		closeThinking();
 		const safeInput = redact(session.id, input);
-		const activity = addActivity(session, {
+		if (toolName === 'browser_open' && typeof input?.url === 'string') {
+			session.targetUrl ??= input.url;
+		}
+		const activity = await runStore.addActivity(session, {
 			id: toolCallId,
 			type: 'tool',
 			toolName,
@@ -336,9 +345,6 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 			status: 'running'
 		});
 		openActivities.set(toolCallId ?? activity.id, activity.id);
-		if (toolName === 'browser_open' && typeof input?.url === 'string') {
-			session.targetUrl ??= input.url;
-		}
 		return activity;
 	};
 
@@ -354,11 +360,11 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 				case 'chat_text':
 					// Anything it says out loud ends the thought that preceded it.
 					closeThinking();
-					appendText(part.content, part.kind);
+					await appendText(part.content, part.kind);
 					break;
 
 				case 'chat_text_reset':
-					assistant = undefined;
+					await finalizeAssistant();
 					break;
 
 				case 'reasoning':
@@ -371,9 +377,9 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 
 				case 'assistant_turn_start':
 					// Each model turn is a fresh chat bubble.
-					assistant = undefined;
+					await finalizeAssistant();
 					closeThinking();
-					emit(session, 'turn', { turnId: part.turnId, index: part.turnIndex });
+					runStore.publish(session, 'turn', { turnId: part.turnId, index: part.turnIndex });
 					break;
 
 				case 'context_usage':
@@ -382,13 +388,13 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 						used: part.estimatedInputTokens,
 						window: part.contextWindowTokens
 					};
-					emit(session, 'context', { context: session.contextUsage });
+					await runStore.commit(session, 'context', { context: session.contextUsage });
 					break;
 
 				case 'tool_start':
 					// Not emitted by the SDK today; handled here in case it is.
 					if (!openActivities.has(part.toolCallId)) {
-						beginActivity(part.toolName, part.input, part.toolCallId);
+						await beginActivity(part.toolName, part.input, part.toolCallId);
 					}
 					break;
 
@@ -396,12 +402,12 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 					// A rejected or malformed call never reaches the executor, so
 					// its result is the first thing seen of it.
 					if (!openActivities.has(part.toolCallId)) {
-						beginActivity(part.toolName, part.input, part.toolCallId);
+						await beginActivity(part.toolName, part.input, part.toolCallId);
 					}
 					const id = openActivities.get(part.toolCallId) ?? part.toolCallId;
 					const result = redact(session.id, part.result);
 					const ok = result?.success !== false;
-					updateActivity(session, id, {
+					await runStore.updateActivity(session, id, {
 						status: ok ? 'done' : 'failed',
 						error: ok ? undefined : (result?.error ?? result?.message),
 						summary: summariseResult(part.toolName, result)
@@ -410,7 +416,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 
 					if (part.toolName === 'update_todo' && ok) {
 						session.todos = normaliseTodos(part.result, session.todos);
-						emit(session, 'todos', { todos: session.todos });
+						await runStore.commit(session, 'todos', { todos: session.todos });
 					}
 					if (part.toolName === 'browser_open' && ok && result?.url) {
 						bridge.startFrames();
@@ -419,13 +425,14 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 				}
 
 				case 'task_complete':
-					emit(session, 'task_complete', { result: redact(session.id, part.result) });
+					await runStore.commit(session, 'task_complete', { result: redact(session.id, part.result) });
 					break;
 
 				default:
 					break;
 			}
 		}
+		await finalizeAssistant();
 
 		// The loop ends either because the work is done or because ask_question
 		// suspended it. Only the runtime knows which.
@@ -435,45 +442,45 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 				toolCallId: pending.toolCallId,
 				...normaliseQuestion(pending.question)
 			};
-			emit(session, 'question', { question: session.pendingQuestion });
-			setStatus(session, 'awaiting_input');
+			await runStore.commit(session, 'question', { question: session.pendingQuestion });
+			await runStore.setStatus(session, 'awaiting_input');
 		} else if (session.report) {
-			setStatus(session, 'done');
+			await runStore.setStatus(session, 'done');
 		} else if (!session.targetUrl) {
 			// A greeting or prose-only response can ask for the target without
 			// invoking ask_question. No QA run has started yet, so continuing
 			// automatically would only repeat the request and lock the composer.
-			setStatus(session, 'awaiting_input', 'Waiting for a target URL.');
+			await runStore.setStatus(session, 'awaiting_input', 'Waiting for a target URL.');
 		} else if (incompleteAttempt < INCOMPLETE_RUN_CONTINUATIONS) {
 			// CleanSlate may host-finalize a prose-only model turn even though the
 			// QA-specific completion tool was never called. That is a pause, not an
 			// idle run: keep the visible status active and immediately resume after
 			// cleanup so the agent finishes the remaining plan without user nudges.
 			continueIncompleteRun = true;
-			setStatus(
+			await runStore.setStatus(
 				session,
 				'running',
 				`The agent paused before publishing its report. Continuing automatically (${incompleteAttempt + 1}/${INCOMPLETE_RUN_CONTINUATIONS})…`
 			);
 		} else {
 			const message = 'The agent paused repeatedly before publishing the final QA report. Send "continue" to resume this run.';
-			addMessage(session, { role: 'system', text: message, kind: 'error' });
-			setStatus(session, 'error', message);
+			await runStore.addMessage(session, { role: 'system', text: message, kind: 'error' });
+			await runStore.setStatus(session, 'error', message);
 		}
 	} catch (error) {
 		if (controller.signal.aborted) {
-			setStatus(session, 'idle', 'Stopped by user.');
+			await runStore.setStatus(session, 'idle', 'Stopped by user.');
 		} else if (retryAttempt < MODEL_TIMEOUT_RETRIES && isRetryableModelTimeout(error)) {
 			retryAfterTimeout = true;
-			setStatus(
+			await runStore.setStatus(
 				session,
 				'running',
 				`The model response timed out. Retrying automatically (${retryAttempt + 1}/${MODEL_TIMEOUT_RETRIES})…`
 			);
 		} else {
 			const message = error instanceof Error ? error.message : String(error);
-			addMessage(session, { role: 'system', text: message, kind: 'error' });
-			setStatus(session, 'error', message);
+			await runStore.addMessage(session, { role: 'system', text: message, kind: 'error' });
+			await runStore.setStatus(session, 'error', message);
 		}
 	} finally {
 		closeThinking();
@@ -491,7 +498,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 			// A paused run is likely to continue, so it waits proportionally longer.
 			const idleMs = session.status === 'awaiting_input' ? BROWSER_IDLE_MS * 3 : BROWSER_IDLE_MS;
 			record.idleTimer = setTimeout(() => {
-				void closeBrowser(session.id);
+				void closeBrowser(session.id, runStore);
 			}, idleMs);
 			record.idleTimer.unref?.();
 		}
@@ -501,7 +508,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		return runTurn(session, {
 			task: 'Continue the unfinished QA run now. Do not stop with a progress update or a description of what you will do next. Immediately use the next required tool, complete every remaining test-plan item without repeating finished work, and call finish_qa_report when the run is complete. Only call ask_question if user input is genuinely required.',
 			incompleteAttempt: incompleteAttempt + 1
-		});
+		}, runStore);
 	}
 
 	if (retryAfterTimeout) {
@@ -512,7 +519,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 			task: 'Continue from the latest transcript and browser state. The previous model request timed out after the last successful step. Inspect the current state before acting, do not repeat completed or irreversible actions, and finish the remaining test plan.',
 			retryAttempt: retryAttempt + 1,
 			incompleteAttempt
-		});
+		}, runStore);
 	}
 }
 

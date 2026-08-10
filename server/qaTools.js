@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { emit } from './store.js';
 import { redact } from './secrets.js';
 
 /**
@@ -11,7 +10,7 @@ import { redact } from './secrets.js';
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 
-export function createQaTools(session) {
+export function createQaTools(session, runStore) {
 	const reportFinding = {
 		name: 'report_finding',
 		description: 'Files one confirmed defect found while testing the site. Call once per distinct defect, as soon as you have confirmed it. Never include credentials or other secrets in any field.',
@@ -50,7 +49,7 @@ export function createQaTools(session) {
 			}
 
 			session.findings.push(finding);
-			emit(session, 'finding', { finding });
+			await runStore.commit(session, 'finding', { finding });
 			return {
 				success: true,
 				finding_id: finding.id,
@@ -92,7 +91,7 @@ export function createQaTools(session) {
 			});
 
 			session.report = report;
-			emit(session, 'report', { report });
+			await runStore.commit(session, 'report', { report });
 			return { success: true, published: true, verdict: report.verdict, findings: report.findings };
 		}
 	};

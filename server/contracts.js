@@ -10,7 +10,7 @@
 const REQUIRED_METHODS = {
 	runs: [
 		'load', 'create', 'get', 'list', 'delete',
-		'addMessage', 'setStatus'
+		'commit', 'addMessage', 'addActivity', 'updateActivity', 'setStatus'
 	],
 	events: ['publish', 'subscribe'],
 	configuration: ['getPublic', 'save', 'testConnection'],
@@ -20,7 +20,8 @@ const REQUIRED_METHODS = {
 		'ensureRuntime', 'runTurn', 'closeBrowser', 'getLiveState',
 		'stop', 'invalidateIdleRuntimes'
 	],
-	readiness: ['check']
+	readiness: ['check'],
+	lifecycle: ['close']
 };
 
 export function assertApplicationServices(services) {

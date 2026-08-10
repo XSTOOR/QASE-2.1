@@ -3,37 +3,21 @@ import { getPublicConfig, saveConfig, testConnection } from './config.js';
 import { buildReportMarkdown } from './report.js';
 import { clearSecrets, secretNames, storeSecrets } from './secrets.js';
 import {
-	addMessage, bus, createSession, deleteSession, emit, getSession,
-	listSessions, liveFor, loadSessions, setStatus
+	addActivity, addMessage, bus, createSession, deleteSession, emit, getSession,
+	flushSessions, listSessions, liveFor, loadSessions, setStatus, updateActivity
 } from './store.js';
 
 /**
- * Adapts the current file- and memory-backed implementation to the application
- * service contract. This preserves today's behavior while making the boundary
- * explicit for later infrastructure phases.
+	* Builds the non-persistence services around a run store. Both the rollback
+	* file adapter and PostgreSQL adapter use this composition so the agent cannot
+	* accidentally bypass the selected durable store.
  */
-export function createLocalApplicationServices() {
-	let initialized = false;
-
+export function createRuntimeApplicationServices(runStore, options = {}) {
 	return {
-		runs: {
-			load() {
-				loadSessions();
-				initialized = true;
-			},
-			create: createSession,
-			get: getSession,
-			list: listSessions,
-			delete: deleteSession,
-			addMessage,
-			setStatus
-		},
+		runs: runStore,
 		events: {
-			publish: emit,
-			subscribe(sessionId, listener) {
-				bus.on(sessionId, listener);
-				return () => bus.off(sessionId, listener);
-			}
+			publish: runStore.publish,
+			subscribe: runStore.subscribe
 		},
 		configuration: {
 			getPublic: getPublicConfig,
@@ -49,23 +33,23 @@ export function createLocalApplicationServices() {
 			buildMarkdown: buildReportMarkdown
 		},
 		agent: {
-			closeBrowser,
-			ensureRuntime,
-			runTurn,
+			closeBrowser: sessionId => closeBrowser(sessionId, runStore),
+			ensureRuntime: session => ensureRuntime(session, runStore),
+			runTurn: (session, turnOptions) => runTurn(session, turnOptions, runStore),
 			getLiveState(sessionId) {
-				const record = liveFor(sessionId);
+				const record = runStore.liveFor(sessionId);
 				return {
 					running: Boolean(record.running),
 					frame: record.bridge?.getLastFrame?.()
 				};
 			},
 			stop(sessionId) {
-				liveFor(sessionId).controller?.abort();
+				runStore.liveFor(sessionId).controller?.abort();
 			},
-			invalidateIdleRuntimes() {
+			async invalidateIdleRuntimes() {
 				let kept = 0;
-				for (const summary of listSessions()) {
-					const record = liveFor(summary.id);
+				for (const summary of await runStore.list()) {
+					const record = runStore.liveFor(summary.id);
 					if (!record.runtime) continue;
 					if (record.running) {
 						kept++;
@@ -80,12 +64,76 @@ export function createLocalApplicationServices() {
 			}
 		},
 		readiness: {
-			check() {
-				return {
-					ready: initialized,
-					checks: { localRunStore: initialized ? 'ready' : 'initializing' }
-				};
+			check: () => runStore.check()
+		},
+		lifecycle: {
+			close: async () => {
+				await runStore.close?.();
+				await options.close?.();
 			}
 		}
 	};
+}
+
+/**
+ * Adapts the existing file-backed aggregate store to the asynchronous Phase 2
+ * run contract. Methods remain behavior-compatible, but callers now await them
+ * just as they will await PostgreSQL transactions.
+ */
+export function createLocalApplicationServices() {
+	let initialized = false;
+	let closed = false;
+
+	const runStore = {
+		async load() {
+			loadSessions();
+			initialized = true;
+		},
+		async create(title) {
+			return createSession(title);
+		},
+		async get(id) {
+			return getSession(id);
+		},
+		async list() {
+			return listSessions();
+		},
+		async delete(id) {
+			return deleteSession(id);
+		},
+		async commit(session, type, payload = {}) {
+			emit(session, type, payload);
+			return session;
+		},
+		async addMessage(session, message) {
+			return addMessage(session, message);
+		},
+		async addActivity(session, activity) {
+			return addActivity(session, activity);
+		},
+		async updateActivity(session, id, patch) {
+			return updateActivity(session, id, patch);
+		},
+		async setStatus(session, status, detail) {
+			setStatus(session, status, detail);
+		},
+		publish: emit,
+		subscribe(sessionId, listener) {
+			bus.on(sessionId, listener);
+			return () => bus.off(sessionId, listener);
+		},
+		liveFor,
+		check() {
+			return {
+				ready: initialized && !closed,
+				checks: { localRunStore: initialized && !closed ? 'ready' : 'initializing' }
+			};
+		},
+		async close() {
+			flushSessions();
+			closed = true;
+		}
+	};
+
+	return createRuntimeApplicationServices(runStore);
 }

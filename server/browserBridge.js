@@ -1,4 +1,3 @@
-import { emit } from './store.js';
 import { hasUnresolvedPlaceholder, resolveSecrets } from './secrets.js';
 
 /**
@@ -40,7 +39,7 @@ const POINTER_ACTIONS = {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-export function attachBrowserBridge(session, service) {
+export function attachBrowserBridge(session, service, runStore) {
 	const bridge = {
 		service,
 		frameTimer: undefined,
@@ -212,7 +211,9 @@ export function attachBrowserBridge(session, service) {
 			if (saved.url && page) {
 				await page.goto(saved.url, { waitUntil: 'domcontentloaded', timeout: 20_000 });
 			}
-			emit(session, 'browser', { browser: { url: currentPage()?.url(), action: 'restored' } });
+			await runStore.commit(session, 'browser', {
+				browser: { url: currentPage()?.url(), action: 'restored' }
+			});
 		} catch {
 			// Best effort — a failed restore is no worse than not trying.
 		} finally {
@@ -269,7 +270,7 @@ export function attachBrowserBridge(session, service) {
 
 	const publishCursor = (verb, target, input) => {
 		const page = currentPage();
-		emit(session, 'cursor', {
+		runStore.publish(session, 'cursor', {
 			cursor: {
 				verb,
 				x: target?.x,
@@ -389,7 +390,7 @@ export function attachBrowserBridge(session, service) {
 		}
 		service[method] = async (...args) => {
 			const result = await original(...args);
-			emit(session, 'browser', {
+			await runStore.commit(session, 'browser', {
 				browser: { url: result?.url, title: result?.title, loading: result?.loading, action: method }
 			});
 			startFrames();
@@ -414,7 +415,7 @@ export function attachBrowserBridge(session, service) {
 				viewport: viewportOf(page),
 				ts: Date.now()
 			};
-			emit(session, 'frame', { frame: bridge.lastFrame });
+			runStore.publish(session, 'frame', { frame: bridge.lastFrame });
 		} catch {
 			// A screenshot taken across a navigation throws; the next tick recovers.
 		}

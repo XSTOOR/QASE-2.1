@@ -22,6 +22,7 @@ function createMemoryServices(options = {}) {
 		ensureCalls: [],
 		runCalls: [],
 		closeCalls: [],
+		lifecycleCloseCalls: 0,
 		events: [],
 		configTests: [],
 		ready: options.ready ?? true,
@@ -93,10 +94,27 @@ function createMemoryServices(options = {}) {
 				live.delete(id);
 				return sessions.delete(id);
 			},
+			commit(session, type, payload = {}) {
+				publish(session, type, payload);
+				return session;
+			},
 			addMessage(session, message) {
 				const entry = { id: randomUUID(), ts: Date.now(), ...message };
 				session.messages.push(entry);
 				publish(session, 'message', { message: entry });
+				return entry;
+			},
+			addActivity(session, activity) {
+				const entry = { id: activity.id ?? randomUUID(), ts: Date.now(), status: 'done', ...activity };
+				session.activities.push(entry);
+				publish(session, 'activity', { activity: entry });
+				return entry;
+			},
+			updateActivity(session, id, patch) {
+				const entry = session.activities.find(candidate => candidate.id === id);
+				if (!entry) return undefined;
+				Object.assign(entry, patch);
+				publish(session, 'activity', { activity: entry });
 				return entry;
 			},
 			setStatus(session, status, detail) {
@@ -195,6 +213,12 @@ function createMemoryServices(options = {}) {
 				ready: state.ready,
 				checks: { testStore: state.ready ? 'ready' : 'initializing' }
 			})
+		},
+		lifecycle: {
+			close() {
+				state.lifecycleCloseCalls++;
+				return Promise.resolve();
+			}
 		}
 	};
 

@@ -24,16 +24,26 @@ bus.setMaxListeners(0);
 
 let saveTimer;
 
+function persistNow() {
+	try {
+		fs.mkdirSync(STATE_DIR, { recursive: true });
+		fs.writeFileSync(STATE_FILE, JSON.stringify([...sessions.values()], undefined, '\t'));
+	} catch {
+		// A dashboard that cannot write its history is still a usable dashboard.
+	}
+}
+
 function persistSoon() {
 	clearTimeout(saveTimer);
-	saveTimer = setTimeout(() => {
-		try {
-			fs.mkdirSync(STATE_DIR, { recursive: true });
-			fs.writeFileSync(STATE_FILE, JSON.stringify([...sessions.values()], undefined, '\t'));
-		} catch {
-			// A dashboard that cannot write its history is still a usable dashboard.
-		}
-	}, 250).unref?.();
+	saveTimer = setTimeout(persistNow, 250);
+	saveTimer.unref?.();
+}
+
+/** Flushes pending local history before the process exits. */
+export function flushSessions() {
+	clearTimeout(saveTimer);
+	saveTimer = undefined;
+	persistNow();
 }
 
 export function loadSessions() {
