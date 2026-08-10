@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createPlacementLoadConfig, createSmokeConfig, runPlacementLoad, runSmokeChecks } from './deploymentChecks.js';
+import {
+	createPlacementLoadConfig, createReleaseGateConfig, createSmokeConfig,
+	runPlacementLoad, runReleaseGate, runSmokeChecks
+} from './deploymentChecks.js';
 
 const ORG = '4a7f5cf0-813d-4e3c-8d5d-4b4b9fc88c01';
 const PROJECT = '4a7f5cf0-813d-4e3c-8d5d-4b4b9fc88c02';
@@ -48,4 +51,28 @@ test('placement load probe permits only bounded GET resolution traffic', async (
 		QASE_LOAD_CONTROL_URL: 'https://control.test', QASE_LOAD_ORGANIZATION_ID: ORG,
 		QASE_LOAD_PROJECT_ID: PROJECT, QASE_CONTROL_API_READ_TOKEN: TOKEN, QASE_LOAD_CONCURRENCY: '201'
 	}), /1 to 200/);
+});
+
+test('release gate repeats read-only readiness and emits sanitized pass/fail evidence', async () => {
+	const config = createReleaseGateConfig({
+		QASE_RELEASE_ID: 'sha256:reviewed-image-digest',
+		QASE_SMOKE_TARGETS: 'api=https://api.test/readyz,control=https://control.test/readyz',
+		QASE_RELEASE_ATTEMPTS: '3', QASE_RELEASE_INTERVAL_MS: '1',
+		QASE_RELEASE_MAX_READY_P95_MS: '2000'
+	});
+	let requests = 0;
+	const report = await runReleaseGate({
+		config, delay: async () => undefined,
+		fetchImpl: async () => {
+			requests += 1;
+			return new Response('{}', { status: requests === 4 ? 503 : 200 });
+		}
+	});
+	assert.equal(requests, 6);
+	assert.equal(report.passed, false);
+	assert.equal(report.targets.find(target => target.name === 'control').passed, false);
+	assert.equal(JSON.stringify(report).includes('https://'), false);
+	assert.throws(() => createReleaseGateConfig({
+		QASE_RELEASE_ID: 'unsafe release id', QASE_SMOKE_TARGETS: 'api=https://api.test/readyz'
+	}), /release identifier/);
 });

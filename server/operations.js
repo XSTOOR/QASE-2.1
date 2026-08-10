@@ -58,6 +58,8 @@ export function createOperationalControls(options = {}) {
 		throw new TypeError('mutationPrefixes must contain absolute path prefixes ending in /.');
 	}
 	const now = options.now ?? (() => process.hrtime.bigint());
+	const logger = options.logger;
+	if (logger !== undefined && typeof logger?.info !== 'function') throw new TypeError('Operational logger is invalid.');
 	const startedAt = options.startedAt ?? Date.now();
 	const requests = new Map();
 	const durations = new Map();
@@ -96,7 +98,15 @@ export function createOperationalControls(options = {}) {
 			finished = true;
 			if (mutation && !overloaded) mutationInFlight -= 1;
 			const elapsed = Number(now() - started) / 1_000_000_000;
-			observe(request.method, requestRoute(request, overloaded), response.statusCode, Math.max(0, elapsed));
+			const route = requestRoute(request, overloaded);
+			observe(request.method, route, response.statusCode, Math.max(0, elapsed));
+			logger?.info('http.request.completed', {
+				requestId,
+				method: request.method,
+				route,
+				statusCode: response.statusCode,
+				durationMs: Math.max(0, elapsed * 1_000)
+			});
 		};
 		response.once('finish', finalize);
 		response.once('close', finalize);

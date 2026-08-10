@@ -92,7 +92,10 @@ if (leaked.length > 0) {
 
 for (const required of [
 	'package.json', 'package-lock.json', '.env.example', 'Dockerfile',
-	'deploy/kubernetes/base/qase.yaml', 'deploy/kubernetes/base/migrations.yaml'
+	'deploy/kubernetes/base/qase.yaml', 'deploy/kubernetes/base/migrations.yaml',
+	'deploy/observability/service-monitors.yaml',
+	'deploy/observability/prometheus-rules.yaml',
+	'deploy/observability/grafana-dashboard.json'
 ]) {
 	if (!listing.includes(required)) {
 		fs.rmSync(output, { force: true });

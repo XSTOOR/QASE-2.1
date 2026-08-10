@@ -76,6 +76,44 @@ function percentile(sorted, fraction) {
 	return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
 }
 
+export function createReleaseGateConfig(environment = process.env) {
+	const releaseId = String(environment.QASE_RELEASE_ID ?? '').trim();
+	if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(releaseId)) {
+		throw new TypeError('QASE_RELEASE_ID must be a safe image digest or release identifier.');
+	}
+	return Object.freeze({
+		releaseId,
+		smoke: createSmokeConfig(environment),
+		attempts: positiveInteger(environment.QASE_RELEASE_ATTEMPTS, 3, 10, 'QASE_RELEASE_ATTEMPTS'),
+		intervalMs: positiveInteger(environment.QASE_RELEASE_INTERVAL_MS, 1_000, 30_000, 'QASE_RELEASE_INTERVAL_MS'),
+		maximumP95Ms: positiveInteger(environment.QASE_RELEASE_MAX_READY_P95_MS, 2_000, 30_000, 'QASE_RELEASE_MAX_READY_P95_MS')
+	});
+}
+
+export async function runReleaseGate(options = {}) {
+	const config = options.config ?? createReleaseGateConfig(options.environment);
+	const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+	const delay = options.delay ?? (milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)));
+	const observations = new Map(config.smoke.targets.map(target => [target.name, []]));
+	for (let attempt = 0; attempt < config.attempts; attempt++) {
+		const results = await runSmokeChecks({ config: config.smoke, fetchImpl });
+		for (const result of results) observations.get(result.name).push(result);
+		if (attempt + 1 < config.attempts) await delay(config.intervalMs);
+	}
+	const targets = [...observations].map(([name, results]) => {
+		const durations = results.map(result => result.durationMs).sort((left, right) => left - right);
+		const p95Ms = percentile(durations, 0.95);
+		const passed = results.every(result => result.ok) && p95Ms <= config.maximumP95Ms;
+		return Object.freeze({ name, attempts: results.length, passed, p95Ms, statuses: results.map(result => result.status) });
+	});
+	return Object.freeze({
+		releaseId: config.releaseId,
+		passed: targets.every(target => target.passed),
+		maximumP95Ms: config.maximumP95Ms,
+		targets: Object.freeze(targets)
+	});
+}
+
 export async function runPlacementLoad(options = {}) {
 	const config = options.config ?? createPlacementLoadConfig(options.environment);
 	const fetchImpl = options.fetchImpl ?? globalThis.fetch;

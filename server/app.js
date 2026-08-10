@@ -44,6 +44,8 @@ export function createApplication(options = {}) {
 	const heartbeatMs = Math.max(1_000, Number(options.sseHeartbeatMs) || 15_000);
 	const publicDirectory = options.publicDirectory ?? path.join(here, '..', 'public');
 	const operations = options.operations ?? createOperationalControls({ environment });
+	const logger = options.logger;
+	if (logger !== undefined && typeof logger?.error !== 'function') throw new TypeError('Application logger is invalid.');
 	const isDraining = typeof options.isDraining === 'function' ? options.isDraining : () => false;
 	const activeTurns = new Set();
 
@@ -355,7 +357,11 @@ export function createApplication(options = {}) {
 			});
 			return;
 		}
-		console.error(`[Qase server ${request.qaseRequestId ?? 'no-request-id'}]`, error instanceof Error ? error.message : String(error));
+		if (logger) logger.error('http.request.failed', {
+			requestId: request.qaseRequestId,
+			errorName: error?.name ?? 'Error'
+		});
+		else console.error(`[Qase server ${request.qaseRequestId ?? 'no-request-id'}]`, error instanceof Error ? error.message : String(error));
 		response.status(500).json({ error: 'Unexpected server error.' });
 	});
 

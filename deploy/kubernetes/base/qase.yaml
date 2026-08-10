@@ -36,6 +36,8 @@ data:
   QASE_MODEL: replace-with-reviewed-model-id
   QASE_REASONING: medium
   QASE_MUTATION_MAX_IN_FLIGHT: "64"
+  QASE_LOG_FORMAT: json
+  QASE_LOG_LEVEL: info
   QASE_QUEUE_MAX_ACTIVE_JOBS: "5000"
   QASE_WORKER_PROBE_HOST: 0.0.0.0
   QASE_WORKER_PROBE_PORT: "9174"
@@ -67,6 +69,8 @@ data:
   QASE_CONTROL_CELL_STALE_SECONDS: "90"
   QASE_CONTROL_TRUST_PROXY: "true"
   QASE_MUTATION_MAX_IN_FLIGHT: "64"
+  QASE_LOG_FORMAT: json
+  QASE_LOG_LEVEL: info
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -156,6 +160,9 @@ kind: Service
 metadata:
   name: qase-api
   namespace: qase
+  labels:
+    app.kubernetes.io/name: qase-api
+    app.kubernetes.io/part-of: qase
 spec:
   selector:
     app.kubernetes.io/name: qase-api
@@ -244,6 +251,21 @@ spec:
         - name: shm
           emptyDir: { medium: Memory, sizeLimit: 1Gi }
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qase-worker-metrics
+  namespace: qase
+  labels:
+    app.kubernetes.io/name: qase-worker
+    app.kubernetes.io/part-of: qase
+spec:
+  selector:
+    app.kubernetes.io/name: qase-worker
+    app.kubernetes.io/part-of: qase
+  ports:
+    - { name: metrics, port: 9174, targetPort: probes }
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -320,6 +342,9 @@ kind: Service
 metadata:
   name: qase-control
   namespace: qase
+  labels:
+    app.kubernetes.io/name: qase-control
+    app.kubernetes.io/part-of: qase
 spec:
   selector:
     app.kubernetes.io/name: qase-control

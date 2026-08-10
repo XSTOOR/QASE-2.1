@@ -1,9 +1,14 @@
 import 'dotenv/config';
 import { createCellHeartbeatController } from './cellHeartbeat.js';
 import { createCellHeartbeatProbe } from './cellHeartbeatProbe.js';
+import { createOperationalLogger } from './operationalLogger.js';
 
+const logger = createOperationalLogger({ component: 'qase-heartbeat' });
 const controller = createCellHeartbeatController({
-	onError: error => console.error('[Qase cell heartbeat]', error instanceof Error ? error.message : String(error))
+	onError: error => logger.error('heartbeat.failed', {
+		errorName: error?.name ?? 'Error',
+		consecutiveFailures: controller?.getState().consecutiveFailures ?? 0
+	})
 });
 const probe = createCellHeartbeatProbe({ controller });
 const probeServer = await probe.listen();
@@ -12,6 +17,7 @@ let closing = false;
 async function close() {
 	if (closing) return;
 	closing = true;
+	logger.info('process.draining');
 	controller.stop();
 	await probe.close();
 }
@@ -20,5 +26,5 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => {
 	process.exit(0);
 });
 
-console.log(`Qase cell heartbeat controller started; probes on http://${probe.host}:${probeServer.address().port}.`);
+logger.info('process.started', { host: probe.host, port: probeServer.address().port });
 await controller.start();

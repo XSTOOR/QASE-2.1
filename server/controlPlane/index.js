@@ -3,12 +3,14 @@ import { createControlPlaneApplication } from './app.js';
 import { runControlPlaneMigrations } from './migrations.js';
 import { createControlPlaneRepository } from './repository.js';
 import { createOperationalControls } from '../operations.js';
+import { createOperationalLogger } from '../operationalLogger.js';
 import { createPostgresPool } from '../postgres/pool.js';
 
 const environment = process.env;
+const logger = createOperationalLogger({ component: 'qase-control', environment });
 const databaseUrl = String(environment.QASE_CONTROL_DATABASE_URL ?? '').trim();
 if (!databaseUrl) throw new Error('Control plane requires QASE_CONTROL_DATABASE_URL.');
-const operations = createOperationalControls({ environment, mutationPrefixes: ['/internal/'] });
+const operations = createOperationalControls({ environment, mutationPrefixes: ['/internal/'], logger });
 const databaseEnvironment = {
 	...environment,
 	QASE_DATABASE_URL: databaseUrl,
@@ -31,7 +33,7 @@ try {
 		staleAfterSeconds: environment.QASE_CONTROL_CELL_STALE_SECONDS
 			? Number(environment.QASE_CONTROL_CELL_STALE_SECONDS) : undefined
 	});
-	const { app } = createControlPlaneApplication({ repository, environment, operations });
+	const { app } = createControlPlaneApplication({ repository, environment, operations, logger });
 	const host = String(environment.QASE_CONTROL_HOST ?? '127.0.0.1').trim() || '127.0.0.1';
 	const port = Number(environment.QASE_CONTROL_PORT ?? 5180);
 	if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new TypeError('QASE_CONTROL_PORT is invalid.');
@@ -43,7 +45,7 @@ try {
 		});
 		candidate.once('error', onError);
 	});
-	console.log(`Qase control plane listening on http://${host}:${port}.`);
+	logger.info('process.started', { host, port });
 } catch (error) {
 	await (repository?.close() ?? pool.end()).catch(() => undefined);
 	throw error;
@@ -54,6 +56,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 	process.on(signal, async () => {
 		if (closing) return;
 		closing = true;
+		logger.info('process.draining', { signal });
 		await new Promise(resolve => server.close(resolve));
 		await repository.close();
 		process.exit(0);

@@ -116,6 +116,7 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 | `QASE_METRICS_TOKEN` | unset | Enables bearer-protected `/metrics`; must contain at least 32 bytes |
 | `QASE_WORKER_PROBE_HOST` | `127.0.0.1` | Worker liveness/readiness/metrics bind address |
 | `QASE_WORKER_PROBE_PORT` | `9174` | Worker probe listener port; use `0` only for tests |
+| `QASE_LOG_FORMAT` / `QASE_LOG_LEVEL` | `json` / `info` in production | Correlation-safe stdout operational logs |
 | `QASE_CONTROL_DATABASE_URL` | unset | Separate PostgreSQL database for global cell/placement metadata |
 | `QASE_CONTROL_MIGRATION_DATABASE_URL` | unset | Separate DDL credential for `npm run control:db:migrate` |
 | `QASE_CONTROL_API_READ_TOKEN` | unset | Internal Drytis resolver credential; at least 32 bytes |
@@ -155,6 +156,11 @@ For the production process/container topology, deployment order, safe smoke and
 load probes, failure drills, and recovery contract, see
 `docs/enterprise-migration/phase-7-deployment-resilience.md` and
 `deploy/kubernetes/README.md`.
+
+For Prometheus/Grafana wiring, SLO burn alerts, structured-log policy and the
+read-only release gate, see
+`docs/enterprise-migration/phase-8-observability-release.md` and
+`deploy/observability/README.md`.
 
 ## How it works
 

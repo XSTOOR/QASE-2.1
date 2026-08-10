@@ -1,0 +1,73 @@
+# Optional Prometheus Operator resources. Install its CRDs first and ensure the
+# Prometheus selector includes app.kubernetes.io/part-of=qase.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: qase-api
+  namespace: qase
+  labels:
+    app.kubernetes.io/part-of: qase
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qase-api
+  namespaceSelector:
+    matchNames: [qase]
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      authorization:
+        type: Bearer
+        credentials: { name: qase-cell-runtime, key: metrics-token }
+      relabelings:
+        - { targetLabel: qase_role, replacement: api }
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: qase-worker
+  namespace: qase
+  labels:
+    app.kubernetes.io/part-of: qase
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qase-worker
+  namespaceSelector:
+    matchNames: [qase]
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      authorization:
+        type: Bearer
+        credentials: { name: qase-cell-runtime, key: metrics-token }
+      relabelings:
+        - { targetLabel: qase_role, replacement: worker }
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: qase-control
+  namespace: qase
+  labels:
+    app.kubernetes.io/part-of: qase
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qase-control
+  namespaceSelector:
+    matchNames: [qase]
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      authorization:
+        type: Bearer
+        credentials: { name: qase-control-runtime, key: metrics-token }
+      relabelings:
+        - { targetLabel: qase_role, replacement: control }

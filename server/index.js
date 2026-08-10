@@ -2,11 +2,13 @@ import 'dotenv/config';
 import { createApplication } from './app.js';
 import { createConfiguredAuthentication } from './authFactory.js';
 import { createOperationalControls } from './operations.js';
+import { createOperationalLogger } from './operationalLogger.js';
 import { createConfiguredApplicationServices } from './serviceFactory.js';
 
 // Validate process-local operational limits and metrics credentials before
 // opening PostgreSQL or Redis clients.
-const operations = createOperationalControls();
+const logger = createOperationalLogger({ component: 'qase-api' });
+const operations = createOperationalControls({ logger });
 const {
 	services, mode: runStoreMode, executionMode, tenantContext, pool, executionQueue
 } = await createConfiguredApplicationServices();
@@ -16,7 +18,7 @@ const { authentication, mode: authenticationMode } = createConfiguredAuthenticat
 
 let shuttingDown = false;
 const { app, demoEnabled } = createApplication({
-	services, authentication, executionQueue, operations,
+	services, authentication, executionQueue, operations, logger,
 	isDraining: () => shuttingDown
 });
 const port = Number(process.env.PORT ?? 5173);
@@ -30,6 +32,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 			process.exit(1);
 		}
 		shuttingDown = true;
+		logger.info('process.draining', { signal });
 		let closeHttp = Promise.resolve();
 		if (server) {
 			closeHttp = new Promise(resolve => server.close(() => resolve()));
@@ -60,6 +63,14 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 
 server = app.listen(port, host, () => {
 	const config = services.configuration.getPublic();
+	if (process.env.NODE_ENV === 'production') {
+		logger.info('process.started', {
+			host, port, storeMode: runStoreMode, executionMode,
+			authenticationMode, provider: config.provider, model: config.model
+		});
+		if (config.problem) logger.warn('configuration.problem', { errorName: 'ConfigurationError' });
+		return;
+	}
 	console.log('\n  Qase — autonomous QA agent');
 	console.log(`  http://${host}:${port}`);
 	console.log(`  run store: ${runStoreMode}`);

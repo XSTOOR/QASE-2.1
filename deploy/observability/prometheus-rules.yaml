@@ -1,0 +1,110 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: qase-enterprise
+  namespace: qase
+  labels:
+    app.kubernetes.io/part-of: qase
+spec:
+  groups:
+    - name: qase.recording
+      interval: 30s
+      rules:
+        - record: qase:http_requests:rate5m
+          expr: sum by (qase_role, status_class) (rate(qase_http_requests_total[5m]))
+        - record: qase:http_error_ratio:5m
+          expr: (sum by (qase_role) (rate(qase_http_requests_total{status_class="5xx"}[5m])) or on (qase_role) (0 * sum by (qase_role) (rate(qase_http_requests_total[5m])))) / clamp_min(sum by (qase_role) (rate(qase_http_requests_total[5m])), 0.001)
+        - record: qase:http_error_ratio:1h
+          expr: (sum by (qase_role) (rate(qase_http_requests_total{status_class="5xx"}[1h])) or on (qase_role) (0 * sum by (qase_role) (rate(qase_http_requests_total[1h])))) / clamp_min(sum by (qase_role) (rate(qase_http_requests_total[1h])), 0.001)
+        - record: qase:http_error_ratio:30m
+          expr: (sum by (qase_role) (rate(qase_http_requests_total{status_class="5xx"}[30m])) or on (qase_role) (0 * sum by (qase_role) (rate(qase_http_requests_total[30m])))) / clamp_min(sum by (qase_role) (rate(qase_http_requests_total[30m])), 0.001)
+        - record: qase:http_error_ratio:6h
+          expr: (sum by (qase_role) (rate(qase_http_requests_total{status_class="5xx"}[6h])) or on (qase_role) (0 * sum by (qase_role) (rate(qase_http_requests_total[6h])))) / clamp_min(sum by (qase_role) (rate(qase_http_requests_total[6h])), 0.001)
+        - record: qase:http_latency_p95_seconds:5m
+          expr: histogram_quantile(0.95, sum by (qase_role, le) (rate(qase_http_request_duration_seconds_bucket[5m])))
+    - name: qase.alerts
+      rules:
+        - alert: QaseApiMetricsAbsent
+          expr: absent(up{qase_role="api"})
+          for: 5m
+          labels: { severity: critical, service: qase-api }
+          annotations:
+            summary: Qase API metrics are absent
+            runbook_url: https://runbooks.example.invalid/qase/phase-8-observability-release#scrape-or-role-down
+        - alert: QaseWorkerMetricsAbsent
+          expr: absent(up{qase_role="worker"})
+          for: 5m
+          labels: { severity: critical, service: qase-worker }
+          annotations:
+            summary: Qase worker metrics are absent
+            runbook_url: https://runbooks.example.invalid/qase/phase-8-observability-release#scrape-or-role-down
+        - alert: QaseControlMetricsAbsent
+          expr: absent(up{qase_role="control"})
+          for: 5m
+          labels: { severity: critical, service: qase-control }
+          annotations:
+            summary: Qase control-plane metrics are absent
+            runbook_url: https://runbooks.example.invalid/qase/phase-8-observability-release#scrape-or-role-down
+        - alert: QaseMetricsTargetDown
+          expr: up{qase_role=~"api|worker|control"} == 0
+          for: 2m
+          labels: { severity: critical }
+          annotations:
+            summary: A Qase metrics target is down
+            runbook_url: https://runbooks.example.invalid/qase/phase-8-observability-release#scrape-or-role-down
+        - alert: QaseAvailabilityFastBurn
+          expr: qase:http_error_ratio:5m > 0.0144 and on (qase_role) qase:http_error_ratio:1h > 0.0144
+          for: 2m
+          labels: { severity: critical, slo: availability }
+          annotations:
+            summary: Qase is rapidly consuming its HTTP availability error budget
+            runbook_url: https://runbooks.example.invalid/qase/phase-8-observability-release#availability-burn
+        - alert: QaseAvailabilitySlowBurn
+          expr: qase:http_error_ratio:30m > 0.006 and on (qase_role) qase:http_error_ratio:6h > 0.006
+          for: 15m
+          labels: { severity: warning, slo: availability }
+          annotations:
+            summary: Qase is steadily consuming its HTTP availability error budget
+            runbook_url: https://runbooks.example.invalid/qase/phase-8-observability-release#availability-burn
+        - alert: QaseHttpLatencyHigh
+          expr: qase:http_latency_p95_seconds:5m > 2.5
+          for: 10m
+          labels: { severity: warning, slo: latency }
+          annotations:
+            summary: Qase HTTP p95 latency exceeds 2.5 seconds
+            runbook_url: https://runbooks.example.invalid/qase/phase-8-observability-release#latency-or-overload
+        - alert: QaseMutationOverload
+          expr: increase(qase_http_overload_rejections_total[5m]) > 0
+          for: 2m
+          labels: { severity: warning }
+          annotations:
+            summary: Qase is rejecting mutations at its local concurrency guard
+            runbook_url: https://runbooks.example.invalid/qase/phase-8-observability-release#latency-or-overload
+        - alert: QaseQueueDepthHigh
+          expr: max(qase_execution_jobs{qase_role="api",status="queued"}) > 1000
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: Qase execution queue depth is high
+            runbook_url: https://runbooks.example.invalid/qase/phase-8-observability-release#queue-pressure
+        - alert: QaseQueueWaitHigh
+          expr: max(qase_execution_oldest_queued_age_seconds{qase_role="api"}) > 120
+          for: 5m
+          labels: { severity: critical }
+          annotations:
+            summary: Oldest Qase job has waited longer than two minutes
+            runbook_url: https://runbooks.example.invalid/qase/phase-8-observability-release#queue-pressure
+        - alert: QaseExpiredWorkerLeases
+          expr: max(qase_execution_expired_leases{qase_role="worker"}) > 0
+          for: 2m
+          labels: { severity: warning }
+          annotations:
+            summary: Qase has expired worker leases
+            runbook_url: https://runbooks.example.invalid/qase/phase-8-observability-release#expired-leases
+        - alert: QaseDeploymentUnavailable
+          expr: kube_deployment_status_replicas_available{namespace="qase",deployment=~"qase-api|qase-worker|qase-control|qase-cell-heartbeat"} < kube_deployment_spec_replicas{namespace="qase",deployment=~"qase-api|qase-worker|qase-control|qase-cell-heartbeat"}
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: A Qase deployment has unavailable replicas
+            runbook_url: https://runbooks.example.invalid/qase/phase-8-observability-release#deployment-unavailable

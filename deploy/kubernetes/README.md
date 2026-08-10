@@ -21,6 +21,10 @@ Before applying anything:
 6. Verify all probes, perform a signed Drytis canary, and run the bounded smoke
    check before adding traffic.
 
+After the base is healthy, review the optional `../observability` overlay. It
+adds Prometheus Operator discovery/rules and a Grafana dashboard but does not
+install or configure those third-party systems.
+
 The worker HPA's CPU policy is a conservative bootstrap. Replace it with a
 reviewed custom-metrics policy based on queued jobs and oldest queued age after
 measuring browser/provider saturation in that cell. Do not autoscale solely on

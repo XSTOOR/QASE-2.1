@@ -2,8 +2,11 @@ import 'dotenv/config';
 import os from 'node:os';
 import { createExecutionWorker } from './distributedExecution.js';
 import { createConfiguredApplicationServices } from './serviceFactory.js';
+import { createOperationalLogger } from './operationalLogger.js';
+import { createOperationalControls } from './operations.js';
 import { createWorkerProbe } from './workerProbe.js';
 
+const logger = createOperationalLogger({ component: 'qase-worker' });
 const result = await createConfiguredApplicationServices({ executionRole: 'worker' });
 if (result.executionMode !== 'distributed' || !result.executionQueue) {
 	await result.services.lifecycle.close();
@@ -17,14 +20,17 @@ const worker = createExecutionWorker({
 	services: result.services,
 	credentialVault: result.credentialVault,
 	workerId,
-	onError: error => console.error('[Qase worker]', error instanceof Error ? error.message : String(error)),
+	onError: error => logger.error('worker.execution.failed', { errorName: error?.name ?? 'Error', workerId }),
 	pollMs: Number(process.env.QASE_WORKER_POLL_MS) || 1_000,
 	leaseMs: Number(process.env.QASE_WORKER_LEASE_MS) || 30_000
 });
 let probe;
 let probeServer;
 try {
-	probe = createWorkerProbe({ worker, queue: result.executionQueue });
+	probe = createWorkerProbe({
+		worker, queue: result.executionQueue,
+		operations: createOperationalControls({ logger })
+	});
 	probeServer = await probe.listen();
 } catch (error) {
 	await result.services.lifecycle.close();
@@ -36,6 +42,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 	process.on(signal, async () => {
 		if (shuttingDown) return;
 		shuttingDown = true;
+		logger.info('process.draining', { signal, workerId });
 		await worker.stop();
 		await probe.close();
 		await result.services.lifecycle.close();
@@ -43,11 +50,11 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 	});
 }
 
-console.log(`Qase execution worker ${workerId} started; probes on http://${probe.host}:${probeServer.address().port}.`);
+logger.info('process.started', { workerId, host: probe.host, port: probeServer.address().port });
 try {
 	await worker.start();
 } catch (error) {
-	console.error('[Qase worker]', error instanceof Error ? error.message : String(error));
+	logger.error('worker.stopped', { errorName: error?.name ?? 'Error', workerId });
 	await probe.close();
 	await result.services.lifecycle.close();
 	process.exitCode = 1;

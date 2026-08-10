@@ -28,6 +28,8 @@ export function createControlPlaneApplication(options = {}) {
 	const writeToken = requiredToken(options.writeToken ?? environment.QASE_CONTROL_API_WRITE_TOKEN, 'QASE_CONTROL_API_WRITE_TOKEN');
 	if (same(readToken, writeToken)) throw new TypeError('Control-plane read and write tokens must be different.');
 	const operations = options.operations ?? createOperationalControls({ environment, mutationPrefixes: ['/internal/'] });
+	const logger = options.logger;
+	if (logger !== undefined && typeof logger?.error !== 'function') throw new TypeError('Control-plane logger is invalid.');
 	const app = express();
 	app.disable('x-powered-by');
 	app.locals.qaseDemoEnabled = false;
@@ -120,7 +122,11 @@ export function createControlPlaneApplication(options = {}) {
 		if (error instanceof SyntaxError && error?.status === 400) return response.status(400).json({ error: 'Request body is not valid JSON.' });
 		if (error instanceof TypeError) return response.status(400).json({ error: error.message });
 		if (error?.code === 'QASE_NO_HEALTHY_CELL') return response.status(503).json({ error: error.message });
-		console.error(`[Qase control ${request.qaseRequestId ?? 'no-request-id'}]`, error instanceof Error ? error.message : String(error));
+		if (logger) logger.error('http.request.failed', {
+			requestId: request.qaseRequestId,
+			errorName: error?.name ?? 'Error'
+		});
+		else console.error(`[Qase control ${request.qaseRequestId ?? 'no-request-id'}]`, error instanceof Error ? error.message : String(error));
 		response.status(500).json({ error: 'Unexpected control-plane error.' });
 	});
 

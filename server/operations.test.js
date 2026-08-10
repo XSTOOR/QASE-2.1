@@ -70,3 +70,20 @@ test('metrics endpoint is disabled without a token and protected when enabled', 
 	assert.match(body, /qase_execution_jobs\{status="queued"\} 7/);
 	assert.match(body, /qase_execution_oldest_queued_age_seconds 11/);
 });
+
+test('request logs use correlation IDs and normalized routes without raw URLs', async t => {
+	const records = [];
+	const controls = createOperationalControls({ logger: { info: (event, fields) => records.push({ event, fields }) } });
+	const app = express();
+	app.use(controls.middleware);
+	app.get('/api/runs/:id', (_request, response) => response.json({ ok: true }));
+	const server = await listen(app);
+	t.after(server.close);
+	const response = await fetch(`${server.origin}/api/runs/private-run-id`);
+	assert.equal(response.status, 200);
+	assert.equal(records.length, 1);
+	assert.equal(records[0].event, 'http.request.completed');
+	assert.equal(records[0].fields.route, '/api/runs/:id');
+	assert.match(records[0].fields.requestId, /^[0-9a-f-]{36}$/);
+	assert.doesNotMatch(JSON.stringify(records), /private-run-id/);
+});
