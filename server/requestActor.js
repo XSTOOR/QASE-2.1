@@ -4,8 +4,9 @@ const storage = new AsyncLocalStorage();
 
 export function runWithRequestActor(authentication, callback) {
 	const actorUserId = authentication?.actorUserId;
-	return actorUserId
-		? storage.run(Object.freeze({ actorUserId }), callback)
+	const requestId = authentication?.requestId;
+	return actorUserId || requestId
+		? storage.run(Object.freeze({ ...(actorUserId ? { actorUserId } : {}), ...(requestId ? { requestId } : {}) }), callback)
 		: callback();
 }
 

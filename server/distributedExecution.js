@@ -6,8 +6,11 @@ export function createDistributedApiAgent({ queue, realtime, runs, tenantContext
 		isRemote: true,
 		ensureRuntime() {},
 		async runTurn(session, turnOptions) {
-			const requestedByUserId = currentRequestActor()?.actorUserId ?? tenantContext.actorUserId;
-			const job = await queue.enqueue({ runId: session.id, requestedByUserId, turnOptions });
+			const actor = currentRequestActor();
+			const requestedByUserId = actor?.actorUserId ?? tenantContext.actorUserId;
+			const job = await queue.enqueue({
+				runId: session.id, requestedByUserId, turnOptions, correlationId: actor?.requestId
+			});
 			try {
 				await runs.setStatus(session, 'running', 'Queued for an execution worker.');
 				return job;
@@ -34,6 +37,7 @@ export function createExecutionWorker(options = {}) {
 	let stopping = false;
 	let current;
 	let loopPromise;
+	let started = false;
 
 	async function markExhausted() {
 		for (const runId of await queue.reapExhausted()) {
@@ -72,7 +76,10 @@ export function createExecutionWorker(options = {}) {
 				await queue.complete({ jobId: job.id, leaseToken: job.leaseToken, workerId });
 				return true;
 			}
-			await runWithRequestActor({ actorUserId: job.requestedByUserId }, async () => {
+			await runWithRequestActor({
+				actorUserId: job.requestedByUserId,
+				requestId: job.correlationId
+			}, async () => {
 				if (credentialVault) {
 					const values = await credentialVault.values(job.runId);
 					await services.secrets.store(job.runId, values);
@@ -113,7 +120,8 @@ export function createExecutionWorker(options = {}) {
 
 	return Object.freeze({
 		runOnce,
-		start() { loopPromise ??= loop(); return loopPromise; },
+		start() { started = true; loopPromise ??= loop(); return loopPromise; },
+		getState() { return Object.freeze({ started, stopping, working: Boolean(current), jobId: current?.id }); },
 		async stop() {
 			stopping = true;
 			if (current) await services.agent.stop(current.runId);

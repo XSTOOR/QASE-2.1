@@ -6,10 +6,12 @@ import { DEFAULT_TENANT_CONTEXT as TENANT } from '../tenancy.js';
 const RUN = '6bf078e0-20df-48c3-a6f8-eb74ca14b9e1';
 const JOB = '08ddf3b0-4499-4101-a20f-d87d3eebcd52';
 const LEASE = '9e2fb678-423e-41a0-ae19-e9cae143c606';
+const CORRELATION = 'fb139801-54e8-4289-ad10-f70c92967967';
 
 function row(overrides = {}) {
 	return {
 		id: JOB, run_id: RUN, requested_by_user_id: TENANT.actorUserId, kind: 'turn',
+		correlation_id: CORRELATION,
 		payload: { task: 'test example.com' }, status: 'queued', attempts: 0,
 		max_attempts: 3, ...overrides
 	};
@@ -28,7 +30,8 @@ function fixture(handler) {
 	return {
 		calls,
 		queue: createPostgresExecutionQueue({
-			pool: { connect: async () => client }, tenantContext: TENANT, leaseMs: 20_000
+			pool: { connect: async () => client }, tenantContext: TENANT, leaseMs: 20_000,
+			maxActiveJobs: 5
 		})
 	};
 }
@@ -38,12 +41,14 @@ test('enqueue is tenant scoped, stores only structured turn input, and rejects a
 		? { rows: [row()], rowCount: 1 } : { rows: [], rowCount: 1 });
 	const job = await target.queue.enqueue({
 		runId: RUN, requestedByUserId: TENANT.actorUserId,
-		turnOptions: { task: 'test example.com' }, idempotencyKey: JOB
+		turnOptions: { task: 'test example.com' }, idempotencyKey: JOB, correlationId: CORRELATION
 	});
 	assert.equal(job.runId, RUN);
+	assert.equal(job.correlationId, CORRELATION);
 	const insert = target.calls.find(call => call.text.startsWith('INSERT INTO qa_execution_jobs'));
 	assert.deepEqual(insert.params.slice(0, 5), [JOB, TENANT.organizationId, TENANT.projectId, RUN, TENANT.actorUserId]);
-	assert.equal(insert.params[5], JSON.stringify({ task: 'test example.com' }));
+	assert.equal(insert.params[5], CORRELATION);
+	assert.equal(insert.params[6], JSON.stringify({ task: 'test example.com' }));
 	assert.equal(target.calls.at(-2).text, 'COMMIT');
 
 	const duplicate = fixture(call => {
@@ -54,6 +59,18 @@ test('enqueue is tenant scoped, stores only structured turn input, and rejects a
 		runId: RUN, requestedByUserId: TENANT.actorUserId, turnOptions: { task: 'x' }
 	}), error => error.code === 'QASE_RUN_ALREADY_QUEUED');
 	assert.equal(duplicate.calls.at(-2).text, 'ROLLBACK');
+});
+
+test('enqueue serializes capacity admission and fails closed when the cell is full', async () => {
+	const full = fixture(call => {
+		if (call.text.startsWith('SELECT COUNT(*)::int AS count')) return { rows: [{ count: 5 }], rowCount: 1 };
+		return { rows: [], rowCount: 1 };
+	});
+	await assert.rejects(() => full.queue.enqueue({
+		runId: RUN, requestedByUserId: TENANT.actorUserId, turnOptions: { task: 'x' }
+	}), error => error.code === 'QASE_CELL_CAPACITY_EXCEEDED');
+	assert.ok(full.calls.some(call => call.text.includes('pg_advisory_xact_lock')));
+	assert.equal(full.calls.at(-2).text, 'ROLLBACK');
 });
 
 test('claim uses skip-locked leasing and heartbeat exposes cancellation', async () => {
@@ -90,4 +107,22 @@ test('completion, retry failure, cancellation, and exhausted lease recovery requ
 	const mutations = target.calls.filter(call => call.text.startsWith('UPDATE qa_execution_jobs'));
 	assert.deepEqual(mutations[0].params.slice(0, 3), [JOB, LEASE, 'worker:a']);
 	assert.match(mutations[1].text, /attempts < max_attempts/);
+});
+
+test('stats returns tenant-scoped fixed-cardinality autoscaling signals', async () => {
+	const target = fixture(call => {
+		if (call.text.startsWith('SELECT status, COUNT')) {
+			return { rows: [{ status: 'queued', count: 9 }, { status: 'leased', count: 3 }], rowCount: 2 };
+		}
+		if (call.text.startsWith('SELECT') && call.text.includes('oldest_queued_age_seconds')) {
+			return { rows: [{ oldest_queued_age_seconds: 42.5, expired_leases: 2 }], rowCount: 1 };
+		}
+		return { rows: [], rowCount: 1 };
+	});
+	assert.deepEqual(await target.queue.stats(), {
+		queued: 9, leased: 3, cancel_requested: 0, succeeded: 0, failed: 0, cancelled: 0,
+		oldestQueuedAgeSeconds: 42.5, expiredLeases: 2
+	});
+	const scoped = target.calls.filter(call => call.text.includes('FROM qa_execution_jobs'));
+	assert.ok(scoped.every(call => call.params[0] === TENANT.organizationId && call.params[1] === TENANT.projectId));
 });

@@ -29,6 +29,7 @@ async function setScope(client, tenant) {
 function hydrate(row) {
 	return row ? {
 		id: row.id, runId: row.run_id, requestedByUserId: row.requested_by_user_id,
+		correlationId: row.correlation_id ?? undefined,
 		kind: row.kind, payload: row.payload ?? {}, status: row.status,
 		attempts: Number(row.attempts), maxAttempts: Number(row.max_attempts),
 		leaseOwner: row.lease_owner, leaseToken: row.lease_token,
@@ -43,6 +44,7 @@ export function createPostgresExecutionQueue(options = {}) {
 	const defaultLeaseMs = milliseconds(options.leaseMs, 30_000, 5_000, 300_000, 'leaseMs');
 	const defaultMaxAttempts = milliseconds(options.maxAttempts, 3, 1, 20, 'maxAttempts');
 	const retentionDays = milliseconds(options.retentionDays, 30, 1, 365, 'retentionDays');
+	const maxActiveJobs = milliseconds(options.maxActiveJobs, 5_000, 1, 100_000, 'maxActiveJobs');
 
 	async function transaction(work) {
 		const client = await pool.connect();
@@ -59,18 +61,33 @@ export function createPostgresExecutionQueue(options = {}) {
 	}
 
 	return Object.freeze({
-		async enqueue({ runId, requestedByUserId, turnOptions, idempotencyKey }) {
+		async enqueue({ runId, requestedByUserId, turnOptions, idempotencyKey, correlationId }) {
 			uuid(runId, 'runId');
 			uuid(requestedByUserId, 'requestedByUserId');
+			if (correlationId !== undefined) uuid(correlationId, 'correlationId');
 			const payload = structuredClone(turnOptions ?? {});
 			const jobId = idempotencyKey ? uuid(idempotencyKey, 'idempotencyKey') : randomUUID();
 			return transaction(async client => {
+				const capacityScope = `${tenant.organizationId}:${tenant.projectId}:execution-capacity`;
+				await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [capacityScope]);
+				const capacity = await client.query(
+					`SELECT COUNT(*)::int AS count FROM qa_execution_jobs
+					 WHERE organization_id = $1 AND project_id = $2
+					 AND status IN ('queued', 'leased', 'cancel_requested')`,
+					[tenant.organizationId, tenant.projectId]
+				);
+				if (Number(capacity.rows[0]?.count ?? 0) >= maxActiveJobs) {
+					const error = new Error('This Qase cell has reached its active execution capacity.');
+					error.code = 'QASE_CELL_CAPACITY_EXCEEDED';
+					throw error;
+				}
 				try {
 					const result = await client.query(
 						`INSERT INTO qa_execution_jobs
-						 (id, organization_id, project_id, run_id, requested_by_user_id, kind, payload, max_attempts)
-						 VALUES ($1, $2, $3, $4, $5, 'turn', $6::jsonb, $7) RETURNING *`,
-						[jobId, tenant.organizationId, tenant.projectId, runId, requestedByUserId, JSON.stringify(payload), defaultMaxAttempts]
+						 (id, organization_id, project_id, run_id, requested_by_user_id, correlation_id, kind, payload, max_attempts)
+						 VALUES ($1, $2, $3, $4, $5, $6, 'turn', $7::jsonb, $8) RETURNING *`,
+						[jobId, tenant.organizationId, tenant.projectId, runId, requestedByUserId,
+						 correlationId ?? null, JSON.stringify(payload), defaultMaxAttempts]
 					);
 					return hydrate(result.rows[0]);
 				} catch (error) {
@@ -209,6 +226,36 @@ export function createPostgresExecutionQueue(options = {}) {
 				await client.query('SELECT 1 FROM qa_execution_jobs WHERE organization_id = $1 AND project_id = $2 LIMIT 1',
 					[tenant.organizationId, tenant.projectId]);
 				return true;
+			});
+		},
+
+		async stats() {
+			return transaction(async client => {
+				const counts = await client.query(
+					`SELECT status, COUNT(*)::int AS count FROM qa_execution_jobs
+					 WHERE organization_id = $1 AND project_id = $2 GROUP BY status`,
+					[tenant.organizationId, tenant.projectId]
+				);
+				const timing = await client.query(
+					`SELECT
+					 COALESCE(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - MIN(available_at)
+					  FILTER (WHERE status = 'queued' AND available_at <= CURRENT_TIMESTAMP))), 0)::float8
+					  AS oldest_queued_age_seconds,
+					 COUNT(*) FILTER (WHERE status IN ('leased', 'cancel_requested')
+					  AND lease_expires_at <= CURRENT_TIMESTAMP)::int AS expired_leases
+					 FROM qa_execution_jobs WHERE organization_id = $1 AND project_id = $2`,
+					[tenant.organizationId, tenant.projectId]
+				);
+				const result = {
+					queued: 0, leased: 0, cancel_requested: 0,
+					succeeded: 0, failed: 0, cancelled: 0
+				};
+				for (const row of counts.rows) {
+					if (Object.hasOwn(result, row.status)) result[row.status] = Number(row.count);
+				}
+				result.oldestQueuedAgeSeconds = Number(timing.rows[0]?.oldest_queued_age_seconds ?? 0);
+				result.expiredLeases = Number(timing.rows[0]?.expired_leases ?? 0);
+				return result;
 			});
 		}
 	});

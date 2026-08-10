@@ -111,6 +111,11 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 | `QASE_WORKER_LEASE_MS` | `30000` | Durable worker lease duration; heartbeats run at one third of this value |
 | `QASE_JOB_MAX_ATTEMPTS` | `3` | Maximum claims before a repeatedly abandoned job fails visibly |
 | `QASE_JOB_RETENTION_DAYS` | `30` | Terminal job retention; cleanup is bounded to 1,000 rows per claim cycle |
+| `QASE_QUEUE_MAX_ACTIVE_JOBS` | `5000` | Cell-wide cap on queued/leased/cancelling jobs across API replicas |
+| `QASE_MUTATION_MAX_IN_FLIGHT` | `64` | Per-replica concurrent mutating-request guard |
+| `QASE_METRICS_TOKEN` | unset | Enables bearer-protected `/metrics`; must contain at least 32 bytes |
+| `QASE_WORKER_PROBE_HOST` | `127.0.0.1` | Worker liveness/readiness/metrics bind address |
+| `QASE_WORKER_PROBE_PORT` | `9174` | Worker probe listener port; use `0` only for tests |
 | `QASE_AUTH_REMEMBER_DAYS` | `30` | Lifetime when **Remember me** is selected |
 | `QASE_AUTH_COOKIE_SECURE` | `auto` | `true` forces HTTPS-only auth cookies; `auto` follows the incoming protocol |
 | `QASE_AUTH_SETUP_TOKEN` | unset | Required for first-owner setup from a non-loopback address |

@@ -1,16 +1,22 @@
 import 'dotenv/config';
 import { createApplication } from './app.js';
 import { createConfiguredAuthentication } from './authFactory.js';
+import { createOperationalControls } from './operations.js';
 import { createConfiguredApplicationServices } from './serviceFactory.js';
 
+// Validate process-local operational limits and metrics credentials before
+// opening PostgreSQL or Redis clients.
+const operations = createOperationalControls();
 const {
-	services, mode: runStoreMode, executionMode, tenantContext, pool
+	services, mode: runStoreMode, executionMode, tenantContext, pool, executionQueue
 } = await createConfiguredApplicationServices();
 const { authentication, mode: authenticationMode } = createConfiguredAuthentication({
 	runStoreMode, tenantContext, pool
 });
 
-const { app, demoEnabled } = createApplication({ services, authentication });
+const { app, demoEnabled } = createApplication({
+	services, authentication, executionQueue, operations
+});
 const port = Number(process.env.PORT ?? 5173);
 const host = String(process.env.QASE_HOST ?? '127.0.0.1').trim() || '127.0.0.1';
 

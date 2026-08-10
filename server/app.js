@@ -4,6 +4,7 @@ import express from 'express';
 import { createAuthentication, securityHeaders } from './auth.js';
 import { assertApplicationServices } from './contracts.js';
 import { mountDemoSite } from './demoSite.js';
+import { createOperationalControls } from './operations.js';
 import { runWithRequestActor } from './requestActor.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -42,6 +43,7 @@ export function createApplication(options = {}) {
 		&& (options.demoEnabled ?? String(environment.QASE_ENABLE_DEMO ?? '').toLowerCase() !== 'false');
 	const heartbeatMs = Math.max(1_000, Number(options.sseHeartbeatMs) || 15_000);
 	const publicDirectory = options.publicDirectory ?? path.join(here, '..', 'public');
+	const operations = options.operations ?? createOperationalControls({ environment });
 	const activeTurns = new Set();
 
 	const app = express();
@@ -50,6 +52,7 @@ export function createApplication(options = {}) {
 	if (options.trustProxy ?? String(environment.QASE_TRUST_PROXY ?? '').toLowerCase() === 'true') {
 		app.set('trust proxy', 1);
 	}
+	app.use(operations.middleware);
 	app.use(securityHeaders);
 
 	app.get('/healthz', (_request, response) => {
@@ -68,6 +71,7 @@ export function createApplication(options = {}) {
 			response.status(503).json({ status: 'not_ready' });
 		}
 	});
+	operations.mount(app, { queue: options.executionQueue });
 
 	app.use(express.json({ limit: '1mb' }));
 	app.use(express.static(publicDirectory));
@@ -78,7 +82,10 @@ export function createApplication(options = {}) {
 	// Authentication routes stay public; middleware installed after them protects
 	// every application API route, including reports and event streams.
 	authentication.mount(app);
-	app.use('/api', (request, _response, next) => runWithRequestActor(request.auth, next));
+	app.use('/api', (request, _response, next) => runWithRequestActor({
+		...request.auth,
+		requestId: request.qaseRequestId
+	}, next));
 
 	async function requireSession(request, response) {
 		const session = await services.runs.get(request.params.id);
@@ -324,7 +331,7 @@ export function createApplication(options = {}) {
 		response.status(404).json({ error: 'API route not found.' });
 	});
 
-	app.use((error, _request, response, next) => {
+	app.use((error, request, response, next) => {
 		if (response.headersSent) {
 			next(error);
 			return;
@@ -343,7 +350,7 @@ export function createApplication(options = {}) {
 			});
 			return;
 		}
-		console.error('[Qase server]', error instanceof Error ? error.message : String(error));
+		console.error(`[Qase server ${request.qaseRequestId ?? 'no-request-id'}]`, error instanceof Error ? error.message : String(error));
 		response.status(500).json({ error: 'Unexpected server error.' });
 	});
 
@@ -352,6 +359,7 @@ export function createApplication(options = {}) {
 		authentication,
 		demoEnabled,
 		services,
+		operations,
 		whenIdle: () => Promise.allSettled([...activeTurns])
 	};
 }

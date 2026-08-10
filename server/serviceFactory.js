@@ -106,7 +106,8 @@ export async function createConfiguredApplicationServices(options = {}) {
 				pool, tenantContext,
 				leaseMs: environment.QASE_WORKER_LEASE_MS ? Number(environment.QASE_WORKER_LEASE_MS) : undefined,
 				maxAttempts: environment.QASE_JOB_MAX_ATTEMPTS ? Number(environment.QASE_JOB_MAX_ATTEMPTS) : undefined,
-				retentionDays: environment.QASE_JOB_RETENTION_DAYS ? Number(environment.QASE_JOB_RETENTION_DAYS) : undefined
+				retentionDays: environment.QASE_JOB_RETENTION_DAYS ? Number(environment.QASE_JOB_RETENTION_DAYS) : undefined,
+				maxActiveJobs: environment.QASE_QUEUE_MAX_ACTIVE_JOBS ? Number(environment.QASE_QUEUE_MAX_ACTIVE_JOBS) : undefined
 			});
 			if (executionRole === 'api') {
 				services.agent = (options.createDistributedAgent ?? createDistributedApiAgent)({

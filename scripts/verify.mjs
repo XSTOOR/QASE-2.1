@@ -70,6 +70,8 @@ const secretSignatures = [
 
 const scanFiles = [
 	...sourceFiles,
+	...filesUnder(path.join(root, 'server'), new Set(['.sql'])),
+	...filesUnder(path.join(root, 'docs'), new Set(['.md'])),
 	path.join(root, 'package.json'),
 	path.join(root, 'README.md'),
 	path.join(root, '.env.example')
