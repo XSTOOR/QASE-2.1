@@ -122,6 +122,9 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 | `QASE_CONTROL_API_WRITE_TOKEN` | unset | Distinct deployment-controller credential; at least 32 bytes |
 | `QASE_CONTROL_CELL_STALE_SECONDS` | `90` | Heartbeat age after which placement resolution fails closed |
 | `QASE_CONTROL_HOST` / `QASE_CONTROL_PORT` | `127.0.0.1` / `5180` | Internal control-plane listener |
+| `QASE_CELL_ID` / `QASE_CELL_REGION` | unset | Stable identity used by the trusted cell heartbeat controller |
+| `QASE_CELL_METRICS_URL` | unset | Private bearer-protected API metrics URL read by the controller |
+| `QASE_CELL_HEARTBEAT_INTERVAL_MS` | `30000` | Cell observation publish interval with capped retry backoff |
 | `QASE_AUTH_REMEMBER_DAYS` | `30` | Lifetime when **Remember me** is selected |
 | `QASE_AUTH_COOKIE_SECURE` | `auto` | `true` forces HTTPS-only auth cookies; `auto` follows the incoming protocol |
 | `QASE_AUTH_SETUP_TOKEN` | unset | Required for first-owner setup from a non-loopback address |
@@ -147,6 +150,11 @@ user's private app-data directory (or `QASE_AUTH_FILE` when overridden).
 
 Whoever receives it runs `npm install && npm run install-browser`, then
 `npm start`, and enters their own endpoint under Settings.
+
+For the production process/container topology, deployment order, safe smoke and
+load probes, failure drills, and recovery contract, see
+`docs/enterprise-migration/phase-7-deployment-resilience.md` and
+`deploy/kubernetes/README.md`.
 
 ## How it works
 

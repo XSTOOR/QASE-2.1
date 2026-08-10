@@ -72,9 +72,11 @@ const scanFiles = [
 	...sourceFiles,
 	...filesUnder(path.join(root, 'server'), new Set(['.sql'])),
 	...filesUnder(path.join(root, 'docs'), new Set(['.md'])),
+	...filesUnder(path.join(root, 'deploy'), new Set(['.yaml', '.yml'])),
 	path.join(root, 'package.json'),
 	path.join(root, 'README.md'),
-	path.join(root, '.env.example')
+	path.join(root, '.env.example'),
+	path.join(root, 'Dockerfile')
 ];
 
 for (const filePath of scanFiles) {

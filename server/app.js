@@ -44,6 +44,7 @@ export function createApplication(options = {}) {
 	const heartbeatMs = Math.max(1_000, Number(options.sseHeartbeatMs) || 15_000);
 	const publicDirectory = options.publicDirectory ?? path.join(here, '..', 'public');
 	const operations = options.operations ?? createOperationalControls({ environment });
+	const isDraining = typeof options.isDraining === 'function' ? options.isDraining : () => false;
 	const activeTurns = new Set();
 
 	const app = express();
@@ -62,6 +63,10 @@ export function createApplication(options = {}) {
 
 	app.get('/readyz', async (_request, response) => {
 		response.set('Cache-Control', 'no-store');
+		if (isDraining()) {
+			response.status(503).json({ status: 'not_ready' });
+			return;
+		}
 		try {
 			const readiness = readinessPayload(await services.readiness.check());
 			response.status(readiness.ready ? 200 : 503).json({

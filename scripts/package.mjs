@@ -21,10 +21,10 @@ const EXCLUDED_ROOTS = new Set([
 	'coverage', 'test-results', 'playwright-report', 'dist', 'tmp', 'temp'
 ]);
 const EXCLUDED_EXTENSIONS = new Set(['.zip', '.log', '.pem', '.key', '.p12', '.pfx']);
-const INCLUDED_DIRECTORIES = ['public', 'server', 'scripts', 'docs'];
+const INCLUDED_DIRECTORIES = ['public', 'server', 'scripts', 'docs', 'deploy'];
 const INCLUDED_FILES = [
 	'package.json', 'package-lock.json', 'README.md', '.env.example',
-	'.gitignore', '.gitattributes'
+	'.gitignore', '.gitattributes', '.dockerignore', 'Dockerfile'
 ];
 
 fs.rmSync(output, { force: true });
@@ -90,7 +90,10 @@ if (leaked.length > 0) {
 	process.exit(1);
 }
 
-for (const required of ['package.json', 'package-lock.json', '.env.example']) {
+for (const required of [
+	'package.json', 'package-lock.json', '.env.example', 'Dockerfile',
+	'deploy/kubernetes/base/qase.yaml', 'deploy/kubernetes/base/migrations.yaml'
+]) {
 	if (!listing.includes(required)) {
 		fs.rmSync(output, { force: true });
 		throw new Error(`Refusing to package — required source file is missing: ${required}`);

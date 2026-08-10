@@ -1,0 +1,69 @@
+# Apply these Jobs explicitly before the Deployments. Runtime credentials must
+# not have DDL ownership; the two referenced migrator Secrets are separate.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qase-cell-migrate
+  namespace: qase
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: qase-runtime
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: migrate
+          image: registry.example.invalid/qase:phase-7
+          command: ["node", "scripts/migrate.mjs"]
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: QASE_DATABASE_SSL
+              value: require
+            - name: QASE_MIGRATION_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: qase-cell-migrator, key: database-url } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qase-control-migrate
+  namespace: qase
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: qase-runtime
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: migrate
+          image: registry.example.invalid/qase:phase-7
+          command: ["node", "scripts/migrate-control-plane.mjs"]
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: QASE_CONTROL_DATABASE_SSL
+              value: require
+            - name: QASE_CONTROL_MIGRATION_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: qase-control-migrator, key: database-url } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }

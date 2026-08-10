@@ -14,20 +14,34 @@ const { authentication, mode: authenticationMode } = createConfiguredAuthenticat
 	runStoreMode, tenantContext, pool
 });
 
+let shuttingDown = false;
 const { app, demoEnabled } = createApplication({
-	services, authentication, executionQueue, operations
+	services, authentication, executionQueue, operations,
+	isDraining: () => shuttingDown
 });
 const port = Number(process.env.PORT ?? 5173);
 const host = String(process.env.QASE_HOST ?? '127.0.0.1').trim() || '127.0.0.1';
 
 // Chromium is a child process; without this it can outlive the server process.
-let shuttingDown = false;
+let server;
 for (const signal of ['SIGINT', 'SIGTERM']) {
 	process.on(signal, async () => {
 		if (shuttingDown) {
 			process.exit(1);
 		}
 		shuttingDown = true;
+		let closeHttp = Promise.resolve();
+		if (server) {
+			closeHttp = new Promise(resolve => server.close(() => resolve()));
+			const completed = await Promise.race([
+				closeHttp.then(() => true),
+				new Promise(resolve => setTimeout(() => resolve(false), 10_000))
+			]);
+			if (!completed) {
+				server.closeAllConnections?.();
+				await closeHttp;
+			}
+		}
 		let summaries = [];
 		try {
 			summaries = await services.runs.list();
@@ -44,7 +58,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 	});
 }
 
-app.listen(port, host, () => {
+server = app.listen(port, host, () => {
 	const config = services.configuration.getPublic();
 	console.log('\n  Qase — autonomous QA agent');
 	console.log(`  http://${host}:${port}`);

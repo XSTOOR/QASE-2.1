@@ -251,6 +251,7 @@ async function startFixture(options = {}) {
 		authentication: options.authentication ?? createTestAuthentication(),
 		demoEnabled: options.demoEnabled,
 		environment: options.environment ?? {},
+		isDraining: options.isDraining,
 		sseHeartbeatMs: 1_000
 	});
 	const server = await new Promise(resolve => {
@@ -297,7 +298,11 @@ test('application construction has no startup side effects and validates its ser
 });
 
 test('health and readiness are public, minimal, and reflect the injected readiness check', async t => {
-	const fixture = await startFixture({ authentication: createTestAuthentication({ authenticated: false }) });
+	let draining = false;
+	const fixture = await startFixture({
+		authentication: createTestAuthentication({ authenticated: false }),
+		isDraining: () => draining
+	});
 	t.after(() => fixture.close());
 
 	const health = await fixture.request('/healthz');
@@ -309,6 +314,11 @@ test('health and readiness are public, minimal, and reflect the injected readine
 	const ready = await fixture.request('/readyz');
 	assert.equal(ready.status, 200);
 	assert.deepEqual(await body(ready), { status: 'ready' });
+	draining = true;
+	const drainingResponse = await fixture.request('/readyz');
+	assert.equal(drainingResponse.status, 503);
+	assert.deepEqual(await body(drainingResponse), { status: 'not_ready' });
+	draining = false;
 
 	fixture.state.ready = false;
 	const unavailable = await fixture.request('/readyz');

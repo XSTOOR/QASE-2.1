@@ -1,0 +1,17 @@
+.git
+.github
+.agents
+.codex
+.env
+.env.*
+!.env.example
+.qase
+node_modules
+coverage
+test-results
+playwright-report
+tmp
+temp
+*.log
+*.zip
+docs

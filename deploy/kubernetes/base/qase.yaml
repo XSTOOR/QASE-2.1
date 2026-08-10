@@ -1,0 +1,450 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: qase
+  labels:
+    app.kubernetes.io/part-of: qase
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qase-cell
+  namespace: qase
+data:
+  NODE_ENV: production
+  QASE_RUN_STORE: postgres
+  QASE_EXECUTION_MODE: distributed
+  QASE_DATABASE_SSL: require
+  QASE_DATABASE_POOL_MIN: "0"
+  QASE_DATABASE_POOL_MAX: "10"
+  QASE_DATABASE_MIGRATE_ON_START: "false"
+  QASE_POSTGRES_RECOVER_ACTIVE_RUNS: "false"
+  QASE_HOST: 0.0.0.0
+  PORT: "5173"
+  QASE_HEADLESS: "true"
+  QASE_ENABLE_DEMO: "false"
+  QASE_AUTH_MODE: drytis
+  QASE_PUBLIC_URL: https://qase.example.invalid
+  QASE_DRYTIS_LOGIN_URL: https://studio.drytis.example.invalid/integrations/qase/launch
+  QASE_DRYTIS_ISSUER: https://identity.drytis.example.invalid
+  QASE_DRYTIS_AUDIENCE: qase-production
+  QASE_DRYTIS_JWKS_URL: https://identity.drytis.example.invalid/.well-known/jwks.json
+  QASE_AUTH_COOKIE_SECURE: "true"
+  QASE_TRUST_PROXY: "true"
+  QASE_PROVIDER: custom
+  QASE_BASE_URL: https://model-gateway.example.invalid/v1
+  QASE_MODEL: replace-with-reviewed-model-id
+  QASE_REASONING: medium
+  QASE_MUTATION_MAX_IN_FLIGHT: "64"
+  QASE_QUEUE_MAX_ACTIVE_JOBS: "5000"
+  QASE_WORKER_PROBE_HOST: 0.0.0.0
+  QASE_WORKER_PROBE_PORT: "9174"
+  QASE_CELL_ID: 4a7f5cf0-813d-4e3c-8d5d-4b4b9fc88c10
+  QASE_CELL_NAME: qase-ap-south-1
+  QASE_CELL_REGION: ap-south-1
+  QASE_CELL_PUBLIC_URL: https://qase.example.invalid
+  QASE_CELL_CAPACITY_WEIGHT: "100"
+  QASE_CELL_METRICS_URL: http://qase-api.qase.svc.cluster.local:5173/metrics
+  QASE_CELL_HEARTBEAT_INTERVAL_MS: "30000"
+  QASE_CELL_HEARTBEAT_TIMEOUT_MS: "5000"
+  QASE_CELL_HEARTBEAT_PROBE_HOST: 0.0.0.0
+  QASE_CELL_HEARTBEAT_PROBE_PORT: "9175"
+  QASE_CONTROL_URL: http://qase-control.qase.svc.cluster.local:5180
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qase-control
+  namespace: qase
+data:
+  NODE_ENV: production
+  QASE_CONTROL_DATABASE_SSL: require
+  QASE_CONTROL_DATABASE_POOL_MIN: "0"
+  QASE_CONTROL_DATABASE_POOL_MAX: "10"
+  QASE_CONTROL_DATABASE_MIGRATE_ON_START: "false"
+  QASE_CONTROL_HOST: 0.0.0.0
+  QASE_CONTROL_PORT: "5180"
+  QASE_CONTROL_CELL_STALE_SECONDS: "90"
+  QASE_CONTROL_TRUST_PROXY: "true"
+  QASE_MUTATION_MAX_IN_FLIGHT: "64"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: qase-runtime
+  namespace: qase
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qase-api
+  namespace: qase
+  labels: &apiLabels
+    app.kubernetes.io/name: qase-api
+    app.kubernetes.io/part-of: qase
+spec:
+  replicas: 3
+  selector:
+    matchLabels: *apiLabels
+  template:
+    metadata:
+      labels: *apiLabels
+    spec:
+      serviceAccountName: qase-runtime
+      terminationGracePeriodSeconds: 45
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: *apiLabels
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: api
+          image: registry.example.invalid/qase:phase-7
+          imagePullPolicy: IfNotPresent
+          command: ["node", "server/index.js"]
+          envFrom:
+            - configMapRef: { name: qase-cell }
+          env:
+            - name: QASE_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: qase-cell-runtime, key: database-url } }
+            - name: QASE_REDIS_URL
+              valueFrom: { secretKeyRef: { name: qase-cell-runtime, key: redis-url } }
+            - name: QASE_SECRETS_MASTER_KEY
+              valueFrom: { secretKeyRef: { name: qase-cell-runtime, key: secrets-master-key } }
+            - name: QASE_METRICS_TOKEN
+              valueFrom: { secretKeyRef: { name: qase-cell-runtime, key: metrics-token } }
+            - name: QASE_API_KEY
+              valueFrom: { secretKeyRef: { name: qase-cell-runtime, key: model-api-key } }
+          ports:
+            - { name: http, containerPort: 5173 }
+          startupProbe: &apiStartup
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe: &apiLive
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 3
+          readinessProbe: &apiReady
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests: { cpu: 250m, memory: 384Mi }
+            limits: { cpu: "2", memory: 2Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: runtime, mountPath: /app/.qase }
+            - { name: temp, mountPath: /tmp }
+      volumes:
+        - { name: runtime, emptyDir: {} }
+        - { name: temp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qase-api
+  namespace: qase
+spec:
+  selector:
+    app.kubernetes.io/name: qase-api
+    app.kubernetes.io/part-of: qase
+  ports:
+    - { name: http, port: 5173, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qase-worker
+  namespace: qase
+  labels: &workerLabels
+    app.kubernetes.io/name: qase-worker
+    app.kubernetes.io/part-of: qase
+spec:
+  replicas: 2
+  selector:
+    matchLabels: *workerLabels
+  template:
+    metadata:
+      labels: *workerLabels
+    spec:
+      serviceAccountName: qase-runtime
+      terminationGracePeriodSeconds: 60
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: *workerLabels
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: worker
+          image: registry.example.invalid/qase:phase-7
+          imagePullPolicy: IfNotPresent
+          command: ["node", "server/worker.js"]
+          envFrom:
+            - configMapRef: { name: qase-cell }
+          env:
+            - name: QASE_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: qase-cell-runtime, key: database-url } }
+            - name: QASE_REDIS_URL
+              valueFrom: { secretKeyRef: { name: qase-cell-runtime, key: redis-url } }
+            - name: QASE_SECRETS_MASTER_KEY
+              valueFrom: { secretKeyRef: { name: qase-cell-runtime, key: secrets-master-key } }
+            - name: QASE_METRICS_TOKEN
+              valueFrom: { secretKeyRef: { name: qase-cell-runtime, key: metrics-token } }
+            - name: QASE_API_KEY
+              valueFrom: { secretKeyRef: { name: qase-cell-runtime, key: model-api-key } }
+          ports:
+            - { name: probes, containerPort: 9174 }
+          startupProbe:
+            httpGet: { path: /healthz, port: probes }
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /healthz, port: probes }
+            periodSeconds: 15
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet: { path: /readyz, port: probes }
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests: { cpu: "1", memory: 1Gi }
+            limits: { cpu: "4", memory: 4Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: runtime, mountPath: /app/.qase }
+            - { name: temp, mountPath: /tmp }
+            - { name: shm, mountPath: /dev/shm }
+            - { name: cache, mountPath: /home/node/.cache }
+      volumes:
+        - { name: runtime, emptyDir: {} }
+        - { name: temp, emptyDir: {} }
+        - { name: cache, emptyDir: {} }
+        - name: shm
+          emptyDir: { medium: Memory, sizeLimit: 1Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qase-control
+  namespace: qase
+  labels: &controlLabels
+    app.kubernetes.io/name: qase-control
+    app.kubernetes.io/part-of: qase
+spec:
+  replicas: 3
+  selector:
+    matchLabels: *controlLabels
+  template:
+    metadata:
+      labels: *controlLabels
+    spec:
+      serviceAccountName: qase-runtime
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: *controlLabels
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: control
+          image: registry.example.invalid/qase:phase-7
+          imagePullPolicy: IfNotPresent
+          command: ["node", "server/controlPlane/index.js"]
+          envFrom:
+            - configMapRef: { name: qase-control }
+          env:
+            - name: QASE_CONTROL_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: qase-control-runtime, key: database-url } }
+            - name: QASE_CONTROL_API_READ_TOKEN
+              valueFrom: { secretKeyRef: { name: qase-control-runtime, key: read-token } }
+            - name: QASE_CONTROL_API_WRITE_TOKEN
+              valueFrom: { secretKeyRef: { name: qase-control-runtime, key: write-token } }
+            - name: QASE_METRICS_TOKEN
+              valueFrom: { secretKeyRef: { name: qase-control-runtime, key: metrics-token } }
+          ports:
+            - { name: http, containerPort: 5180 }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: temp, mountPath: /tmp }
+      volumes:
+        - { name: temp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qase-control
+  namespace: qase
+spec:
+  selector:
+    app.kubernetes.io/name: qase-control
+    app.kubernetes.io/part-of: qase
+  ports:
+    - { name: http, port: 5180, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qase-cell-heartbeat
+  namespace: qase
+  labels: &heartbeatLabels
+    app.kubernetes.io/name: qase-cell-heartbeat
+    app.kubernetes.io/part-of: qase
+spec:
+  replicas: 2
+  selector:
+    matchLabels: *heartbeatLabels
+  template:
+    metadata:
+      labels: *heartbeatLabels
+    spec:
+      serviceAccountName: qase-runtime
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: heartbeat
+          image: registry.example.invalid/qase:phase-7
+          imagePullPolicy: IfNotPresent
+          command: ["node", "server/cellHeartbeatController.js"]
+          envFrom:
+            - configMapRef: { name: qase-cell }
+          env:
+            - name: QASE_CONTROL_API_WRITE_TOKEN
+              valueFrom: { secretKeyRef: { name: qase-heartbeat-runtime, key: control-write-token } }
+            - name: QASE_METRICS_TOKEN
+              valueFrom: { secretKeyRef: { name: qase-heartbeat-runtime, key: metrics-token } }
+          ports:
+            - { name: probes, containerPort: 9175 }
+          startupProbe:
+            httpGet: { path: /healthz, port: probes }
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet: { path: /healthz, port: probes }
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /readyz, port: probes }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: temp, mountPath: /tmp }
+      volumes:
+        - { name: temp, emptyDir: {} }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: qase-api, namespace: qase }
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qase-api
+      app.kubernetes.io/part-of: qase
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: qase-control, namespace: qase }
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qase-control
+      app.kubernetes.io/part-of: qase
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: qase-worker, namespace: qase }
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qase-worker
+      app.kubernetes.io/part-of: qase
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: qase-api, namespace: qase }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: qase-api }
+  minReplicas: 3
+  maxReplicas: 30
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 65 }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: qase-worker, namespace: qase }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: qase-worker }
+  minReplicas: 2
+  maxReplicas: 50
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 60 }
