@@ -22,6 +22,9 @@ if (entry) {
 	const backButton = document.getElementById('entry-back');
 	const emailInput = document.getElementById('entry-email');
 	const passwordInput = document.getElementById('entry-password');
+	const emailField = emailInput.closest('.auth-field');
+	const passwordField = passwordInput.closest('.auth-field');
+	const authOptions = document.querySelector('.auth-options');
 	const confirmInput = document.getElementById('entry-password-confirm');
 	const confirmField = document.getElementById('auth-confirm-field');
 	const setupTokenInput = document.getElementById('entry-setup-token');
@@ -86,21 +89,33 @@ if (entry) {
 	function setAuthMode(mode) {
 		authMode = mode;
 		const setup = mode === 'setup';
+		const drytis = mode === 'drytis';
 		const requiresSetupToken = setup && Boolean(authStatus?.setupTokenRequired);
-		authTitle.textContent = setup ? 'Create owner account' : 'Welcome back';
-		authKicker.textContent = setup ? 'Secure this instance' : 'Mission control';
-		authDescription.textContent = setup
+		authTitle.textContent = drytis ? 'Continue with Drytis' : setup ? 'Create owner account' : 'Welcome back';
+		authKicker.textContent = drytis ? 'Connected workspace' : setup ? 'Secure this instance' : 'Mission control';
+		authDescription.textContent = drytis
+			? 'Use your Drytis coding-platform identity to enter this Qase workspace.'
+			: setup
 			? 'Create the single owner account for this Qase workspace.'
 			: 'Sign in to continue to your QA workspace.';
-		authSubmitLabel.textContent = setup ? 'Create account' : 'Sign in';
-		authAccountNote.textContent = setup
+		authSubmitLabel.textContent = drytis ? 'Continue to Drytis' : setup ? 'Create account' : 'Sign in';
+		authAccountNote.textContent = drytis
+			? 'Qase accepts only short-lived, signed launch requests from Drytis.'
+			: setup
 			? 'Use at least 12 characters. Your password is never stored in plain text.'
 			: 'This Qase instance is restricted to its owner account.';
 		if (authSecurityCopy) {
-			authSecurityCopy.textContent = setup
+			authSecurityCopy.textContent = drytis
+				? 'Identity verified by Drytis; session protected by Qase.'
+				: setup
 				? 'Protected with a one-way scrypt password hash.'
 				: 'Protected by a secure server-side session.';
 		}
+		emailField.hidden = drytis;
+		passwordField.hidden = drytis;
+		authOptions.hidden = drytis;
+		emailInput.required = !drytis;
+		passwordInput.required = !drytis;
 		confirmField.hidden = !setup;
 		confirmInput.required = setup;
 		if (!setup) confirmInput.value = '';
@@ -162,7 +177,7 @@ if (entry) {
 				await completeAuthentication(session);
 				return;
 			}
-			setAuthMode(session.configured ? 'login' : 'setup');
+			setAuthMode(session.provider === 'drytis' ? 'drytis' : session.configured ? 'login' : 'setup');
 		} catch (error) {
 			setAuthMode('login');
 			setAuthMessage(error instanceof Error ? error.message : String(error), 'error');
@@ -173,7 +188,7 @@ if (entry) {
 
 		window.setTimeout(() => {
 			updateView('auth');
-			focusWithoutScroll(emailInput);
+			focusWithoutScroll(authMode === 'drytis' ? authSubmit : emailInput);
 		}, switchDelay);
 		window.setTimeout(() => {
 			entry.classList.remove('is-warping');
@@ -231,7 +246,11 @@ if (entry) {
 
 	async function submitAuthentication(event) {
 		event.preventDefault();
-		if (transitioning || submitting || !authForm.reportValidity()) return;
+		if (transitioning || submitting || (authMode !== 'drytis' && !authForm.reportValidity())) return;
+		if (authMode === 'drytis') {
+			window.location.assign(authStatus.loginUrl);
+			return;
+		}
 
 		if (authMode === 'setup' && passwordInput.value !== confirmInput.value) {
 			confirmInput.setCustomValidity('Passwords do not match.');
@@ -246,7 +265,7 @@ if (entry) {
 		backButton.disabled = true;
 		authForm.setAttribute('aria-busy', 'true');
 		authSubmit.classList.add('is-loading');
-		authSubmitLabel.textContent = authMode === 'setup' ? 'Creating account…' : 'Signing in…';
+			authSubmitLabel.textContent = authMode === 'setup' ? 'Creating account…' : 'Signing in…';
 		setAuthMessage(authMode === 'setup' ? 'Securing your workspace…' : 'Verifying your session…');
 
 		try {
@@ -384,7 +403,7 @@ if (entry) {
 				await completeAuthentication(session, true);
 				return;
 			}
-			setAuthMode(session.configured ? 'login' : 'setup');
+			setAuthMode(session.provider === 'drytis' ? 'drytis' : session.configured ? 'login' : 'setup');
 		} catch {
 			// The entry stays usable. A precise network error is shown if the user
 			// opens or submits the auth form while the server is unavailable.

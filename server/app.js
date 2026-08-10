@@ -4,6 +4,7 @@ import express from 'express';
 import { createAuthentication, securityHeaders } from './auth.js';
 import { assertApplicationServices } from './contracts.js';
 import { mountDemoSite } from './demoSite.js';
+import { runWithRequestActor } from './requestActor.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const URL_PATTERN = /\bhttps?:\/\/[^\s<>"']+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>"']*)?/i;
@@ -77,6 +78,7 @@ export function createApplication(options = {}) {
 	// Authentication routes stay public; middleware installed after them protects
 	// every application API route, including reports and event streams.
 	authentication.mount(app);
+	app.use('/api', (request, _response, next) => runWithRequestActor(request.auth, next));
 
 	async function requireSession(request, response) {
 		const session = await services.runs.get(request.params.id);
@@ -288,19 +290,31 @@ export function createApplication(options = {}) {
 		}
 
 		let closed = false;
+		let checkingSession = false;
 		const cleanup = () => {
 			if (closed) return;
 			closed = true;
 			clearInterval(heartbeat);
 			unsubscribe();
 		};
-		const heartbeat = setInterval(() => {
-			if (!authentication.isSessionActive(request.auth?.sessionId)) {
+		const heartbeat = setInterval(async () => {
+			if (checkingSession) return;
+			checkingSession = true;
+			try {
+				if (!await authentication.isSessionActive(
+					request.auth?.sessionReference ?? request.auth?.sessionId
+				)) {
+					cleanup();
+					response.end();
+					return;
+				}
+				response.write(': ping\n\n');
+			} catch {
 				cleanup();
 				response.end();
-				return;
+			} finally {
+				checkingSession = false;
 			}
-			response.write(': ping\n\n');
 		}, heartbeatMs);
 		request.on('close', cleanup);
 	});

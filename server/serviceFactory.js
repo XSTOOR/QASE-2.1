@@ -50,7 +50,7 @@ export async function createConfiguredApplicationServices(options = {}) {
 		const services = (options.createLocalServices ?? createLocalApplicationServices)();
 		services.tenantContext = tenantContext;
 		await services.runs.load();
-		return { mode, services, tenantContext };
+		return { mode, services, tenantContext, pool: undefined };
 	}
 
 	const pool = options.pool ?? (options.createPool ?? createPostgresPool)({ environment });
@@ -69,7 +69,7 @@ export async function createConfiguredApplicationServices(options = {}) {
 			recoverActiveRuns: recoverPostgresRunsOnStartup(environment)
 		});
 		await services.runs.load();
-		return { mode, services, tenantContext };
+		return { mode, services, tenantContext, pool };
 	} catch (error) {
 		if (repository) await repository.close().catch(() => undefined);
 		else if (typeof pool.end === 'function') await Promise.resolve(pool.end()).catch(() => undefined);

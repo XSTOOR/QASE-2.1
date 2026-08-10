@@ -99,6 +99,12 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 | `QASE_HOST` | `127.0.0.1` | Interface to bind. Keep loopback unless you deliberately deploy Qase. |
 | `QASE_ENABLE_DEMO` | `true` outside production | `false` disables the practice site; production always disables it |
 | `QASE_AUTH_SESSION_HOURS` | `12` | Lifetime of a normal authenticated session |
+| `QASE_AUTH_MODE` | `local` | `local` owner login or PostgreSQL-backed `drytis` signed-launch SSO |
+| `QASE_PUBLIC_URL` | — | Required HTTPS public origin in Drytis mode |
+| `QASE_DRYTIS_LOGIN_URL` | — | Drytis launch-page URL used to begin SSO |
+| `QASE_DRYTIS_ISSUER` | — | Exact trusted JWT issuer |
+| `QASE_DRYTIS_AUDIENCE` | — | Exact Qase audience required in launch JWTs |
+| `QASE_DRYTIS_JWKS_URL` | — | HTTPS Drytis signing-key endpoint with rotation support |
 | `QASE_AUTH_REMEMBER_DAYS` | `30` | Lifetime when **Remember me** is selected |
 | `QASE_AUTH_COOKIE_SECURE` | `auto` | `true` forces HTTPS-only auth cookies; `auto` follows the incoming protocol |
 | `QASE_AUTH_SETUP_TOKEN` | unset | Required for first-owner setup from a non-loopback address |

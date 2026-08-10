@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createRuntimeApplicationServices } from './localServices.js';
+import { currentRequestActor } from './requestActor.js';
 
 function clone(value) {
 	return structuredClone(value);
@@ -47,7 +48,7 @@ function summary(session) {
 function eventActor(type, payload, tenantContext) {
 	const messageRole = payload?.message?.role;
 	if (messageRole === 'user' || ['run.created', 'session', 'secrets', 'run.stop_requested'].includes(type)) {
-		return { actorType: 'user', actorUserId: tenantContext.actorUserId };
+		return { actorType: 'user', actorUserId: currentRequestActor()?.actorUserId ?? tenantContext.actorUserId };
 	}
 	if (messageRole === 'system' || type === 'run.recovered') {
 		return { actorType: 'system', actorUserId: undefined };

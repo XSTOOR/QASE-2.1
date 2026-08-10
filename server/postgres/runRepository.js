@@ -116,10 +116,10 @@ function eventOptions(options, fallbackDate, tenant) {
 	}
 	let actorUserId = null;
 	if (actorType === 'user') {
-		if (options?.actorUserId !== undefined && options.actorUserId !== tenant.actorUserId) {
-			throw new TypeError('User event attribution must use the trusted tenant actor.');
+		actorUserId = options?.actorUserId ?? tenant.actorUserId;
+		if (typeof actorUserId !== 'string' || !UUID_PATTERN.test(actorUserId)) {
+			throw new TypeError('User event attribution requires a trusted canonical actor UUID.');
 		}
-		actorUserId = tenant.actorUserId;
 	} else if (options?.actorUserId !== undefined && options.actorUserId !== null) {
 		// The schema intentionally forbids a user identity on agent/system events.
 		throw new TypeError('Agent and system events cannot carry a user actor ID.');

@@ -1,10 +1,14 @@
 import 'dotenv/config';
 import { createApplication } from './app.js';
+import { createConfiguredAuthentication } from './authFactory.js';
 import { createConfiguredApplicationServices } from './serviceFactory.js';
 
-const { services, mode: runStoreMode } = await createConfiguredApplicationServices();
+const { services, mode: runStoreMode, tenantContext, pool } = await createConfiguredApplicationServices();
+const { authentication, mode: authenticationMode } = createConfiguredAuthentication({
+	runStoreMode, tenantContext, pool
+});
 
-const { app, demoEnabled } = createApplication({ services });
+const { app, demoEnabled } = createApplication({ services, authentication });
 const port = Number(process.env.PORT ?? 5173);
 const host = String(process.env.QASE_HOST ?? '127.0.0.1').trim() || '127.0.0.1';
 
@@ -37,6 +41,7 @@ app.listen(port, host, () => {
 	console.log('\n  Qase — autonomous QA agent');
 	console.log(`  http://${host}:${port}`);
 	console.log(`  run store: ${runStoreMode}`);
+	console.log(`  authentication: ${authenticationMode}`);
 	console.log(`  ${config.provider} · ${config.model}${config.baseUrl ? ` · ${config.baseUrl}` : ''}`);
 	if (demoEnabled) {
 		console.log(`  practice target: http://${host}:${port}/demo  (demo@qase.dev / demo1234)`);

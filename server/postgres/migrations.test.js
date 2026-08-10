@@ -54,11 +54,12 @@ function statements(client) {
 
 test('loads the checked migration set in numeric order', async () => {
 	const migrations = await loadMigrations();
-	assert.deepEqual(migrations.map(migration => migration.version), [1, 2, 3]);
+	assert.deepEqual(migrations.map(migration => migration.version), [1, 2, 3, 4]);
 	assert.deepEqual(migrations.map(migration => migration.name), [
 		'identity_tenancy',
 		'run_domain',
-		'events_import_rls'
+		'events_import_rls',
+		'drytis_identity_sessions'
 	]);
 	for (const migration of migrations) {
 		assert.match(migration.checksum, /^[0-9a-f]{64}$/);
@@ -68,6 +69,7 @@ test('loads the checked migration set in numeric order', async () => {
 	assert.match(migrations[2].sql, /FORCE ROW LEVEL SECURITY/);
 	assert.match(migrations[2].sql, /current_setting\('qase\.organization_id', true\)/);
 	assert.match(migrations[2].sql, /current_setting\('qase\.project_id', true\)/);
+	assert.match(migrations[3].sql, /CREATE TABLE qase_auth_sessions/);
 });
 
 test('applies pending migrations in order and records them with parameters', async () => {
@@ -79,20 +81,21 @@ test('applies pending migrations in order and records them with parameters', asy
 		.filter(Boolean);
 
 	assert.equal(pool.connectCalls, 1);
-	assert.deepEqual(migrationOrder, ['001', '002', '003']);
-	assert.deepEqual(result.applied.map(migration => migration.version), [1, 2, 3]);
-	assert.equal(result.currentVersion, 3);
-	assert.equal(sql.filter(statement => statement === 'BEGIN').length, 3);
-	assert.equal(sql.filter(statement => statement === 'COMMIT').length, 3);
+	assert.deepEqual(migrationOrder, ['001', '002', '003', '004']);
+	assert.deepEqual(result.applied.map(migration => migration.version), [1, 2, 3, 4]);
+	assert.equal(result.currentVersion, 4);
+	assert.equal(sql.filter(statement => statement === 'BEGIN').length, 4);
+	assert.equal(sql.filter(statement => statement === 'COMMIT').length, 4);
 	assert.equal(sql.filter(statement => statement === 'ROLLBACK').length, 0);
 
 	const records = pool.client.calls.filter(call => call.text.startsWith('INSERT INTO qase_schema_migrations'));
-	assert.equal(records.length, 3);
+	assert.equal(records.length, 4);
 	assert.match(records[0].text, /VALUES \(\$1, \$2, \$3\)/);
 	assert.deepEqual(records.map(record => record.values.slice(0, 2)), [
 		[1, 'identity_tenancy'],
 		[2, 'run_domain'],
-		[3, 'events_import_rls']
+		[3, 'events_import_rls'],
+		[4, 'drytis_identity_sessions']
 	]);
 	assert.deepEqual(pool.client.calls[0].values, [MIGRATION_ADVISORY_LOCK_KEY]);
 	assert.match(sql[0], /pg_advisory_lock/);
@@ -108,7 +111,7 @@ test('does no transactional work when every migration is already applied', async
 	const result = await runPostgresMigrations(pool);
 	const sql = statements(pool.client);
 
-	assert.deepEqual(result, { applied: [], currentVersion: 3 });
+	assert.deepEqual(result, { applied: [], currentVersion: 4 });
 	assert.equal(sql.includes('BEGIN'), false);
 	assert.equal(sql.some(statement => statement.startsWith('INSERT INTO qase_schema_migrations')), false);
 	assert.match(sql.at(-1), /pg_advisory_unlock/);

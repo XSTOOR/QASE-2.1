@@ -177,16 +177,16 @@ test('create replaces normalized children and commits its durable event before s
 	assert.equal(fake.calls.at(-1).text, 'COMMIT');
 });
 
-test('event attribution rejects arbitrary user IDs and user IDs on agent/system events', async () => {
+test('event attribution requires canonical trusted user IDs and forbids user IDs on agent/system events', async () => {
 	const fake = scriptedPool();
 	const repository = createPostgresRunRepository({ pool: fake.pool, tenantContext: TENANT, now: () => NOW });
 	await assert.rejects(
 		repository.create(session(), {
 			eventType: 'run.created',
 			actorType: 'user',
-			actorUserId: '3260cc0d-65dd-49c7-974c-ce2af7a9573e'
+			actorUserId: 'not-a-trusted-uuid'
 		}),
-		/trusted tenant actor/
+		/trusted canonical actor UUID/
 	);
 	assert.equal(fake.calls.at(-1).text, 'ROLLBACK');
 

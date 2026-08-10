@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DEFAULT_TENANT_CONTEXT } from './tenancy.js';
 import { createPostgresApplicationServices } from './postgresServices.js';
+import { runWithRequestActor } from './requestActor.js';
 
 const FIRST_ID = '6bf078e0-20df-48c3-a6f8-eb74ca14b9e1';
 const SECOND_ID = '08ddf3b0-4499-4101-a20f-d87d3eebcd52';
@@ -275,4 +276,21 @@ test('tenant context is exposed read-only, readiness delegates, and close is ide
 	]);
 	await services.lifecycle.close();
 	assert.equal(fake.state.closeCalls, 1);
+});
+
+test('trusted Drytis request identity is retained for detached durable user events', async () => {
+	const fake = createFakeRepository();
+	const services = createPostgresApplicationServices({
+		repository: fake.repository,
+		tenantContext: DEFAULT_TENANT_CONTEXT,
+		now: () => 700
+	});
+	await services.runs.load();
+	const actorUserId = '9e2fb678-423e-41a0-ae19-e9cae143c606';
+	await runWithRequestActor({ actorUserId }, async () => {
+		await Promise.resolve();
+		await services.runs.create('Drytis run');
+	});
+	assert.equal(fake.state.createCalls[0].metadata.actorType, 'user');
+	assert.equal(fake.state.createCalls[0].metadata.actorUserId, actorUserId);
 });
