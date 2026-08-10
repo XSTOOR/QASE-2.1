@@ -83,7 +83,9 @@ test('rejects tampering, wrong audience, long lifetime, and invalid tenant claim
 	const key = keys('primary');
 	const instance = verifier({ current: [key.jwk] }, { count: 0 });
 	const valid = token(key.privateKey, 'primary');
-	await assert.rejects(() => instance.verify(`${valid.slice(0, -2)}aa`), DrytisTokenError);
+	const [header, payload, signature] = valid.split('.');
+	const tamperedSignature = `${signature[0] === 'A' ? 'B' : 'A'}${signature.slice(1)}`;
+	await assert.rejects(() => instance.verify(`${header}.${payload}.${tamperedSignature}`), DrytisTokenError);
 	await assert.rejects(() => instance.verify(token(key.privateKey, 'primary', { aud: 'another-service' })), /audience/i);
 	await assert.rejects(() => instance.verify(token(key.privateKey, 'primary', {
 		iat: Math.floor(NOW / 1000) - 1, exp: Math.floor(NOW / 1000) + 600

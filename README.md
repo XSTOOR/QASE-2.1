@@ -105,6 +105,12 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 | `QASE_DRYTIS_ISSUER` | — | Exact trusted JWT issuer |
 | `QASE_DRYTIS_AUDIENCE` | — | Exact Qase audience required in launch JWTs |
 | `QASE_DRYTIS_JWKS_URL` | — | HTTPS Drytis signing-key endpoint with rotation support |
+| `QASE_EXECUTION_MODE` | `local` | `distributed` moves agent/browser work into dedicated workers |
+| `QASE_REDIS_URL` | — | Redis transport URL; production distributed mode requires `rediss://` |
+| `QASE_SECRETS_MASTER_KEY` | — | Shared base64url 32-byte key for short-lived encrypted worker credentials |
+| `QASE_WORKER_LEASE_MS` | `30000` | Durable worker lease duration; heartbeats run at one third of this value |
+| `QASE_JOB_MAX_ATTEMPTS` | `3` | Maximum claims before a repeatedly abandoned job fails visibly |
+| `QASE_JOB_RETENTION_DAYS` | `30` | Terminal job retention; cleanup is bounded to 1,000 rows per claim cycle |
 | `QASE_AUTH_REMEMBER_DAYS` | `30` | Lifetime when **Remember me** is selected |
 | `QASE_AUTH_COOKIE_SECURE` | `auto` | `true` forces HTTPS-only auth cookies; `auto` follows the incoming protocol |
 | `QASE_AUTH_SETUP_TOKEN` | unset | Required for first-owner setup from a non-loopback address |

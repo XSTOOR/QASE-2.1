@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { test } from 'node:test';
 import pg from 'pg';
 import { runPostgresMigrations } from './migrations.js';
+import { createPostgresExecutionQueue } from './executionQueue.js';
 import {
 	RunVersionConflictError,
 	createPostgresRunRepository
@@ -155,6 +156,28 @@ test(
 		assert.equal(tenantAGet.version, created.version);
 		assert.deepEqual((await tenantARepository.list()).map(run => run.id), [value.id]);
 
+		const tenantAQueue = createPostgresExecutionQueue({ pool: tenantAPool, tenantContext: contextA });
+		const tenantBQueue = createPostgresExecutionQueue({ pool: tenantBPool, tenantContext: contextB });
+		const queued = await tenantAQueue.enqueue({
+			runId: value.id,
+			requestedByUserId: contextA.actorUserId,
+			turnOptions: { task: 'integration canary' }
+		});
+		assert.equal(queued.status, 'queued');
+		assert.equal(await tenantBQueue.claim('integration-worker-b'), undefined);
+		const claimed = await tenantAQueue.claim('integration-worker-a');
+		assert.equal(claimed.id, queued.id);
+		assert.equal(await tenantAQueue.heartbeat({
+			jobId: claimed.id,
+			leaseToken: claimed.leaseToken,
+			workerId: 'integration-worker-a'
+		}), 'leased');
+		assert.equal(await tenantAQueue.complete({
+			jobId: claimed.id,
+			leaseToken: claimed.leaseToken,
+			workerId: 'integration-worker-a'
+		}), 'succeeded');
+
 		assert.equal(await tenantBRepository.get(value.id), undefined);
 		assert.deepEqual(await tenantBRepository.list(), []);
 
@@ -196,5 +219,7 @@ test(
 
 		const raw = await tenantAPool.query('SELECT COUNT(*)::int AS count FROM runs');
 		assert.equal(raw.rows[0].count, 0, 'forced RLS must default-deny without transaction-local tenant context');
+		const rawJobs = await tenantAPool.query('SELECT COUNT(*)::int AS count FROM qa_execution_jobs');
+		assert.equal(rawJobs.rows[0].count, 0, 'execution jobs must default-deny without tenant context');
 	}
 );

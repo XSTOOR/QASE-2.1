@@ -68,6 +68,8 @@ function eventActor(type, payload, tenantContext) {
 export function createPostgresApplicationServices({
 	repository,
 	tenantContext,
+	eventTransport,
+	hydrateAll = true,
 	now = () => Date.now(),
 	recoverActiveRuns = true
 }) {
@@ -122,7 +124,9 @@ export function createPostgresApplicationServices({
 	}
 
 	function publish(session, type, payload = {}, timestamp = now()) {
-		bus.emit(session.id, { type, sessionId: session.id, ts: timestamp, ...payload });
+		const event = { type, sessionId: session.id, ts: timestamp, ...payload };
+		if (eventTransport) eventTransport.publish(event);
+		else bus.emit(session.id, event);
 	}
 
 	function enqueue(id, operation) {
@@ -177,8 +181,9 @@ export function createPostgresApplicationServices({
 
 	const runStore = {
 		async load() {
+			await eventTransport?.load();
 			await repository.bootstrapTenant();
-			const records = await repository.loadAll();
+			const records = hydrateAll ? await repository.loadAll() : [];
 			for (const { session, version } of records) {
 				sessions.set(session.id, session);
 				versions.set(session.id, version);
@@ -292,6 +297,7 @@ export function createPostgresApplicationServices({
 		},
 		publish,
 		subscribe(sessionId, listener) {
+			if (eventTransport) return eventTransport.subscribe(sessionId, listener);
 			bus.on(sessionId, listener);
 			return () => bus.off(sessionId, listener);
 		},
@@ -302,7 +308,11 @@ export function createPostgresApplicationServices({
 			}
 			try {
 				await repository.check();
-				return { ready: true, checks: { postgres: 'ready' } };
+				const realtimeReady = eventTransport ? await eventTransport.check() : true;
+				return {
+					ready: realtimeReady,
+					checks: { postgres: 'ready', ...(eventTransport ? { redis: realtimeReady ? 'ready' : 'error' } : {}) }
+				};
 			} catch (error) {
 				lastError = error;
 				return { ready: false, checks: { postgres: 'error' } };
@@ -313,6 +323,7 @@ export function createPostgresApplicationServices({
 				await Promise.allSettled([...queues.values()]);
 				for (const record of live.values()) record.dispose?.();
 				live.clear();
+				await eventTransport?.close();
 				await repository.close();
 			})();
 			return closing;
@@ -321,5 +332,6 @@ export function createPostgresApplicationServices({
 
 	const services = createRuntimeApplicationServices(runStore);
 	services.tenantContext = tenantContext;
+	services.realtime = eventTransport;
 	return services;
 }

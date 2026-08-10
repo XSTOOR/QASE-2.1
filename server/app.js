@@ -143,7 +143,7 @@ export function createApplication(options = {}) {
 		const liveState = services.agent.getLiveState(session.id);
 		response.json({
 			...session,
-			secretNames: services.secrets.names(session.id),
+			secretNames: await services.secrets.names(session.id),
 			running: liveState.running,
 			frame: liveState.frame
 		});
@@ -155,8 +155,9 @@ export function createApplication(options = {}) {
 			response.json({ deleted: false });
 			return;
 		}
+		if (services.agent.isRemote) await services.agent.stop(session.id);
 		const deleted = await services.runs.delete(session.id);
-		if (deleted) services.secrets.clear(session.id);
+		if (deleted) await services.secrets.clear(session.id);
 		response.json({ deleted });
 	});
 
@@ -229,12 +230,12 @@ export function createApplication(options = {}) {
 			return;
 		}
 
-		const names = services.secrets.store(session.id, fields);
+		const names = await services.secrets.store(session.id, fields);
 		if (names.length === 0) {
 			response.status(400).json({ error: 'No usable credentials supplied.' });
 			return;
 		}
-		session.secretNames = services.secrets.names(session.id);
+		session.secretNames = await services.secrets.names(session.id);
 
 		const note = String(request.body?.note ?? '').trim();
 		const placeholders = names.map(name => `{{${name}}}`).join(', ');
@@ -259,7 +260,7 @@ export function createApplication(options = {}) {
 		const session = await requireSession(request, response);
 		if (!session) return;
 		await services.runs.commit(session, 'run.stop_requested');
-		services.agent.stop(session.id);
+		await services.agent.stop(session.id);
 		response.json({ ok: true });
 	});
 

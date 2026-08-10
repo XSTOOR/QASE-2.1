@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
+    "worker": "node server/worker.js",
     "test": "node --test server/*.test.js server/postgres/*.test.js",
     "db:migrate": "node scripts/migrate.mjs",
     "db:import": "node scripts/import-sessions.mjs",
@@ -22,6 +23,7 @@
     "@cleanslate/sdk": "^0.1.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "redis": "6.2.0"
   }
 }

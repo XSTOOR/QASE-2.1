@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
 	RUN_STORE_MODES,
+	configuredExecutionMode,
 	configuredRunStore,
 	createConfiguredApplicationServices
 } from './serviceFactory.js';
@@ -25,6 +26,15 @@ test('run-store selection defaults to local and rejects unsupported modes', () =
 		() => configuredRunStore({ QASE_RUN_STORE: 'automatic-fallback' }),
 		/unsupported|unknown|QASE_RUN_STORE/i
 	);
+});
+
+test('execution selection defaults to local and distributed mode refuses local persistence', async () => {
+	assert.equal(configuredExecutionMode({}), 'local');
+	assert.equal(configuredExecutionMode({ QASE_EXECUTION_MODE: ' DISTRIBUTED ' }), 'distributed');
+	assert.throws(() => configuredExecutionMode({ QASE_EXECUTION_MODE: 'magic' }), /local, distributed/);
+	await assert.rejects(() => createConfiguredApplicationServices({
+		environment: { QASE_EXECUTION_MODE: 'distributed' }
+	}), /requires QASE_RUN_STORE=postgres/);
 });
 
 test('local mode loads only local services and never constructs PostgreSQL infrastructure', async () => {
@@ -174,4 +184,57 @@ test('postgres startup failure closes its pool and never falls back to local', a
 	);
 	assert.equal(poolCloseCalls, 1);
 	assert.equal(localCalls, 0);
+});
+
+test('distributed API mode wires Redis, encrypted secrets, queue, and remote agent before readiness', async () => {
+	const calls = [];
+	const pool = { end: async () => calls.push('pool:end') };
+	const repository = { close: async () => pool.end() };
+	const eventTransport = {
+		load: async () => calls.push('events:load'), check: async () => true,
+		close: async () => calls.push('events:close')
+	};
+	const credentialVault = {
+		load: async () => calls.push('secrets:load'), check: async () => true,
+		close: async () => calls.push('secrets:close')
+	};
+	const executionQueue = { check: async () => true };
+	const remoteAgent = { isRemote: true };
+	let serviceOptions;
+	const services = {
+		runs: { load: async () => { await serviceOptions.eventTransport.load(); calls.push('runs:load'); } },
+		readiness: { check: async () => ({ ready: true, checks: { postgres: 'ready' } }) },
+		lifecycle: { close: async () => { await eventTransport.close(); await repository.close(); } },
+		secrets: {}, agent: { local: true }
+	};
+	const result = await createConfiguredApplicationServices({
+		environment: {
+			QASE_RUN_STORE: 'postgres', QASE_EXECUTION_MODE: 'distributed',
+			QASE_DATABASE_MIGRATE_ON_START: 'false'
+		},
+		pool,
+		createRepository: () => repository,
+		createEventTransport: () => eventTransport,
+		createCredentialVault: () => credentialVault,
+		createPostgresServices: options => {
+			serviceOptions = options;
+			assert.equal(options.hydrateAll, false);
+			assert.equal(options.recoverActiveRuns, false);
+			return services;
+		},
+		createExecutionQueue: options => { assert.equal(options.pool, pool); return executionQueue; },
+		createDistributedAgent: options => {
+			assert.equal(options.queue, executionQueue);
+			assert.equal(options.realtime, eventTransport);
+			return remoteAgent;
+		}
+	});
+	assert.equal(result.executionMode, 'distributed');
+	assert.equal(result.executionRole, 'api');
+	assert.equal(result.services.agent, remoteAgent);
+	assert.equal(result.services.secrets, credentialVault);
+	assert.equal((await result.services.readiness.check()).ready, true);
+	assert.deepEqual(calls.slice(0, 3), ['events:load', 'runs:load', 'secrets:load']);
+	await result.services.lifecycle.close();
+	assert.ok(calls.includes('secrets:close'));
 });

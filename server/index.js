@@ -3,7 +3,9 @@ import { createApplication } from './app.js';
 import { createConfiguredAuthentication } from './authFactory.js';
 import { createConfiguredApplicationServices } from './serviceFactory.js';
 
-const { services, mode: runStoreMode, tenantContext, pool } = await createConfiguredApplicationServices();
+const {
+	services, mode: runStoreMode, executionMode, tenantContext, pool
+} = await createConfiguredApplicationServices();
 const { authentication, mode: authenticationMode } = createConfiguredAuthentication({
 	runStoreMode, tenantContext, pool
 });
@@ -28,7 +30,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 			// process-local browser cleanup must still continue.
 		}
 		await Promise.all(summaries.map(summary => {
-			services.agent.stop(summary.id);
+			if (!services.agent.isRemote) services.agent.stop(summary.id);
 			return services.agent.closeBrowser(summary.id);
 		}));
 		await services.lifecycle.close();
@@ -41,6 +43,7 @@ app.listen(port, host, () => {
 	console.log('\n  Qase — autonomous QA agent');
 	console.log(`  http://${host}:${port}`);
 	console.log(`  run store: ${runStoreMode}`);
+	console.log(`  execution: ${executionMode}`);
 	console.log(`  authentication: ${authenticationMode}`);
 	console.log(`  ${config.provider} · ${config.model}${config.baseUrl ? ` · ${config.baseUrl}` : ''}`);
 	if (demoEnabled) {
