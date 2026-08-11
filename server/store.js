@@ -108,6 +108,7 @@ export function listSessions() {
 
 export function deleteSession(id) {
 	const record = live.get(id);
+	record?.controller?.abort();
 	record?.dispose?.();
 	live.delete(id);
 	const existed = sessions.delete(id);
@@ -123,6 +124,16 @@ export function liveFor(id) {
 		live.set(id, record);
 	}
 	return record;
+}
+
+/** Read live handles without creating state for an already-deleted run. */
+export function peekLive(id) {
+	return live.get(id);
+}
+
+/** Remove one live handle record after its controller/runtime are disposed. */
+export function dropLive(id) {
+	return live.delete(id);
 }
 
 /** Events that exist only for the live view and are not worth a disk write. */

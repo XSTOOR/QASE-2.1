@@ -62,12 +62,26 @@ export function createPostgresExecutionQueue(options = {}) {
 
 	return Object.freeze({
 		async enqueue({ runId, requestedByUserId, turnOptions, idempotencyKey, correlationId }) {
-			uuid(runId, 'runId');
+			const selectedRunId = uuid(runId, 'runId');
 			uuid(requestedByUserId, 'requestedByUserId');
 			if (correlationId !== undefined) uuid(correlationId, 'correlationId');
 			const payload = structuredClone(turnOptions ?? {});
 			const jobId = idempotencyKey ? uuid(idempotencyKey, 'idempotencyKey') : randomUUID();
 			return transaction(async client => {
+				// Serialize job admission against Phase 10 run tombstoning. A plain
+				// foreign key still permits jobs for soft-deleted parent rows.
+				const run = await client.query(
+					`SELECT id FROM qa_runs
+					 WHERE organization_id = $1 AND project_id = $2 AND id = $3
+						AND deleted_at IS NULL
+					 FOR SHARE`,
+					[tenant.organizationId, tenant.projectId, selectedRunId]
+				);
+				if (!run.rows?.length) {
+					const error = new Error('This run is no longer available for execution.');
+					error.code = 'QASE_RUN_NOT_AVAILABLE';
+					throw error;
+				}
 				const capacityScope = `${tenant.organizationId}:${tenant.projectId}:execution-capacity`;
 				await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [capacityScope]);
 				const capacity = await client.query(
@@ -86,7 +100,7 @@ export function createPostgresExecutionQueue(options = {}) {
 						`INSERT INTO qa_execution_jobs
 						 (id, organization_id, project_id, run_id, requested_by_user_id, correlation_id, kind, payload, max_attempts)
 						 VALUES ($1, $2, $3, $4, $5, $6, 'turn', $7::jsonb, $8) RETURNING *`,
-						[jobId, tenant.organizationId, tenant.projectId, runId, requestedByUserId,
+						[jobId, tenant.organizationId, tenant.projectId, selectedRunId, requestedByUserId,
 						 correlationId ?? null, JSON.stringify(payload), defaultMaxAttempts]
 					);
 					return hydrate(result.rows[0]);
@@ -107,9 +121,17 @@ export function createPostgresExecutionQueue(options = {}) {
 			return transaction(async client => {
 				await client.query(
 					`DELETE FROM qa_execution_jobs WHERE ctid IN (
-					 SELECT ctid FROM qa_execution_jobs WHERE organization_id = $1 AND project_id = $2
-					 AND status IN ('succeeded', 'failed', 'cancelled')
-					 AND finished_at < CURRENT_TIMESTAMP - ($3 * INTERVAL '1 day') LIMIT 1000
+					 SELECT job.ctid FROM qa_execution_jobs job
+					 WHERE job.organization_id = $1 AND job.project_id = $2
+					 AND job.status IN ('succeeded', 'failed', 'cancelled')
+					 AND job.finished_at < CURRENT_TIMESTAMP - ($3 * INTERVAL '1 day')
+					 AND NOT EXISTS (
+						SELECT 1 FROM qa_run_legal_holds hold
+						WHERE hold.organization_id = $1 AND hold.project_id = $2
+						AND hold.run_id = job.run_id
+					 )
+					 ORDER BY job.finished_at, job.id
+					 FOR UPDATE OF job SKIP LOCKED LIMIT 1000
 					)`,
 					[tenant.organizationId, tenant.projectId, retentionDays]
 				);

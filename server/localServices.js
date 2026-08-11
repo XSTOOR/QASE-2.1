@@ -4,8 +4,9 @@ import { buildReportMarkdown } from './report.js';
 import { clearSecrets, secretNames, storeSecrets } from './secrets.js';
 import {
 	addActivity, addMessage, bus, createSession, deleteSession, emit, getSession,
-	flushSessions, listSessions, liveFor, loadSessions, setStatus, updateActivity
+	dropLive, flushSessions, listSessions, liveFor, loadSessions, peekLive, setStatus, updateActivity
 } from './store.js';
+import { purgeRunWorkspace } from './workspaceLifecycle.js';
 
 /**
 	* Builds the non-persistence services around a run store. Both the rollback
@@ -13,6 +14,7 @@ import {
 	* accidentally bypass the selected durable store.
  */
 export function createRuntimeApplicationServices(runStore, options = {}) {
+	const purgeWorkspace = options.purgeRunWorkspace ?? purgeRunWorkspace;
 	return {
 		runs: runStore,
 		events: {
@@ -34,6 +36,27 @@ export function createRuntimeApplicationServices(runStore, options = {}) {
 		},
 		agent: {
 			closeBrowser: sessionId => closeBrowser(sessionId, runStore),
+			async purgeArtifacts(sessionId) {
+				const record = runStore.peekLive?.(sessionId);
+				let disposalError;
+				try {
+					record?.controller?.abort();
+					record?.dispose?.();
+				} catch (error) {
+					disposalError = error;
+				} finally {
+					runStore.dropLive?.(sessionId);
+				}
+				try {
+					await purgeWorkspace(sessionId);
+				} catch (workspaceError) {
+					if (disposalError) {
+						throw new AggregateError([disposalError, workspaceError], 'Run artifact cleanup failed.');
+					}
+					throw workspaceError;
+				}
+				if (disposalError) throw disposalError;
+			},
 			ensureRuntime: session => ensureRuntime(session, runStore),
 			runTurn: (session, turnOptions) => runTurn(session, turnOptions, runStore),
 			getLiveState(sessionId) {
@@ -123,6 +146,8 @@ export function createLocalApplicationServices() {
 			return () => bus.off(sessionId, listener);
 		},
 		liveFor,
+		peekLive,
+		dropLive,
 		check() {
 			return {
 				ready: initialized && !closed,

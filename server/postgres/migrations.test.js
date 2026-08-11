@@ -54,14 +54,15 @@ function statements(client) {
 
 test('loads the checked migration set in numeric order', async () => {
 	const migrations = await loadMigrations();
-	assert.deepEqual(migrations.map(migration => migration.version), [1, 2, 3, 4, 5, 6]);
+	assert.deepEqual(migrations.map(migration => migration.version), [1, 2, 3, 4, 5, 6, 7]);
 	assert.deepEqual(migrations.map(migration => migration.name), [
 		'identity_tenancy',
 		'run_domain',
 		'events_import_rls',
 		'drytis_identity_sessions',
 		'distributed_execution',
-		'operational_correlation'
+		'operational_correlation',
+		'data_lifecycle'
 	]);
 	for (const migration of migrations) {
 		assert.match(migration.checksum, /^[0-9a-f]{64}$/);
@@ -74,6 +75,21 @@ test('loads the checked migration set in numeric order', async () => {
 	assert.match(migrations[3].sql, /CREATE TABLE qase_auth_sessions/);
 	assert.match(migrations[4].sql, /FOR UPDATE SKIP LOCKED|CREATE TABLE qa_execution_jobs/);
 	assert.match(migrations[5].sql, /ADD COLUMN correlation_id uuid/);
+	assert.match(migrations[6].sql, /CREATE TABLE qase_lifecycle_requests/);
+	assert.match(migrations[6].sql, /CREATE TABLE qa_run_legal_holds/);
+	assert.match(migrations[6].sql, /CREATE TABLE qa_run_legal_holds \([\s\S]*?id uuid PRIMARY KEY/);
+	assert.match(migrations[6].sql, /qa_run_legal_holds_reference_unique[\s\S]*organization_id, project_id, run_id, reference_id/);
+	assert.match(migrations[6].sql, /CREATE TABLE qase_run_cleanup/);
+	assert.match(migrations[6].sql, /request_reference_id text NOT NULL/);
+	assert.match(migrations[6].sql, /attestation_reference_id text/);
+	assert.match(migrations[6].sql, /cleanup attestation reference may only be set on completion/);
+	assert.match(migrations[6].sql, /CREATE TABLE qase_lifecycle_events/);
+	assert.match(migrations[6].sql, /CREATE TABLE qase_erasure_tombstones/);
+	assert.match(migrations[6].sql, /qase_lifecycle_events_append_only/);
+	assert.match(migrations[6].sql, /CREATE TRIGGER qa_runs_restore_suppression/);
+	assert.match(migrations[6].sql, /FOREIGN KEY \(organization_id, project_id, run_id\)[\s\S]*ON DELETE RESTRICT/);
+	assert.match(migrations[6].sql, /FORCE ROW LEVEL SECURITY/);
+	assert.match(migrations[6].sql, /qa_runs_purge_candidates/);
 });
 
 test('applies pending migrations in order and records them with parameters', async () => {
@@ -85,15 +101,15 @@ test('applies pending migrations in order and records them with parameters', asy
 		.filter(Boolean);
 
 	assert.equal(pool.connectCalls, 1);
-	assert.deepEqual(migrationOrder, ['001', '002', '003', '004', '005', '006']);
-	assert.deepEqual(result.applied.map(migration => migration.version), [1, 2, 3, 4, 5, 6]);
-	assert.equal(result.currentVersion, 6);
-	assert.equal(sql.filter(statement => statement === 'BEGIN').length, 6);
-	assert.equal(sql.filter(statement => statement === 'COMMIT').length, 6);
+	assert.deepEqual(migrationOrder, ['001', '002', '003', '004', '005', '006', '007']);
+	assert.deepEqual(result.applied.map(migration => migration.version), [1, 2, 3, 4, 5, 6, 7]);
+	assert.equal(result.currentVersion, 7);
+	assert.equal(sql.filter(statement => statement === 'BEGIN').length, 7);
+	assert.equal(sql.filter(statement => statement === 'COMMIT').length, 7);
 	assert.equal(sql.filter(statement => statement === 'ROLLBACK').length, 0);
 
 	const records = pool.client.calls.filter(call => call.text.startsWith('INSERT INTO qase_schema_migrations'));
-	assert.equal(records.length, 6);
+	assert.equal(records.length, 7);
 	assert.match(records[0].text, /VALUES \(\$1, \$2, \$3\)/);
 	assert.deepEqual(records.map(record => record.values.slice(0, 2)), [
 		[1, 'identity_tenancy'],
@@ -101,7 +117,8 @@ test('applies pending migrations in order and records them with parameters', asy
 		[3, 'events_import_rls'],
 		[4, 'drytis_identity_sessions'],
 		[5, 'distributed_execution'],
-		[6, 'operational_correlation']
+		[6, 'operational_correlation'],
+		[7, 'data_lifecycle']
 	]);
 	assert.deepEqual(pool.client.calls[0].values, [MIGRATION_ADVISORY_LOCK_KEY]);
 	assert.match(sql[0], /pg_advisory_lock/);
@@ -117,7 +134,7 @@ test('does no transactional work when every migration is already applied', async
 	const result = await runPostgresMigrations(pool);
 	const sql = statements(pool.client);
 
-	assert.deepEqual(result, { applied: [], currentVersion: 6 });
+	assert.deepEqual(result, { applied: [], currentVersion: 7 });
 	assert.equal(sql.includes('BEGIN'), false);
 	assert.equal(sql.some(statement => statement.startsWith('INSERT INTO qase_schema_migrations')), false);
 	assert.match(sql.at(-1), /pg_advisory_unlock/);

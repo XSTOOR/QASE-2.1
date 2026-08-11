@@ -37,8 +37,11 @@ function fixture(handler) {
 }
 
 test('enqueue is tenant scoped, stores only structured turn input, and rejects an active-run conflict', async () => {
-	const target = fixture(call => call.text.startsWith('INSERT INTO qa_execution_jobs')
-		? { rows: [row()], rowCount: 1 } : { rows: [], rowCount: 1 });
+	const target = fixture(call => {
+		if (call.text.startsWith('SELECT id FROM qa_runs')) return { rows: [{ id: RUN }], rowCount: 1 };
+		if (call.text.startsWith('INSERT INTO qa_execution_jobs')) return { rows: [row()], rowCount: 1 };
+		return { rows: [], rowCount: 1 };
+	});
 	const job = await target.queue.enqueue({
 		runId: RUN, requestedByUserId: TENANT.actorUserId,
 		turnOptions: { task: 'test example.com' }, idempotencyKey: JOB, correlationId: CORRELATION
@@ -52,6 +55,7 @@ test('enqueue is tenant scoped, stores only structured turn input, and rejects a
 	assert.equal(target.calls.at(-2).text, 'COMMIT');
 
 	const duplicate = fixture(call => {
+		if (call.text.startsWith('SELECT id FROM qa_runs')) return { rows: [{ id: RUN }], rowCount: 1 };
 		if (call.text.startsWith('INSERT INTO qa_execution_jobs')) throw Object.assign(new Error('duplicate'), { code: '23505' });
 		return { rows: [], rowCount: 1 };
 	});
@@ -63,6 +67,7 @@ test('enqueue is tenant scoped, stores only structured turn input, and rejects a
 
 test('enqueue serializes capacity admission and fails closed when the cell is full', async () => {
 	const full = fixture(call => {
+		if (call.text.startsWith('SELECT id FROM qa_runs')) return { rows: [{ id: RUN }], rowCount: 1 };
 		if (call.text.startsWith('SELECT COUNT(*)::int AS count')) return { rows: [{ count: 5 }], rowCount: 1 };
 		return { rows: [], rowCount: 1 };
 	});
@@ -71,6 +76,38 @@ test('enqueue serializes capacity admission and fails closed when the cell is fu
 	}), error => error.code === 'QASE_CELL_CAPACITY_EXCEEDED');
 	assert.ok(full.calls.some(call => call.text.includes('pg_advisory_xact_lock')));
 	assert.equal(full.calls.at(-2).text, 'ROLLBACK');
+});
+
+test('enqueue locks and rejects a soft-deleted or cross-tenant run before capacity admission', async () => {
+	const unavailable = fixture(call => call.text.startsWith('SELECT id FROM qa_runs')
+		? { rows: [], rowCount: 0 }
+		: { rows: [], rowCount: 1 });
+
+	await assert.rejects(() => unavailable.queue.enqueue({
+		runId: RUN, requestedByUserId: TENANT.actorUserId, turnOptions: { task: 'x' }
+	}), error => error.code === 'QASE_RUN_NOT_AVAILABLE');
+	const runRead = unavailable.calls.find(call => call.text.startsWith('SELECT id FROM qa_runs'));
+	assert.match(runRead.text, /organization_id = \$1 AND project_id = \$2 AND id = \$3/);
+	assert.match(runRead.text, /deleted_at IS NULL/);
+	assert.match(runRead.text, /FOR SHARE/);
+	assert.deepEqual(runRead.params, [TENANT.organizationId, TENANT.projectId, RUN]);
+	assert.equal(unavailable.calls.some(call => call.text.includes('execution-capacity')), false);
+	assert.equal(unavailable.calls.at(-2).text, 'ROLLBACK');
+});
+
+test('claim retention cleanup is deterministic, bounded, and preserves jobs for held runs', async () => {
+	const target = fixture();
+	assert.equal(await target.queue.claim('worker:cleanup'), undefined);
+
+	const cleanup = target.calls.find(call => call.text.startsWith('DELETE FROM qa_execution_jobs'));
+	assert.ok(cleanup);
+	assert.match(cleanup.text, /SELECT job\.ctid FROM qa_execution_jobs job/);
+	assert.match(cleanup.text, /job\.organization_id = \$1 AND job\.project_id = \$2/);
+	assert.match(cleanup.text, /NOT EXISTS \([\s\S]*FROM qa_run_legal_holds hold/);
+	assert.match(cleanup.text, /hold\.run_id = job\.run_id/);
+	assert.match(cleanup.text, /ORDER BY job\.finished_at, job\.id/);
+	assert.match(cleanup.text, /FOR UPDATE OF job SKIP LOCKED LIMIT 1000/);
+	assert.deepEqual(cleanup.params, [TENANT.organizationId, TENANT.projectId, 30]);
 });
 
 test('claim uses skip-locked leasing and heartbeat exposes cancellation', async () => {

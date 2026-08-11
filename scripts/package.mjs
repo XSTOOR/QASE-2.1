@@ -98,7 +98,11 @@ for (const required of [
 	'deploy/observability/grafana-dashboard.json',
 	'deploy/qualification/capacity-evidence.schema.json',
 	'deploy/qualification/resilience-evidence.schema.json',
-	'load/k6/control-plane-placement.js'
+	'load/k6/control-plane-placement.js',
+	'server/postgres/migrations/007_data_lifecycle.sql',
+	'server/postgres/retentionRepository.js',
+	'scripts/data-governance.mjs',
+	'docs/enterprise-migration/phase-10-data-governance.md'
 ]) {
 	if (!listing.includes(required)) {
 		fs.rmSync(output, { force: true });

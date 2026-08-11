@@ -171,7 +171,36 @@ export function createApplication(options = {}) {
 		}
 		if (services.agent.isRemote) await services.agent.stop(session.id);
 		const deleted = await services.runs.delete(session.id);
-		if (deleted) await services.secrets.clear(session.id);
+		if (deleted) {
+			const cleanup = await Promise.allSettled([
+				Promise.resolve().then(() => services.secrets.clear(session.id)),
+				Promise.resolve().then(() => services.agent.purgeArtifacts?.(session.id))
+			]);
+			const failed = cleanup
+				.map((result, index) => result.status === 'rejected' ? index : -1)
+				.filter(index => index >= 0);
+			const deferred = services.agent.cleanupDeferred === true && failed.length === 0;
+			if (!deferred && typeof services.runs.recordCleanup === 'function') {
+				const errorCode = failed.length > 1
+					? 'multiple_cleanup_failures'
+					: failed[0] === 0 ? 'secret_clear_failed' : 'artifact_purge_failed';
+				try {
+					const referenceId = request.qaseRequestId
+						? `request/${request.qaseRequestId}`
+						: undefined;
+					const attribution = referenceId ? { referenceId } : {};
+					await services.runs.recordCleanup(session.id, failed.length > 0
+						? { status: 'failed', errorCode, actorType: 'system', ...attribution }
+						: { status: 'completed', actorType: 'system', ...attribution });
+				} catch (error) {
+					if (logger) logger.error('run.cleanup.attestation_failed', {
+						requestId: request.qaseRequestId,
+						errorName: error?.name ?? 'Error'
+					});
+					else console.error(`[Qase cleanup ${request.qaseRequestId ?? 'no-request-id'}] attestation failed`);
+				}
+			}
+		}
 		response.json({ deleted });
 	});
 

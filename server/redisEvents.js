@@ -38,7 +38,9 @@ export function createRedisEventTransport(options = {}) {
 
 	function accept(event) {
 		if (!event || typeof event !== 'object' || typeof event.sessionId !== 'string') return;
-		if (event.type === 'frame') {
+		if (event.type === 'run.deleted') {
+			live.delete(event.sessionId);
+		} else if (event.type === 'frame') {
 			const current = live.get(event.sessionId) ?? {};
 			current.frame = event.frame;
 			live.set(event.sessionId, current);

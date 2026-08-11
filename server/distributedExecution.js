@@ -4,6 +4,7 @@ export function createDistributedApiAgent({ queue, realtime, runs, tenantContext
 	if (!queue || !realtime || !runs || !tenantContext) throw new TypeError('Distributed API execution dependencies are required.');
 	return Object.freeze({
 		isRemote: true,
+		cleanupDeferred: true,
 		ensureRuntime() {},
 		async runTurn(session, turnOptions) {
 			const actor = currentRequestActor();
@@ -21,6 +22,9 @@ export function createDistributedApiAgent({ queue, realtime, runs, tenantContext
 		},
 		getLiveState(sessionId) { return realtime.getLiveState(sessionId); },
 		async stop(sessionId) { return queue.cancelRun(sessionId); },
+		async purgeArtifacts(sessionId) {
+			realtime.publish({ type: 'run.deleted', sessionId, ts: Date.now() });
+		},
 		async closeBrowser() {},
 		async invalidateIdleRuntimes() { return 0; }
 	});
@@ -100,11 +104,34 @@ export function createExecutionWorker(options = {}) {
 			}
 		} finally {
 			clearInterval(heartbeat);
+			let runDeleted = false;
+			try {
+				runDeleted = !(await services.runs.get(job.runId));
+			} catch {
+				// A database outage is not evidence that the run was deleted. Leave
+				// the cleanup record pending for a later reconciliation attempt.
+			}
 			const cleanup = [Promise.resolve().then(() => services.secrets.clear(job.runId))];
-			if (credentialVault && session && ['done', 'error', 'idle'].includes(session.status)) {
+			if (credentialVault && (runDeleted || (session && ['done', 'error', 'idle'].includes(session.status)))) {
 				cleanup.push(Promise.resolve().then(() => credentialVault.clear(job.runId)));
 			}
-			await Promise.allSettled(cleanup);
+			if (runDeleted) {
+				cleanup.push(Promise.resolve().then(() => services.agent.purgeArtifacts?.(job.runId)));
+			}
+			const cleanupResults = await Promise.allSettled(cleanup);
+			if (runDeleted && typeof services.runs.recordCleanup === 'function') {
+				const cleanupFailed = cleanupResults.some(result => result.status === 'rejected');
+				try {
+					await services.runs.recordCleanup(job.runId, cleanupFailed
+						? {
+							status: 'failed', errorCode: 'worker_cleanup_failed', actorType: 'worker',
+							referenceId: `worker-job/${job.id}`
+						}
+						: { status: 'completed', actorType: 'worker', referenceId: `worker-job/${job.id}` });
+				} catch (error) {
+					options.onError?.(error);
+				}
+			}
 			current = undefined;
 		}
 		return true;

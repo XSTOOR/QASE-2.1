@@ -8,6 +8,10 @@ import {
 	RunVersionConflictError,
 	createPostgresRunRepository
 } from './runRepository.js';
+import {
+	PURGE_ACKNOWLEDGEMENT,
+	createPostgresRetentionRepository
+} from './retentionRepository.js';
 
 const { Pool } = pg;
 const DATABASE_URL = String(process.env.QASE_TEST_DATABASE_URL ?? '').trim();
@@ -84,6 +88,126 @@ function runAggregate() {
 		contextUsage: undefined,
 		secretNames: []
 	};
+}
+
+/**
+ * Creates one expired post-hold candidate using PostgreSQL's transaction clock.
+ * The fixture uses ordinary tenant RLS and lifecycle transitions; it never
+ * disables the immutable lifecycle triggers or relies on the test host clock.
+ */
+async function createExpiredPostHoldFixture(pool, context) {
+	const runId = 'f24010d2-78bf-43f7-a1e1-8f127df3042d';
+	const requestId = 'a24010d2-78bf-43f7-a1e1-8f127df3042d';
+	const leaseToken = 'b24010d2-78bf-43f7-a1e1-8f127df3042d';
+	const referenceId = 'TEST-CASE-EXPIRED';
+	const policyVersion = 'qase-data-lifecycle/v1';
+	const client = await pool.connect();
+	try {
+		await client.query('BEGIN');
+		await client.query(
+			"SELECT set_config('qase.organization_id', $1, true), set_config('qase.project_id', $2, true)",
+			[context.organizationId, context.projectId]
+		);
+		await client.query(
+			`INSERT INTO qa_runs (
+				id, organization_id, project_id, created_by_user_id, title, status,
+				status_detail, created_at, updated_at, completed_at, deleted_at, deleted_by_user_id
+			) VALUES (
+				$1, $2, $3, $4, 'Expired post-hold integration fixture', 'done',
+				'Deleted by integration fixture.',
+				CURRENT_TIMESTAMP - INTERVAL '32 days',
+				CURRENT_TIMESTAMP - INTERVAL '31 days',
+				CURRENT_TIMESTAMP - INTERVAL '31 days',
+				CURRENT_TIMESTAMP - INTERVAL '31 days', $4
+			)`,
+			[runId, context.organizationId, context.projectId, context.actorUserId]
+		);
+		await client.query(
+			`INSERT INTO qase_lifecycle_requests (
+				id, organization_id, project_id, subject_type, subject_id, action,
+				idempotency_key, requested_by_actor_type, requested_by_user_id,
+				reason_code, reference_id, policy_version, purge_after, available_at,
+				created_at, updated_at
+			) VALUES (
+				$1, $2, $3, 'run', $4, 'soft_delete', $5, 'user', $6,
+				'integration_expired_fixture', $7, $8,
+				CURRENT_TIMESTAMP - INTERVAL '31 days',
+				CURRENT_TIMESTAMP - INTERVAL '31 days',
+				CURRENT_TIMESTAMP - INTERVAL '31 days',
+				CURRENT_TIMESTAMP - INTERVAL '31 days'
+			)`,
+			[
+				requestId, context.organizationId, context.projectId, runId,
+				`run:${runId}:soft-delete-fixture`, context.actorUserId,
+				referenceId, policyVersion
+			]
+		);
+		await client.query(
+			`UPDATE qase_lifecycle_requests SET status = 'approved',
+				updated_at = CURRENT_TIMESTAMP - INTERVAL '31 days'
+			 WHERE organization_id = $1 AND project_id = $2 AND id = $3 AND status = 'requested'`,
+			[context.organizationId, context.projectId, requestId]
+		);
+		await client.query(
+			`UPDATE qase_lifecycle_requests SET status = 'processing', attempts = attempts + 1,
+				lease_owner = 'integration-fixture', lease_token = $4,
+				lease_expires_at = CURRENT_TIMESTAMP - INTERVAL '31 days' + INTERVAL '5 minutes',
+				started_at = CURRENT_TIMESTAMP - INTERVAL '31 days',
+				updated_at = CURRENT_TIMESTAMP - INTERVAL '31 days'
+			 WHERE organization_id = $1 AND project_id = $2 AND id = $3 AND status = 'approved'`,
+			[context.organizationId, context.projectId, requestId, leaseToken]
+		);
+		await client.query(
+			`UPDATE qase_lifecycle_requests SET status = 'completed',
+				finished_at = CURRENT_TIMESTAMP - INTERVAL '31 days',
+				lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
+				updated_at = CURRENT_TIMESTAMP - INTERVAL '31 days'
+			 WHERE organization_id = $1 AND project_id = $2 AND id = $3 AND status = 'processing'`,
+			[context.organizationId, context.projectId, requestId]
+		);
+		await client.query(
+			`INSERT INTO qase_run_cleanup (
+				organization_id, project_id, run_id, requested_at,
+				request_reference_id, policy_version
+			) VALUES (
+				$1, $2, $3, CURRENT_TIMESTAMP - INTERVAL '31 days', $4, $5
+			)`,
+			[
+				context.organizationId, context.projectId, runId,
+				`cleanup/${requestId}`, policyVersion
+			]
+		);
+		await client.query(
+			`UPDATE qase_run_cleanup SET status = 'completed', attempts = attempts + 1,
+				last_attempt_at = CURRENT_TIMESTAMP - INTERVAL '31 days',
+				completed_at = CURRENT_TIMESTAMP - INTERVAL '31 days',
+				attestation_reference_id = $4
+			 WHERE organization_id = $1 AND project_id = $2 AND run_id = $3 AND status = 'pending'`,
+			[context.organizationId, context.projectId, runId, referenceId]
+		);
+		await client.query(
+			`INSERT INTO qase_lifecycle_events (
+				organization_id, project_id, subject_type, subject_id, action, event_type,
+				from_status, actor_type, actor_user_id, reason_code, reference_id,
+				resource_counts, policy_version, created_at
+			) VALUES (
+				$1, $2, 'run', $3, 'legal_hold', 'legal_hold.released', 'held',
+				'user', $4, 'integration_hold_released', $5, '{}'::jsonb, $6,
+				CURRENT_TIMESTAMP - INTERVAL '31 days'
+			)`,
+			[
+				context.organizationId, context.projectId, runId,
+				context.actorUserId, referenceId, policyVersion
+			]
+		);
+		await client.query('COMMIT');
+		return runId;
+	} catch (error) {
+		await client.query('ROLLBACK').catch(() => undefined);
+		throw error;
+	} finally {
+		client.release();
+	}
 }
 
 test(
@@ -207,6 +331,73 @@ test(
 		);
 		assert.equal((await tenantARepository.get(value.id)).session.status, 'done');
 
+		const retentionA = createPostgresRetentionRepository({
+			pool: tenantAPool,
+			tenantContext: contextA
+		});
+		const retentionB = createPostgresRetentionRepository({
+			pool: tenantBPool,
+			tenantContext: contextB
+		});
+		assert.equal((await retentionA.placeHold({
+			runId: value.id,
+			reasonCode: 'integration_hold',
+			referenceId: 'TEST-CASE-10',
+			actorType: 'user',
+			actorUserId: contextA.actorUserId,
+			policyVersion: 'integration-v1'
+		})).placed, true);
+		assert.equal(await tenantARepository.delete(value.id, {
+			expectedVersion: saved.version,
+			eventType: 'run.deleted',
+			actorType: 'user',
+			actorUserId: contextA.actorUserId
+		}), true);
+		assert.equal(await tenantARepository.get(value.id), undefined);
+		assert.equal((await tenantARepository.recordCleanup(value.id, {
+			status: 'completed',
+			actorType: 'worker',
+			referenceId: 'TEST-CASE-10'
+		})).recorded, true,
+		'purge must remain ineligible until external cleanup is durably recorded');
+
+		assert.equal((await retentionA.previewRuns({ retentionDays: 30 })).candidateCount, 0,
+			'an active hold must block the deleted run');
+		assert.equal((await retentionA.releaseHold({
+			runId: value.id,
+			reasonCode: 'integration_hold_released',
+			referenceId: 'TEST-CASE-10',
+			actorType: 'user',
+			actorUserId: contextA.actorUserId,
+			policyVersion: 'integration-v1'
+		})).released, true);
+		assert.equal((await retentionA.previewRuns({ retentionDays: 30 })).candidateCount, 0,
+			'a hold release starts a new conservative grace period');
+
+		const expiredRunId = await createExpiredPostHoldFixture(tenantAPool, contextA);
+		assert.equal((await retentionB.previewRuns({ retentionDays: 30 })).candidateCount, 0);
+		assert.equal((await retentionA.previewRuns({ retentionDays: 30 })).candidateCount, 1);
+		const purged = await retentionA.purgeBatch({
+			execute: true,
+			acknowledgement: PURGE_ACKNOWLEDGEMENT,
+			idempotencyKey: 'integration/phase-10/purge-001',
+			retentionDays: 30,
+			actorType: 'worker',
+			reasonCode: 'integration_retention_expired',
+			referenceId: 'TEST-CASE-10',
+			policyVersion: 'qase-data-lifecycle/v1'
+		});
+		assert.equal(purged.purgedCount, 1);
+		assert.deepEqual(purged.runIds, [expiredRunId]);
+		assert.equal((await retentionA.previewRuns({ retentionDays: 30 })).candidateCount, 0);
+		await assert.rejects(
+			tenantARepository.create({ ...runAggregate(), id: expiredRunId }, {
+				eventType: 'session', payload: { title: 'suppressed restore attempt' }
+			}),
+			/erasure tombstone|suppressed/i,
+			'a purged run identifier must not be re-created from a restored backup or import'
+		);
+
 		// The dedicated test URL must use the same non-bypass role production uses;
 		// a PostgreSQL superuser would make an RLS assertion meaningless.
 		const role = await tenantAPool.query(`
@@ -221,5 +412,7 @@ test(
 		assert.equal(raw.rows[0].count, 0, 'forced RLS must default-deny without transaction-local tenant context');
 		const rawJobs = await tenantAPool.query('SELECT COUNT(*)::int AS count FROM qa_execution_jobs');
 		assert.equal(rawJobs.rows[0].count, 0, 'execution jobs must default-deny without tenant context');
+		const rawLifecycle = await tenantAPool.query('SELECT COUNT(*)::int AS count FROM qase_lifecycle_events');
+		assert.equal(rawLifecycle.rows[0].count, 0, 'lifecycle audit must default-deny without tenant context');
 	}
 );

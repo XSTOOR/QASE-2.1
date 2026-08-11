@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 /**
  * PostgreSQL persistence for the current Qase run aggregate.
@@ -9,6 +9,9 @@ import { randomUUID } from 'node:crypto';
  */
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const LIFECYCLE_CODE_PATTERN = /^[a-z0-9][a-z0-9_.:-]*$/;
+const LIFECYCLE_REFERENCE_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]*$/;
 const CONTEXT_KEYS = [
 	'organizationId', 'organizationSlug', 'organizationName',
 	'projectId', 'projectSlug', 'projectName',
@@ -22,6 +25,8 @@ const BEGIN = 'BEGIN';
 const COMMIT = 'COMMIT';
 const ROLLBACK = 'ROLLBACK';
 const ACTOR_TYPES = new Set(['user', 'agent', 'system']);
+const LIFECYCLE_POLICY_VERSION = 'qase-data-lifecycle/v1';
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export class RunVersionConflictError extends Error {
 	constructor(runId, expectedVersion) {
@@ -30,6 +35,15 @@ export class RunVersionConflictError extends Error {
 		this.code = 'QASE_RUN_VERSION_CONFLICT';
 		this.runId = runId;
 		this.expectedVersion = expectedVersion;
+	}
+}
+
+export class TenantInactiveError extends Error {
+	constructor(resource) {
+		super(`The configured Qase ${resource} is not active.`);
+		this.name = 'TenantInactiveError';
+		this.code = 'QASE_TENANT_INACTIVE';
+		this.resource = resource;
 	}
 }
 
@@ -61,6 +75,58 @@ function nonNegativeInteger(value, label) {
 		throw new TypeError(`${label} must be a non-negative safe integer.`);
 	}
 	return number;
+}
+
+function boundedInteger(value, fallback, minimum, maximum, label) {
+	const number = value === undefined ? fallback : Number(value);
+	if (!Number.isSafeInteger(number) || number < minimum || number > maximum) {
+		throw new TypeError(`${label} must be an integer from ${minimum} through ${maximum}.`);
+	}
+	return number;
+}
+
+function lifecycleCode(value, label) {
+	const result = String(value ?? '').trim();
+	if (!result || result.length > 100 || !LIFECYCLE_CODE_PATTERN.test(result)) {
+		throw new TypeError(`${label} must be a bounded machine-readable code.`);
+	}
+	return result;
+}
+
+function lifecycleReference(value) {
+	if (value === undefined || value === null || value === '') return null;
+	const result = String(value).trim();
+	if (result.length > 200 || !LIFECYCLE_REFERENCE_PATTERN.test(result)) {
+		throw new TypeError('referenceId must be a bounded opaque reference.');
+	}
+	return result;
+}
+
+function databaseDate(result, column = 'lifecycle_now') {
+	const value = result?.rows?.[0]?.[column];
+	if (value === undefined || value === null) {
+		throw new Error('PostgreSQL did not return its lifecycle clock.');
+	}
+	return asDate(value);
+}
+
+function count(value) {
+	const result = Number(value ?? 0);
+	if (!Number.isSafeInteger(result) || result < 0) {
+		throw new Error('PostgreSQL returned an invalid lifecycle resource count.');
+	}
+	return result;
+}
+
+function deletionManifest(tenant, runId, resourceCounts) {
+	return createHash('sha256').update(JSON.stringify({
+		version: 1,
+		organizationId: tenant.organizationId,
+		projectId: tenant.projectId,
+		runId,
+		policyVersion: LIFECYCLE_POLICY_VERSION,
+		resourceCounts
+	}), 'utf8').digest('hex');
 }
 
 function requireRun(session) {
@@ -397,7 +463,12 @@ async function insertAggregate(client, tenant, session, event, nowValue) {
 	};
 }
 
-export function createPostgresRunRepository({ pool, tenantContext, now = () => Date.now() } = {}) {
+export function createPostgresRunRepository({
+	pool,
+	tenantContext,
+	now = () => Date.now(),
+	runRetentionDays
+} = {}) {
 	if (!pool || typeof pool.connect !== 'function' || typeof pool.end !== 'function') {
 		throw new TypeError('A PostgreSQL pool with connect() and end() is required.');
 	}
@@ -405,6 +476,7 @@ export function createPostgresRunRepository({ pool, tenantContext, now = () => D
 		throw new TypeError('now must be a function.');
 	}
 	const tenant = trustedTenantContext(tenantContext);
+	const retentionDays = boundedInteger(runRetentionDays, 30, 1, 3650, 'runRetentionDays');
 	let closePromise;
 
 	async function transaction(work) {
@@ -434,40 +506,52 @@ export function createPostgresRunRepository({ pool, tenantContext, now = () => D
 	async function bootstrapTenant() {
 		return transaction(async client => {
 			const timestamp = asDate(now(), Date.now());
-			await client.query(
+			const organization = await client.query(
 				`INSERT INTO organizations (id, slug, name, status, created_at, updated_at)
 				 VALUES ($1,$2,$3,'active',$4,$4)
 				 ON CONFLICT (id) DO UPDATE SET
-					slug = EXCLUDED.slug, name = EXCLUDED.name, status = 'active', updated_at = EXCLUDED.updated_at`,
+					slug = EXCLUDED.slug, name = EXCLUDED.name, updated_at = EXCLUDED.updated_at
+				 WHERE organizations.status = 'active'
+				 RETURNING status`,
 				[tenant.organizationId, tenant.organizationSlug, tenant.organizationName, timestamp]
 			);
-			await client.query(
+			if (organization.rows?.[0]?.status !== 'active') throw new TenantInactiveError('organization');
+			const user = await client.query(
 				`INSERT INTO users (
 					id, email, normalized_email, display_name, status, created_at, updated_at
 				) VALUES ($1,$2,$3,$4,'active',$5,$5)
 				 ON CONFLICT (id) DO UPDATE SET
 					email = EXCLUDED.email, normalized_email = EXCLUDED.normalized_email,
-					display_name = EXCLUDED.display_name, status = 'active', updated_at = EXCLUDED.updated_at`,
+					display_name = EXCLUDED.display_name, updated_at = EXCLUDED.updated_at
+				 WHERE users.status = 'active'
+				 RETURNING status`,
 				[
 					tenant.actorUserId, tenant.actorEmail,
 					tenant.actorEmail.trim().toLowerCase(), tenant.actorName, timestamp
 				]
 			);
-			await client.query(
+			if (user.rows?.[0]?.status !== 'active') throw new TenantInactiveError('user');
+			const membership = await client.query(
 				`INSERT INTO organization_memberships (
 					organization_id, user_id, role, status, created_at, updated_at
 				) VALUES ($1,$2,$3,'active',$4,$4)
 				 ON CONFLICT (organization_id, user_id) DO UPDATE SET
-					role = EXCLUDED.role, status = 'active', updated_at = EXCLUDED.updated_at`,
+					role = EXCLUDED.role, updated_at = EXCLUDED.updated_at
+				 WHERE organization_memberships.status = 'active'
+				 RETURNING status`,
 				[tenant.organizationId, tenant.actorUserId, tenant.actorRole, timestamp]
 			);
-			await client.query(
+			if (membership.rows?.[0]?.status !== 'active') throw new TenantInactiveError('membership');
+			const project = await client.query(
 				`INSERT INTO projects (id, organization_id, slug, name, status, created_at, updated_at)
 				 VALUES ($1,$2,$3,$4,'active',$5,$5)
 				 ON CONFLICT (id) DO UPDATE SET
-					slug = EXCLUDED.slug, name = EXCLUDED.name, status = 'active', updated_at = EXCLUDED.updated_at`,
+					slug = EXCLUDED.slug, name = EXCLUDED.name, updated_at = EXCLUDED.updated_at
+				 WHERE projects.status = 'active'
+				 RETURNING status`,
 				[tenant.projectId, tenant.organizationId, tenant.projectSlug, tenant.projectName, timestamp]
 			);
+			if (project.rows?.[0]?.status !== 'active') throw new TenantInactiveError('project');
 			return {
 				ready: true,
 				organizationId: tenant.organizationId,
@@ -547,6 +631,9 @@ export function createPostgresRunRepository({ pool, tenantContext, now = () => D
 				throw new TypeError(`${label} must be a non-empty string.`);
 			}
 		}
+		if (!SHA256_PATTERN.test(sourceHash.trim())) {
+			throw new TypeError('sourceHash must be a lowercase SHA-256 digest.');
+		}
 		if (!Array.isArray(runs)) {
 			throw new TypeError('runs must be an array.');
 		}
@@ -565,8 +652,9 @@ export function createPostgresRunRepository({ pool, tenantContext, now = () => D
 				[`${tenant.organizationId}:${tenant.projectId}:${sourceHash.trim()}`]
 			);
 			const marker = await client.query(
-				`SELECT run_count FROM qa_legacy_imports
-				 WHERE source_hash = $1 AND organization_id = $2 AND project_id = $3`,
+				`SELECT counts FROM qa_legacy_imports
+				 WHERE source_kind = 'sessions_json' AND source_sha256 = $1
+					AND organization_id = $2 AND project_id = $3`,
 				[sourceHash.trim(), tenant.organizationId, tenant.projectId]
 			);
 			if (marker.rows?.length) {
@@ -599,12 +687,12 @@ export function createPostgresRunRepository({ pool, tenantContext, now = () => D
 
 			await client.query(
 				`INSERT INTO qa_legacy_imports (
-					source_hash, organization_id, project_id, importer_version,
-					source_path, run_count, imported_at
-				) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+					id, organization_id, project_id, imported_by_user_id,
+					source_kind, source_sha256, source_label, counts, imported_at
+				) VALUES ($1,$2,$3,$4,'sessions_json',$5,'legacy sessions import',$6,$7)`,
 				[
-					sourceHash.trim(), tenant.organizationId, tenant.projectId,
-					importerVersion.trim(), sourcePath.trim(), runs.length, importedAt
+					randomUUID(), tenant.organizationId, tenant.projectId, tenant.actorUserId,
+					sourceHash.trim(), { runCount: runs.length, importerVersion: importerVersion.trim() }, importedAt
 				]
 			);
 			return { alreadyImported: false, imported: runs.length };
@@ -658,22 +746,268 @@ export function createPostgresRunRepository({ pool, tenantContext, now = () => D
 			: undefined;
 		return transaction(async client => {
 			const parameters = [tenant.organizationId, tenant.projectId, id];
-			const result = await client.query(
-				`DELETE FROM qa_runs
-				 WHERE organization_id = $1 AND project_id = $2 AND id = $3${hasVersion ? ' AND lock_version = $4' : ''}
-				 RETURNING id`,
-				hasVersion ? [...parameters, expectedVersion] : parameters
+			const correlationId = options.correlationId;
+			if (correlationId !== undefined && correlationId !== null
+				&& (typeof correlationId !== 'string' || !UUID_PATTERN.test(correlationId))) {
+				throw new TypeError('correlationId must be a canonical UUID when supplied.');
+			}
+			await client.query(
+				'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+				[`${tenant.organizationId}:${tenant.projectId}:${id}:lifecycle`]
 			);
-			if (result.rows?.length) return true;
-			if (!hasVersion) return false;
-
 			const existing = await client.query(
-				`SELECT lock_version FROM qa_runs
-				 WHERE organization_id = $1 AND project_id = $2 AND id = $3`,
+				`SELECT lock_version, next_event_sequence, deleted_at FROM qa_runs
+				 WHERE organization_id = $1 AND project_id = $2 AND id = $3
+				 FOR UPDATE`,
 				parameters
 			);
-			if (existing.rows?.length) throw new RunVersionConflictError(id, expectedVersion);
-			return false;
+			const row = existing.rows?.[0];
+			if (!row) return false;
+			if (row.deleted_at) return true;
+			if (hasVersion && Number(row.lock_version) !== expectedVersion) {
+				throw new RunVersionConflictError(id, expectedVersion);
+			}
+			const timestamp = databaseDate(await client.query('SELECT CURRENT_TIMESTAMP AS lifecycle_now'));
+			const event = eventOptions({
+				...options,
+				eventType: options.eventType ?? 'run.deleted',
+				payload: options.payload ?? { reasonCode: 'user_request' },
+				eventTs: options.eventTs ?? timestamp
+			}, timestamp, tenant);
+			const counts = await client.query(
+				`SELECT
+					(SELECT COUNT(*)::int FROM qa_messages
+					 WHERE organization_id = $1 AND project_id = $2 AND run_id = $3) AS messages,
+					(SELECT COUNT(*)::int FROM qa_activities
+					 WHERE organization_id = $1 AND project_id = $2 AND run_id = $3) AS activities,
+					(SELECT COUNT(*)::int FROM qa_plan_items
+					 WHERE organization_id = $1 AND project_id = $2 AND run_id = $3) AS plan_items,
+					(SELECT COUNT(*)::int FROM qa_findings
+					 WHERE organization_id = $1 AND project_id = $2 AND run_id = $3) AS findings,
+					(SELECT COUNT(*)::int FROM qa_reports
+					 WHERE organization_id = $1 AND project_id = $2 AND run_id = $3) AS reports,
+					(SELECT COUNT(*)::int FROM qa_run_events
+					 WHERE organization_id = $1 AND project_id = $2 AND run_id = $3) AS run_events,
+					(SELECT COUNT(*)::int FROM qa_execution_jobs
+					 WHERE organization_id = $1 AND project_id = $2 AND run_id = $3) AS execution_jobs`,
+				parameters
+			);
+			const countRow = counts.rows?.[0] ?? {};
+			const resourceCounts = {
+				messages: count(countRow.messages),
+				activities: count(countRow.activities),
+				planItems: count(countRow.plan_items),
+				findings: count(countRow.findings),
+				reports: count(countRow.reports),
+				runEvents: count(countRow.run_events),
+				executionJobs: count(countRow.execution_jobs)
+			};
+
+			const jobs = await client.query(
+				`UPDATE qa_execution_jobs SET
+					status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE 'cancel_requested' END,
+					finished_at = CASE WHEN status = 'queued' THEN $4 ELSE finished_at END,
+					updated_at = $4
+				 WHERE organization_id = $1 AND project_id = $2 AND run_id = $3
+					AND status IN ('queued', 'leased')`,
+				[...parameters, timestamp]
+			);
+			const result = await client.query(
+				`UPDATE qa_runs SET
+					deleted_at = $4, deleted_by_user_id = $5,
+					status = CASE WHEN status IN ('running', 'awaiting_input') THEN 'interrupted' ELSE status END,
+					status_detail = 'Deleted by user request.', pending_question = NULL,
+					secret_names = ARRAY[]::text[], updated_at = $4,
+					lock_version = lock_version + 1, next_event_sequence = next_event_sequence + 1
+				 WHERE organization_id = $1 AND project_id = $2 AND id = $3 AND deleted_at IS NULL
+				 RETURNING next_event_sequence`,
+				[...parameters, timestamp, event.actorType === 'user' ? event.actorUserId : null]
+			);
+			if (!result.rows?.length) return false;
+			const lifecycleRequestId = randomUUID();
+			const lifecycleLeaseToken = randomUUID();
+			const cleanupRequestReference = `cleanup/${lifecycleRequestId}`;
+			const lifecycleActorType = event.actorType === 'agent' ? 'worker' : event.actorType;
+			const purgeAfter = new Date(timestamp.getTime() + retentionDays * DAY_MS);
+			const manifestSha256 = deletionManifest(tenant, id, resourceCounts);
+			await client.query(
+				`INSERT INTO qase_lifecycle_requests (
+					id, organization_id, project_id, subject_type, subject_id, action,
+					idempotency_key, requested_by_actor_type, requested_by_user_id,
+					reason_code, policy_version, purge_after, correlation_id, created_at, updated_at
+				) VALUES ($1,$2,$3,'run',$4,'soft_delete',$5,$6,$7,'user_request',$8,$9,$10,$11,$11)`,
+				[
+					lifecycleRequestId, tenant.organizationId, tenant.projectId, id,
+					`run:${id}:soft-delete`, lifecycleActorType,
+					event.actorType === 'user' ? event.actorUserId : null,
+					LIFECYCLE_POLICY_VERSION, purgeAfter, correlationId ?? null, timestamp
+				]
+			);
+			await client.query(
+				`INSERT INTO qase_run_cleanup (
+					organization_id, project_id, run_id, status, attempts, requested_at,
+					correlation_id, request_reference_id, policy_version
+				) VALUES ($1,$2,$3,'pending',0,$4,$5,$6,$7)`,
+				[
+					tenant.organizationId, tenant.projectId, id, timestamp,
+					correlationId ?? null, cleanupRequestReference, LIFECYCLE_POLICY_VERSION
+				]
+			);
+			await client.query(
+				`UPDATE qase_lifecycle_requests SET status = 'approved', updated_at = $4
+				 WHERE organization_id = $1 AND project_id = $2 AND id = $3 AND status = 'requested'`,
+				[tenant.organizationId, tenant.projectId, lifecycleRequestId, timestamp]
+			);
+			await client.query(
+				`UPDATE qase_lifecycle_requests SET status = 'processing', attempts = attempts + 1,
+					lease_owner = 'qase-api-soft-delete', lease_token = $5,
+					lease_expires_at = $6, started_at = $4, updated_at = $4
+				 WHERE organization_id = $1 AND project_id = $2 AND id = $3 AND status = 'approved'`,
+				[
+					tenant.organizationId, tenant.projectId, lifecycleRequestId, timestamp,
+					lifecycleLeaseToken, new Date(timestamp.getTime() + 300_000)
+				]
+			);
+			await appendEvent(
+				client,
+				tenant,
+				id,
+				Number(result.rows[0].next_event_sequence) - 1,
+				event,
+				timestamp
+			);
+			await client.query(
+				`INSERT INTO qase_lifecycle_events (
+					organization_id, project_id, request_id, subject_type, subject_id,
+					action, event_type, from_status, to_status, actor_type, actor_user_id,
+					reason_code, resource_counts, manifest_sha256, correlation_id,
+					policy_version, created_at
+				) VALUES ($1,$2,$3,'run',$4,'soft_delete','run.soft_deleted','processing','completed',$5,$6,
+					'user_request',$7,$8,$9,$10,$11)`,
+				[
+					tenant.organizationId, tenant.projectId, lifecycleRequestId, id,
+					lifecycleActorType, event.actorType === 'user' ? event.actorUserId : null,
+					{
+						...resourceCounts,
+						executionJobsFenced: Number(jobs.rowCount ?? jobs.rows?.length ?? 0)
+					},
+					manifestSha256, correlationId ?? null, LIFECYCLE_POLICY_VERSION, timestamp
+				]
+			);
+			const completed = await client.query(
+				`UPDATE qase_lifecycle_requests SET status = 'completed', finished_at = $4,
+					lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = $4
+				 WHERE organization_id = $1 AND project_id = $2 AND id = $3
+					AND status = 'processing' AND lease_token = $5`,
+				[
+					tenant.organizationId, tenant.projectId, lifecycleRequestId, timestamp,
+					lifecycleLeaseToken
+				]
+			);
+			if (completed.rowCount !== 1) {
+				throw new Error('Soft-delete lifecycle request could not be completed.');
+			}
+			return true;
+		});
+	}
+
+	async function recordCleanup(id, options = {}) {
+		if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
+			throw new TypeError('Run ID must be a canonical UUID.');
+		}
+		const status = String(options.status ?? '').trim();
+		if (!['completed', 'failed'].includes(status)) {
+			throw new TypeError('Cleanup status must be completed or failed.');
+		}
+		const actorType = String(options.actorType ?? 'system').trim();
+		if (!['system', 'worker'].includes(actorType)) {
+			throw new TypeError('Cleanup actorType must be system or worker.');
+		}
+		const errorCode = status === 'failed'
+			? lifecycleCode(options.errorCode, 'errorCode')
+			: null;
+		if (status === 'completed' && options.errorCode !== undefined && options.errorCode !== null) {
+			throw new TypeError('Completed cleanup cannot include errorCode.');
+		}
+		const reasonCode = lifecycleCode(
+			options.reasonCode ?? (status === 'completed' ? 'cleanup_completed' : errorCode),
+			'reasonCode'
+		);
+		const referenceId = lifecycleReference(options.referenceId);
+		if (status === 'completed' && !referenceId) {
+			throw new TypeError('Completed cleanup requires an attestation referenceId.');
+		}
+		return transaction(async client => {
+			const parameters = [tenant.organizationId, tenant.projectId, id];
+			await client.query(
+				'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+				[`${tenant.organizationId}:${tenant.projectId}:${id}:lifecycle`]
+			);
+			const selected = await client.query(
+				`SELECT status, attempts, completed_at, correlation_id,
+					request_reference_id, attestation_reference_id, policy_version
+				 FROM qase_run_cleanup
+				 WHERE organization_id = $1 AND project_id = $2 AND run_id = $3
+				 FOR UPDATE`,
+				parameters
+			);
+			const current = selected.rows?.[0];
+			if (!current) {
+				return { recorded: false, reason: 'not_found', runId: id };
+			}
+			if (current.status === 'completed') {
+				if (referenceId && referenceId !== current.attestation_reference_id) {
+					const error = new Error('Run cleanup is already bound to a different attestation reference.');
+					error.code = 'QASE_CLEANUP_ATTESTATION_CONFLICT';
+					throw error;
+				}
+				return {
+					recorded: false,
+					reason: 'already_completed',
+					runId: id,
+					status: 'completed',
+					attempts: Number(current.attempts),
+					completedAt: epoch(current.completed_at)
+				};
+			}
+			const timestamp = databaseDate(await client.query('SELECT CURRENT_TIMESTAMP AS lifecycle_now'));
+			const attestationReference = status === 'completed' ? referenceId : null;
+			const updated = await client.query(
+				`UPDATE qase_run_cleanup SET
+					status = $4, attempts = attempts + 1, last_attempt_at = $5,
+					completed_at = CASE WHEN $4 = 'completed' THEN $5 ELSE NULL END,
+					last_error_code = $6,
+					attestation_reference_id = CASE WHEN $4 = 'completed' THEN $7 ELSE NULL END
+				 WHERE organization_id = $1 AND project_id = $2 AND run_id = $3
+					AND status <> 'completed'
+				 RETURNING status, attempts, completed_at, correlation_id,
+					attestation_reference_id, policy_version`,
+				[...parameters, status, timestamp, errorCode, attestationReference]
+			);
+			const row = updated.rows?.[0];
+			if (!row) throw new Error('Run cleanup attestation changed concurrently.');
+			await client.query(
+				`INSERT INTO qase_lifecycle_events (
+					organization_id, project_id, subject_type, subject_id, action, event_type,
+					from_status, to_status, actor_type, reason_code, reference_id,
+					resource_counts, correlation_id, policy_version, created_at
+				) VALUES ($1,$2,'run',$3,'cleanup',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+				[
+					tenant.organizationId, tenant.projectId, id,
+					`run.cleanup_${status}`, current.status === 'pending' ? null : current.status,
+					status, actorType, reasonCode,
+					referenceId ?? row.attestation_reference_id ?? current.request_reference_id,
+					{ attempt: Number(row.attempts) }, row.correlation_id ?? null,
+					row.policy_version, timestamp
+				]
+			);
+			return {
+				recorded: true,
+				runId: id,
+				status,
+				attempts: Number(row.attempts),
+				completedAt: epoch(row.completed_at)
+			};
 		});
 	}
 
@@ -707,6 +1041,7 @@ export function createPostgresRunRepository({ pool, tenantContext, now = () => D
 		importBatch,
 		save,
 		delete: deleteRun,
+		recordCleanup,
 		check,
 		close
 	};

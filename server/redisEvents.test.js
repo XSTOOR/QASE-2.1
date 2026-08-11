@@ -41,6 +41,10 @@ test('Redis transport delivers cross-replica events once and retains the latest 
 	await Promise.resolve();
 	assert.equal(received.length, 2);
 	assert.deepEqual(api.getLiveState('run-1'), { running: true, frame: { data: 'image' } });
+	worker.publish({ type: 'run.deleted', sessionId: 'run-1', ts: 3 });
+	await Promise.resolve();
+	assert.equal(received.length, 3);
+	assert.deepEqual(api.getLiveState('run-1'), { running: false, frame: undefined });
 	unsubscribe();
 	await Promise.all([worker.close(), api.close()]);
 });

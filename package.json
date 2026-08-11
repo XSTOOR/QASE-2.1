@@ -15,6 +15,7 @@
     "db:migrate": "node scripts/migrate.mjs",
     "control:db:migrate": "node scripts/migrate-control-plane.mjs",
     "db:import": "node scripts/import-sessions.mjs",
+    "data:governance": "node scripts/data-governance.mjs",
     "deployment:smoke": "node scripts/smoke-deployment.mjs",
     "deployment:load": "node scripts/load-placement.mjs",
     "deployment:release-gate": "node scripts/release-gate.mjs",

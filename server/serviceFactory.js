@@ -81,7 +81,10 @@ export async function createConfiguredApplicationServices(options = {}) {
 		}
 		repository = (options.createRepository ?? createPostgresRunRepository)({
 			pool,
-			tenantContext
+			tenantContext,
+			runRetentionDays: environment.QASE_RUN_RETENTION_DAYS
+				? Number(environment.QASE_RUN_RETENTION_DAYS)
+				: undefined
 		});
 		if (executionMode === 'distributed') {
 			eventTransport = (options.createEventTransport ?? createRedisEventTransport)({

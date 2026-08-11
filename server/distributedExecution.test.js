@@ -17,10 +17,15 @@ test('distributed API adapter persists queued state and attributes work to the r
 			enqueue: async value => { calls.push(['enqueue', value]); return { id: JOB }; },
 			cancelRun: async id => { calls.push(['cancel', id]); return 'cancel_requested'; }
 		},
-		realtime: { getLiveState: id => ({ running: true, frame: { id } }) },
+		realtime: {
+			getLiveState: id => ({ running: true, frame: { id } }),
+			publish: event => calls.push(['realtime', event])
+		},
 		runs: { setStatus: async (...args) => calls.push(['status', ...args]) },
 		tenantContext: TENANT
 	});
+	assert.equal(agent.cleanupDeferred, true,
+		'distributed API deletion must remain pending until a worker attests local cleanup');
 	const actorUserId = '5b198555-7a63-42b7-a36d-dddc5a4a3d60';
 	await runWithRequestActor({ actorUserId, requestId: CORRELATION }, () => agent.runTurn(session, { task: 'test' }));
 	assert.equal(calls[0][0], 'enqueue');
@@ -30,6 +35,10 @@ test('distributed API adapter persists queued state and attributes work to the r
 	assert.equal(calls[1][2], 'running');
 	assert.deepEqual(agent.getLiveState(RUN), { running: true, frame: { id: RUN } });
 	assert.equal(await agent.stop(RUN), 'cancel_requested');
+	await agent.purgeArtifacts(RUN);
+	assert.equal(calls.at(-1)[0], 'realtime');
+	assert.equal(calls.at(-1)[1].type, 'run.deleted');
+	assert.equal(calls.at(-1)[1].sessionId, RUN);
 });
 
 test('worker claims a lease, runs the existing agent under requester identity, and completes', async () => {
@@ -122,4 +131,76 @@ test('worker cleanup failures do not overturn an acknowledged job', async () => 
 	};
 	const worker = createExecutionWorker({ queue, services, credentialVault, workerId: 'worker:test', leaseMs: 5_000 });
 	assert.equal(await worker.runOnce(), true);
+});
+
+test('worker removes local artifacts after a concurrently deleted run', async () => {
+	let readCount = 0;
+	const calls = [];
+	const queue = {
+		reapExhausted: async () => [],
+		claim: async () => ({
+			id: JOB, runId: RUN, requestedByUserId: TENANT.actorUserId,
+			leaseToken: LEASE, payload: { task: 'test' }
+		}),
+		heartbeat: async () => 'leased',
+		complete: async () => 'cancelled',
+		fail: async () => 'cancelled'
+	};
+	const services = {
+		runs: {
+			get: async () => (++readCount === 1 ? { id: RUN, status: 'running' } : undefined),
+			addMessage: async () => {}, setStatus: async () => {},
+			recordCleanup: async (runId, options) => calls.push(['cleanup', runId, options])
+		},
+		secrets: { store: async () => [], clear: async () => {} },
+		agent: {
+			ensureRuntime() {}, runTurn: async () => {}, stop: async () => {},
+			purgeArtifacts: async runId => calls.push(['artifacts', runId])
+		}
+	};
+	const worker = createExecutionWorker({ queue, services, workerId: 'worker:test', leaseMs: 5_000 });
+	assert.equal(await worker.runOnce(), true);
+	assert.deepEqual(calls, [
+		['artifacts', RUN],
+		['cleanup', RUN, {
+			status: 'completed', actorType: 'worker', referenceId: `worker-job/${JOB}`
+		}]
+	]);
+});
+
+test('worker records a sanitized failed cleanup attempt when deleted-run artifact removal fails', async () => {
+	let readCount = 0;
+	const cleanupCalls = [];
+	const queue = {
+		reapExhausted: async () => [],
+		claim: async () => ({
+			id: JOB, runId: RUN, requestedByUserId: TENANT.actorUserId,
+			leaseToken: LEASE, payload: { task: 'test' }
+		}),
+		heartbeat: async () => 'leased',
+		complete: async () => 'cancelled',
+		fail: async () => 'cancelled'
+	};
+	const services = {
+		runs: {
+			get: async () => (++readCount === 1 ? { id: RUN, status: 'running' } : undefined),
+			addMessage: async () => {}, setStatus: async () => {},
+			recordCleanup: async (runId, options) => cleanupCalls.push({ runId, options })
+		},
+		secrets: { store: async () => [], clear: async () => {} },
+		agent: {
+			ensureRuntime() {}, runTurn: async () => {}, stop: async () => {},
+			purgeArtifacts: async () => { throw new Error('C:\\private\\workspace secret'); }
+		}
+	};
+	const worker = createExecutionWorker({ queue, services, workerId: 'worker:test', leaseMs: 5_000 });
+	assert.equal(await worker.runOnce(), true);
+	assert.deepEqual(cleanupCalls, [{
+		runId: RUN,
+		options: {
+			status: 'failed', errorCode: 'worker_cleanup_failed', actorType: 'worker',
+			referenceId: `worker-job/${JOB}`
+		}
+	}]);
+	assert.equal(JSON.stringify(cleanupCalls).includes('private'), false);
 });

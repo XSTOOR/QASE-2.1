@@ -25,6 +25,8 @@ function createMemoryServices(options = {}) {
 		lifecycleCloseCalls: 0,
 		events: [],
 		configTests: [],
+		cleanupCalls: [],
+		artifactPurgeCalls: [],
 		ready: options.ready ?? true,
 		ensureError: undefined,
 		liveFor,
@@ -93,6 +95,10 @@ function createMemoryServices(options = {}) {
 				liveFor(id).dispose?.();
 				live.delete(id);
 				return sessions.delete(id);
+			},
+			recordCleanup(id, cleanupOptions) {
+				state.cleanupCalls.push({ id, options: cleanupOptions });
+				return Promise.resolve({ recorded: true, runId: id, ...cleanupOptions });
 			},
 			commit(session, type, payload = {}) {
 				publish(session, type, payload);
@@ -190,6 +196,10 @@ function createMemoryServices(options = {}) {
 			},
 			stop(id) {
 				liveFor(id).controller?.abort();
+			},
+			purgeArtifacts(id) {
+				state.artifactPurgeCalls.push(id);
+				return options.purgeArtifacts?.(id);
 			},
 			invalidateIdleRuntimes() {
 				let kept = 0;
@@ -414,11 +424,41 @@ test('run CRUD preserves summaries, derived detail fields, cleanup, and 404 beha
 	assert.equal(detail.frame, 'data:image/jpeg;base64,frame');
 	assert.equal(JSON.stringify(detail).includes('fixture-secret'), false);
 
-	const removed = await body(await fixture.request(`/api/sessions/${created.id}`, { method: 'DELETE' }));
+	const deleteResponse = await fixture.request(`/api/sessions/${created.id}`, { method: 'DELETE' });
+	const removed = await body(deleteResponse);
 	assert.deepEqual(removed, { deleted: true });
+	assert.deepEqual(fixture.state.artifactPurgeCalls, [created.id]);
+	assert.deepEqual(fixture.state.cleanupCalls, [{
+		id: created.id,
+		options: {
+			status: 'completed', actorType: 'system',
+			referenceId: `request/${deleteResponse.headers.get('x-request-id')}`
+		}
+	}]);
 	const removedAgain = await body(await fixture.request(`/api/sessions/${created.id}`, { method: 'DELETE' }));
 	assert.deepEqual(removedAgain, { deleted: false });
 	assert.equal((await fixture.request(`/api/sessions/${created.id}`)).status, 404);
+});
+
+test('run deletion remains hidden while durable cleanup records a sanitized failure', async t => {
+	const fixture = await startFixture({
+		purgeArtifacts() { throw new Error('workspace path and secret must never enter audit'); }
+	});
+	t.after(() => fixture.close());
+	const session = fixture.services.runs.create();
+
+	const response = await fixture.request(`/api/sessions/${session.id}`, { method: 'DELETE' });
+	assert.equal(response.status, 200);
+	assert.deepEqual(await body(response), { deleted: true });
+	assert.deepEqual(fixture.state.cleanupCalls, [{
+		id: session.id,
+		options: {
+			status: 'failed', errorCode: 'artifact_purge_failed', actorType: 'system',
+			referenceId: `request/${response.headers.get('x-request-id')}`
+		}
+	}]);
+	assert.equal(JSON.stringify(fixture.state.cleanupCalls).includes('workspace path'), false);
+	assert.equal((await fixture.request(`/api/sessions/${session.id}`)).status, 404);
 });
 
 test('messages preserve validation, URL normalization, runtime startup, and detached errors', async t => {

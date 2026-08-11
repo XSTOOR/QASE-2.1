@@ -54,8 +54,11 @@ the real values are substituted at the keyboard. Anything that leaks back
 through a page snapshot or an error is masked before it reaches the model or
 the screen.
 
-Credentials are held in memory only. They are never written to disk and are
-gone when the server stops.
+Local-mode credentials are held in memory only. Distributed workers receive a
+short-lived AES-256-GCM encrypted envelope through Redis so another process can
+perform the run; values are never written to PostgreSQL or the local workspace.
+Qase clears the envelope on completion or deletion, and its bounded TTL is a
+backstop for interrupted cleanup.
 
 ## Owner authentication
 
@@ -111,6 +114,9 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 | `QASE_WORKER_LEASE_MS` | `30000` | Durable worker lease duration; heartbeats run at one third of this value |
 | `QASE_JOB_MAX_ATTEMPTS` | `3` | Maximum claims before a repeatedly abandoned job fails visibly |
 | `QASE_JOB_RETENTION_DAYS` | `30` | Terminal job retention; cleanup is bounded to 1,000 rows per claim cycle |
+| `QASE_RUN_RETENTION_DAYS` | `30` | Grace after a PostgreSQL run tombstone before it can appear in a manual, legal-hold-aware purge preview |
+| `QASE_GOVERNANCE_BATCH_SIZE` | `100` | Manual lifecycle command batch, hard-capped at 1,000 |
+| `QASE_GOVERNANCE_ACK` | unset | Exact acknowledgement required together with `--apply` and an external change/case reference |
 | `QASE_QUEUE_MAX_ACTIVE_JOBS` | `5000` | Cell-wide cap on queued/leased/cancelling jobs across API replicas |
 | `QASE_MUTATION_MAX_IN_FLIGHT` | `64` | Per-replica concurrent mutating-request guard |
 | `QASE_METRICS_TOKEN` | unset | Enables bearer-protected `/metrics`; must contain at least 32 bytes |
@@ -166,6 +172,12 @@ Capacity cannot be inferred from code or registered-user count. The staging-only
 workload, strict evidence evaluator, resilience schema and qualification method
 are documented in `docs/enterprise-migration/phase-9-capacity-qualification.md`
 and `load/README.md`.
+
+PostgreSQL run deletion is now a reversible tombstone. Legal holds, bounded
+dry-run/apply retention, expired-auth cleanup, restore suppression and the
+operator approval boundary are documented in
+`docs/enterprise-migration/phase-10-data-governance.md`. No production purge
+scheduler is enabled; `npm run data:governance -- runs-preview` is read-only.
 
 ## How it works
 

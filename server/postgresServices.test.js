@@ -44,6 +44,7 @@ function createFakeRepository(options = {}) {
 		createCalls: [],
 		saveCalls: [],
 		deleteCalls: [],
+		cleanupCalls: [],
 		checkCalls: 0,
 		closeCalls: 0,
 		createImplementation: undefined,
@@ -78,6 +79,10 @@ function createFakeRepository(options = {}) {
 			state.deleteCalls.push({ id, metadata: structuredClone(metadata) });
 			if (state.deleteImplementation) return state.deleteImplementation(id, metadata);
 			return true;
+		},
+		async recordCleanup(id, cleanupOptions) {
+			state.cleanupCalls.push({ id, options: structuredClone(cleanupOptions) });
+			return { recorded: true, runId: id, ...cleanupOptions };
 		},
 		async check() {
 			state.checkCalls += 1;
@@ -131,6 +136,10 @@ test('create, save, and delete await repository durability before visible public
 	assert.equal(created.title, 'Durable run');
 	assert.equal(created.updatedAt, 201);
 	assert.equal(events.length, 1);
+	const disposal = [];
+	const liveRecord = services.runs.liveFor(created.id);
+	liveRecord.controller = { abort: () => disposal.push('abort') };
+	liveRecord.dispose = () => disposal.push('dispose');
 
 	const statusPromise = services.runs.setStatus(created, 'running', 'Started');
 	await flushAsyncStart();
@@ -151,7 +160,16 @@ test('create, save, and delete await repository durability before visible public
 	assert.equal((await services.runs.get(created.id)).id, created.id);
 	deleteGate.resolve(true);
 	assert.equal(await deletePromise, true);
+	assert.deepEqual(disposal, ['abort', 'dispose']);
+	assert.equal(services.runs.peekLive(created.id), undefined);
 	assert.equal(await services.runs.get(created.id), undefined);
+	assert.equal((await services.runs.recordCleanup(created.id, {
+		status: 'completed', actorType: 'system', referenceId: 'request/test-1'
+	})).recorded, true);
+	assert.deepEqual(fake.state.cleanupCalls, [{
+		id: created.id,
+		options: { status: 'completed', actorType: 'system', referenceId: 'request/test-1' }
+	}]);
 	unsubscribe();
 });
 
@@ -287,10 +305,16 @@ test('trusted Drytis request identity is retained for detached durable user even
 	});
 	await services.runs.load();
 	const actorUserId = '9e2fb678-423e-41a0-ae19-e9cae143c606';
-	await runWithRequestActor({ actorUserId }, async () => {
+	const requestId = 'fb139801-54e8-4289-ad10-f70c92967967';
+	await runWithRequestActor({ actorUserId, requestId }, async () => {
 		await Promise.resolve();
-		await services.runs.create('Drytis run');
+		const created = await services.runs.create('Drytis run');
+		await services.runs.delete(created.id);
 	});
 	assert.equal(fake.state.createCalls[0].metadata.actorType, 'user');
 	assert.equal(fake.state.createCalls[0].metadata.actorUserId, actorUserId);
+	assert.equal(fake.state.deleteCalls[0].metadata.actorType, 'user');
+	assert.equal(fake.state.deleteCalls[0].metadata.actorUserId, actorUserId);
+	assert.equal(fake.state.deleteCalls[0].metadata.correlationId, requestId);
+	assert.deepEqual(fake.state.deleteCalls[0].metadata.payload, { reasonCode: 'user_request' });
 });

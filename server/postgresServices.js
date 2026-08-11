@@ -254,11 +254,17 @@ export function createPostgresApplicationServices({
 		async delete(id) {
 			const session = sessions.get(id);
 			if (!session) return false;
+			const requestActor = currentRequestActor();
 			const deleted = await enqueue(id, () => repository.delete(id, {
-				expectedVersion: versions.get(id)
+				expectedVersion: versions.get(id),
+				eventType: 'run.deleted',
+				payload: { reasonCode: 'user_request' },
+				correlationId: requestActor?.requestId,
+				...eventActor('session', {}, tenantContext)
 			}));
 			if (!deleted) return false;
 			const record = live.get(id);
+			record?.controller?.abort();
 			record?.dispose?.();
 			live.delete(id);
 			sessions.delete(id);
@@ -267,6 +273,12 @@ export function createPostgresApplicationServices({
 			generations.delete(id);
 			failedRuns.delete(id);
 			return true;
+		},
+		async recordCleanup(id, options = {}) {
+			if (typeof repository.recordCleanup !== 'function') {
+				return { recorded: false, reason: 'unsupported', runId: id };
+			}
+			return repository.recordCleanup(id, options);
 		},
 		commit,
 		async addMessage(session, message) {
@@ -302,6 +314,12 @@ export function createPostgresApplicationServices({
 			return () => bus.off(sessionId, listener);
 		},
 		liveFor,
+		peekLive(id) {
+			return live.get(id);
+		},
+		dropLive(id) {
+			return live.delete(id);
+		},
 		async check() {
 			if (!initialized || closing || lastError) {
 				return { ready: false, checks: { postgres: lastError ? 'error' : 'initializing' } };
