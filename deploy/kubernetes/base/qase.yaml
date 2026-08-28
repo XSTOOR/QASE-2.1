@@ -23,13 +23,8 @@ data:
   PORT: "5173"
   QASE_HEADLESS: "true"
   QASE_ENABLE_DEMO: "false"
-  QASE_AUTH_MODE: drytis
   QASE_PUBLIC_URL: https://qase.example.invalid
-  QASE_DRYTIS_LOGIN_URL: https://studio.drytis.example.invalid/integrations/qase/launch
-  QASE_DRYTIS_ISSUER: https://identity.drytis.example.invalid
-  QASE_DRYTIS_AUDIENCE: qase-production
-  QASE_DRYTIS_JWKS_URL: https://identity.drytis.example.invalid/.well-known/jwks.json
-  QASE_AUTH_COOKIE_SECURE: "true"
+  QASE_DRYTIS_EMBED_ORIGIN: https://studio.drytis.example.invalid
   QASE_TRUST_PROXY: "true"
   QASE_PROVIDER: custom
   QASE_BASE_URL: https://model-gateway.example.invalid/v1
@@ -42,6 +37,11 @@ data:
   QASE_WORKER_PROBE_HOST: 0.0.0.0
   QASE_WORKER_PROBE_PORT: "9174"
   QASE_CELL_ID: 4a7f5cf0-813d-4e3c-8d5d-4b4b9fc88c10
+  QASE_BOOTSTRAP_ORGANIZATION_ID: 4a7f5cf0-813d-4e3c-8d5d-4b4b9fc88c01
+  QASE_BOOTSTRAP_PROJECT_ID: 4a7f5cf0-813d-4e3c-8d5d-4b4b9fc88c02
+  QASE_BOOTSTRAP_USER_ID: 4a7f5cf0-813d-4e3c-8d5d-4b4b9fc88c03
+  QASE_BOOTSTRAP_USER_EMAIL: owner@drytis.example.invalid
+  QASE_BOOTSTRAP_USER_NAME: Drytis Qase Owner
   QASE_CELL_NAME: qase-ap-south-1
   QASE_CELL_REGION: ap-south-1
   QASE_CELL_PUBLIC_URL: https://qase.example.invalid

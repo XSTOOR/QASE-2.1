@@ -18,7 +18,7 @@ import {
 const OVERRIDE_ORGANIZATION_ID = '3bbcee6b-1ed9-4f29-942b-0ed8e4207641';
 const OVERRIDE_PROJECT_ID = 'ea850020-d13a-4df2-8b43-faf30d58b240';
 
-test('single-owner defaults are deterministic, safe, and immutable', () => {
+test('per-instance defaults are deterministic, safe, and immutable', () => {
 	const first = createTenantContext({});
 	const second = createTenantContext({ PATH: 'ignored' });
 

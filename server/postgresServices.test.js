@@ -202,6 +202,58 @@ test('failed save restores the last committed aggregate and publishes nothing', 
 	unsubscribe();
 });
 
+test('create accepts a trusted Drytis initializer and publishes its durable creation event', async () => {
+	const fake = createFakeRepository();
+	const services = createPostgresApplicationServices({
+		repository: fake.repository,
+		tenantContext: DEFAULT_TENANT_CONTEXT,
+		now: () => 250
+	});
+	await services.runs.load();
+	const id = 'fe25868f-45f3-45cc-84a5-69fec3c42de1';
+	const integration = { schemaVersion: '2026-08-1', externalReviewId: id };
+	const events = [];
+	const unsubscribe = services.events.subscribe(id, event => events.push(event));
+	const created = await services.runs.create('Drytis project', {
+		id,
+		mode: 'qa',
+		targetUrl: 'https://preview.example.test/',
+		findings: [],
+		drytisIntegration: integration,
+		eventType: 'drytis.review.created',
+		eventPayload: { externalReviewId: id }
+	});
+
+	assert.equal(created.id, id);
+	assert.equal(created.targetUrl, 'https://preview.example.test/');
+	assert.deepEqual(created.drytisIntegration, integration);
+	assert.equal(fake.state.createCalls[0].metadata.eventType, 'drytis.review.created');
+	assert.equal(fake.state.createCalls[0].metadata.actorType, 'system');
+	assert.deepEqual(fake.state.createCalls[0].metadata.payload, { externalReviewId: id });
+	assert.equal(events[0].type, 'drytis.review.created');
+	unsubscribe();
+});
+
+test('Drytis-generated model tasks retain a user transcript role without impersonating a human audit actor', async () => {
+	const fake = createFakeRepository();
+	const services = createPostgresApplicationServices({
+		repository: fake.repository,
+		tenantContext: DEFAULT_TENANT_CONTEXT,
+		now: () => 275
+	});
+	await services.runs.load();
+	const created = await services.runs.create('Drytis integration task');
+	await services.runs.addMessage(created, {
+		role: 'user',
+		kind: 'integration',
+		text: 'Run the authorized review.'
+	});
+	const saved = fake.state.saveCalls.at(-1).metadata;
+	assert.equal(saved.eventType, 'message');
+	assert.equal(saved.actorType, 'system');
+	assert.equal(saved.actorUserId, undefined);
+});
+
 test('loaded summaries preserve newest-first ordering and exact child counts', async () => {
 	const older = session({
 		id: FIRST_ID,
@@ -219,7 +271,9 @@ test('loaded summaries preserve newest-first ordering and exact child counts', a
 			{ id: 'm2', ts: 2, role: 'user', text: 'Two' },
 			{ id: 'm3', ts: 3, role: 'agent', text: 'Three' }
 		],
-		findings: [{ id: 'f3' }]
+		findings: [{ id: 'f3' }],
+		mode: 'founder',
+		founder: { scope: { target: { name: 'Newer' } }, observations: [] }
 	});
 	const fake = createFakeRepository({
 		rows: [{ session: older, version: 1 }, { session: newer, version: 4 }]
@@ -233,6 +287,7 @@ test('loaded summaries preserve newest-first ordering and exact child counts', a
 	const summaries = await services.runs.list();
 	assert.deepEqual(summaries.map(item => item.id), [SECOND_ID, FIRST_ID]);
 	assert.deepEqual(summaries.map(item => [item.messageCount, item.findingCount]), [[2, 1], [1, 2]]);
+	assert.deepEqual(summaries.map(item => item.mode), ['founder', 'qa']);
 	assert.equal(summaries[0].messages, undefined);
 	assert.equal(summaries[0].findings, undefined);
 });
@@ -309,10 +364,16 @@ test('trusted Drytis request identity is retained for detached durable user even
 	await runWithRequestActor({ actorUserId, requestId }, async () => {
 		await Promise.resolve();
 		const created = await services.runs.create('Drytis run');
+		created.mode = 'founder';
+		created.founder = { scope: { target: { name: 'Drytis run' }, categories: [] }, observations: [] };
+		await services.runs.commit(created, 'founder.created', { schemaVersion: '2026.08.1' });
 		await services.runs.delete(created.id);
 	});
 	assert.equal(fake.state.createCalls[0].metadata.actorType, 'user');
 	assert.equal(fake.state.createCalls[0].metadata.actorUserId, actorUserId);
+	assert.equal(fake.state.saveCalls[0].metadata.eventType, 'founder.created');
+	assert.equal(fake.state.saveCalls[0].metadata.actorType, 'user');
+	assert.equal(fake.state.saveCalls[0].metadata.actorUserId, actorUserId);
 	assert.equal(fake.state.deleteCalls[0].metadata.actorType, 'user');
 	assert.equal(fake.state.deleteCalls[0].metadata.actorUserId, actorUserId);
 	assert.equal(fake.state.deleteCalls[0].metadata.correlationId, requestId);

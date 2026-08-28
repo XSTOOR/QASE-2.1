@@ -6,7 +6,12 @@ import { attachBrowserBridge } from './browserBridge.js';
 import { getConfig, getPublicConfig } from './config.js';
 import { buildQaContext } from './prompt.js';
 import { createQaTools } from './qaTools.js';
+import { buildFounderContext } from './founderPrompt.js';
+import { createFounderTools } from './founderTools.js';
+import { buildSqaContext } from './sqaPrompt.js';
+import { createSqaTools } from './sqaTools.js';
 import { redact, secretNames } from './secrets.js';
+import { sanitizeErrorDetail } from './errorSanitizer.js';
 
 /**
  * One CleanSlate runtime per session, narrowed to browser work.
@@ -30,7 +35,7 @@ const MODEL_TIMEOUT_RETRY_DELAY_MS = Math.max(0, Number(process.env.QASE_MODEL_T
 const INCOMPLETE_RUN_CONTINUATIONS = Math.max(0, Number(process.env.QASE_INCOMPLETE_RUN_CONTINUATIONS ?? 2));
 
 function isRetryableModelTimeout(error) {
-	const message = error instanceof Error ? error.message : String(error);
+	const message = sanitizeErrorDetail(error);
 	return /request timed out|provider activity for \d+ seconds/i.test(message);
 }
 
@@ -62,7 +67,9 @@ const ALLOWED_TOOLS = new Set([
 	'browser_click', 'browser_hover', 'browser_fill', 'browser_check', 'browser_select',
 	'browser_type', 'browser_key', 'browser_scroll', 'browser_diagnostics', 'browser_dialog',
 	'browser_tabs', 'browser_new_tab', 'browser_select_tab', 'browser_close_tab',
-	'update_todo', 'ask_question', 'report_finding', 'finish_qa_report'
+	'update_todo', 'ask_question', 'report_finding', 'finish_qa_report',
+	'record_sqa_control', 'record_sqa_blockers', 'finish_sqa_assessment',
+	'record_founder_observation', 'finish_founder_review'
 ]);
 
 /** Tool name -> how the activity feed should announce it. */
@@ -89,7 +96,12 @@ const ACTIVITY_LABELS = {
 	update_todo: 'Updated the test plan',
 	ask_question: 'Asked the user',
 	report_finding: 'Filed a finding',
-	finish_qa_report: 'Published the report'
+	finish_qa_report: 'Published the report',
+	record_sqa_control: 'Recorded SQA control',
+	record_sqa_blockers: 'Recorded SQA blockers',
+	finish_sqa_assessment: 'Published SQA assessment',
+	record_founder_observation: 'Recorded founder observation',
+	finish_founder_review: 'Published founder review'
 };
 
 function describeTarget(input) {
@@ -145,10 +157,15 @@ export async function closeBrowser(sessionId, runStore) {
 
 /** Closes every other session's browser, so only one is ever running. */
 async function closeOtherBrowsers(keepSessionId, runStore) {
+	const live = typeof runStore.listLive === 'function'
+		? runStore.listLive()
+		: (await runStore.list({ limit: 100 })).map(summary => ({ id: summary.id, record: runStore.peekLive?.(summary.id) }));
 	await Promise.all(
-		(await runStore.list())
-			.filter(summary => summary.id !== keepSessionId)
-			.map(summary => (runStore.liveFor(summary.id).running ? undefined : closeBrowser(summary.id, runStore)))
+		live
+			.filter(entry => entry.id !== keepSessionId)
+			.map(entry => {
+				return !entry.record || entry.record.running ? undefined : closeBrowser(entry.id, runStore);
+			})
 	);
 }
 
@@ -195,7 +212,11 @@ export function ensureRuntime(session, runStore) {
 		// explicit means the policy survives an SDK default changing.
 		approveCommand: async () => false,
 		approveTool: async ({ toolName }) => ALLOWED_TOOLS.has(toolName),
-		additionalContext: () => buildQaContext(session, liveBrowserUrl(record))
+		additionalContext: () => session.mode === 'founder'
+			? buildFounderContext(session, liveBrowserUrl(record))
+			: session.mode === 'sqa'
+				? buildSqaContext(session, liveBrowserUrl(record))
+				: buildQaContext(session, liveBrowserUrl(record))
 	});
 
 	// CleanSlate's default continuation appends a fresh system message before
@@ -209,17 +230,24 @@ export function ensureRuntime(session, runStore) {
 		sdkSession.continueWithTurn = sdkSession.continueWithLatestUserMessage.bind(sdkSession);
 	}
 
-	// The registry is fixed at construction, so the QA tools are registered
-	// afterwards through the headless runtime that actually resolves them.
-	const qaTools = createQaTools(session, runStore);
+	// The registry is fixed at construction, so mode-specific tools are
+	// registered afterwards through the headless runtime that resolves them.
+	// Founder observations replace QA findings in that mode; withholding the QA
+	// finalizer prevents an accidental second, semantically unrelated report.
+	const sessionTools = session.mode === 'founder'
+		? createFounderTools(session, runStore)
+		: [
+			...createQaTools(session, runStore),
+			...(session.mode === 'sqa' ? createSqaTools(session, runStore) : [])
+		];
 	const headless = runtime.headlessRuntime;
-	headless.options.tools = [...ALL_TOOLS, ...qaTools];
-	for (const tool of qaTools) {
+	headless.options.tools = [...ALL_TOOLS, ...sessionTools];
+	for (const tool of sessionTools) {
 		headless.toolsByName.set(tool.name, tool);
 	}
 	// The prompt's tool list is built from ALL_TOOLS; extend it to match reality.
 	const describeTools = runtime.getToolDescriptions.bind(runtime);
-	runtime.getToolDescriptions = () => `${describeTools()}${qaTools
+	runtime.getToolDescriptions = () => `${describeTools()}${sessionTools
 		.map(tool => `- ${tool.name}: ${tool.description}\n  Parameters: ${JSON.stringify(tool.parametersSchema)}`)
 		.join('\n')}\n`;
 
@@ -233,7 +261,7 @@ export function ensureRuntime(session, runStore) {
 	};
 
 	const service = headless.getToolContext().browserAutomationService;
-	const bridge = attachBrowserBridge(session, service, runStore);
+	const bridge = attachBrowserBridge(session, service, runStore, { device: session.device, deviceLandscape: session.deviceLandscape === true });
 
 	record.runtime = runtime;
 	record.bridge = bridge;
@@ -409,7 +437,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 					const ok = result?.success !== false;
 					await runStore.updateActivity(session, id, {
 						status: ok ? 'done' : 'failed',
-						error: ok ? undefined : (result?.error ?? result?.message),
+						error: ok ? undefined : sanitizeErrorDetail(result?.error ?? result?.message),
 						summary: summariseResult(part.toolName, result)
 					});
 					openActivities.delete(part.toolCallId);
@@ -444,7 +472,9 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 			};
 			await runStore.commit(session, 'question', { question: session.pendingQuestion });
 			await runStore.setStatus(session, 'awaiting_input');
-		} else if (session.report) {
+		} else if (session.mode === 'founder'
+			? session.founder?.finalizedAt
+			: session.mode === 'sqa' ? session.sqa?.finalizedAt : session.report) {
 			await runStore.setStatus(session, 'done');
 		} else if (!session.targetUrl) {
 			// A greeting or prose-only response can ask for the target without
@@ -463,7 +493,8 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 				`The agent paused before publishing its report. Continuing automatically (${incompleteAttempt + 1}/${INCOMPLETE_RUN_CONTINUATIONS})…`
 			);
 		} else {
-			const message = 'The agent paused repeatedly before publishing the final QA report. Send "continue" to resume this run.';
+			const artifact = session.mode === 'founder' ? 'Founder review' : session.mode === 'sqa' ? 'SQA assessment' : 'QA report';
+			const message = `The agent paused repeatedly before publishing the final ${artifact}. Send "continue" to resume this run.`;
 			await runStore.addMessage(session, { role: 'system', text: message, kind: 'error' });
 			await runStore.setStatus(session, 'error', message);
 		}
@@ -478,12 +509,22 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 				`The model response timed out. Retrying automatically (${retryAttempt + 1}/${MODEL_TIMEOUT_RETRIES})…`
 			);
 		} else {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = sanitizeErrorDetail(error);
 			await runStore.addMessage(session, { role: 'system', text: message, kind: 'error' });
 			await runStore.setStatus(session, 'error', message);
 		}
 	} finally {
 		closeThinking();
+		// A provider can end a turn while a parallel tool call is still open.
+		// Never leave those activities looking permanently in-flight; the next
+		// continuation will inspect current browser state before retrying.
+		await Promise.allSettled([...openActivities.values()].map(id => runStore.updateActivity(session, id, {
+			status: 'failed',
+			error: controller.signal.aborted
+				? 'Tool stopped with the agent run.'
+				: 'The model turn ended before this tool returned.'
+		})));
+		openActivities.clear();
 		record.running = false;
 		record.controller = undefined;
 		session.secretNames = secretNames(session.id);
@@ -505,8 +546,13 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	}
 
 	if (continueIncompleteRun) {
+		const completionInstruction = session.mode === 'founder'
+			? 'Continue the unfinished Founder review now. Read the current Progress section, immediately complete the remaining route/surface inventory, representative workflow, diagnostics, and evidence-backed category observations without repeating finished work. Ask for critical founder context or an authenticated/public-only scope decision only when genuinely required. Then call finish_founder_review with the complete evidence-linked strategy; never invent customer, analytics, market, or revenue facts.'
+			: session.mode === 'sqa'
+				? 'Continue the unfinished SQA assessment now. Read the current Progress section, immediately perform each remaining browser-first technical check, then use record_sqa_blockers once for reviewer-only prerequisites. If authentication blocks representative scoped workflows, call ask_question for vaulted credentials or an explicit public-only scope decision before publishing. Do not repeat recorded checks. Call finish_sqa_assessment only after the plan and every control are complete. Never invent documentary evidence or claim certification.'
+				: 'Continue the unfinished QA run now. Do not stop with a progress update or a description of what you will do next. Immediately use the next required tool, complete every remaining test-plan item without repeating finished work, and call finish_qa_report when the run is complete. Only call ask_question if user input is genuinely required.';
 		return runTurn(session, {
-			task: 'Continue the unfinished QA run now. Do not stop with a progress update or a description of what you will do next. Immediately use the next required tool, complete every remaining test-plan item without repeating finished work, and call finish_qa_report when the run is complete. Only call ask_question if user input is genuinely required.',
+			task: completionInstruction,
 			incompleteAttempt: incompleteAttempt + 1
 		}, runStore);
 	}

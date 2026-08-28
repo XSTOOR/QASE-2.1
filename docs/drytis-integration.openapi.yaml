@@ -1,0 +1,1239 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Qase Drytis Integration API
+  version: '2026-08-1'
+  description: |
+    Qase-side, project-cell integration contract for signed Drytis review
+    creation, result polling, black-box restart, and optional fixed-target
+    delivery. This specification does not claim that the Drytis toolbar,
+    source packager, identity issuer, result receiver, or repair agent exists
+    in this repository.
+
+    All inbound operations, including GET, require the five X-Drytis signing
+    inputs represented by the AND-combined security schemes below. The HMAC
+    canonical form signs the exact request target and raw body bytes; see
+    docs/drytis-integration.md.
+servers:
+  - url: https://qase.example.com
+    description: Replace with the public origin of the project-bound Qase cell.
+tags:
+  - name: Drytis integration
+security:
+  - DrytisSignature: []
+    DrytisTimestamp: []
+    DrytisNonce: []
+    DrytisIdempotencyKey: []
+    DrytisCorrelationId: []
+paths:
+  /internal/v1/drytis/capabilities:
+    parameters:
+      - $ref: '#/components/parameters/DrytisSignatureHeader'
+      - $ref: '#/components/parameters/DrytisTimestampHeader'
+      - $ref: '#/components/parameters/DrytisNonceHeader'
+      - $ref: '#/components/parameters/DrytisIdempotencyHeader'
+      - $ref: '#/components/parameters/DrytisCorrelationHeader'
+    get:
+      tags: [Drytis integration]
+      operationId: getDrytisQaseCapabilities
+      summary: Read the signed integration capabilities
+      description: |
+        The exact path and query string are signed. The implementation does not
+        otherwise interpret query parameters. The signed body is zero bytes.
+      responses:
+        '200':
+          description: Integration capabilities.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationResponse'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capabilities'
+        '400': {$ref: '#/components/responses/Error400'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '409': {$ref: '#/components/responses/Error409'}
+        '413': {$ref: '#/components/responses/Error413'}
+        '500': {$ref: '#/components/responses/Error500'}
+        '503': {$ref: '#/components/responses/Error503'}
+
+  /internal/v1/drytis/reviews:
+    parameters:
+      - $ref: '#/components/parameters/DrytisSignatureHeader'
+      - $ref: '#/components/parameters/DrytisTimestampHeader'
+      - $ref: '#/components/parameters/DrytisNonceHeader'
+      - $ref: '#/components/parameters/DrytisIdempotencyHeader'
+      - $ref: '#/components/parameters/DrytisCorrelationHeader'
+    post:
+      tags: [Drytis integration]
+      operationId: createDrytisQaseReview
+      summary: Create and optionally start a project review
+      description: |
+        White-box analysis is synchronous. Submitted file contents and
+        source-line snippets are not persisted by the integration; structural
+        locations, hashes, rule metadata, and repair prompts are. When
+        black-box testing is requested, Qase attempts
+        to start the browser-agent turn automatically before returning. A
+        proven replay of the same externalReviewId, business idempotency key,
+        and exact body digest returns 200 rather than creating another run.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReviewRequest'
+      responses:
+        '201':
+          description: Review created.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationResponse'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewResult'
+        '200':
+          description: Idempotent replay of the already-created review.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationResponse'
+            Idempotent-Replay:
+              $ref: '#/components/headers/IdempotentReplay'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewResult'
+        '400': {$ref: '#/components/responses/Error400'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '403': {$ref: '#/components/responses/Error403'}
+        '409': {$ref: '#/components/responses/Error409'}
+        '413': {$ref: '#/components/responses/Error413'}
+        '415': {$ref: '#/components/responses/Error415'}
+        '422': {$ref: '#/components/responses/Error422'}
+        '500': {$ref: '#/components/responses/Error500'}
+        '503': {$ref: '#/components/responses/Error503'}
+
+  /internal/v1/drytis/reviews/{reviewId}:
+    parameters:
+      - $ref: '#/components/parameters/ReviewId'
+      - $ref: '#/components/parameters/DrytisSignatureHeader'
+      - $ref: '#/components/parameters/DrytisTimestampHeader'
+      - $ref: '#/components/parameters/DrytisNonceHeader'
+      - $ref: '#/components/parameters/DrytisIdempotencyHeader'
+      - $ref: '#/components/parameters/DrytisCorrelationHeader'
+    get:
+      tags: [Drytis integration]
+      operationId: getDrytisQaseReview
+      summary: Poll the combined review result
+      description: The signed body is zero bytes. A fresh nonce is required for every poll.
+      responses:
+        '200':
+          description: Current durable review result.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationResponse'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewResult'
+        '400': {$ref: '#/components/responses/Error400'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '404': {$ref: '#/components/responses/Error404'}
+        '409': {$ref: '#/components/responses/Error409'}
+        '413': {$ref: '#/components/responses/Error413'}
+        '500': {$ref: '#/components/responses/Error500'}
+        '503': {$ref: '#/components/responses/Error503'}
+
+  /internal/v1/drytis/reviews/{reviewId}/start:
+    parameters:
+      - $ref: '#/components/parameters/ReviewId'
+      - $ref: '#/components/parameters/DrytisSignatureHeader'
+      - $ref: '#/components/parameters/DrytisTimestampHeader'
+      - $ref: '#/components/parameters/DrytisNonceHeader'
+      - $ref: '#/components/parameters/DrytisIdempotencyHeader'
+      - $ref: '#/components/parameters/DrytisCorrelationHeader'
+    post:
+      tags: [Drytis integration]
+      operationId: startDrytisQaseBlackBoxReview
+      summary: Start another authorized black-box attempt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmptyObject'
+      responses:
+        '202':
+          description: Start request persisted and accepted.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationResponse'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewResult'
+        '200':
+          description: Idempotent replay; no duplicate attempt was started.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationResponse'
+            Idempotent-Replay:
+              $ref: '#/components/headers/IdempotentReplay'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewResult'
+        '400': {$ref: '#/components/responses/Error400'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '404': {$ref: '#/components/responses/Error404'}
+        '409': {$ref: '#/components/responses/Error409'}
+        '413': {$ref: '#/components/responses/Error413'}
+        '415': {$ref: '#/components/responses/Error415'}
+        '500': {$ref: '#/components/responses/Error500'}
+        '503': {$ref: '#/components/responses/Error503'}
+
+  /internal/v1/drytis/reviews/{reviewId}/deliver:
+    parameters:
+      - $ref: '#/components/parameters/ReviewId'
+      - $ref: '#/components/parameters/DrytisSignatureHeader'
+      - $ref: '#/components/parameters/DrytisTimestampHeader'
+      - $ref: '#/components/parameters/DrytisNonceHeader'
+      - $ref: '#/components/parameters/DrytisIdempotencyHeader'
+      - $ref: '#/components/parameters/DrytisCorrelationHeader'
+    post:
+      tags: [Drytis integration]
+      operationId: deliverDrytisQaseReview
+      summary: Deliver the current result to the configured fixed target
+      description: |
+        Available only when QASE_DRYTIS_RESULTS_PATH is configured. The caller
+        cannot select the target. Delivery occurs synchronously; there is no
+        durable outbox retry in this API version.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmptyObject'
+      responses:
+        '200':
+          description: Delivery completed, or this is an idempotent replay of a recorded delivery request.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationResponse'
+            Idempotent-Replay:
+              $ref: '#/components/headers/OptionalIdempotentReplay'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewResult'
+        '400': {$ref: '#/components/responses/Error400'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '404': {$ref: '#/components/responses/Error404'}
+        '409': {$ref: '#/components/responses/Error409'}
+        '413': {$ref: '#/components/responses/Error413'}
+        '415': {$ref: '#/components/responses/Error415'}
+        '500': {$ref: '#/components/responses/Error500'}
+        '502': {$ref: '#/components/responses/Error502'}
+        '503': {$ref: '#/components/responses/Error503'}
+
+  /internal/v1/drytis/reviews/{reviewId}/stop:
+    parameters:
+      - $ref: '#/components/parameters/ReviewId'
+      - $ref: '#/components/parameters/DrytisSignatureHeader'
+      - $ref: '#/components/parameters/DrytisTimestampHeader'
+      - $ref: '#/components/parameters/DrytisNonceHeader'
+      - $ref: '#/components/parameters/DrytisIdempotencyHeader'
+      - $ref: '#/components/parameters/DrytisCorrelationHeader'
+    post:
+      tags: [Drytis integration]
+      operationId: stopDrytisQaseBlackBoxReview
+      summary: Stop the active black-box review
+      description: Qase persists the request, stops the existing agent run, and marks it interrupted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmptyObject'
+      responses:
+        '202':
+          description: Stop request completed and the run is interrupted.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationResponse'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewResult'
+        '200':
+          description: Idempotent replay; the stop action was not repeated.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationResponse'
+            Idempotent-Replay:
+              $ref: '#/components/headers/IdempotentReplay'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewResult'
+        '400': {$ref: '#/components/responses/Error400'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '404': {$ref: '#/components/responses/Error404'}
+        '409': {$ref: '#/components/responses/Error409'}
+        '413': {$ref: '#/components/responses/Error413'}
+        '415': {$ref: '#/components/responses/Error415'}
+        '500': {$ref: '#/components/responses/Error500'}
+        '503': {$ref: '#/components/responses/Error503'}
+
+webhooks:
+  qaseResultDelivery:
+    post:
+      tags: [Drytis integration]
+      summary: Qase pushes a result to the fixed Drytis receiver
+      description: |
+        This is an outbound Qase call to QASE_DRYTIS_RESULTS_PATH, not a route
+        served by Qase. It is emitted only when a signed caller invokes the
+        deliver operation. The ReviewResult sent during the call contains
+        delivery.status=delivering. Drytis must verify the exact raw body with
+        signer `qase`. Redirects are not followed.
+      security:
+        - QaseSignature: []
+          QaseTimestamp: []
+          QaseNonce: []
+          QaseIdempotencyKey: []
+          QaseCorrelationId: []
+      parameters:
+        - $ref: '#/components/parameters/QaseSignatureHeader'
+        - $ref: '#/components/parameters/QaseTimestampHeader'
+        - $ref: '#/components/parameters/QaseNonceHeader'
+        - $ref: '#/components/parameters/QaseIdempotencyHeader'
+        - $ref: '#/components/parameters/QaseCorrelationHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewResult'
+      responses:
+        2XX:
+          description: |
+            Accepted. Status 204 may omit a body. Every other successful status
+            must return a bounded JSON object with a JSON content type; the
+            response body is deliberately not persisted by Qase.
+          content:
+            application/json:
+              schema: {}
+        default:
+          description: Rejected; Qase records a sanitized delivery failure.
+
+components:
+  securitySchemes:
+    DrytisSignature:
+      type: apiKey
+      in: header
+      name: X-Drytis-Signature
+      description: HMAC-SHA256 signature formatted as v1 plus an equals sign and 64 lower-case hex characters.
+    DrytisTimestamp:
+      type: apiKey
+      in: header
+      name: X-Drytis-Timestamp
+    DrytisNonce:
+      type: apiKey
+      in: header
+      name: X-Drytis-Nonce
+    DrytisIdempotencyKey:
+      type: apiKey
+      in: header
+      name: Idempotency-Key
+    DrytisCorrelationId:
+      type: apiKey
+      in: header
+      name: X-Correlation-Id
+    QaseSignature:
+      type: apiKey
+      in: header
+      name: X-Qase-Signature
+    QaseTimestamp:
+      type: apiKey
+      in: header
+      name: X-Qase-Timestamp
+    QaseNonce:
+      type: apiKey
+      in: header
+      name: X-Qase-Nonce
+    QaseIdempotencyKey:
+      type: apiKey
+      in: header
+      name: Idempotency-Key
+    QaseCorrelationId:
+      type: apiKey
+      in: header
+      name: X-Correlation-Id
+
+  parameters:
+    DrytisSignatureHeader:
+      name: X-Drytis-Signature
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^v1=[0-9a-f]{64}$'
+    DrytisTimestampHeader:
+      name: X-Drytis-Timestamp
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^\d{10,11}$'
+    DrytisNonceHeader:
+      name: X-Drytis-Nonce
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/Nonce'
+    DrytisIdempotencyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/IdempotencyKey'
+    DrytisCorrelationHeader:
+      name: X-Correlation-Id
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/CorrelationId'
+    QaseSignatureHeader:
+      name: X-Qase-Signature
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^v1=[0-9a-f]{64}$'
+    QaseTimestampHeader:
+      name: X-Qase-Timestamp
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^\d{10,11}$'
+    QaseNonceHeader:
+      name: X-Qase-Nonce
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/Nonce'
+    QaseIdempotencyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/IdempotencyKey'
+    QaseCorrelationHeader:
+      name: X-Correlation-Id
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/CorrelationId'
+    ReviewId:
+      name: reviewId
+      in: path
+      required: true
+      description: The lower-case externalReviewId used to create the review.
+      schema:
+        $ref: '#/components/schemas/CanonicalUuid'
+
+  headers:
+    CorrelationResponse:
+      description: The verified X-Correlation-Id supplied by Drytis.
+      required: true
+      schema:
+        $ref: '#/components/schemas/CorrelationId'
+    IdempotentReplay:
+      description: Present and true for a proven idempotent replay.
+      required: true
+      schema:
+        type: string
+        const: 'true'
+    OptionalIdempotentReplay:
+      description: Present and true only for a proven idempotent replay.
+      schema:
+        type: string
+        const: 'true'
+    NoStore:
+      description: Integration responses are not cacheable.
+      required: true
+      schema:
+        type: string
+        const: no-store
+
+  responses:
+    Error400:
+      description: Malformed signed request, invalid JSON, or invalid request data.
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Error401:
+      description: Invalid signature or stale signed timestamp.
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Error403:
+      description: Project does not belong to this Qase cell.
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Error404:
+      description: Review or endpoint not found in this project cell.
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Error409:
+      description: Replay, idempotency conflict, existing review, or unavailable operation.
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Error413:
+      description: Signed request exceeds the configured or parser limit.
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Error415:
+      description: Content-Type is not application/json.
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Error422:
+      description: Snapshot validation or bounded-analysis persistence failed.
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Error500:
+      description: Internal integration error.
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Error502:
+      description: Fixed-target delivery failed, was rejected, or returned an invalid response.
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+    Error503:
+      description: Shared replay protection or another required integration service is unavailable.
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+
+  schemas:
+    CanonicalUuid:
+      type: string
+      pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      examples: [8768e292-6278-4daa-a61a-56ab81e081fc]
+    CorrelationId:
+      type: string
+      minLength: 8
+      maxLength: 128
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._~:/-]*$'
+    Nonce:
+      type: string
+      minLength: 16
+      maxLength: 128
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._~:/-]*$'
+    IdempotencyKey:
+      type: string
+      minLength: 8
+      maxLength: 200
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._~:/-]*$'
+    SchemaVersion:
+      type: string
+      const: '2026-08-1'
+    IsoTimestamp:
+      type: string
+      format: date-time
+    Sha256:
+      type: string
+      pattern: '^([sS][hH][aA]256:)?[a-fA-F0-9]{64}$'
+    EmptyObject:
+      type: object
+      additionalProperties: false
+      maxProperties: 0
+
+    Project:
+      type: object
+      additionalProperties: false
+      required: [id, name, revision]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Must exactly equal the trusted Qase cell project ID.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        revision:
+          type: string
+          minLength: 1
+          maxLength: 200
+
+    ProjectContext:
+      type: object
+      additionalProperties: false
+      description: Bounded untrusted product labels used to choose coverage; never commands or credentials.
+      properties:
+        description: {type: string, maxLength: 2000}
+        applicationType: {type: string, maxLength: 100}
+        primaryLanguage: {type: string, maxLength: 100}
+        frameworks:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 100}
+        environment: {type: string, maxLength: 100}
+        defaultBranch: {type: string, maxLength: 200}
+
+    RequestedChecks:
+      type: object
+      additionalProperties: false
+      required: [blackBox, whiteBox]
+      properties:
+        blackBox: {type: boolean}
+        whiteBox: {type: boolean}
+      not:
+        properties:
+          blackBox: {const: false}
+          whiteBox: {const: false}
+        required: [blackBox, whiteBox]
+
+    SourceFile:
+      type: object
+      additionalProperties: false
+      required: [path, content, sha256]
+      properties:
+        path:
+          type: string
+          minLength: 1
+          description: Canonical, NFC-normalized, safe relative POSIX path; maximum 512 UTF-8 bytes and allowlisted text type.
+        content:
+          type: string
+          description: Validated Unicode source text with no detected credential material; maximum 524288 UTF-8 bytes.
+        sha256:
+          $ref: '#/components/schemas/Sha256'
+        sizeBytes:
+          type: integer
+          minimum: 0
+          maximum: 524288
+          description: Optional exact UTF-8 byte length.
+
+    SourceSnapshot:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, project, files]
+      description: Project must exactly match the parent review project after normalization.
+      properties:
+        schemaVersion:
+          $ref: '#/components/schemas/SchemaVersion'
+        project:
+          $ref: '#/components/schemas/Project'
+        files:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/SourceFile'
+
+    CreateReviewRequest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, externalReviewId, project, requestedChecks]
+      properties:
+        schemaVersion:
+          $ref: '#/components/schemas/SchemaVersion'
+        externalReviewId:
+          $ref: '#/components/schemas/CanonicalUuid'
+        project:
+          $ref: '#/components/schemas/Project'
+        projectContext:
+          $ref: '#/components/schemas/ProjectContext'
+        containerUrl:
+          type: string
+          format: uri
+          maxLength: 8192
+          pattern: '^[Hh][Tt][Tt][Pp][Ss]://[^?#]+$'
+          description: Canonical Drytis container/preview URL. HTTPS without credentials, query, or fragment; accepted exactly when blackBox is true.
+        previewUrl:
+          type: string
+          format: uri
+          maxLength: 8192
+          pattern: '^[Hh][Tt][Tt][Pp][Ss]://[^?#]+$'
+          deprecated: true
+          description: Backward-compatible alias for containerUrl. When both are supplied they must normalize identically.
+        requestedChecks:
+          $ref: '#/components/schemas/RequestedChecks'
+        sourceSnapshot:
+          $ref: '#/components/schemas/SourceSnapshot'
+      allOf:
+        - if:
+            properties:
+              requestedChecks:
+                properties:
+                  blackBox: {const: true}
+                required: [blackBox]
+          then:
+            anyOf:
+              - required: [containerUrl]
+              - required: [previewUrl]
+          else:
+            not:
+              anyOf:
+                - required: [containerUrl]
+                - required: [previewUrl]
+        - if:
+            properties:
+              requestedChecks:
+                properties:
+                  whiteBox: {const: true}
+                required: [whiteBox]
+          then:
+            required: [sourceSnapshot]
+          else:
+            not:
+              required: [sourceSnapshot]
+
+    Severity:
+      type: string
+      enum: [critical, high, medium, low, info]
+    WhiteBoxSeverity:
+      type: string
+      enum: [critical, high, medium, low]
+
+    WhiteBoxEvidence:
+      type: object
+      additionalProperties: false
+      required: [path, startLine, endLine]
+      properties:
+        path: {type: string}
+        startLine: {type: integer, minimum: 1}
+        endLine: {type: integer, minimum: 1}
+
+    WhiteBoxFinding:
+      type: object
+      additionalProperties: false
+      required: [id, ruleId, severity, confidence, category, title, description, remediation, evidence]
+      properties:
+        id: {type: string, pattern: '^WB-[A-F0-9]{12}$'}
+        ruleId: {type: string}
+        severity:
+          $ref: '#/components/schemas/WhiteBoxSeverity'
+        confidence: {type: string, enum: [high, medium, low]}
+        category: {type: string}
+        title: {type: string}
+        description: {type: string}
+        remediation: {type: string}
+        evidence:
+          $ref: '#/components/schemas/WhiteBoxEvidence'
+
+    WhiteBoxRepairPrompt:
+      type: object
+      additionalProperties: false
+      required: [findingId, path, startLine, severity, prompt]
+      properties:
+        findingId: {type: string, pattern: '^WB-[A-F0-9]{12}$'}
+        path: {type: string}
+        startLine: {type: integer, minimum: 1}
+        severity:
+          $ref: '#/components/schemas/WhiteBoxSeverity'
+        prompt: {type: string}
+
+    WhiteBoxInventory:
+      type: object
+      additionalProperties: false
+      required: [fileCount, totalBytes, totalLines, byLanguage, byExtension]
+      properties:
+        fileCount: {type: integer, minimum: 1, maximum: 1000}
+        totalBytes: {type: integer, minimum: 0, maximum: 12582912}
+        totalLines: {type: integer, minimum: 0}
+        byLanguage:
+          type: object
+          additionalProperties: {type: integer, minimum: 0}
+        byExtension:
+          type: object
+          additionalProperties: {type: integer, minimum: 0}
+
+    WhiteBoxCoverage:
+      type: object
+      additionalProperties: false
+      required: [filesReceived, filesScreened, filesAnalyzed, filesWithoutLanguageRules, linesReviewed, checkFamilies, limitations]
+      properties:
+        filesReceived: {type: integer, minimum: 1, maximum: 1000}
+        filesScreened: {type: integer, minimum: 1, maximum: 1000}
+        filesAnalyzed:
+          type: integer
+          minimum: 0
+          maximum: 1000
+          description: Files covered by language-specific static rules, not merely manifest/secret screening.
+        filesWithoutLanguageRules: {type: integer, minimum: 0, maximum: 1000}
+        linesReviewed: {type: integer, minimum: 0}
+        checkFamilies:
+          type: array
+          items: {type: string}
+        limitations:
+          type: array
+          items: {type: string}
+
+    WhiteBoxSummary:
+      type: object
+      additionalProperties: false
+      required: [total, critical, high, medium, low, truncated]
+      properties:
+        total: {type: integer, minimum: 0, maximum: 200}
+        critical: {type: integer, minimum: 0, maximum: 200}
+        high: {type: integer, minimum: 0, maximum: 200}
+        medium: {type: integer, minimum: 0, maximum: 200}
+        low: {type: integer, minimum: 0, maximum: 200}
+        truncated: {type: boolean}
+
+    WhiteBoxAnalysis:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, analysisId, analysisSha256, snapshotSha256, project, inventory, coverage, summary, verdict, findings, findingsPage]
+      properties:
+        schemaVersion:
+          $ref: '#/components/schemas/SchemaVersion'
+        analysisId: {type: string, pattern: '^whitebox_[a-f0-9]{24}$'}
+        analysisSha256:
+          $ref: '#/components/schemas/Sha256'
+        snapshotSha256:
+          $ref: '#/components/schemas/Sha256'
+        project:
+          $ref: '#/components/schemas/Project'
+        inventory:
+          $ref: '#/components/schemas/WhiteBoxInventory'
+        coverage:
+          $ref: '#/components/schemas/WhiteBoxCoverage'
+        summary:
+          $ref: '#/components/schemas/WhiteBoxSummary'
+        verdict:
+          type: string
+          enum: [issues_found, review_recommended, no_deterministic_findings, insufficient_static_coverage]
+        findings:
+          type: array
+          maxItems: 40
+          items:
+            $ref: '#/components/schemas/WhiteBoxFinding'
+        findingsPage:
+          $ref: '#/components/schemas/BoundedPage'
+
+    WhiteBoxCheck:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [requested, status]
+          properties:
+            requested: {const: false}
+            status: {const: not_requested}
+        - type: object
+          additionalProperties: false
+          required: [requested, status, analysis]
+          properties:
+            requested: {const: true}
+            status: {const: completed}
+            analysis:
+              $ref: '#/components/schemas/WhiteBoxAnalysis'
+        - type: object
+          additionalProperties: false
+          required: [requested, status]
+          properties:
+            requested: {const: true}
+            status: {const: failed}
+
+    QaFinding:
+      type: object
+      additionalProperties: false
+      required: [title, severity, category, steps]
+      properties:
+        id: {type: string}
+        ts: {type: number}
+        title: {type: string, maxLength: 500}
+        severity:
+          $ref: '#/components/schemas/Severity'
+        category: {type: string, maxLength: 200}
+        url:
+          type: string
+          format: uri
+          description: HTTP(S) URL with credentials rejected and query/fragment removed.
+        steps:
+          type: array
+          maxItems: 12
+          items: {type: string, maxLength: 500}
+        expected: {type: string, maxLength: 1500}
+        actual: {type: string, maxLength: 1500}
+        evidence: {type: string, maxLength: 1500}
+
+    QaReport:
+      type: object
+      additionalProperties: false
+      required: [covered, notCovered, recommendations]
+      properties:
+        ts: {type: number}
+        verdict: {type: string, enum: [pass, pass_with_issues, fail, blocked]}
+        summary: {type: string, maxLength: 2000}
+        covered:
+          type: array
+          maxItems: 25
+          items: {type: string, maxLength: 500}
+        notCovered:
+          type: array
+          maxItems: 25
+          items: {type: string, maxLength: 500}
+        recommendations:
+          type: array
+          maxItems: 25
+          items: {type: string, maxLength: 500}
+
+    BlackBoxCheck:
+      type: object
+      additionalProperties: false
+      required: [requested, status, attempts, findings, findingsPage]
+      properties:
+        requested: {type: boolean}
+        status:
+          type: string
+          enum: [not_requested, ready, starting, queued, running, stopping, awaiting_input, completed, failed, interrupted]
+        attempts: {type: integer, minimum: 0}
+        containerUrl: {type: string, format: uri}
+        previewUrl:
+          type: string
+          format: uri
+          deprecated: true
+        findings:
+          type: array
+          maxItems: 40
+          items:
+            $ref: '#/components/schemas/QaFinding'
+        findingsPage:
+          $ref: '#/components/schemas/BoundedPage'
+        report:
+          $ref: '#/components/schemas/QaReport'
+
+    SeverityCounts:
+      type: object
+      additionalProperties: false
+      required: [critical, high, medium, low, info]
+      properties:
+        critical: {type: integer, minimum: 0}
+        high: {type: integer, minimum: 0}
+        medium: {type: integer, minimum: 0}
+        low: {type: integer, minimum: 0}
+        info: {type: integer, minimum: 0}
+
+    BoundedPage:
+      type: object
+      additionalProperties: false
+      required: [total, returned, truncated]
+      properties:
+        total: {type: integer, minimum: 0}
+        returned: {type: integer, minimum: 0}
+        truncated: {type: boolean}
+
+    CombinedSummary:
+      type: object
+      additionalProperties: false
+      required: [findings, returnedFindings, findingsTruncated, bySeverity]
+      properties:
+        findings: {type: integer, minimum: 0}
+        returnedFindings: {type: integer, minimum: 0, maximum: 80}
+        findingsTruncated: {type: boolean}
+        bySeverity:
+          $ref: '#/components/schemas/SeverityCounts'
+        verdict:
+          type: string
+          enum: [pass, pass_with_issues, fail, blocked, issues_found, review_recommended, no_deterministic_findings, insufficient_static_coverage]
+
+    WhiteBoxRepairTask:
+      type: object
+      additionalProperties: false
+      required: [id, type, findingId, path, startLine, severity, revision, snapshotSha256, prompt]
+      properties:
+        id: {type: string, pattern: '^repair:'}
+        type: {const: white_box}
+        findingId: {type: string}
+        path: {type: string}
+        startLine: {type: integer, minimum: 1}
+        severity:
+          $ref: '#/components/schemas/WhiteBoxSeverity'
+        revision: {type: string, minLength: 1, maxLength: 200}
+        snapshotSha256:
+          $ref: '#/components/schemas/Sha256'
+        prompt: {type: string}
+
+    BlackBoxRepairTask:
+      type: object
+      additionalProperties: false
+      required: [id, type, findingId, severity, revision, prompt]
+      properties:
+        id: {type: string, pattern: '^repair:'}
+        type: {const: black_box}
+        findingId: {type: string}
+        severity:
+          $ref: '#/components/schemas/Severity'
+        revision: {type: string, minLength: 1, maxLength: 200}
+        prompt: {type: string}
+
+    RepairTask:
+      oneOf:
+        - $ref: '#/components/schemas/WhiteBoxRepairTask'
+        - $ref: '#/components/schemas/BlackBoxRepairTask'
+
+    DeliveryFailure:
+      type: object
+      additionalProperties: false
+      required: [code, message, retryable]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        retryable: {type: boolean}
+
+    DeliveryState:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [status, correlationId]
+          properties:
+            status: {const: delivering}
+            correlationId:
+              $ref: '#/components/schemas/CorrelationId'
+        - type: object
+          additionalProperties: false
+          required: [status, deliveredAt, correlationId]
+          properties:
+            status: {const: delivered}
+            deliveredAt:
+              $ref: '#/components/schemas/IsoTimestamp'
+            upstreamStatus: {type: integer, minimum: 200, maximum: 299}
+            correlationId:
+              $ref: '#/components/schemas/CorrelationId'
+        - type: object
+          additionalProperties: false
+          required: [status, failedAt, correlationId, error]
+          properties:
+            status: {const: failed}
+            failedAt:
+              $ref: '#/components/schemas/IsoTimestamp'
+            correlationId:
+              $ref: '#/components/schemas/CorrelationId'
+            error:
+              $ref: '#/components/schemas/DeliveryFailure'
+
+    ReviewResult:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, externalReviewId, qaseRunId, project, launchUrl, status, checks, summary, repairTasks, repairTasksPage, createdAt, updatedAt]
+      properties:
+        schemaVersion:
+          $ref: '#/components/schemas/SchemaVersion'
+        externalReviewId:
+          $ref: '#/components/schemas/CanonicalUuid'
+        qaseRunId:
+          $ref: '#/components/schemas/CanonicalUuid'
+        project:
+          $ref: '#/components/schemas/Project'
+        projectContext:
+          $ref: '#/components/schemas/ProjectContext'
+        launchUrl:
+          type: string
+          format: uri-reference
+        status:
+          type: string
+          enum: [ready, running, stopping, awaiting_input, completed, failed, interrupted]
+        checks:
+          type: object
+          additionalProperties: false
+          required: [whiteBox, blackBox]
+          properties:
+            whiteBox:
+              $ref: '#/components/schemas/WhiteBoxCheck'
+            blackBox:
+              $ref: '#/components/schemas/BlackBoxCheck'
+        summary:
+          $ref: '#/components/schemas/CombinedSummary'
+        repairTasks:
+          type: array
+          maxItems: 80
+          items:
+            $ref: '#/components/schemas/RepairTask'
+        repairTasksPage:
+          $ref: '#/components/schemas/BoundedPage'
+        delivery:
+          $ref: '#/components/schemas/DeliveryState'
+        createdAt:
+          $ref: '#/components/schemas/IsoTimestamp'
+        updatedAt:
+          $ref: '#/components/schemas/IsoTimestamp'
+
+    SnapshotLimits:
+      type: object
+      additionalProperties: false
+      required: [maxFiles, maxFileBytes, maxTotalBytes, maxPathBytes, maxProjectIdCharacters, maxProjectNameCharacters, maxRevisionCharacters, maxFindings]
+      properties:
+        maxFiles: {const: 1000}
+        maxFileBytes: {const: 524288}
+        maxTotalBytes: {const: 12582912}
+        maxPathBytes: {const: 512}
+        maxProjectIdCharacters: {const: 200}
+        maxProjectNameCharacters: {const: 200}
+        maxRevisionCharacters: {const: 200}
+        maxFindings: {const: 200}
+
+    Capabilities:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, integration, authentication, checks, sourceSnapshot, results, projectContext, controls, launch]
+      properties:
+        schemaVersion:
+          $ref: '#/components/schemas/SchemaVersion'
+        integration: {const: drytis-qase}
+        authentication:
+          type: object
+          additionalProperties: false
+          required: [scheme, rawRequestTargetAndBodySigned, replayProtected, businessIdempotency]
+          properties:
+            scheme: {const: qase-drytis-hmac-v1}
+            rawRequestTargetAndBodySigned: {const: true}
+            replayProtected: {const: true}
+            businessIdempotency: {const: true}
+        checks:
+          type: object
+          additionalProperties: false
+          required: [blackBox, whiteBox]
+          properties:
+            blackBox:
+              type: object
+              additionalProperties: false
+              required: [supported, containerUrl, previewUrl, execution]
+              properties:
+                supported: {const: true}
+                containerUrl: {const: https_required}
+                previewUrl: {const: deprecated_alias}
+                execution: {const: qase_browser_agent}
+            whiteBox:
+              type: object
+              additionalProperties: false
+              required: [supported, execution, snapshotSchemaVersion, analysisSchemaVersion]
+              properties:
+                supported: {const: true}
+                execution: {const: deterministic_static_analysis_only}
+                snapshotSchemaVersion:
+                  $ref: '#/components/schemas/SchemaVersion'
+                analysisSchemaVersion:
+                  $ref: '#/components/schemas/SchemaVersion'
+        sourceSnapshot:
+          type: object
+          additionalProperties: false
+          required: [transfer, retention, limits, transportRequestLimit]
+          properties:
+            transfer: {const: inline_json}
+            retention:
+              const: source_content_not_persisted
+              description: Submitted file contents and source-line snippets are not persisted; structural locations, hashes, rule metadata, and repair prompts are.
+            limits:
+              $ref: '#/components/schemas/SnapshotLimits'
+            transportRequestLimit: {const: deployment_configured}
+        results:
+          type: object
+          additionalProperties: false
+          required: [polling, pushDelivery, repairTasks, rawSourceReturned]
+          properties:
+            polling: {const: true}
+            pushDelivery: {type: boolean}
+            repairTasks: {const: true}
+            rawSourceReturned: {const: false}
+        projectContext:
+          type: object
+          additionalProperties: false
+          required: [supported, fields, untrustedLabelsOnly]
+          properties:
+            supported: {const: true}
+            fields:
+              type: array
+              minItems: 6
+              maxItems: 6
+              items:
+                enum: [description, applicationType, primaryLanguage, frameworks, environment, defaultBranch]
+            untrustedLabelsOnly: {const: true}
+        controls:
+          type: object
+          additionalProperties: false
+          required: [start, stop, deliver]
+          properties:
+            start: {const: true}
+            stop: {const: true}
+            deliver:
+              type: boolean
+              description: True only when fixed-target push delivery is configured.
+        launch:
+          type: object
+          additionalProperties: false
+          required: [pathTemplate]
+          properties:
+            pathTemplate: {const: '/?run={externalReviewId}'}
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, retryable]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            retryable: {type: boolean}
+            correlationId:
+              $ref: '#/components/schemas/CorrelationId'
+            details:
+              type: object
+              additionalProperties: true

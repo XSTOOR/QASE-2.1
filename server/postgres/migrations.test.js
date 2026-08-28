@@ -54,7 +54,7 @@ function statements(client) {
 
 test('loads the checked migration set in numeric order', async () => {
 	const migrations = await loadMigrations();
-	assert.deepEqual(migrations.map(migration => migration.version), [1, 2, 3, 4, 5, 6, 7]);
+	assert.deepEqual(migrations.map(migration => migration.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 	assert.deepEqual(migrations.map(migration => migration.name), [
 		'identity_tenancy',
 		'run_domain',
@@ -62,7 +62,10 @@ test('loads the checked migration set in numeric order', async () => {
 		'drytis_identity_sessions',
 		'distributed_execution',
 		'operational_correlation',
-		'data_lifecycle'
+		'data_lifecycle',
+		'sqa_assessment',
+		'founder_review',
+		'drytis_product_integration'
 	]);
 	for (const migration of migrations) {
 		assert.match(migration.checksum, /^[0-9a-f]{64}$/);
@@ -90,6 +93,18 @@ test('loads the checked migration set in numeric order', async () => {
 	assert.match(migrations[6].sql, /FOREIGN KEY \(organization_id, project_id, run_id\)[\s\S]*ON DELETE RESTRICT/);
 	assert.match(migrations[6].sql, /FORCE ROW LEVEL SECURITY/);
 	assert.match(migrations[6].sql, /qa_runs_purge_candidates/);
+	assert.match(migrations[7].sql, /ADD COLUMN run_mode text NOT NULL DEFAULT 'qa'/);
+	assert.match(migrations[7].sql, /ADD COLUMN sqa_assessment jsonb/);
+	assert.match(migrations[7].sql, /qa_runs_sqa_shape/);
+	assert.match(migrations[8].sql, /ADD COLUMN founder_assessment jsonb/);
+	assert.match(migrations[8].sql, /run_mode IN \('qa', 'sqa', 'founder'\)/);
+	assert.match(migrations[8].sql, /qa_runs_mode_shape/);
+	assert.match(migrations[9].sql, /ADD COLUMN drytis_integration jsonb/);
+	assert.match(migrations[9].sql, /CREATE TABLE qase_drytis_request_nonces/);
+	assert.match(migrations[9].sql, /requested_by_actor_type text NOT NULL DEFAULT 'user'/);
+	assert.match(migrations[9].sql, /requested_by_actor_type IN \('system', 'service'\)/);
+	assert.match(migrations[9].sql, /FORCE ROW LEVEL SECURITY/);
+	assert.doesNotMatch(migrations[9].sql, /source_content|file_content|access_token|private_key/i);
 });
 
 test('applies pending migrations in order and records them with parameters', async () => {
@@ -101,15 +116,15 @@ test('applies pending migrations in order and records them with parameters', asy
 		.filter(Boolean);
 
 	assert.equal(pool.connectCalls, 1);
-	assert.deepEqual(migrationOrder, ['001', '002', '003', '004', '005', '006', '007']);
-	assert.deepEqual(result.applied.map(migration => migration.version), [1, 2, 3, 4, 5, 6, 7]);
-	assert.equal(result.currentVersion, 7);
-	assert.equal(sql.filter(statement => statement === 'BEGIN').length, 7);
-	assert.equal(sql.filter(statement => statement === 'COMMIT').length, 7);
+	assert.deepEqual(migrationOrder, ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010']);
+	assert.deepEqual(result.applied.map(migration => migration.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+	assert.equal(result.currentVersion, 10);
+	assert.equal(sql.filter(statement => statement === 'BEGIN').length, 10);
+	assert.equal(sql.filter(statement => statement === 'COMMIT').length, 10);
 	assert.equal(sql.filter(statement => statement === 'ROLLBACK').length, 0);
 
 	const records = pool.client.calls.filter(call => call.text.startsWith('INSERT INTO qase_schema_migrations'));
-	assert.equal(records.length, 7);
+	assert.equal(records.length, 10);
 	assert.match(records[0].text, /VALUES \(\$1, \$2, \$3\)/);
 	assert.deepEqual(records.map(record => record.values.slice(0, 2)), [
 		[1, 'identity_tenancy'],
@@ -118,7 +133,10 @@ test('applies pending migrations in order and records them with parameters', asy
 		[4, 'drytis_identity_sessions'],
 		[5, 'distributed_execution'],
 		[6, 'operational_correlation'],
-		[7, 'data_lifecycle']
+		[7, 'data_lifecycle'],
+		[8, 'sqa_assessment'],
+		[9, 'founder_review'],
+		[10, 'drytis_product_integration']
 	]);
 	assert.deepEqual(pool.client.calls[0].values, [MIGRATION_ADVISORY_LOCK_KEY]);
 	assert.match(sql[0], /pg_advisory_lock/);
@@ -134,7 +152,7 @@ test('does no transactional work when every migration is already applied', async
 	const result = await runPostgresMigrations(pool);
 	const sql = statements(pool.client);
 
-	assert.deepEqual(result, { applied: [], currentVersion: 7 });
+	assert.deepEqual(result, { applied: [], currentVersion: 10 });
 	assert.equal(sql.includes('BEGIN'), false);
 	assert.equal(sql.some(statement => statement.startsWith('INSERT INTO qase_schema_migrations')), false);
 	assert.match(sql.at(-1), /pg_advisory_unlock/);

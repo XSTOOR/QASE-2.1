@@ -1,45 +1,21 @@
 /*
- * Qase cinematic entry and owner authentication.
+ * Qase cinematic entry handoff.
  *
- * This module keeps the existing visual transitions, but the workspace handoff
- * now happens only after the server confirms an HttpOnly authenticated session.
- * The dashboard waits on `qaseAuthReady`, so it cannot touch protected APIs
- * while the entry layer is still locked.
+ * The workspace stays inert until the user explicitly begins the transmission.
+ * This module owns only that visual handoff; the hosting Drytis instance owns
+ * access and user isolation.
  */
 
 const entry = document.getElementById('entry-experience');
 
-let resolveAuthReady;
-window.qaseAuth = { authenticated: false, configured: false };
-window.qaseAuthReady = new Promise(resolve => {
-	resolveAuthReady = resolve;
+let resolveEntryReady;
+window.qaseEntryReady = new Promise(resolve => {
+	resolveEntryReady = resolve;
 });
 
 if (entry) {
 	const welcome = document.getElementById('entry-welcome');
-	const auth = document.getElementById('entry-auth');
 	const beginButton = document.getElementById('entry-begin');
-	const backButton = document.getElementById('entry-back');
-	const emailInput = document.getElementById('entry-email');
-	const passwordInput = document.getElementById('entry-password');
-	const emailField = emailInput.closest('.auth-field');
-	const passwordField = passwordInput.closest('.auth-field');
-	const authOptions = document.querySelector('.auth-options');
-	const confirmInput = document.getElementById('entry-password-confirm');
-	const confirmField = document.getElementById('auth-confirm-field');
-	const setupTokenInput = document.getElementById('entry-setup-token');
-	const setupTokenField = document.getElementById('auth-setup-token-field');
-	const rememberInput = document.getElementById('entry-remember');
-	const authForm = document.getElementById('entry-auth-form');
-	const authTitle = document.getElementById('auth-title');
-	const authKicker = document.querySelector('.auth-kicker');
-	const authDescription = document.querySelector('.auth-heading > p:last-child');
-	const authSubmit = document.getElementById('auth-submit');
-	const authSubmitLabel = document.getElementById('auth-submit-label');
-	const authMessage = document.getElementById('auth-message');
-	const authAccountNote = document.getElementById('auth-account-note');
-	const authSecurityCopy = document.getElementById('auth-security-copy');
-	const indexLabel = document.getElementById('entry-index');
 	const announcer = document.getElementById('entry-announcer');
 	const particleLayer = document.getElementById('galaxy-particles');
 	const workspace = document.querySelector('.app');
@@ -51,12 +27,7 @@ if (entry) {
 	const workspaceSurfaces = [workspace, skipLink, settings, toasts].filter(Boolean);
 
 	let transitioning = false;
-	let submitting = false;
-	let activeView = 'welcome';
-	let authMode = 'login';
-	let authStatus;
-	let statusRequest;
-	let authResolved = false;
+	let entryResolved = false;
 	let pointerFrame = 0;
 	let pointerX = 0;
 	let pointerY = 0;
@@ -69,244 +40,45 @@ if (entry) {
 		}
 	}
 
-	function setScreenActive(screen, active) {
-		screen.toggleAttribute('inert', !active);
-		if (active) screen.removeAttribute('aria-hidden');
-		else screen.setAttribute('aria-hidden', 'true');
-	}
-
 	function focusWithoutScroll(control) {
 		control?.focus({ preventScroll: true });
 	}
 
-	function setAuthMessage(message = '', kind = '') {
-		authMessage.textContent = message;
-		authMessage.className = `auth-message${kind ? ` is-${kind}` : ''}`;
-		authMessage.setAttribute('role', kind === 'error' ? 'alert' : 'status');
-		authMessage.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
-	}
-
-	function setAuthMode(mode) {
-		authMode = mode;
-		const setup = mode === 'setup';
-		const drytis = mode === 'drytis';
-		const requiresSetupToken = setup && Boolean(authStatus?.setupTokenRequired);
-		authTitle.textContent = drytis ? 'Continue with Drytis' : setup ? 'Create owner account' : 'Welcome back';
-		authKicker.textContent = drytis ? 'Connected workspace' : setup ? 'Secure this instance' : 'Mission control';
-		authDescription.textContent = drytis
-			? 'Use your Drytis coding-platform identity to enter this Qase workspace.'
-			: setup
-			? 'Create the single owner account for this Qase workspace.'
-			: 'Sign in to continue to your QA workspace.';
-		authSubmitLabel.textContent = drytis ? 'Continue to Drytis' : setup ? 'Create account' : 'Sign in';
-		authAccountNote.textContent = drytis
-			? 'Qase accepts only short-lived, signed launch requests from Drytis.'
-			: setup
-			? 'Use at least 12 characters. Your password is never stored in plain text.'
-			: 'This Qase instance is restricted to its owner account.';
-		if (authSecurityCopy) {
-			authSecurityCopy.textContent = drytis
-				? 'Identity verified by Drytis; session protected by Qase.'
-				: setup
-				? 'Protected with a one-way scrypt password hash.'
-				: 'Protected by a secure server-side session.';
+	function completeEntryHandoff() {
+		entry.hidden = true;
+		entry.setAttribute('aria-hidden', 'true');
+		entry.removeAttribute('aria-modal');
+		document.documentElement.classList.remove('entry-active');
+		setWorkspaceLocked(false);
+		transitioning = false;
+		focusWithoutScroll(document.getElementById('composer-input'));
+		if (!entryResolved) {
+			entryResolved = true;
+			resolveEntryReady();
 		}
-		emailField.hidden = drytis;
-		passwordField.hidden = drytis;
-		authOptions.hidden = drytis;
-		emailInput.required = !drytis;
-		passwordInput.required = !drytis;
-		confirmField.hidden = !setup;
-		confirmInput.required = setup;
-		if (!setup) confirmInput.value = '';
-		setupTokenField.hidden = !requiresSetupToken;
-		setupTokenInput.required = requiresSetupToken;
-		if (!requiresSetupToken) setupTokenInput.value = '';
-		passwordInput.autocomplete = setup ? 'new-password' : 'current-password';
-		setAuthMessage();
 	}
 
-	function updateView(view) {
-		activeView = view;
-		entry.dataset.view = view;
-		entry.setAttribute('aria-labelledby', view === 'auth' ? 'auth-title' : 'entry-title');
-		setScreenActive(welcome, view === 'welcome');
-		setScreenActive(auth, view === 'auth');
-		indexLabel.textContent = view === 'auth' ? '02 / 02' : '01 / 02';
-	}
-
-	async function authRequest(path, options = {}) {
-		const response = await fetch(`/api/auth${path}`, {
-			credentials: 'same-origin',
-			headers: { Accept: 'application/json', ...(options.headers ?? {}) },
-			...options
-		});
-		const body = response.status === 204 ? undefined : await response.json().catch(() => ({}));
-		if (!response.ok) {
-			const error = new Error(body?.error ?? `Authentication request failed (${response.status}).`);
-			error.status = response.status;
-			throw error;
-		}
-		return body;
-	}
-
-	function getAuthStatus(refresh = false) {
-		if (!statusRequest || refresh) {
-			statusRequest = authRequest('/session').then(result => {
-				authStatus = result;
-				return result;
-			}).finally(() => {
-				statusRequest = undefined;
-			});
-		}
-		return statusRequest;
-	}
-
-	async function showAuth() {
-		if (transitioning || activeView === 'auth') return;
+	function revealWorkspace() {
+		if (transitioning || entry.hidden) return;
 
 		transitioning = true;
 		beginButton.disabled = true;
-		authSubmit.disabled = true;
 		entry.classList.add('is-warping');
-		announcer.textContent = 'Preparing secure Qase sign-in.';
+		announcer.textContent = 'Opening the Qase workspace.';
 
-		try {
-			const session = authStatus ?? await getAuthStatus();
-			if (session.authenticated) {
-				await completeAuthentication(session);
-				return;
-			}
-			setAuthMode(session.provider === 'drytis' ? 'drytis' : session.configured ? 'login' : 'setup');
-		} catch (error) {
-			setAuthMode('login');
-			setAuthMessage(error instanceof Error ? error.message : String(error), 'error');
-		}
-
-		const switchDelay = reducedMotion.matches ? 0 : 410;
-		const finishDelay = reducedMotion.matches ? 0 : 860;
-
-		window.setTimeout(() => {
-			updateView('auth');
-			focusWithoutScroll(authMode === 'drytis' ? authSubmit : emailInput);
-		}, switchDelay);
-		window.setTimeout(() => {
-			entry.classList.remove('is-warping');
-			beginButton.disabled = false;
-			authSubmit.disabled = false;
-			transitioning = false;
-		}, finishDelay);
-	}
-
-	function showWelcome() {
-		if (transitioning || submitting || activeView === 'welcome') return;
-
-		transitioning = true;
-		updateView('welcome');
-		setAuthMessage();
-		passwordInput.value = '';
-		confirmInput.value = '';
-		focusWithoutScroll(beginButton);
-		announcer.textContent = 'Returned to the Qase welcome screen.';
-
-		window.setTimeout(() => {
-			transitioning = false;
-		}, reducedMotion.matches ? 0 : 650);
-	}
-
-	function revealWorkspace(immediate = false) {
-		if (entry.hidden) return Promise.resolve();
-		transitioning = true;
-		if (!immediate) entry.classList.add('is-leaving');
-		announcer.textContent = 'Authentication complete. Opening the Qase workspace.';
-
-		return new Promise(resolve => {
-			window.setTimeout(() => {
-				entry.hidden = true;
-				entry.setAttribute('aria-hidden', 'true');
-				entry.removeAttribute('aria-modal');
-				document.documentElement.classList.remove('entry-active');
-				setWorkspaceLocked(false);
-				transitioning = false;
-				focusWithoutScroll(document.getElementById('composer-input'));
-				resolve();
-			}, immediate || reducedMotion.matches ? 0 : 650);
-		});
-	}
-
-	async function completeAuthentication(session, immediate = false) {
-		authStatus = session;
-		window.qaseAuth = session;
-		await revealWorkspace(immediate);
-		if (!authResolved) {
-			authResolved = true;
-			resolveAuthReady(session);
-		}
-	}
-
-	async function submitAuthentication(event) {
-		event.preventDefault();
-		if (transitioning || submitting || (authMode !== 'drytis' && !authForm.reportValidity())) return;
-		if (authMode === 'drytis') {
-			window.location.assign(authStatus.loginUrl);
+		if (reducedMotion.matches) {
+			entry.classList.add('is-leaving');
+			completeEntryHandoff();
 			return;
 		}
 
-		if (authMode === 'setup' && passwordInput.value !== confirmInput.value) {
-			confirmInput.setCustomValidity('Passwords do not match.');
-			confirmInput.reportValidity();
-			confirmInput.setCustomValidity('');
-			setAuthMessage('Passwords do not match.', 'error');
-			return;
-		}
-
-		submitting = true;
-		authSubmit.disabled = true;
-		backButton.disabled = true;
-		authForm.setAttribute('aria-busy', 'true');
-		authSubmit.classList.add('is-loading');
-			authSubmitLabel.textContent = authMode === 'setup' ? 'Creating account…' : 'Signing in…';
-		setAuthMessage(authMode === 'setup' ? 'Securing your workspace…' : 'Verifying your session…');
-
-		try {
-			const headers = { 'Content-Type': 'application/json' };
-			if (authMode === 'setup' && setupTokenInput.value) {
-				headers['X-Qase-Setup-Token'] = setupTokenInput.value;
-			}
-			const session = await authRequest(authMode === 'setup' ? '/setup' : '/login', {
-				method: 'POST',
-				headers,
-				body: JSON.stringify({
-					email: emailInput.value.trim(),
-					password: passwordInput.value,
-					remember: rememberInput.checked
-				})
-			});
-			passwordInput.value = '';
-			confirmInput.value = '';
-			setAuthMessage('Authenticated. Opening your workspace…', 'success');
-			await completeAuthentication(session);
-		} catch (error) {
-			if (authMode === 'setup' && error?.status === 409) {
-				const latest = await getAuthStatus(true).catch(() => undefined);
-				if (latest?.configured) setAuthMode('login');
-			}
-			setAuthMessage(error instanceof Error ? error.message : String(error), 'error');
-			passwordInput.select();
-		} finally {
-			submitting = false;
-			authSubmit.disabled = false;
-			backButton.disabled = false;
-			authForm.removeAttribute('aria-busy');
-			authSubmit.classList.remove('is-loading');
-			if (!entry.hidden) authSubmitLabel.textContent = authMode === 'setup' ? 'Create account' : 'Sign in';
-		}
+		window.setTimeout(() => entry.classList.add('is-leaving'), 140);
+		window.setTimeout(completeEntryHandoff, 800);
 	}
 
 	function activeFocusables() {
-		const screen = activeView === 'auth' ? auth : welcome;
-		return [...screen.querySelectorAll(
-			'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+		return [...welcome.querySelectorAll(
+			'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
 		)].filter(control => !control.closest('[inert]') && !control.closest('[hidden]'));
 	}
 
@@ -319,12 +91,6 @@ if (entry) {
 		if (appShortcut) {
 			event.preventDefault();
 			event.stopImmediatePropagation();
-			return;
-		}
-
-		if (event.key === 'Escape' && activeView === 'auth' && !submitting) {
-			event.preventDefault();
-			showWelcome();
 			return;
 		}
 
@@ -372,7 +138,7 @@ if (entry) {
 			fragment.append(star);
 		}
 
-		particleLayer.append(fragment);
+		particleLayer?.append(fragment);
 	}
 
 	function paintParallax() {
@@ -396,37 +162,17 @@ if (entry) {
 		if (!pointerFrame) pointerFrame = window.requestAnimationFrame(paintParallax);
 	}
 
-	async function initialiseAuthentication() {
-		try {
-			const session = await getAuthStatus();
-			if (session.authenticated) {
-				await completeAuthentication(session, true);
-				return;
-			}
-			setAuthMode(session.provider === 'drytis' ? 'drytis' : session.configured ? 'login' : 'setup');
-		} catch {
-			// The entry stays usable. A precise network error is shown if the user
-			// opens or submits the auth form while the server is unavailable.
-			setAuthMode('login');
-		}
-		window.requestAnimationFrame(() => focusWithoutScroll(beginButton));
-	}
-
 	document.documentElement.classList.add('entry-active');
 	setWorkspaceLocked(true);
-	updateView('welcome');
 	addParticles();
 
-	beginButton.addEventListener('click', () => void showAuth());
-	backButton.addEventListener('click', showWelcome);
-	authForm.addEventListener('submit', event => void submitAuthentication(event));
+	beginButton.addEventListener('click', revealWorkspace);
 	document.addEventListener('keydown', guardEntryKeyboard, true);
 	document.addEventListener('focusin', keepFocusInside, true);
 	entry.addEventListener('pointermove', handlePointerMove, { passive: true });
 	entry.addEventListener('pointerleave', resetParallax, { passive: true });
-	window.addEventListener('qase:auth-expired', () => window.location.reload(), { once: true });
 
-	void initialiseAuthentication();
+	window.requestAnimationFrame(() => focusWithoutScroll(beginButton));
 } else {
-	resolveAuthReady(window.qaseAuth);
+	resolveEntryReady();
 }

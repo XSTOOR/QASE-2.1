@@ -1,5 +1,10 @@
 # Phase 3: Drytis identity integration
 
+> Historical migration record. The browser login/SSO implementation described
+> here has been superseded by Drytis-owned per-user Qase instances. Migration
+> `004_drytis_identity_sessions.sql` remains immutable database history, but the
+> current application has no Qase login page or Qase session cookie.
+
 Scope: signed Drytis launch SSO, external identity mapping, shared PostgreSQL
 sessions and authenticated actor attribution. This phase does not add a job
 queue, browser-worker leases, a broker, global tenant discovery or a secrets

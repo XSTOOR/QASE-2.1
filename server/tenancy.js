@@ -1,5 +1,5 @@
 /**
- * Trusted tenant identity for the current single-owner bootstrap.
+ * Trusted tenant identity for one Drytis-owned Qase instance.
  *
  * Phase 2 will persist every run beneath an organization and project. Until
  * Drytis identity is introduced, those identifiers come only from process
@@ -104,7 +104,7 @@ function email(value, key) {
 }
 
 /**
- * Creates the immutable tenant context used by the local single-owner adapter.
+ * Creates the immutable tenant context used by the per-instance access adapter.
  * IDs may be overridden only as a pair so a configured organization is never
  * accidentally combined with the deterministic default project (or vice versa).
  */

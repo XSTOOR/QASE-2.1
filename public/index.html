@@ -3,18 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#07090d">
+<meta name="theme-color" content="#05080d">
 <meta name="color-scheme" content="dark">
 <meta name="description" content="Qase is an autonomous website QA workspace with live browser testing, findings, and reports.">
 <title>Qase — autonomous QA agent</title>
 <link rel="stylesheet" href="styles.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a84ff'/><path d='M11 8h10M13 8v7L9.5 22a2 2 0 0 0 1.8 3h9.4a2 2 0 0 0 1.8-3L19 15V8' stroke='%23fff' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 </head>
-<body>
+<body class="cli-theme">
 
-<!-- Cinematic entry and owner authentication layer. The QA workspace remains
-     locked until the server confirms a secure local session. -->
-<div class="entry-experience" id="entry-experience" data-view="welcome"
+<!-- Cinematic entry layer. The QA workspace remains locked until the user
+     explicitly begins the transmission. -->
+<div class="entry-experience" id="entry-experience"
      role="dialog" aria-modal="true" aria-labelledby="entry-title">
   <div class="galaxy-scene" aria-hidden="true">
     <div class="galaxy-nebula galaxy-nebula--violet"></div>
@@ -52,7 +52,7 @@
   </header>
 
   <main class="entry-stage">
-    <section class="entry-screen entry-welcome" id="entry-welcome">
+    <section class="entry-screen entry-welcome" id="entry-welcome" data-terminal-title="qase@local:~/workspace">
       <p class="entry-eyebrow"><span></span> Autonomous quality, reimagined</p>
       <h1 class="entry-wordmark" id="entry-title" aria-label="Qase">
         <span aria-hidden="true">Q</span><span aria-hidden="true">A</span><span aria-hidden="true">S</span><span aria-hidden="true">E</span>
@@ -65,84 +65,10 @@
       <p class="entry-caption">An autonomous workspace for testing what matters.</p>
     </section>
 
-    <section class="entry-screen entry-auth" id="entry-auth" aria-hidden="true" inert>
-      <button class="entry-back" id="entry-back" type="button">
-        <span aria-hidden="true">&#8592;</span> Return to orbit
-      </button>
-
-      <div class="auth-card">
-        <div class="auth-card-glow" aria-hidden="true"></div>
-        <div class="auth-brand">
-          <span class="auth-brand-glyph" aria-hidden="true">Q</span>
-          <span>QASE</span>
-        </div>
-
-        <div class="auth-heading">
-          <p class="auth-kicker">Mission control</p>
-          <h2 id="auth-title">Welcome back</h2>
-          <p>Enter your details to continue your journey.</p>
-        </div>
-
-        <form class="auth-form" id="entry-auth-form" autocomplete="on">
-          <label class="auth-field" for="entry-email">
-            <span>Email address</span>
-            <span class="auth-input-shell">
-              <span class="auth-field-mark" aria-hidden="true">@</span>
-              <input id="entry-email" type="email" inputmode="email" autocomplete="username" placeholder="you@company.com" maxlength="254" required>
-            </span>
-          </label>
-
-          <label class="auth-field" for="entry-password">
-            <span>Password</span>
-            <span class="auth-input-shell">
-              <span class="auth-field-mark auth-field-mark--key" aria-hidden="true"></span>
-              <input id="entry-password" type="password" autocomplete="current-password" placeholder="Enter your password" minlength="12" maxlength="256" required>
-            </span>
-          </label>
-
-          <label class="auth-field" id="auth-confirm-field" for="entry-password-confirm" hidden>
-            <span>Confirm password</span>
-            <span class="auth-input-shell">
-              <span class="auth-field-mark auth-field-mark--key" aria-hidden="true"></span>
-              <input id="entry-password-confirm" type="password" autocomplete="new-password" placeholder="Repeat your password" minlength="12" maxlength="256">
-            </span>
-          </label>
-
-          <label class="auth-field" id="auth-setup-token-field" for="entry-setup-token" hidden>
-            <span>Setup token</span>
-            <span class="auth-input-shell">
-              <span class="auth-field-mark auth-field-mark--key" aria-hidden="true"></span>
-              <input id="entry-setup-token" type="password" autocomplete="one-time-code" placeholder="Server setup token" maxlength="256">
-            </span>
-          </label>
-
-          <div class="auth-options">
-            <label class="auth-remember">
-              <input id="entry-remember" type="checkbox">
-              <span class="auth-checkbox" aria-hidden="true"></span>
-              <span>Remember me</span>
-            </label>
-            <span class="auth-session-copy">Private session</span>
-          </div>
-
-          <p class="auth-message" id="auth-message" role="status" aria-live="polite"></p>
-
-          <button class="auth-primary" id="auth-submit" type="submit">
-            <span id="auth-submit-label">Sign in</span>
-            <span aria-hidden="true">&#8594;</span>
-          </button>
-        </form>
-
-        <p class="auth-create" id="auth-account-note">One secure owner account per Qase instance.</p>
-        <p class="auth-demo-note" id="auth-demo-note">
-          <span aria-hidden="true"></span><span id="auth-security-copy">Protected by a secure server-side session.</span>
-        </p>
-      </div>
-    </section>
   </main>
 
   <footer class="entry-footer">
-    <span class="entry-index" id="entry-index">01 / 02</span>
+    <span class="entry-index">01 / 01</span>
     <span class="entry-progress" aria-hidden="true"><i></i></span>
     <span>Designed for the unknown</span>
   </footer>
@@ -155,9 +81,13 @@
 
 <div class="app" inert aria-hidden="true">
 
+  <div class="workspace-chrome" aria-hidden="true">
+    <span class="workspace-lights"><i></i><i></i><i></i></span>
+  </div>
+
   <!-- ── Left: runs ─────────────────────────────────────────────── -->
   <aside class="panel runs" aria-label="QA runs">
-    <header class="panel-head">
+    <header class="panel-head" data-path="~/qase/runs">
       <div class="brand">
         <span class="brand-lockup">
           <span class="brand-glyph" aria-hidden="true">Q</span>
@@ -165,20 +95,19 @@
         </span>
         <button class="brand-sub" id="model-badge" title="Model settings">…</button>
       </div>
-      <button id="new-run" class="btn btn-primary" title="New run (Ctrl/⌘ N)" aria-keyshortcuts="Control+N Meta+N">New run</button>
+      <p class="run-explorer-label"><span aria-hidden="true">./</span> recent sessions</p>
     </header>
     <div class="run-list" id="run-list" role="list" aria-label="Recent runs"></div>
     <footer class="panel-foot">
       <span class="dot" id="conn-dot" aria-hidden="true"></span>
       <span id="conn-label" role="status" aria-live="polite">connecting…</span>
       <button class="btn btn-ghost btn-sm foot-btn" id="open-settings" title="Model and endpoint settings">Settings</button>
-      <button class="btn btn-ghost btn-sm signout-btn" id="sign-out" title="Sign out of Qase">Sign out</button>
     </footer>
   </aside>
 
   <!-- ── Middle: agent chat ─────────────────────────────────────── -->
   <main class="panel chat" aria-label="Agent conversation">
-    <header class="panel-head">
+    <header class="panel-head" data-path="~/qase/agent.log">
       <div class="chat-id">
         <h1 id="chat-title">No run selected</h1>
         <p class="subtle" id="chat-target">Start a run and send a URL to test</p>
@@ -223,7 +152,7 @@
 
   <!-- ── Right: live browser + activity ─────────────────────────── -->
   <aside class="panel viewer" aria-label="Live browser and test results">
-    <header class="panel-head">
+    <header class="panel-head" data-path="~/qase/browser.preview">
       <div class="urlbar">
         <span class="dot" id="browser-dot" aria-hidden="true"></span>
         <span class="url" id="browser-url">about:blank</span>
@@ -265,6 +194,8 @@
       <button class="tab" id="tab-plan" data-tab="plan" role="tab" aria-selected="false" aria-controls="pane-plan" tabindex="-1">Plan <span class="count" id="count-plan"></span></button>
       <button class="tab" id="tab-findings" data-tab="findings" role="tab" aria-selected="false" aria-controls="pane-findings" tabindex="-1">Findings <span class="count" id="count-findings"></span></button>
       <button class="tab" id="tab-report" data-tab="report" role="tab" aria-selected="false" aria-controls="pane-report" tabindex="-1">Report</button>
+      <button class="tab tab-sqa" id="tab-sqa" data-tab="sqa" role="tab" aria-selected="false" aria-controls="pane-sqa" tabindex="-1" hidden>SQA <span class="count" id="count-sqa"></span></button>
+      <button class="tab tab-founder" id="tab-founder" data-tab="founder" role="tab" aria-selected="false" aria-controls="pane-founder" tabindex="-1" hidden>Founder <span class="count" id="count-founder"></span></button>
     </nav>
 
     <div class="tab-body">
@@ -272,15 +203,47 @@
       <section class="tab-pane" id="pane-plan" data-pane="plan" role="tabpanel" aria-labelledby="tab-plan"><div class="feed" id="plan-list" role="list"></div></section>
       <section class="tab-pane" id="pane-findings" data-pane="findings" role="tabpanel" aria-labelledby="tab-findings"><div class="feed" id="findings-list" role="list"></div></section>
       <section class="tab-pane" id="pane-report" data-pane="report" role="tabpanel" aria-labelledby="tab-report"><div class="feed" id="report-view"></div></section>
+      <section class="tab-pane" id="pane-sqa" data-pane="sqa" role="tabpanel" aria-labelledby="tab-sqa"><div class="feed sqa-view" id="sqa-view" aria-live="polite"></div></section>
+      <section class="tab-pane" id="pane-founder" data-pane="founder" role="tabpanel" aria-labelledby="tab-founder"><div class="feed founder-view" id="founder-view" aria-live="polite"></div></section>
     </div>
   </aside>
+
+  <!-- Feature dock stays outside the three working panels so launch actions
+       remain available without displacing the browser/results workspace. -->
+  <nav class="feature-dock" aria-label="Qase features">
+    <span class="feature-dock-title" aria-hidden="true">modes</span>
+    <div class="feature-device" title="Emulate a real mobile browser (User-Agent, viewport, touch) for the next run.">
+      <label for="device-select" class="feature-device-label">device</label>
+      <select id="device-select" class="feature-device-select" aria-label="Target device for the next run"></select>
+      <label class="feature-device-landscape" title="Rotate the emulated device to landscape.">
+        <input id="device-landscape" type="checkbox">
+        <span>landscape</span>
+      </label>
+    </div>
+    <button id="new-run" class="feature-action" type="button" aria-label="Start standard QA run" aria-describedby="feature-tip-qa" aria-keyshortcuts="Control+N Meta+N" data-feature="qa">
+      <span class="feature-icon" aria-hidden="true">&gt;_</span>
+      <span class="feature-label">QA</span>
+      <span class="feature-tooltip" id="feature-tip-qa" role="tooltip">New QA run <kbd>⌘N</kbd></span>
+    </button>
+    <button id="new-sqa" class="feature-action" type="button" aria-label="Start SQA assessment" aria-describedby="feature-tip-sqa" data-feature="sqa">
+      <span class="feature-icon" aria-hidden="true">◇</span>
+      <span class="feature-label">SQA</span>
+      <span class="feature-tooltip" id="feature-tip-sqa" role="tooltip">Standards-informed SQA assessment</span>
+    </button>
+    <button id="new-founder" class="feature-action feature-action--founder" type="button" aria-label="Start Founder Mode review" aria-describedby="feature-tip-founder" data-feature="founder">
+      <span class="feature-icon" aria-hidden="true">◆</span>
+      <span class="feature-label">Founder</span>
+      <span class="feature-tooltip" id="feature-tip-founder" role="tooltip">Founder Mode product review</span>
+    </button>
+    <span class="feature-dock-status" aria-hidden="true">03 tools</span>
+  </nav>
 
 </div>
 
 <!-- ── Settings ─────────────────────────────────────────────────── -->
 <dialog class="modal" id="settings" aria-labelledby="settings-title" inert aria-hidden="true">
   <form method="dialog" class="modal-inner">
-    <header class="modal-head">
+    <header class="modal-head" data-path="~/.qase/config.json">
       <h2 id="settings-title">Model endpoint</h2>
       <button class="btn btn-ghost btn-sm" value="cancel" formnovalidate>Close</button>
     </header>
@@ -306,9 +269,11 @@
 
       <label class="field">
         <span>Model name</span>
-        <input id="cfg-model" autocomplete="off" spellcheck="false" placeholder="model-id" list="cfg-model-list">
-        <datalist id="cfg-model-list"></datalist>
-        <small>Exactly the id your endpoint expects. Test the connection to load the list.</small>
+        <select id="cfg-model" aria-describedby="cfg-model-note">
+          <option value="">Loading available models…</option>
+        </select>
+        <input id="cfg-model-custom" autocomplete="off" spellcheck="false" placeholder="Enter the exact model ID" hidden>
+        <small id="cfg-model-note">Models are loaded from your endpoint. Choose Custom model ID if the model is not advertised.</small>
       </label>
 
       <div class="field-row">
@@ -337,6 +302,255 @@
     <footer class="modal-foot">
       <button class="btn btn-ghost" type="button" id="cfg-test-btn">Test connection</button>
       <button class="btn btn-primary" type="button" id="cfg-save">Save</button>
+    </footer>
+  </form>
+</dialog>
+
+
+
+<!-- Standard QA run launcher. Mirrors the SQA/Founder start pattern so
+     device and landscape choices are explicit per run instead of implicit
+     from the mode dock. -->
+<dialog class="modal qa-modal" id="qa-start" aria-labelledby="qa-start-title" aria-describedby="qa-start-description">
+  <form class="modal-inner" id="qa-form">
+    <header class="modal-head" data-path="~/qase/qa/new">
+      <div>
+        <h2 id="qa-start-title">Start QA run</h2>
+        <p id="qa-start-description">Test a live website in a real browser. Choose the target device to emulate.</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" type="button" id="qa-close">Close</button>
+    </header>
+    <div class="modal-body">
+      <label class="field">
+        <span>Target URL</span>
+        <input id="qa-target-url" name="targetUrl" type="url" required maxlength="2048" inputmode="url" autocomplete="url" placeholder="https://example.com" autofocus>
+        <small>Qase opens this URL immediately after the run is created.</small>
+      </label>
+      <fieldset class="qa-device-fieldset">
+        <legend>Target device</legend>
+        <div class="field-row">
+          <label class="field">
+            <span>Device</span>
+            <select id="qa-device-select"></select>
+          </label>
+          <label class="check qa-landscape">
+            <input id="qa-device-landscape" type="checkbox">
+            <span>Landscape orientation</span>
+          </label>
+        </div>
+        <small>Mobile and tablet profiles emulate the real device (User-Agent, viewport, touch), not a resized desktop window.</small>
+      </fieldset>
+      <div class="test-result" id="qa-form-error" role="alert" aria-live="assertive"></div>
+    </div>
+    <footer class="modal-foot">
+      <button class="btn btn-ghost" type="button" id="qa-cancel">Cancel</button>
+      <button class="btn btn-primary" type="submit" id="qa-submit">Start QA run</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- Standards-informed SQA assessment launcher. All verdicts remain scoped
+     engineering results; the server catalog is the source of profile text. -->
+<dialog class="modal sqa-modal" id="sqa-start" aria-labelledby="sqa-start-title" aria-describedby="sqa-start-description">
+  <form class="modal-inner sqa-modal-inner" id="sqa-form">
+    <header class="modal-head" data-path="~/qase/sqa/new">
+      <div>
+        <h2 id="sqa-start-title">Start SQA assessment</h2>
+        <p id="sqa-start-description">Define the assessment boundary and target URL. Starting the assessment opens the target and begins evidence collection.</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" type="button" id="sqa-close">Close</button>
+    </header>
+
+    <div class="modal-body sqa-modal-body">
+      <div class="sqa-intro">
+        <span class="sqa-kicker">Standards-informed engineering assurance</span>
+        <strong>Evidence-backed, scoped, and conservative by design.</strong>
+        <p id="sqa-catalog-disclaimer">Loading the current catalog and assessment notice…</p>
+        <span class="sqa-catalog-meta" id="sqa-catalog-version" aria-live="polite"></span>
+      </div>
+
+      <div class="sqa-catalog-state" id="sqa-catalog-state" role="status" aria-live="polite">Loading assessment catalog…</div>
+
+      <fieldset class="sqa-fieldset" id="sqa-profiles-fieldset" disabled>
+        <legend>Assurance profiles</legend>
+        <p>Select only profiles that apply to this product and release. The universal core is always included.</p>
+        <div class="sqa-option-grid" id="sqa-profile-options"></div>
+      </fieldset>
+
+      <fieldset class="sqa-fieldset" id="sqa-attributes-fieldset" disabled>
+        <legend>Product attributes</legend>
+        <p>Attributes determine which conditional controls enter the assessment scope.</p>
+        <div class="sqa-option-grid sqa-option-grid--compact" id="sqa-attribute-options"></div>
+      </fieldset>
+
+      <aside class="sqa-scope-guidance" id="sqa-scope-guidance" role="note">
+        <strong>Choose the narrowest truthful scope</strong>
+        <p>Core with applicable website attributes enables controlled-browser checks. Sector profiles and broad or all-attribute selections also require external artifacts such as risk records, approvals, traceability, security reports, or an SBOM. Authenticated workflows may require test credentials after the run starts. Missing reviewer evidence is reported as <em>Evidence incomplete</em>, not as a failed automated test.</p>
+      </aside>
+
+      <fieldset class="sqa-fieldset sqa-target-fields">
+        <legend>Assessment target</legend>
+        <div class="field-row sqa-field-row">
+          <label class="field">
+            <span>Product or service</span>
+            <input id="sqa-target-name" name="targetName" required maxlength="200" autocomplete="off" placeholder="Customer portal" autofocus>
+          </label>
+          <label class="field">
+            <span>Release</span>
+            <input id="sqa-target-release" name="targetRelease" required maxlength="200" autocomplete="off" placeholder="2026.08.15">
+          </label>
+          <label class="field">
+            <span>Environment</span>
+            <input id="sqa-target-environment" name="targetEnvironment" required maxlength="100" autocomplete="off" placeholder="staging">
+          </label>
+        </div>
+        <label class="field">
+          <span>Target URL</span>
+          <input id="sqa-target-url" name="targetUrl" type="url" required maxlength="2048" inputmode="url" autocomplete="url" placeholder="https://staging.example.com">
+          <small>Qase opens this URL immediately after the assessment scope is created.</small>
+        </label>
+        <label class="field">
+          <span>Scope notes</span>
+          <textarea id="sqa-scope-notes" name="scopeNotes" rows="3" maxlength="4000" placeholder="In-scope workflows, exclusions, assumptions, and evidence locations…"></textarea>
+          <small>Record boundaries precisely. Unavailable evidence is reported as blocked or not assessed.</small>
+        </label>
+      </fieldset>
+
+      <label class="check sqa-authorization">
+        <input id="sqa-authorization" type="checkbox" required>
+        <span>I confirm that I own this target or am authorized to test it, and I accept non-destructive testing only.<small>This confirmation is required before Qase can create the assessment session.</small></span>
+      </label>
+
+      <fieldset class="qa-device-fieldset sqa-device-fieldset">
+        <legend>Target device</legend>
+        <div class="field-row">
+          <label class="field">
+            <span>Device</span>
+            <select id="sqa-device-select"></select>
+          </label>
+          <label class="check qa-landscape">
+            <input id="sqa-device-landscape" type="checkbox">
+            <span>Landscape orientation</span>
+          </label>
+        </div>
+        <small>Emulates a real mobile or tablet browser (User-Agent, viewport, touch) for the assessment.</small>
+      </fieldset>
+
+      <div class="test-result" id="sqa-form-error" role="alert" aria-live="assertive"></div>
+    </div>
+
+    <footer class="modal-foot">
+      <button class="btn btn-ghost" type="button" id="sqa-cancel">Cancel</button>
+      <button class="btn btn-primary" type="submit" id="sqa-submit" disabled>Start assessment</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- Founder Mode launcher. This creates a scoped strategic product review;
+     the existing agent/runtime remains responsible for evidence collection. -->
+<dialog class="modal founder-modal" id="founder-start" aria-labelledby="founder-start-title" aria-describedby="founder-start-description">
+  <form class="modal-inner founder-modal-inner" id="founder-form">
+    <header class="modal-head" data-path="~/qase/founder/new">
+      <div>
+        <span class="founder-kicker">Founder Mode // product intelligence</span>
+        <h2 id="founder-start-title">Start founder review</h2>
+        <p id="founder-start-description">Give Qase the product and business context it needs to connect observed UX evidence to focused growth decisions.</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" type="button" id="founder-close">Close</button>
+    </header>
+
+    <div class="modal-body founder-modal-body">
+      <aside class="founder-intro" role="note">
+        <span aria-hidden="true">◆</span>
+        <div>
+          <strong>Evidence first. Strategy second.</strong>
+          <p>Founder Mode reviews the authorized product surface, then separates observed evidence from strategic assumptions. It does not contact prospects, change pricing, publish content, or modify the target.</p>
+          <small id="founder-catalog-meta" aria-live="polite">Loading review catalog…</small>
+        </div>
+      </aside>
+
+      <fieldset class="founder-fieldset">
+        <legend>Product target</legend>
+        <div class="field-row founder-target-row">
+          <label class="field">
+            <span>Product or project</span>
+            <input id="founder-target-name" name="targetName" required maxlength="200" autocomplete="off" placeholder="Acme workspace" autofocus>
+          </label>
+          <label class="field">
+            <span>Release</span>
+            <input id="founder-target-release" name="targetRelease" maxlength="200" autocomplete="off" placeholder="2026.08">
+          </label>
+          <label class="field">
+            <span>Environment</span>
+            <input id="founder-target-environment" name="targetEnvironment" maxlength="100" autocomplete="off" placeholder="production">
+          </label>
+        </div>
+        <label class="field">
+          <span>Target URL</span>
+          <input id="founder-target-url" name="targetUrl" type="url" required maxlength="8192" inputmode="url" autocomplete="url" placeholder="https://product.example.com">
+          <small>Qase opens this URL after the review scope is created.</small>
+        </label>
+      </fieldset>
+
+      <fieldset class="founder-fieldset">
+        <legend>Business context</legend>
+        <div class="field-row founder-context-row">
+          <label class="field">
+            <span>Business stage</span>
+            <input id="founder-stage" name="stage" maxlength="200" autocomplete="off" placeholder="Pre-seed, growth, enterprise…">
+          </label>
+          <label class="field">
+            <span>Business model</span>
+            <input id="founder-business-model" name="businessModel" maxlength="500" autocomplete="off" placeholder="B2B SaaS, usage-based…">
+          </label>
+        </div>
+        <label class="field">
+          <span>Target customer / ICP hypothesis</span>
+          <textarea id="founder-target-customer" name="targetCustomer" rows="2" maxlength="1000" placeholder="Who buys, who uses, and what urgent job are they hiring this product to do?"></textarea>
+        </label>
+        <label class="field">
+          <span>Primary goal</span>
+          <textarea id="founder-primary-goal" name="primaryGoal" rows="2" maxlength="1000" placeholder="The single outcome this review should optimize for…"></textarea>
+        </label>
+        <div class="field-row founder-context-row">
+          <label class="field">
+            <span>Constraints</span>
+            <textarea id="founder-constraints" name="constraints" rows="3" maxlength="2000" placeholder="Team, runway, compliance, technical or launch constraints…"></textarea>
+          </label>
+          <label class="field">
+            <span>Known competitors</span>
+            <textarea id="founder-competitors" name="competitors" rows="3" maxlength="10019" aria-describedby="founder-competitors-note" placeholder="One company or product per line…"></textarea>
+            <small id="founder-competitors-note">Up to 20 entries, 500 characters each.</small>
+          </label>
+        </div>
+      </fieldset>
+
+      <label class="check founder-authorization">
+        <input id="founder-authorization" type="checkbox" required>
+        <span>I confirm that I own this target or am authorized to review it using non-destructive browser testing.<small>Founder Mode observes and analyzes; it does not execute external business actions.</small></span>
+      </label>
+
+      <fieldset class="qa-device-fieldset founder-device-fieldset">
+        <legend>Target device</legend>
+        <div class="field-row">
+          <label class="field">
+            <span>Device</span>
+            <select id="founder-device-select"></select>
+          </label>
+          <label class="check qa-landscape">
+            <input id="founder-device-landscape" type="checkbox">
+            <span>Landscape orientation</span>
+          </label>
+        </div>
+        <small>Founder Mode uses this profile when opening the target site.</small>
+      </fieldset>
+
+      <div class="test-result" id="founder-form-error" role="alert" aria-live="assertive"></div>
+    </div>
+
+    <footer class="modal-foot">
+      <button class="btn btn-ghost" type="button" id="founder-cancel">Cancel</button>
+      <button class="btn btn-primary founder-submit" type="submit" id="founder-submit">Start founder review</button>
     </footer>
   </form>
 </dialog>

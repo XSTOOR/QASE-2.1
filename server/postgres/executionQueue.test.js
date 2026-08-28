@@ -10,7 +10,8 @@ const CORRELATION = 'fb139801-54e8-4289-ad10-f70c92967967';
 
 function row(overrides = {}) {
 	return {
-		id: JOB, run_id: RUN, requested_by_user_id: TENANT.actorUserId, kind: 'turn',
+		id: JOB, run_id: RUN, requested_by_user_id: TENANT.actorUserId,
+		requested_by_actor_type: 'user', kind: 'turn',
 		correlation_id: CORRELATION,
 		payload: { task: 'test example.com' }, status: 'queued', attempts: 0,
 		max_attempts: 3, ...overrides
@@ -36,6 +37,11 @@ function fixture(handler) {
 	};
 }
 
+test('queue exposes its bounded cancellation grace to cooperative workers', () => {
+	const target = fixture();
+	assert.equal(target.queue.cancelGraceMs, 5_000);
+});
+
 test('enqueue is tenant scoped, stores only structured turn input, and rejects an active-run conflict', async () => {
 	const target = fixture(call => {
 		if (call.text.startsWith('SELECT id FROM qa_runs')) return { rows: [{ id: RUN }], rowCount: 1 };
@@ -50,8 +56,9 @@ test('enqueue is tenant scoped, stores only structured turn input, and rejects a
 	assert.equal(job.correlationId, CORRELATION);
 	const insert = target.calls.find(call => call.text.startsWith('INSERT INTO qa_execution_jobs'));
 	assert.deepEqual(insert.params.slice(0, 5), [JOB, TENANT.organizationId, TENANT.projectId, RUN, TENANT.actorUserId]);
-	assert.equal(insert.params[5], CORRELATION);
-	assert.equal(insert.params[6], JSON.stringify({ task: 'test example.com' }));
+	assert.equal(insert.params[5], 'user');
+	assert.equal(insert.params[6], CORRELATION);
+	assert.equal(insert.params[7], JSON.stringify({ task: 'test example.com' }));
 	assert.equal(target.calls.at(-2).text, 'COMMIT');
 
 	const duplicate = fixture(call => {
@@ -63,6 +70,28 @@ test('enqueue is tenant scoped, stores only structured turn input, and rejects a
 		runId: RUN, requestedByUserId: TENANT.actorUserId, turnOptions: { task: 'x' }
 	}), error => error.code === 'QASE_RUN_ALREADY_QUEUED');
 	assert.equal(duplicate.calls.at(-2).text, 'ROLLBACK');
+});
+
+test('enqueue records service work without attributing it to a human user', async () => {
+	const target = fixture(call => {
+		if (call.text.startsWith('SELECT id FROM qa_runs')) return { rows: [{ id: RUN }], rowCount: 1 };
+		if (call.text.startsWith('INSERT INTO qa_execution_jobs')) {
+			return { rows: [row({ requested_by_user_id: null, requested_by_actor_type: 'service' })], rowCount: 1 };
+		}
+		return { rows: [], rowCount: 1 };
+	});
+	const job = await target.queue.enqueue({
+		runId: RUN, requestedByActorType: 'service', turnOptions: { task: 'signed integration review' }
+	});
+	assert.equal(job.requestedByUserId, null);
+	assert.equal(job.requestedByActorType, 'service');
+	const insert = target.calls.find(call => call.text.startsWith('INSERT INTO qa_execution_jobs'));
+	assert.equal(insert.params[4], null);
+	assert.equal(insert.params[5], 'service');
+	await assert.rejects(() => target.queue.enqueue({
+		runId: RUN, requestedByActorType: 'service', requestedByUserId: TENANT.actorUserId,
+		turnOptions: {}
+	}), /cannot impersonate a user/);
 });
 
 test('enqueue serializes capacity admission and fails closed when the cell is full', async () => {
@@ -108,6 +137,12 @@ test('claim retention cleanup is deterministic, bounded, and preserves jobs for 
 	assert.match(cleanup.text, /ORDER BY job\.finished_at, job\.id/);
 	assert.match(cleanup.text, /FOR UPDATE OF job SKIP LOCKED LIMIT 1000/);
 	assert.deepEqual(cleanup.params, [TENANT.organizationId, TENANT.projectId, 30]);
+	const deletedRunFence = target.calls.find(call => call.text.startsWith(
+		"UPDATE qa_execution_jobs job SET status = 'cancelled'"
+	));
+	assert.ok(deletedRunFence);
+	assert.match(deletedRunFence.text, /NOT EXISTS \([\s\S]*FROM qa_runs run/);
+	assert.match(deletedRunFence.text, /run\.deleted_at IS NULL/);
 });
 
 test('claim uses skip-locked leasing and heartbeat exposes cancellation', async () => {
@@ -126,6 +161,14 @@ test('claim uses skip-locked leasing and heartbeat exposes cancellation', async 
 	assert.ok(target.calls.some(call => call.text.includes('FOR UPDATE SKIP LOCKED')));
 	const status = await target.queue.heartbeat({ jobId: JOB, leaseToken: LEASE, workerId: 'worker:a' });
 	assert.equal(status, 'cancel_requested');
+	const heartbeat = target.calls.find(call => call.text.startsWith('UPDATE qa_execution_jobs job SET status = CASE')
+		&& call.text.includes('last_heartbeat_at = CURRENT_TIMESTAMP'));
+	assert.match(heartbeat.text, /WHEN status = 'leased' THEN CURRENT_TIMESTAMP/);
+	assert.match(heartbeat.text, /lease_expires_at > CURRENT_TIMESTAMP/);
+	assert.match(heartbeat.text, /NOT EXISTS \([\s\S]*run\.deleted_at IS NULL/);
+	assert.match(heartbeat.text, /THEN 'cancel_requested'/);
+	assert.match(heartbeat.text, /LEAST\(lease_expires_at/);
+	assert.equal(heartbeat.params[4], 5_000);
 });
 
 test('completion, retry failure, cancellation, and exhausted lease recovery require lease identity', async () => {
@@ -143,7 +186,11 @@ test('completion, retry failure, cancellation, and exhausted lease recovery requ
 	assert.deepEqual(await target.queue.reapExhausted(), [RUN]);
 	const mutations = target.calls.filter(call => call.text.startsWith('UPDATE qa_execution_jobs'));
 	assert.deepEqual(mutations[0].params.slice(0, 3), [JOB, LEASE, 'worker:a']);
+	assert.match(mutations[0].text, /lease_expires_at > CURRENT_TIMESTAMP/);
 	assert.match(mutations[1].text, /attempts < max_attempts/);
+	assert.match(mutations[1].text, /lease_expires_at > CURRENT_TIMESTAMP/);
+	assert.match(mutations[2].text, /LEAST\(lease_expires_at/);
+	assert.equal(mutations[2].params[3], 5_000);
 });
 
 test('stats returns tenant-scoped fixed-cardinality autoscaling signals', async () => {

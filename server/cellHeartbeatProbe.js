@@ -1,5 +1,5 @@
 import express from 'express';
-import { securityHeaders } from './auth.js';
+import { securityHeaders } from './instanceAccess.js';
 
 function probePort(value) {
 	const port = value === undefined || value === '' ? 9_175 : Number(value);

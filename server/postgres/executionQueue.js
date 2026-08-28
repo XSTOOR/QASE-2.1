@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { sanitizeErrorDetail } from '../errorSanitizer.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const WORKER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const REQUEST_ACTOR_TYPES = new Set(['user', 'system', 'service']);
 
 function uuid(value, label) {
 	if (typeof value !== 'string' || !UUID_PATTERN.test(value)) throw new TypeError(`${label} must be a canonical UUID.`);
@@ -29,6 +31,7 @@ async function setScope(client, tenant) {
 function hydrate(row) {
 	return row ? {
 		id: row.id, runId: row.run_id, requestedByUserId: row.requested_by_user_id,
+		requestedByActorType: row.requested_by_actor_type ?? 'user',
 		correlationId: row.correlation_id ?? undefined,
 		kind: row.kind, payload: row.payload ?? {}, status: row.status,
 		attempts: Number(row.attempts), maxAttempts: Number(row.max_attempts),
@@ -42,6 +45,7 @@ export function createPostgresExecutionQueue(options = {}) {
 	if (!pool || typeof pool.connect !== 'function') throw new TypeError('A PostgreSQL pool is required.');
 	const tenant = trustedTenant(options.tenantContext);
 	const defaultLeaseMs = milliseconds(options.leaseMs, 30_000, 5_000, 300_000, 'leaseMs');
+	const cancelGraceMs = milliseconds(options.cancelGraceMs, 5_000, 1_000, 30_000, 'cancelGraceMs');
 	const defaultMaxAttempts = milliseconds(options.maxAttempts, 3, 1, 20, 'maxAttempts');
 	const retentionDays = milliseconds(options.retentionDays, 30, 1, 365, 'retentionDays');
 	const maxActiveJobs = milliseconds(options.maxActiveJobs, 5_000, 1, 100_000, 'maxActiveJobs');
@@ -61,9 +65,14 @@ export function createPostgresExecutionQueue(options = {}) {
 	}
 
 	return Object.freeze({
-		async enqueue({ runId, requestedByUserId, turnOptions, idempotencyKey, correlationId }) {
+		cancelGraceMs,
+		async enqueue({ runId, requestedByUserId, requestedByActorType = 'user', turnOptions, idempotencyKey, correlationId }) {
 			const selectedRunId = uuid(runId, 'runId');
-			uuid(requestedByUserId, 'requestedByUserId');
+			if (!REQUEST_ACTOR_TYPES.has(requestedByActorType)) throw new TypeError('requestedByActorType is invalid.');
+			if (requestedByActorType === 'user') uuid(requestedByUserId, 'requestedByUserId');
+			else if (requestedByUserId !== undefined && requestedByUserId !== null) {
+				throw new TypeError('System and service execution jobs cannot impersonate a user.');
+			}
 			if (correlationId !== undefined) uuid(correlationId, 'correlationId');
 			const payload = structuredClone(turnOptions ?? {});
 			const jobId = idempotencyKey ? uuid(idempotencyKey, 'idempotencyKey') : randomUUID();
@@ -98,9 +107,11 @@ export function createPostgresExecutionQueue(options = {}) {
 				try {
 					const result = await client.query(
 						`INSERT INTO qa_execution_jobs
-						 (id, organization_id, project_id, run_id, requested_by_user_id, correlation_id, kind, payload, max_attempts)
-						 VALUES ($1, $2, $3, $4, $5, $6, 'turn', $7::jsonb, $8) RETURNING *`,
-						[jobId, tenant.organizationId, tenant.projectId, selectedRunId, requestedByUserId,
+						 (id, organization_id, project_id, run_id, requested_by_user_id, requested_by_actor_type,
+						  correlation_id, kind, payload, max_attempts)
+						 VALUES ($1, $2, $3, $4, $5, $6, $7, 'turn', $8::jsonb, $9) RETURNING *`,
+						[jobId, tenant.organizationId, tenant.projectId, selectedRunId,
+						 requestedByActorType === 'user' ? requestedByUserId : null, requestedByActorType,
 						 correlationId ?? null, JSON.stringify(payload), defaultMaxAttempts]
 					);
 					return hydrate(result.rows[0]);
@@ -134,6 +145,18 @@ export function createPostgresExecutionQueue(options = {}) {
 					 FOR UPDATE OF job SKIP LOCKED LIMIT 1000
 					)`,
 					[tenant.organizationId, tenant.projectId, retentionDays]
+				);
+				await client.query(
+					`UPDATE qa_execution_jobs job SET status = 'cancelled', finished_at = CURRENT_TIMESTAMP,
+					 lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
+					 WHERE job.organization_id = $1 AND job.project_id = $2
+					 AND job.status IN ('queued', 'leased', 'cancel_requested')
+					 AND NOT EXISTS (
+						SELECT 1 FROM qa_runs run
+						WHERE run.organization_id = job.organization_id AND run.project_id = job.project_id
+						AND run.id = job.run_id AND run.deleted_at IS NULL
+					 )`,
+					[tenant.organizationId, tenant.projectId]
 				);
 				await client.query(
 					`UPDATE qa_execution_jobs SET status = 'queued', available_at = CURRENT_TIMESTAMP,
@@ -170,13 +193,25 @@ export function createPostgresExecutionQueue(options = {}) {
 
 		async heartbeat({ jobId, leaseToken, workerId, leaseMs = defaultLeaseMs }) {
 			uuid(jobId, 'jobId'); uuid(leaseToken, 'leaseToken'); worker(workerId);
+			const selectedLeaseMs = milliseconds(leaseMs, defaultLeaseMs, 5_000, 300_000, 'leaseMs');
 			return transaction(async client => {
 				const result = await client.query(
-					`UPDATE qa_execution_jobs SET lease_expires_at = CURRENT_TIMESTAMP + ($4 * INTERVAL '1 millisecond'),
+					`UPDATE qa_execution_jobs job SET status = CASE WHEN NOT EXISTS (
+						SELECT 1 FROM qa_runs run
+						WHERE run.organization_id = job.organization_id AND run.project_id = job.project_id
+						AND run.id = job.run_id AND run.deleted_at IS NULL
+					 ) THEN 'cancel_requested' ELSE status END,
+					 lease_expires_at = CASE WHEN NOT EXISTS (
+						SELECT 1 FROM qa_runs run
+						WHERE run.organization_id = job.organization_id AND run.project_id = job.project_id
+						AND run.id = job.run_id AND run.deleted_at IS NULL
+					 ) THEN LEAST(lease_expires_at, CURRENT_TIMESTAMP + ($5 * INTERVAL '1 millisecond'))
+					 WHEN status = 'leased' THEN CURRENT_TIMESTAMP + ($4 * INTERVAL '1 millisecond') ELSE lease_expires_at END,
 					 last_heartbeat_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 					 WHERE id = $1 AND lease_token = $2 AND lease_owner = $3
-					 AND status IN ('leased', 'cancel_requested') RETURNING status`,
-					[jobId, leaseToken, workerId, leaseMs]
+					 AND status IN ('leased', 'cancel_requested') AND lease_expires_at > CURRENT_TIMESTAMP
+					 RETURNING status`,
+					[jobId, leaseToken, workerId, selectedLeaseMs, cancelGraceMs]
 				);
 				return result.rows[0]?.status;
 			});
@@ -185,10 +220,14 @@ export function createPostgresExecutionQueue(options = {}) {
 		async complete({ jobId, leaseToken, workerId }) {
 			return transaction(async client => {
 				const result = await client.query(
-					`UPDATE qa_execution_jobs SET status = CASE WHEN status = 'cancel_requested' THEN 'cancelled' ELSE 'succeeded' END,
+					`UPDATE qa_execution_jobs job SET status = CASE WHEN status = 'cancel_requested' OR NOT EXISTS (
+						SELECT 1 FROM qa_runs run
+						WHERE run.organization_id = job.organization_id AND run.project_id = job.project_id
+						AND run.id = job.run_id AND run.deleted_at IS NULL
+					 ) THEN 'cancelled' ELSE 'succeeded' END,
 					 finished_at = CURRENT_TIMESTAMP, lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
 					 updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND lease_token = $2 AND lease_owner = $3
-					 AND status IN ('leased', 'cancel_requested') RETURNING status`,
+					 AND status IN ('leased', 'cancel_requested') AND lease_expires_at > CURRENT_TIMESTAMP RETURNING status`,
 					[uuid(jobId, 'jobId'), uuid(leaseToken, 'leaseToken'), worker(workerId)]
 				);
 				return result.rows[0]?.status;
@@ -196,18 +235,31 @@ export function createPostgresExecutionQueue(options = {}) {
 		},
 
 		async fail({ jobId, leaseToken, workerId, error, retryable = true }) {
-			const detail = String(error instanceof Error ? error.message : error ?? 'Worker execution failed.').slice(0, 2000);
+			const detail = sanitizeErrorDetail(error ?? 'Worker execution failed.', 2_000);
 			return transaction(async client => {
 				const result = await client.query(
-					`UPDATE qa_execution_jobs SET
-					 status = CASE WHEN status = 'cancel_requested' THEN 'cancelled'
-					  WHEN $4 AND attempts < max_attempts THEN 'queued' ELSE 'failed' END,
-					 available_at = CASE WHEN status = 'leased' AND $4 AND attempts < max_attempts
+					`UPDATE qa_execution_jobs job SET
+					 status = CASE WHEN status = 'cancel_requested' OR NOT EXISTS (
+						SELECT 1 FROM qa_runs run
+						WHERE run.organization_id = job.organization_id AND run.project_id = job.project_id
+						AND run.id = job.run_id AND run.deleted_at IS NULL
+					 ) THEN 'cancelled' WHEN $4 AND attempts < max_attempts THEN 'queued' ELSE 'failed' END,
+					 available_at = CASE WHEN status = 'leased' AND $4 AND attempts < max_attempts AND EXISTS (
+						SELECT 1 FROM qa_runs run
+						WHERE run.organization_id = job.organization_id AND run.project_id = job.project_id
+						AND run.id = job.run_id AND run.deleted_at IS NULL
+					 )
 					  THEN CURRENT_TIMESTAMP + (LEAST(60, POWER(2, attempts)) * INTERVAL '1 second') ELSE available_at END,
-					 error_code = $5, error_detail = $6,
-					 finished_at = CASE WHEN status = 'leased' AND $4 AND attempts < max_attempts THEN NULL ELSE CURRENT_TIMESTAMP END,
+					 error_code = CASE WHEN status = 'cancel_requested' THEN NULL ELSE $5 END,
+					 error_detail = CASE WHEN status = 'cancel_requested' THEN NULL ELSE $6 END,
+					 finished_at = CASE WHEN status = 'leased' AND $4 AND attempts < max_attempts AND EXISTS (
+						SELECT 1 FROM qa_runs run
+						WHERE run.organization_id = job.organization_id AND run.project_id = job.project_id
+						AND run.id = job.run_id AND run.deleted_at IS NULL
+					 ) THEN NULL ELSE CURRENT_TIMESTAMP END,
 					 lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
 					 WHERE id = $1 AND lease_token = $2 AND lease_owner = $3 AND status IN ('leased', 'cancel_requested')
+					 AND lease_expires_at > CURRENT_TIMESTAMP
 					 RETURNING status`,
 					[uuid(jobId, 'jobId'), uuid(leaseToken, 'leaseToken'), worker(workerId), Boolean(retryable),
 					 error?.code ? String(error.code).slice(0, 120) : null, detail]
@@ -221,9 +273,11 @@ export function createPostgresExecutionQueue(options = {}) {
 				const result = await client.query(
 					`UPDATE qa_execution_jobs SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE 'cancel_requested' END,
 					 finished_at = CASE WHEN status = 'queued' THEN CURRENT_TIMESTAMP ELSE finished_at END,
+					 lease_expires_at = CASE WHEN status = 'leased' THEN LEAST(lease_expires_at,
+						CURRENT_TIMESTAMP + ($4 * INTERVAL '1 millisecond')) ELSE lease_expires_at END,
 					 updated_at = CURRENT_TIMESTAMP WHERE organization_id = $1 AND project_id = $2 AND run_id = $3
 					 AND status IN ('queued', 'leased') RETURNING status`,
-					[tenant.organizationId, tenant.projectId, uuid(runId, 'runId')]
+					[tenant.organizationId, tenant.projectId, uuid(runId, 'runId'), cancelGraceMs]
 				);
 				return result.rows[0]?.status;
 			});

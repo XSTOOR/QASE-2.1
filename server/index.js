@@ -1,9 +1,10 @@
 import 'dotenv/config';
 import { createApplication } from './app.js';
-import { createConfiguredAuthentication } from './authFactory.js';
+import { createInstanceAccess } from './instanceAccess.js';
 import { createOperationalControls } from './operations.js';
 import { createOperationalLogger } from './operationalLogger.js';
 import { createConfiguredApplicationServices } from './serviceFactory.js';
+import { createConfiguredDrytisIntegration } from './drytisIntegrationFactory.js';
 
 // Validate process-local operational limits and metrics credentials before
 // opening PostgreSQL or Redis clients.
@@ -12,13 +13,19 @@ const operations = createOperationalControls({ logger });
 const {
 	services, mode: runStoreMode, executionMode, tenantContext, pool, executionQueue
 } = await createConfiguredApplicationServices();
-const { authentication, mode: authenticationMode } = createConfiguredAuthentication({
-	runStoreMode, tenantContext, pool
+const access = createInstanceAccess({ tenantContext });
+const drytisIntegration = createConfiguredDrytisIntegration({
+	services,
+	tenantContext,
+	pool,
+	runStoreMode,
+	logger
 });
 
 let shuttingDown = false;
 const { app, demoEnabled } = createApplication({
-	services, authentication, executionQueue, operations, logger,
+	services, access, executionQueue, operations, logger,
+	drytisIntegrationApi: drytisIntegration?.api,
 	isDraining: () => shuttingDown
 });
 const port = Number(process.env.PORT ?? 5173);
@@ -66,7 +73,8 @@ server = app.listen(port, host, () => {
 	if (process.env.NODE_ENV === 'production') {
 		logger.info('process.started', {
 			host, port, storeMode: runStoreMode, executionMode,
-			authenticationMode, provider: config.provider, model: config.model
+			accessMode: 'embedded-instance', drytisIntegration: Boolean(drytisIntegration),
+			provider: config.provider, model: config.model
 		});
 		if (config.problem) logger.warn('configuration.problem', { errorName: 'ConfigurationError' });
 		return;
@@ -75,7 +83,8 @@ server = app.listen(port, host, () => {
 	console.log(`  http://${host}:${port}`);
 	console.log(`  run store: ${runStoreMode}`);
 	console.log(`  execution: ${executionMode}`);
-	console.log(`  authentication: ${authenticationMode}`);
+	console.log('  access: Drytis-owned embedded instance');
+	console.log(`  Drytis integration: ${drytisIntegration ? 'enabled' : 'disabled'}`);
 	console.log(`  ${config.provider} · ${config.model}${config.baseUrl ? ` · ${config.baseUrl}` : ''}`);
 	if (demoEnabled) {
 		console.log(`  practice target: http://${host}:${port}/demo  (demo@qase.dev / demo1234)`);

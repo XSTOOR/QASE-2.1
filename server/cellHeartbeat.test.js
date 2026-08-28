@@ -3,10 +3,14 @@ import test from 'node:test';
 import { createCellHeartbeatConfig, createCellHeartbeatController, parseCellMetrics } from './cellHeartbeat.js';
 
 const ID = '4a7f5cf0-813d-4e3c-8d5d-4b4b9fc88c10';
+const ORG = '4a7f5cf0-813d-4e3c-8d5d-4b4b9fc88c01';
+const PROJECT = '4a7f5cf0-813d-4e3c-8d5d-4b4b9fc88c02';
 const TOKEN = 'heartbeat-test-token-with-at-least-32-bytes';
 function environment(overrides = {}) {
 	return {
 		QASE_CELL_ID: ID,
+		QASE_BOOTSTRAP_ORGANIZATION_ID: ORG,
+		QASE_BOOTSTRAP_PROJECT_ID: PROJECT,
 		QASE_CELL_NAME: 'cell one',
 		QASE_CELL_REGION: 'ap-south-1',
 		QASE_CELL_PUBLIC_URL: 'https://qase.example.test',
@@ -21,6 +25,8 @@ function environment(overrides = {}) {
 test('heartbeat configuration validates identity, endpoints and credentials', () => {
 	const config = createCellHeartbeatConfig(environment());
 	assert.equal(config.id, ID);
+	assert.equal(config.organizationId, ORG);
+	assert.equal(config.projectId, PROJECT);
 	assert.equal(config.capacityWeight, 100);
 	assert.throws(() => createCellHeartbeatConfig(environment({ QASE_CELL_ID: 'bad' })), /canonical UUID/);
 	assert.throws(() => createCellHeartbeatConfig(environment({ QASE_CONTROL_API_WRITE_TOKEN: 'short' })), /32 bytes/);
@@ -56,6 +62,9 @@ test('controller registers once then publishes bounded observations', async () =
 	await controller.start();
 	assert.equal(calls.length, 3);
 	assert.match(calls[0].url, new RegExp(`/cells/${ID}$`));
+	assert.equal(Object.hasOwn(JSON.parse(calls[0].options.body), 'status'), false);
+	assert.equal(JSON.parse(calls[0].options.body).organizationId, ORG);
+	assert.equal(JSON.parse(calls[0].options.body).projectId, PROJECT);
 	assert.deepEqual(JSON.parse(calls[2].options.body), { queueDepth: 4, oldestQueuedAgeSeconds: 1.25 });
 	assert.equal(controller.getState().ready, true);
 	await scheduled();

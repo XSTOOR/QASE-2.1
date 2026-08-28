@@ -8,9 +8,8 @@ import { fileURLToPath } from 'node:url';
  * Builds a zip of the source that is safe to hand to somebody else.
  *
  * The exclusions are the point: `.env` and `.qase/config.json` hold an API key,
- * `.qase/sessions.json` holds every site that has been tested. Owner auth state
- * defaults to the user's private OS app-data directory and is never packaged.
- * Zipping the folder as it stands still ships sensitive local state.
+ * `.qase/sessions.json` holds every site that has been tested. Zipping the
+ * folder as it stands still ships sensitive local state.
  */
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -21,10 +20,10 @@ const EXCLUDED_ROOTS = new Set([
 	'coverage', 'test-results', 'playwright-report', 'dist', 'tmp', 'temp'
 ]);
 const EXCLUDED_EXTENSIONS = new Set(['.zip', '.log', '.pem', '.key', '.p12', '.pfx']);
-const INCLUDED_DIRECTORIES = ['public', 'server', 'scripts', 'docs', 'deploy', 'load'];
+const INCLUDED_DIRECTORIES = ['public', 'server', 'scripts', 'docs', 'deploy', 'load', 'integrations'];
 const INCLUDED_FILES = [
 	'package.json', 'package-lock.json', 'README.md', '.env.example',
-	'.gitignore', '.gitattributes', '.dockerignore', 'Dockerfile'
+	'.gitignore', '.gitattributes', '.dockerignore', '.nvmrc', 'Dockerfile'
 ];
 
 fs.rmSync(output, { force: true });
@@ -62,6 +61,11 @@ try {
 	fs.rmSync(output, { force: true });
 	throw error;
 } finally {
+	const resolvedTemporaryRoot = path.resolve(temporaryRoot);
+	if (path.dirname(resolvedTemporaryRoot) !== path.resolve(os.tmpdir())
+		|| !path.basename(resolvedTemporaryRoot).startsWith('qase-package-')) {
+		throw new Error('Refusing to remove an unexpected packaging temporary directory.');
+	}
 	fs.rmSync(temporaryRoot, { recursive: true, force: true });
 }
 
@@ -91,7 +95,7 @@ if (leaked.length > 0) {
 }
 
 for (const required of [
-	'package.json', 'package-lock.json', '.env.example', 'Dockerfile',
+	'package.json', 'package-lock.json', '.env.example', '.nvmrc', 'Dockerfile',
 	'deploy/kubernetes/base/qase.yaml', 'deploy/kubernetes/base/migrations.yaml',
 	'deploy/observability/service-monitors.yaml',
 	'deploy/observability/prometheus-rules.yaml',
@@ -101,6 +105,9 @@ for (const required of [
 	'load/k6/control-plane-placement.js',
 	'server/postgres/migrations/007_data_lifecycle.sql',
 	'server/postgres/retentionRepository.js',
+	'integrations/drytis/qaseClient.js',
+	'integrations/drytis/protocol.js',
+	'integrations/drytis/README.md',
 	'scripts/data-governance.mjs',
 	'docs/enterprise-migration/phase-10-data-governance.md'
 ]) {

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createRuntimeApplicationServices } from './localServices.js';
 import { currentRequestActor } from './requestActor.js';
+import { DEFAULT_DEVICE_ID, isDeviceId } from './deviceProfiles.js';
 
 function clone(value) {
 	return structuredClone(value);
@@ -12,24 +13,31 @@ function restore(target, snapshot) {
 	Object.assign(target, clone(snapshot));
 }
 
-function createSession(title, now) {
+function createSession(title, now, options = {}) {
 	const timestamp = now();
-	return {
-		id: randomUUID(),
+	const session = {
+		id: options.id ?? randomUUID(),
 		title: title || 'New test run',
 		createdAt: timestamp,
 		updatedAt: timestamp,
 		status: 'idle',
-		targetUrl: undefined,
+		mode: 'qa',
+		targetUrl: options.targetUrl,
+		device: isDeviceId(options.device) ? options.device : DEFAULT_DEVICE_ID,
+		deviceLandscape: options.deviceLandscape === true,
 		messages: [],
 		activities: [],
-		findings: [],
+		findings: structuredClone(options.findings ?? []),
 		todos: [],
 		report: undefined,
 		pendingQuestion: undefined,
 		contextUsage: undefined,
 		secretNames: []
 	};
+	if (options.drytisIntegration !== undefined) {
+		session.drytisIntegration = structuredClone(options.drytisIntegration);
+	}
+	return session;
 }
 
 function summary(session) {
@@ -37,7 +45,10 @@ function summary(session) {
 		id: session.id,
 		title: session.title,
 		status: session.status,
+		mode: session.mode === 'sqa' || session.mode === 'founder' ? session.mode : 'qa',
 		targetUrl: session.targetUrl,
+		device: isDeviceId(session.device) ? session.device : DEFAULT_DEVICE_ID,
+		deviceLandscape: session.deviceLandscape === true,
 		createdAt: session.createdAt,
 		updatedAt: session.updatedAt,
 		findingCount: session.findings.length,
@@ -47,10 +58,15 @@ function summary(session) {
 
 function eventActor(type, payload, tenantContext) {
 	const messageRole = payload?.message?.role;
-	if (messageRole === 'user' || ['run.created', 'session', 'secrets', 'run.stop_requested'].includes(type)) {
+	if (payload?.message?.kind === 'integration') {
+		return { actorType: 'system', actorUserId: undefined };
+	}
+	if (messageRole === 'user' || [
+		'run.created', 'session', 'secrets', 'run.stop_requested', 'founder.created'
+	].includes(type)) {
 		return { actorType: 'user', actorUserId: currentRequestActor()?.actorUserId ?? tenantContext.actorUserId };
 	}
-	if (messageRole === 'system' || type === 'run.recovered') {
+	if (messageRole === 'system' || type === 'run.recovered' || type?.startsWith('drytis.')) {
 		return { actorType: 'system', actorUserId: undefined };
 	}
 	return { actorType: 'agent', actorUserId: undefined };
@@ -210,19 +226,21 @@ export function createPostgresApplicationServices({
 				});
 			}
 		},
-		async create(title = 'New test run') {
-			const session = createSession(title, now);
+		async create(title = 'New test run', options = {}) {
+			const session = createSession(title, now, options);
+			const eventType = options.eventType ?? 'run.created';
+			const eventPayload = options.eventPayload ?? { title: session.title };
 			const result = await repository.create(clone(session), {
-				eventType: 'run.created',
-				payload: { title: session.title },
-				...eventActor('run.created', {}, tenantContext)
+				eventType,
+				payload: eventPayload,
+				...eventActor(eventType, eventPayload, tenantContext)
 			});
 			session.updatedAt = result.updatedAt;
 			sessions.set(session.id, session);
 			versions.set(session.id, result.version);
 			generations.set(session.id, 0);
 			snapshots.set(session.id, clone(session));
-			publish(session, 'run.created', { title: session.title }, session.createdAt);
+			publish(session, eventType, eventPayload, session.createdAt);
 			return session;
 		},
 		async get(id) {
@@ -245,10 +263,11 @@ export function createPostgresApplicationServices({
 			}
 			return undefined;
 		},
-		async list() {
-			if (typeof repository.list === 'function') return repository.list();
+		async list(options) {
+			if (typeof repository.list === 'function') return repository.list(options);
 			return [...sessions.values()]
 				.sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+				.slice(0, Math.min(100, Math.max(1, Number(options?.limit) || 100)))
 				.map(summary);
 		},
 		async delete(id) {
@@ -319,6 +338,9 @@ export function createPostgresApplicationServices({
 		},
 		dropLive(id) {
 			return live.delete(id);
+		},
+		listLive() {
+			return [...live.entries()].map(([id, record]) => ({ id, record }));
 		},
 		async check() {
 			if (!initialized || closing || lastError) {

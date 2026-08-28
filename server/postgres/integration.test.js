@@ -12,6 +12,7 @@ import {
 	PURGE_ACKNOWLEDGEMENT,
 	createPostgresRetentionRepository
 } from './retentionRepository.js';
+import { createSqaState } from '../sqaService.js';
 
 const { Pool } = pg;
 const DATABASE_URL = String(process.env.QASE_TEST_DATABASE_URL ?? '').trim();
@@ -279,6 +280,65 @@ test(
 		assert.equal(tenantAGet.session.id, value.id);
 		assert.equal(tenantAGet.version, created.version);
 		assert.deepEqual((await tenantARepository.list()).map(run => run.id), [value.id]);
+
+		const sqaRun = {
+			...runAggregate(),
+			id: 'f24010d2-78bf-43f7-a1e1-8f127df3042e',
+			title: 'Tenant A SQA persistence canary',
+			mode: 'sqa',
+			sqa: createSqaState({
+				authorizationConfirmed: true,
+				profiles: ['core'],
+				attributes: ['web_application'],
+				target: { name: 'Integration canary', release: '2026.08', environment: 'test' }
+			})
+		};
+		const sqaCreated = await tenantARepository.create(sqaRun, {
+			eventType: 'sqa.created',
+			payload: { catalogVersion: sqaRun.sqa.scope.catalogVersion }
+		});
+		const sqaLoaded = await tenantARepository.get(sqaRun.id);
+		assert.equal(sqaLoaded.session.mode, 'sqa');
+		assert.equal(sqaLoaded.session.sqa.scope.catalogVersion, sqaRun.sqa.scope.catalogVersion);
+		assert.equal(sqaLoaded.session.sqa.assessment, undefined);
+		assert.equal(await tenantBRepository.get(sqaRun.id), undefined);
+		assert.equal(await tenantARepository.delete(sqaRun.id, {
+			expectedVersion: sqaCreated.version,
+			eventType: 'run.deleted',
+			actorType: 'user',
+			actorUserId: contextA.actorUserId
+		}), true);
+
+		const drytisRun = {
+			...runAggregate(),
+			id: 'd1ad1965-6709-4d96-a9f5-b973f397dd46',
+			title: 'Tenant A Drytis integration canary',
+			mode: 'qa',
+			drytisIntegration: {
+				schemaVersion: '2026-08-1',
+				externalReviewId: 'd1ad1965-6709-4d96-a9f5-b973f397dd46',
+				project: { id: contextA.projectId, name: 'Integration canary', revision: 'revision-1' },
+				requestedChecks: { blackBox: false, whiteBox: true },
+				whiteBox: { analysis: { analysisId: 'analysis-canary', snapshotSha256: 'a'.repeat(64) } },
+				blackBox: { status: 'not_requested', attempts: 0 },
+				createdAt: '2026-08-19T00:00:00.000Z',
+				updatedAt: '2026-08-19T00:00:00.000Z'
+			}
+		};
+		const drytisCreated = await tenantARepository.create(drytisRun, {
+			eventType: 'drytis.review.created',
+			payload: { externalReviewId: drytisRun.id }
+		});
+		const drytisLoaded = await tenantARepository.get(drytisRun.id);
+		assert.equal(drytisLoaded.session.mode, 'qa');
+		assert.deepEqual(drytisLoaded.session.drytisIntegration, drytisRun.drytisIntegration);
+		assert.equal(await tenantBRepository.get(drytisRun.id), undefined);
+		assert.equal(await tenantARepository.delete(drytisRun.id, {
+			expectedVersion: drytisCreated.version,
+			eventType: 'run.deleted',
+			actorType: 'user',
+			actorUserId: contextA.actorUserId
+		}), true);
 
 		const tenantAQueue = createPostgresExecutionQueue({ pool: tenantAPool, tenantContext: contextA });
 		const tenantBQueue = createPostgresExecutionQueue({ pool: tenantBPool, tenantContext: contextB });

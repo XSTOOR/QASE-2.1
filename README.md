@@ -1,12 +1,14 @@
 # Qase
 
-An autonomous QA agent that tests live websites in a real browser, built on
-[`@cleanslate/sdk`](https://www.npmjs.com/package/@cleanslate/sdk).
+An autonomous QA agent that tests live websites through a policy-gated browser
+automation runtime.
 
 Paste a URL. Qase opens the site in Chromium, writes a test plan, works through
 it, and files what breaks — while you watch the cursor move.
 
 ## Setup
+
+Use an actively supported Node.js LTS release (22 or 24).
 
 ```bash
 npm install && npm run install-browser
@@ -18,8 +20,8 @@ Then start it:
 npm start
 ```
 
-Open http://127.0.0.1:5173. On first launch, create the single owner account,
-then click **Settings** and fill in three fields:
+Open http://127.0.0.1:5173, select **Begin transmission**, then click
+**Settings** and fill in three fields:
 
 | Field | What it is |
 | --- | --- |
@@ -31,21 +33,107 @@ Pick **custom** as the provider for any OpenAI-compatible endpoint. **Test
 connection** probes it and loads the model list before you commit. Settings are
 saved to `.qase/config.json`; `.env` works too, and the file wins over `.env`.
 
+The server needs outbound HTTPS access to the configured model gateway and
+network access to the websites being tested. A server launched inside a
+network-restricted sandbox can serve the dashboard while all agent requests
+fail. If Settings reports `EACCES/EPERM`, restart the server from a terminal
+with the required network permissions; changing the API key will not fix that
+restriction. Missing Chromium is a separate issue: run `npm run install-browser`
+under the same OS account that runs Qase.
+
 Nothing to test against yet? Outside production, the server hosts a deliberately
 broken practice site at http://localhost:5173/demo — sign in with
 `demo@qase.dev` / `demo1234`. Production mode always disables this route.
+
+## Repository map
+
+- `public/` contains the landing page and browser workspace.
+- `server/` contains the HTTP API, browser agent, storage adapters, and tests.
+- `integrations/drytis/` is the server-only Drytis adapter and signing protocol.
+- `docs/` contains the current SQA, Founder Mode, and Drytis contracts;
+  `docs/enterprise-migration/` records historical infrastructure phases.
+- `deploy/`, `load/`, and `scripts/` contain referenced operational tooling.
+
+Generated dependencies, runtime state, logs, reports, and share archives are
+ignored and are not part of the source tree.
 
 ## The dashboard
 
 **Left** — your runs. **Middle** — the conversation, with what the agent is
 thinking pinned above the composer while it works. **Right** — the live browser
 with the agent's cursor drawn over it, and tabs for Activity, Plan, Findings and
-the Report.
+the Report. The slim mode dock on the far right starts standard QA, SQA, and
+Founder Mode without displacing the working panels; on narrower screens it
+becomes a bottom dock.
 
 The cursor and the highlight box are drawn over the video feed, not injected
 into the page under test, so watching a run never changes what is being tested.
 
-## Logging in
+## SQA assessments
+
+Choose **SQA assessment** to create a separately scoped software-quality run.
+Qase resolves a versioned, standards-informed control set, drives the existing
+browser automation runtime through non-destructive checks, binds observations to
+run evidence, and computes the verdict in a deterministic evaluator outside the
+model. Mandatory controls without sufficient evidence remain **blocked**; the
+agent cannot turn missing documents or regulatory review into a pass.
+
+SQA produces a technical assessment, not an ISO certification, regulatory
+approval, legal opinion, or whole-product compliance attestation. The built-in
+catalog contains independently authored control objectives based on public
+framework descriptions. Licensed standards text is not embedded or sent to the
+model. See [`docs/sqa.md`](docs/sqa.md) for profiles, evidence contracts, APIs,
+security boundaries, and the customer-licensed control-pack boundary.
+
+## Founder Mode
+
+Choose **Founder** in the mode dock to start an evidence-informed product and
+go-to-market review. Supply the authorized URL plus the product stage, business
+model, target-customer hypothesis, current goal, constraints, and any named
+alternatives you already know. Qase inventories the browser-accessible product,
+walks a representative workflow, checks diagnostics and responsive behavior,
+and records evidence-bound strengths, friction, opportunities, and risks.
+
+The resulting founder brief includes product/UI/UX improvements, ICP and
+positioning hypotheses, monetization and pricing tests, sales and marketing
+motions, prioritized recommendations, quick wins, metrics and experiments, and
+a 30/60/90-day roadmap. Observed facts stay separate from assumptions, and each
+recommendation carries impact, effort, and confidence. Founder Mode cannot see
+source code, private analytics, customers, revenue, or unrelated competitor
+sites unless that context is explicitly supplied through an authorized future
+workflow, so it never represents browser review as complete codebase or market
+research. See [`docs/founder-mode.md`](docs/founder-mode.md) for the complete
+contract and API.
+
+## Drytis product integration
+
+Qase includes a disabled-by-default, cell-local Drytis data plane for a toolbar
+integration. A Drytis backend can submit one signed project review containing
+an authorized HTTPS preview for black-box testing, a bounded source snapshot
+for deterministic white-box analysis, or both. Qase correlates both results
+under one run and returns sanitized findings, coverage, a deep link, and repair
+prompts that Drytis must treat as untrusted user-level input.
+
+Every integration route authenticates the exact raw request target and body,
+uses replay protection and durable business idempotency, and binds the request
+to the cell's configured project. Submitted source is validated, analyzed only
+in memory, never executed, and never persisted. PostgreSQL stores only bounded
+derived analysis, source digests, findings, and correlation metadata. Drytis
+can poll the canonical result or request a signed delivery to one fixed,
+deployment-configured endpoint; request bodies cannot choose callback URLs.
+
+This repository contains the Qase side, a versioned protocol, and a server-only
+Drytis adapter at [`integrations/drytis/qaseClient.js`](integrations/drytis/qaseClient.js).
+The actual toolbar button, per-user instance provisioning, snapshot packager,
+result receiver, and human-approved patch workflow still belong in the Drytis
+codebase. See
+[`docs/drytis-studio-integration-architecture.md`](docs/drytis-studio-integration-architecture.md),
+[`docs/drytis-integration.md`](docs/drytis-integration.md), and
+[`docs/drytis-integration.openapi.yaml`](docs/drytis-integration.openapi.yaml)
+for the payloads, signing algorithm, data flow, deployment controls, and current
+production boundaries.
+
+## Testing sites that require login
 
 When the agent hits a login wall it stops and asks. Type the credentials into
 the form that appears and they go into a server-side vault — **the model never
@@ -60,20 +148,22 @@ perform the run; values are never written to PostgreSQL or the local workspace.
 Qase clears the envelope on completion or deletion, and its bounded TTL is a
 backstop for interrupted cleanup.
 
-## Owner authentication
+## Drytis-owned instance boundary
 
-Qase creates one owner account per local instance. The password is stored only
-as a salted `scrypt` hash in the current user's private OS app-data directory;
-authenticated sessions use an
-opaque `HttpOnly`, `SameSite=Strict` cookie and all dashboard APIs, reports and
-event streams require that session. **Remember me** extends the server-side
-session to 30 days; signing out revokes it immediately.
+Qase intentionally has no separate login page, owner password, session cookie,
+or sign-out action. Drytis authenticates the user and routes that user to a
+private Qase instance. Selecting **Begin transmission** only moves from the
+landing experience into that instance's workspace.
 
-The server listens on `127.0.0.1` by default so an unconfigured first launch
-cannot be claimed from another machine. For a public deployment, use HTTPS and
-a trusted reverse proxy, set `QASE_AUTH_COOKIE_SECURE=true`, and configure a
-one-time `QASE_AUTH_SETUP_TOKEN` before creating the owner. There are
-intentionally no default credentials.
+This is a deployment boundary, not public anonymous access. Keep a local
+instance on the default `127.0.0.1` listener. A Drytis deployment must prevent
+direct public access at its gateway, provision an isolated instance identity,
+isolate its runtime storage, and set `QASE_DRYTIS_EMBED_ORIGIN` to the one Studio
+origin allowed to frame it. Different users must not share a local `.qase`
+directory or the same project-scoped database binding when their data must be
+isolated.
+Qase still rejects cross-origin API requests and emits restrictive browser
+security headers, but it does not replace Drytis identity or authorization.
 
 `GET /healthz` is a public process-liveness probe. `GET /readyz` is a public
 readiness probe for the configured storage adapter. Neither endpoint exposes
@@ -101,13 +191,17 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 | `PORT` | `5173` | Server port |
 | `QASE_HOST` | `127.0.0.1` | Interface to bind. Keep loopback unless you deliberately deploy Qase. |
 | `QASE_ENABLE_DEMO` | `true` outside production | `false` disables the practice site; production always disables it |
-| `QASE_AUTH_SESSION_HOURS` | `12` | Lifetime of a normal authenticated session |
-| `QASE_AUTH_MODE` | `local` | `local` owner login or PostgreSQL-backed `drytis` signed-launch SSO |
-| `QASE_PUBLIC_URL` | — | Required HTTPS public origin in Drytis mode |
-| `QASE_DRYTIS_LOGIN_URL` | — | Drytis launch-page URL used to begin SSO |
-| `QASE_DRYTIS_ISSUER` | — | Exact trusted JWT issuer |
-| `QASE_DRYTIS_AUDIENCE` | — | Exact Qase audience required in launch JWTs |
-| `QASE_DRYTIS_JWKS_URL` | — | HTTPS Drytis signing-key endpoint with rotation support |
+| `QASE_DRYTIS_INTEGRATION_ENABLED` | `false` | Enables the signed cell-local Drytis review API; production requires PostgreSQL |
+| `QASE_PUBLIC_URL` | — | Exact Qase origin used to produce an absolute Drytis `launchUrl` |
+| `QASE_DRYTIS_API_ORIGIN` | — | Exact trusted Drytis service origin for the data plane |
+| `QASE_DRYTIS_ALLOWED_ORIGINS` | — | Comma-separated exact HTTPS origins allowed for Qase-to-Drytis delivery |
+| `QASE_DRYTIS_HMAC_KEY` | — | Shared 32-byte integration key encoded as unpadded base64url; store it as a secret |
+| `QASE_DRYTIS_MAX_CLOCK_SKEW_SECONDS` | `300` | Signed-request timestamp window, bounded from 30 to 900 seconds |
+| `QASE_DRYTIS_TIMEOUT_MS` | `10000` | Fixed outbound Drytis delivery timeout, capped at 30 seconds |
+| `QASE_DRYTIS_MAX_REQUEST_BYTES` | `16777216` | Maximum signed body; source validation applies stricter limits |
+| `QASE_DRYTIS_MAX_RESPONSE_BYTES` | `1048576` | Maximum accepted Drytis delivery receipt body |
+| `QASE_DRYTIS_RESULTS_PATH` | unset | Optional fixed allowlisted delivery path or URL; never request supplied |
+| `QASE_DRYTIS_EMBED_ORIGIN` | unset | One exact HTTPS Drytis origin allowed to frame Qase; otherwise framing stays denied |
 | `QASE_EXECUTION_MODE` | `local` | `distributed` moves agent/browser work into dedicated workers |
 | `QASE_REDIS_URL` | — | Redis transport URL; production distributed mode requires `rediss://` |
 | `QASE_SECRETS_MASTER_KEY` | — | Shared base64url 32-byte key for short-lived encrypted worker credentials |
@@ -130,12 +224,9 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 | `QASE_CONTROL_CELL_STALE_SECONDS` | `90` | Heartbeat age after which placement resolution fails closed |
 | `QASE_CONTROL_HOST` / `QASE_CONTROL_PORT` | `127.0.0.1` / `5180` | Internal control-plane listener |
 | `QASE_CELL_ID` / `QASE_CELL_REGION` | unset | Stable identity used by the trusted cell heartbeat controller |
+| `QASE_BOOTSTRAP_ORGANIZATION_ID` / `QASE_BOOTSTRAP_PROJECT_ID` | unset | Trusted tenant binding required when a cell registers; a cell cannot later be rebound to another tenant |
 | `QASE_CELL_METRICS_URL` | unset | Private bearer-protected API metrics URL read by the controller |
 | `QASE_CELL_HEARTBEAT_INTERVAL_MS` | `30000` | Cell observation publish interval with capped retry backoff |
-| `QASE_AUTH_REMEMBER_DAYS` | `30` | Lifetime when **Remember me** is selected |
-| `QASE_AUTH_COOKIE_SECURE` | `auto` | `true` forces HTTPS-only auth cookies; `auto` follows the incoming protocol |
-| `QASE_AUTH_SETUP_TOKEN` | unset | Required for first-owner setup from a non-loopback address |
-| `QASE_AUTH_FILE` | user app data | Optional private location for the owner hash and session digests |
 | `QASE_TRUST_PROXY` | `false` | Trust exactly one reverse proxy for HTTPS detection |
 | `QASE_HEADLESS` | `true` | `false` also opens a visible browser window |
 | `QASE_CURSOR_DWELL_MS` | `420` | How long the cursor is shown travelling to its target. Deliberate latency, so a run is watchable. `0` disables it. |
@@ -143,6 +234,8 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 | `QASE_FRAME_INTERVAL_MS` | `320` | Live view frame interval |
 | `QASE_FRAME_QUALITY` | `55` | Live view JPEG quality |
 | `QASE_BROWSER_IDLE_MS` | `0` | Close a session's browser after this long idle. `0` keeps it open for the whole session. Cookies and the current page are restored either way. |
+| `QASE_BROWSER_ALLOWED_ORIGINS` | unset | Comma-separated trusted HTTP(S) origins (or `https://*.example.com`) that may receive top-level navigation outside the declared target origin |
+| `QASE_BROWSER_ALLOWED_PRIVATE_HOSTS` | unset | Explicit private-network host exceptions for reviewed internal production targets; exact hosts or `*.example.com` only |
 | `QASE_MAX_TURNS` | `120` | Hard ceiling on agent turns per run |
 
 ## Sharing it
@@ -152,8 +245,6 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 
 Do **not** zip the folder as it stands: `.env` and `.qase/config.json` contain
 your API key, and `.qase/sessions.json` contains everything you have tested.
-The owner hash and active session digests live separately in the current
-user's private app-data directory (or `QASE_AUTH_FILE` when overridden).
 
 Whoever receives it runs `npm install && npm run install-browser`, then
 `npm start`, and enters their own endpoint under Settings.
@@ -181,14 +272,17 @@ scheduler is enabled; `npm run data:governance -- runs-preview` is read-only.
 
 ## How it works
 
-`@cleanslate/sdk` supplies the agent loop, the tool protocol and a Playwright
-browser. This app adds four things around it:
+The runtime supplies the agent loop, a structured tool protocol, and an isolated
+Playwright browser. This app adds four things around it:
 
 - **A tool gate** (`server/agent.js`) that narrows 59 tools down to browser
   automation plus two of its own — `report_finding` and `finish_qa_report`.
 - **A browser bridge** (`server/browserBridge.js`) that publishes where each
-  action is about to land before performing it, so the run can be watched, and
-  waits for client-side navigation to settle before reporting a URL.
+  action is about to land before performing it, enforces target/network scope,
+  requires explicit confirmation for destructive actions, and waits for
+  client-side navigation to settle before reporting a URL. Production browser
+  contexts disable service-worker registration because service-worker traffic
+  cannot be inspected by Playwright request routing.
 - **A credential vault** (`server/secrets.js`) that keeps secrets out of the
   model's context entirely.
 - **The dashboard** (`public/`), which renders one SSE stream.

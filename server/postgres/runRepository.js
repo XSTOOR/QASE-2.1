@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { MAX_FOUNDER_STATE_BYTES, normalizeFounderState } from '../founderService.js';
+import { normalizePendingSqaState } from '../sqaService.js';
 
 /**
  * PostgreSQL persistence for the current Qase run aggregate.
@@ -27,6 +29,50 @@ const ROLLBACK = 'ROLLBACK';
 const ACTOR_TYPES = new Set(['user', 'agent', 'system']);
 const LIFECYCLE_POLICY_VERSION = 'qase-data-lifecycle/v1';
 const DAY_MS = 24 * 60 * 60 * 1000;
+const CHILD_TABLES = Object.freeze({
+	messages: 'qa_messages',
+	activities: 'qa_activities',
+	planItems: 'qa_plan_items',
+	findings: 'qa_findings',
+	reports: 'qa_reports'
+});
+const ALL_CHILD_GROUPS = Object.freeze(Object.keys(CHILD_TABLES));
+const EVENT_CHILD_GROUPS = new Map([
+	['message', Object.freeze(['messages'])],
+	['message_done', Object.freeze(['messages'])],
+	['activity', Object.freeze(['activities'])],
+	['todos', Object.freeze(['planItems'])],
+	['finding', Object.freeze(['findings'])],
+	['report', Object.freeze(['reports'])],
+	['browser', Object.freeze([])],
+	['context', Object.freeze([])],
+	['question', Object.freeze([])],
+	['run.recovered', Object.freeze([])],
+	['run.stop_requested', Object.freeze([])],
+	['secrets', Object.freeze([])],
+	['session', Object.freeze([])],
+	['sqa', Object.freeze([])],
+	['sqa.created', Object.freeze([])],
+	['founder.observation', Object.freeze([])],
+	['founder.finalized', Object.freeze([])],
+	['founder.created', Object.freeze([])],
+	['founder.target_bound', Object.freeze([])],
+	['drytis.review.created', Object.freeze([])],
+	['drytis.review.start_requested', Object.freeze([])],
+	['drytis.review.start_completed', Object.freeze([])],
+	['drytis.review.start_failed', Object.freeze([])],
+	['drytis.review.stop_requested', Object.freeze([])],
+	['drytis.review.stopped', Object.freeze([])],
+	['drytis.blackbox.started', Object.freeze([])],
+	['drytis.blackbox.queued', Object.freeze([])],
+	['drytis.blackbox.failed', Object.freeze([])],
+	['drytis.blackbox.settled', Object.freeze([])],
+	['drytis.delivery.requested', Object.freeze([])],
+	['drytis.delivery.completed', Object.freeze([])],
+	['drytis.delivery.failed', Object.freeze([])],
+	['status', Object.freeze([])],
+	['task_complete', Object.freeze([])]
+]);
 
 export class RunVersionConflictError extends Error {
 	constructor(runId, expectedVersion) {
@@ -133,7 +179,60 @@ function requireRun(session) {
 	if (!session || typeof session !== 'object' || typeof session.id !== 'string' || !UUID_PATTERN.test(session.id)) {
 		throw new TypeError('A run aggregate with a canonical UUID is required.');
 	}
+	const mode = session.mode === undefined ? 'qa' : session.mode;
+	if (mode !== 'qa' && mode !== 'sqa' && mode !== 'founder') {
+		throw new TypeError('Run mode must be qa, sqa, or founder.');
+	}
+	if (mode === 'qa' && (session.sqa !== undefined || session.founder !== undefined)) {
+		throw new TypeError('A QA run cannot contain an SQA assessment or Founder review.');
+	}
+	if (mode !== 'qa' && session.drytisIntegration !== undefined) {
+		throw new TypeError('A Drytis integration can only be attached to a QA run.');
+	}
+	if (session.drytisIntegration !== undefined) {
+		if (!session.drytisIntegration || typeof session.drytisIntegration !== 'object'
+			|| Array.isArray(session.drytisIntegration)
+			|| Buffer.byteLength(JSON.stringify(session.drytisIntegration), 'utf8') >= 1_000_000) {
+			throw new TypeError('Drytis integration state must be a bounded JSON object.');
+		}
+	}
+	if (mode === 'sqa') {
+		if (session.founder !== undefined) {
+			throw new TypeError('An SQA run cannot contain a Founder review.');
+		}
+		if (!session.sqa || typeof session.sqa !== 'object' || Array.isArray(session.sqa)) {
+			throw new TypeError('An SQA run requires an SQA assessment object.');
+		}
+		const profiles = session.sqa?.scope?.profiles;
+		if (!Array.isArray(profiles) || profiles.length < 1 || profiles.length > 16
+			|| profiles.some(profile => typeof profile !== 'string' || !profile.trim())) {
+			throw new TypeError('An SQA run requires one through sixteen profile identifiers.');
+		}
+		if (Buffer.byteLength(JSON.stringify(session.sqa), 'utf8') > 1_000_000) {
+			throw new TypeError('The SQA assessment exceeds the one-megabyte storage limit.');
+		}
+	}
+	if (mode === 'founder') {
+		if (session.sqa !== undefined) {
+			throw new TypeError('A Founder run cannot contain an SQA assessment.');
+		}
+		if (!session.founder || typeof session.founder !== 'object' || Array.isArray(session.founder)) {
+			throw new TypeError('A Founder run requires a Founder review object.');
+		}
+		if (Buffer.byteLength(JSON.stringify(session.founder), 'utf8') >= MAX_FOUNDER_STATE_BYTES) {
+			throw new TypeError('The Founder review exceeds the one-megabyte storage limit.');
+		}
+	}
 	return session;
+}
+
+function runMode(session) {
+	return session.mode === 'sqa' || session.mode === 'founder' ? session.mode : 'qa';
+}
+
+function sqaProfiles(session) {
+	if (runMode(session) !== 'sqa') return [];
+	return [...new Set(session.sqa.scope.profiles.map(profile => profile.trim()))];
 }
 
 function asDate(value, fallback) {
@@ -278,6 +377,7 @@ function hydrateRun(row, children) {
 		createdAt: epoch(row.created_at),
 		updatedAt: epoch(row.updated_at),
 		status: row.status,
+		mode: row.run_mode === 'sqa' || row.run_mode === 'founder' ? row.run_mode : 'qa',
 		targetUrl: row.target_url ?? undefined,
 		messages: (children.messages.get(row.id) ?? []).map(hydrateMessage),
 		activities: (children.activities.get(row.id) ?? []).map(hydrateActivity),
@@ -288,6 +388,17 @@ function hydrateRun(row, children) {
 		contextUsage: row.context_usage ?? undefined,
 		secretNames: names(row.secret_names)
 	};
+	if (session.mode === 'sqa') {
+		session.sqa = normalizePendingSqaState(row.sqa_assessment ?? {
+			scope: { profiles: names(row.sqa_profiles) }
+		});
+	}
+	if (session.mode === 'founder') {
+		session.founder = normalizeFounderState(row.founder_assessment);
+	}
+	if (row.drytis_integration !== undefined && row.drytis_integration !== null) {
+		session.drytisIntegration = row.drytis_integration;
+	}
 	return { session, version: Number(row.lock_version) };
 }
 
@@ -334,16 +445,25 @@ async function hydrateRows(client, tenant, runRows) {
 	return runRows.map(row => hydrateRun(row, children));
 }
 
-async function replaceChildren(client, tenant, session, fallbackDate) {
+function childGroupsForEvent(eventType) {
+	// Unknown or eventless repository callers retain the legacy full-aggregate
+	// behavior. Only established application events use the selective fast path.
+	return EVENT_CHILD_GROUPS.get(eventType) ?? ALL_CHILD_GROUPS;
+}
+
+async function replaceChildren(client, tenant, session, fallbackDate, groups = ALL_CHILD_GROUPS) {
 	const scope = [tenant.organizationId, tenant.projectId, session.id];
-	for (const table of ['qa_messages', 'qa_activities', 'qa_plan_items', 'qa_findings', 'qa_reports']) {
+	const selected = new Set(groups);
+	for (const group of selected) {
+		const table = CHILD_TABLES[group];
+		if (!table) throw new TypeError(`Unknown run child group: ${group}.`);
 		await client.query(
 			`DELETE FROM ${table} WHERE organization_id = $1 AND project_id = $2 AND run_id = $3`,
 			scope
 		);
 	}
 
-	for (const [ordinal, message] of (session.messages ?? []).entries()) {
+	for (const [ordinal, message] of (selected.has('messages') ? session.messages ?? [] : []).entries()) {
 		await client.query(
 			`INSERT INTO qa_messages (
 				organization_id, project_id, run_id, id, ordinal, role, kind, content,
@@ -357,7 +477,7 @@ async function replaceChildren(client, tenant, session, fallbackDate) {
 		);
 	}
 
-	for (const [ordinal, activity] of (session.activities ?? []).entries()) {
+	for (const [ordinal, activity] of (selected.has('activities') ? session.activities ?? [] : []).entries()) {
 		await client.query(
 			`INSERT INTO qa_activities (
 				organization_id, project_id, run_id, id, ordinal, type, tool_name, label,
@@ -374,7 +494,7 @@ async function replaceChildren(client, tenant, session, fallbackDate) {
 		);
 	}
 
-	for (const [position, item] of (session.todos ?? []).entries()) {
+	for (const [position, item] of (selected.has('planItems') ? session.todos ?? [] : []).entries()) {
 		const itemId = typeof item.id === 'string' && UUID_PATTERN.test(item.id) ? item.id : randomUUID();
 		await client.query(
 			`INSERT INTO qa_plan_items (
@@ -384,7 +504,7 @@ async function replaceChildren(client, tenant, session, fallbackDate) {
 		);
 	}
 
-	for (const [ordinal, finding] of (session.findings ?? []).entries()) {
+	for (const [ordinal, finding] of (selected.has('findings') ? session.findings ?? [] : []).entries()) {
 		await client.query(
 			`INSERT INTO qa_findings (
 				organization_id, project_id, run_id, id, ordinal, title, severity,
@@ -400,7 +520,7 @@ async function replaceChildren(client, tenant, session, fallbackDate) {
 		);
 	}
 
-	if (session.report) {
+	if (selected.has('reports') && session.report) {
 		const report = session.report;
 		await client.query(
 			`INSERT INTO qa_reports (
@@ -442,17 +562,21 @@ async function insertAggregate(client, tenant, session, event, nowValue) {
 	const result = await client.query(
 		`INSERT INTO qa_runs (
 			id, organization_id, project_id, created_by_user_id, title, target_url,
-			status, status_detail, pending_question, context_usage, secret_names,
+			status, status_detail, run_mode, sqa_profiles, sqa_assessment, founder_assessment,
+			drytis_integration, pending_question, context_usage, secret_names,
 			message_count, finding_count, lock_version, next_event_sequence,
 			created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10,$11,$12,0,$13,$14,$15)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,0,$18,$19,$20)
 		 RETURNING lock_version, updated_at`,
 		[
 			session.id, tenant.organizationId, tenant.projectId, tenant.actorUserId,
 			String(session.title ?? 'New test run'), session.targetUrl ?? null,
-			session.status ?? 'idle', json(session.pendingQuestion), json(session.contextUsage),
-			names(session.secretNames), session.messages?.length ?? 0,
-			session.findings?.length ?? 0, nextEventSequence, createdAt, updatedAt
+			session.status ?? 'idle', runMode(session), sqaProfiles(session),
+			runMode(session) === 'sqa' ? json(session.sqa) : null,
+			runMode(session) === 'founder' ? json(session.founder) : null,
+			json(session.drytisIntegration), json(session.pendingQuestion), json(session.contextUsage), names(session.secretNames),
+			session.messages?.length ?? 0, session.findings?.length ?? 0,
+			nextEventSequence, createdAt, updatedAt
 		]
 	);
 	await replaceChildren(client, tenant, session, updatedAt);
@@ -565,8 +689,8 @@ export function createPostgresRunRepository({
 		return transaction(async client => {
 			const scope = [tenant.organizationId, tenant.projectId];
 			const runs = await client.query(
-				`SELECT id, title, target_url, status, pending_question, context_usage,
-					secret_names, created_at, updated_at, lock_version
+				`SELECT id, title, target_url, status, run_mode, sqa_profiles, sqa_assessment, founder_assessment, drytis_integration,
+					pending_question, context_usage, secret_names, created_at, updated_at, lock_version
 				 FROM qa_runs
 				 WHERE organization_id = $1 AND project_id = $2 AND deleted_at IS NULL
 				 ORDER BY updated_at DESC, id ASC`,
@@ -582,8 +706,8 @@ export function createPostgresRunRepository({
 		}
 		return transaction(async client => {
 			const result = await client.query(
-				`SELECT id, title, target_url, status, pending_question, context_usage,
-					secret_names, created_at, updated_at, lock_version
+				`SELECT id, title, target_url, status, run_mode, sqa_profiles, sqa_assessment, founder_assessment, drytis_integration,
+					pending_question, context_usage, secret_names, created_at, updated_at, lock_version
 				 FROM qa_runs
 				 WHERE organization_id = $1 AND project_id = $2 AND id = $3
 					AND deleted_at IS NULL`,
@@ -594,20 +718,23 @@ export function createPostgresRunRepository({
 		});
 	}
 
-	async function list() {
+	async function list(options = {}) {
+		const limit = boundedInteger(options.limit, 100, 1, 100, 'limit');
 		return transaction(async client => {
 			const result = await client.query(
-				`SELECT id, title, status, target_url, created_at, updated_at,
+				`SELECT id, title, status, run_mode, target_url, created_at, updated_at,
 					message_count, finding_count
 				 FROM qa_runs
 				 WHERE organization_id = $1 AND project_id = $2 AND deleted_at IS NULL
-				 ORDER BY updated_at DESC, id ASC`,
-				[tenant.organizationId, tenant.projectId]
+				 ORDER BY updated_at DESC, id ASC
+				 LIMIT $3`,
+				[tenant.organizationId, tenant.projectId, limit]
 			);
 			return (result.rows ?? []).map(row => ({
 				id: row.id,
 				title: row.title,
 				status: row.status,
+				mode: row.run_mode === 'sqa' || row.run_mode === 'founder' ? row.run_mode : 'qa',
 				targetUrl: row.target_url ?? undefined,
 				createdAt: epoch(row.created_at),
 				updatedAt: epoch(row.updated_at),
@@ -708,25 +835,30 @@ export function createPostgresRunRepository({
 			const eventIncrement = event.type ? 1 : 0;
 			const result = await client.query(
 				`UPDATE qa_runs SET
-					title = $4, target_url = $5, status = $6, pending_question = $7,
-					context_usage = $8, secret_names = $9, message_count = $10,
-					finding_count = $11, updated_at = $12, lock_version = lock_version + 1,
-					next_event_sequence = next_event_sequence + $13
+					title = $4, target_url = $5, status = $6, run_mode = $7,
+					sqa_profiles = $8, sqa_assessment = $9, founder_assessment = $10,
+					drytis_integration = $11, pending_question = $12, context_usage = $13, secret_names = $14,
+					message_count = $15, finding_count = $16, updated_at = $17,
+					lock_version = lock_version + 1,
+					next_event_sequence = next_event_sequence + $18
 				 WHERE organization_id = $1 AND project_id = $2 AND id = $3
-					AND lock_version = $14 AND deleted_at IS NULL
+					AND lock_version = $19 AND deleted_at IS NULL
 				 RETURNING lock_version, updated_at, next_event_sequence`,
 				[
 					tenant.organizationId, tenant.projectId, session.id,
 					String(session.title ?? 'New test run'), session.targetUrl ?? null,
-					session.status ?? 'idle', json(session.pendingQuestion), json(session.contextUsage),
-					names(session.secretNames), session.messages?.length ?? 0,
-					session.findings?.length ?? 0, updatedAt, eventIncrement, expectedVersion
+					session.status ?? 'idle', runMode(session), sqaProfiles(session),
+					runMode(session) === 'sqa' ? json(session.sqa) : null,
+					runMode(session) === 'founder' ? json(session.founder) : null,
+					json(session.drytisIntegration), json(session.pendingQuestion), json(session.contextUsage), names(session.secretNames),
+					session.messages?.length ?? 0, session.findings?.length ?? 0,
+					updatedAt, eventIncrement, expectedVersion
 				]
 			);
 			if (!result.rows?.length) {
 				throw new RunVersionConflictError(session.id, expectedVersion);
 			}
-			await replaceChildren(client, tenant, session, updatedAt);
+			await replaceChildren(client, tenant, session, updatedAt, childGroupsForEvent(event.type));
 			const nextSequence = Number(result.rows[0].next_event_sequence);
 			await appendEvent(client, tenant, session.id, nextSequence - eventIncrement, event, event.createdAt);
 			return {

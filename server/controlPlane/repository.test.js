@@ -8,6 +8,7 @@ const PROJECT = '63e57ec3-5a83-4491-9706-2ce61763f7d1';
 function cellRow(overrides = {}) {
 	return {
 		id: CELL, name: 'Cell EU 1', region: 'eu-west-1', base_url: 'https://qase-eu.example.com',
+		bound_organization_id: ORG, bound_project_id: PROJECT,
 		status: 'active', capacity_weight: 100, heartbeat_at: new Date('2026-08-11T00:00:00Z'),
 		observed_queue_depth: 2, observed_oldest_queue_age_seconds: 3, lock_version: 1,
 		...overrides
@@ -37,15 +38,21 @@ test('cell registration and heartbeat validate and persist only routing observat
 	const target = fixture(call => call.text.startsWith('INSERT INTO qase_cells') || call.text.startsWith('UPDATE qase_cells')
 		? { rows: [cellRow()], rowCount: 1 } : { rows: [], rowCount: 0 });
 	const cell = await target.repository.upsertCell({
-		id: CELL, name: 'Cell EU 1', region: 'eu-west-1', baseUrl: 'https://qase-eu.example.com', capacityWeight: 100
+		id: CELL, name: 'Cell EU 1', region: 'eu-west-1', baseUrl: 'https://qase-eu.example.com',
+		capacityWeight: 100, organizationId: ORG, projectId: PROJECT
 	});
 	assert.equal(cell.baseUrl, 'https://qase-eu.example.com');
 	assert.equal((await target.repository.heartbeat(CELL, { queueDepth: 2, oldestQueuedAgeSeconds: 3 })).id, CELL);
 	await assert.rejects(() => target.repository.upsertCell({
-		id: CELL, name: 'bad', region: 'eu', baseUrl: 'http://private.example.com'
+		id: CELL, name: 'bad', region: 'eu', baseUrl: 'http://private.example.com',
+		organizationId: ORG, projectId: PROJECT
 	}), /HTTPS origin/);
 	const registration = target.calls.find(call => call.text.startsWith('INSERT INTO qase_cells'));
 	assert.equal(registration.params.includes('https://qase-eu.example.com'), true);
+	assert.equal(registration.params[6], false);
+	assert.deepEqual(registration.params.slice(7), [ORG, PROJECT]);
+	assert.match(registration.text, /CASE WHEN \$7 THEN EXCLUDED\.status ELSE qase_cells\.status END/);
+	assert.match(registration.text, /cannot|bound_organization_id = EXCLUDED\.bound_organization_id|bound_organization_id IS NULL/i);
 });
 
 test('automatic placement selects a fresh active cell under lock and upserts one project mapping', async () => {

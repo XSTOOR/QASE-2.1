@@ -1,3 +1,8 @@
+import { describeSqaLifecycle, groupSqaUnresolvedResults } from './sqaPresentation.js';
+import { buildFindingFixPrompt, buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
+import { createFounderView } from './founderView.js';
+import { hostOf, list, markdown, paragraph, relativeTime, section, truncate } from './uiPrimitives.js';
+
 /**
  * Qase dashboard.
  *
@@ -7,14 +12,18 @@
  */
 
 const $ = id => document.getElementById(id);
+const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const el = {
 	runList: $('run-list'),
+	deviceSelect: $('device-select'),
+	deviceLandscape: $('device-landscape'),
 	newRun: $('new-run'),
+	newSqa: $('new-sqa'),
+	newFounder: $('new-founder'),
 	connDot: $('conn-dot'),
 	connLabel: $('conn-label'),
 	modelBadge: $('model-badge'),
-	signOut: $('sign-out'),
 
 	chatTitle: $('chat-title'),
 	chatTarget: $('chat-target'),
@@ -49,8 +58,15 @@ const el = {
 	planList: $('plan-list'),
 	findingsList: $('findings-list'),
 	reportView: $('report-view'),
+	activityTab: $('tab-activity'),
+	sqaTab: $('tab-sqa'),
+	sqaView: $('sqa-view'),
+	founderTab: $('tab-founder'),
+	founderView: $('founder-view'),
 	countPlan: $('count-plan'),
 	countFindings: $('count-findings'),
+	countSqa: $('count-sqa'),
+	countFounder: $('count-founder'),
 	toasts: $('toasts')
 };
 
@@ -63,6 +79,10 @@ const state = {
 	bubbles: new Map(),
 	viewport: { width: 1440, height: 900 },
 	cursorTimer: undefined,
+	sqaCatalog: undefined,
+	sqaCatalogPromise: undefined,
+	founderCatalog: undefined,
+	founderCatalogPromise: undefined,
 	/** Live reasoning for the current turn. Never kept once the agent replies. */
 	thinking: { text: '', action: '' }
 };
@@ -72,19 +92,12 @@ const state = {
 async function apiResponse(path, options = {}) {
 	const method = String(options.method ?? 'GET').toUpperCase();
 	const headers = { 'Content-Type': 'application/json', ...(options.headers ?? {}) };
-	if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && window.qaseAuth?.csrfToken) {
-		headers['X-Qase-CSRF-Token'] = window.qaseAuth.csrfToken;
-	}
 	const response = await fetch(`/api${path}`, {
 		...options,
 		method,
 		headers,
 		credentials: 'same-origin'
 	});
-	if (response.status === 401) {
-		window.dispatchEvent(new Event('qase:auth-expired'));
-		throw new Error('Your Qase session expired. Sign in again.');
-	}
 	if (!response.ok) {
 		const text = await response.text();
 		let message;
@@ -121,63 +134,36 @@ function toast(message, kind = '') {
 
 const fail = error => toast(error instanceof Error ? error.message : String(error), 'bad');
 
-function escapeHtml(text) {
-	return text.replace(/[&<>"']/g, character => (
-		{ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]
-	));
+async function downloadReportPdf(filename) {
+	const response = await apiResponse(`/sessions/${state.sessionId}/report.pdf`);
+	const blob = await response.blob();
+	const url = URL.createObjectURL(blob);
+	const save = document.createElement('a');
+	save.href = url;
+	save.download = filename;
+	document.body.append(save);
+	save.click();
+	save.remove();
+	window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-/**
- * Just enough markdown for what an agent writes. Escapes first, so anything it
- * quotes from the page under test cannot become live markup.
- */
-function markdown(text) {
-	const blocks = [];
-	let html = escapeHtml(text)
-		.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, _lang, code) => {
-			blocks.push(`<pre><code>${code.replace(/\n$/, '')}</code></pre>`);
-			return `\uE000${blocks.length - 1}\uE000`;
-		})
-		.replace(/`([^`\n]+)`/g, '<code>$1</code>')
-		.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-		.replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-		.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer noopener">$1</a>')
-		.replace(/^#{1,6}\s+(.+)$/gm, '<h3>$1</h3>');
-
-	// Group consecutive bullet or numbered lines into a single list.
-	html = html
-		.replace(/(?:^[-*]\s+.+(?:\n|$))+/gm, match =>
-			`<ul>${match.trim().split('\n').map(line => `<li>${line.replace(/^[-*]\s+/, '')}</li>`).join('')}</ul>`)
-		.replace(/(?:^\d+[.)]\s+.+(?:\n|$))+/gm, match =>
-			`<ol>${match.trim().split('\n').map(line => `<li>${line.replace(/^\d+[.)]\s+/, '')}</li>`).join('')}</ol>`);
-
-	html = html
-		.split(/\n{2,}/)
-		.map(chunk => (/^\s*(<(ul|ol|pre|h3)|\uE000)/.test(chunk) ? chunk : `<p>${chunk.replace(/\n/g, '<br>')}</p>`))
-		.join('')
-		.replace(/<p>\s*<\/p>/g, '')
-		.replace(/\uE000(\d+)\uE000/g, (_match, index) => blocks[Number(index)]);
-
-	return html;
-}
-
-function hostOf(url) {
-	try {
-		return new URL(url).host;
-	} catch {
-		return url;
-	}
-}
-
-function relativeTime(ts) {
-	const seconds = Math.round((Date.now() - ts) / 1000);
-	if (seconds < 60) return 'just now';
-	if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
-	if (seconds < 86_400) return `${Math.round(seconds / 3600)}h ago`;
-	return new Date(ts).toLocaleDateString();
-}
-
-const truncate = (text, max) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+const founderView = createFounderView({
+	getSession: () => state.session,
+	getCatalog: () => state.founderCatalog,
+	getSessionId: () => state.sessionId,
+	elements: {
+		founderView: el.founderView,
+		countFounder: el.countFounder,
+		reportView: el.reportView
+	},
+	apiText,
+	downloadReportPdf,
+	toast,
+	fail,
+	humanizeId: humanizeSqaId
+});
+const renderFounder = founderView.render;
+const renderFounderReportTab = founderView.renderReportTab;
 
 /* ── Runs (left panel) ───────────────────────────────────────────── */
 
@@ -211,11 +197,35 @@ function renderRun(run) {
 	dot.className = `dot${run.status === 'running' ? ' is-busy' : run.status === 'done' ? ' is-live' : ''}`;
 	dot.setAttribute('aria-hidden', 'true');
 	meta.append(dot, document.createTextNode(relativeTime(run.updatedAt)));
+	if (run.mode === 'sqa') {
+		const mode = document.createElement('span');
+		mode.className = 'run-mode-badge';
+		mode.textContent = 'SQA';
+		mode.title = 'Software quality assurance assessment';
+		meta.append(mode);
+	}
+	if (run.mode === 'founder') {
+		const mode = document.createElement('span');
+		mode.className = 'run-mode-badge run-mode-badge--founder';
+		mode.textContent = 'Founder';
+		mode.title = 'Founder Mode product and growth review';
+		meta.append(mode);
+	}
 	if (run.findingCount > 0) {
 		const badge = document.createElement('span');
 		badge.className = 'run-badge';
 		badge.textContent = `${run.findingCount}`;
 		meta.append(badge);
+	}
+	if (run.device && run.device !== 'desktop') {
+		const profile = deviceState.list.find(p => p.id === run.device);
+		const pill = document.createElement('span');
+		pill.className = 'run-device-pill';
+		pill.dataset.deviceKind = profile?.kind ?? 'mobile';
+		const short = (profile?.label ?? run.device).replace(/\s*\(.*\)$/, '');
+		pill.textContent = short + (run.deviceLandscape ? ' – L' : '');
+		pill.title = (profile?.label ?? run.device) + (run.deviceLandscape ? ' (landscape)' : '');
+		meta.append(pill);
 	}
 
 	const remove = document.createElement('button');
@@ -242,6 +252,82 @@ function renderRun(run) {
 
 /* ── Session loading ─────────────────────────────────────────────── */
 
+// ── Device emulation ─────────────────────────────────────────────
+// We keep a single, persisted "device for the next run" preference. It flows
+// into the QA quick-start, SQA modal, and Founder modal payloads, and the live
+// preview picks up the current session's device from session.device so it can
+// paint a phone/tablet bezel over the JPEG stream. No stream/DOM of the site
+// under test is ever touched by this — the real emulation lives in
+// server/deviceProfiles.js via Playwright newContext options.
+const DEVICE_PREF_KEY = 'qase.device';
+const deviceState = { list: [], defaultId: 'desktop' };
+
+async function loadDevices() {
+	try {
+		const catalog = await api('/devices');
+		deviceState.list = Array.isArray(catalog?.devices) ? catalog.devices : [];
+		deviceState.defaultId = catalog?.default ?? 'desktop';
+	} catch {
+		deviceState.list = [{ id: 'desktop', label: 'Desktop', kind: 'desktop' }];
+		deviceState.defaultId = 'desktop';
+	}
+	if (!el.deviceSelect) return;
+	el.deviceSelect.innerHTML = '';
+	for (const profile of deviceState.list) {
+		const option = document.createElement('option');
+		option.value = profile.id;
+		option.textContent = profile.label;
+		el.deviceSelect.append(option);
+	}
+	const saved = localStorage.getItem(DEVICE_PREF_KEY);
+	el.deviceSelect.value = deviceState.list.some(p => p.id === saved) ? saved : deviceState.defaultId;
+	el.deviceSelect.addEventListener('change', () => {
+		localStorage.setItem(DEVICE_PREF_KEY, el.deviceSelect.value);
+	});
+	if (el.deviceLandscape) {
+		el.deviceLandscape.checked = localStorage.getItem(DEVICE_LANDSCAPE_KEY) === '1';
+		el.deviceLandscape.addEventListener('change', () => {
+			localStorage.setItem(DEVICE_LANDSCAPE_KEY, el.deviceLandscape.checked ? '1' : '0');
+		});
+	}
+}
+
+function pendingDeviceId() {
+	return (el.deviceSelect && el.deviceSelect.value) || localStorage.getItem(DEVICE_PREF_KEY) || deviceState.defaultId;
+}
+
+const DEVICE_LANDSCAPE_KEY = 'qase.deviceLandscape';
+function pendingLandscape() {
+	if (el.deviceLandscape) return Boolean(el.deviceLandscape.checked);
+	return localStorage.getItem(DEVICE_LANDSCAPE_KEY) === '1';
+}
+function populateDeviceSelect(select, initialId) {
+	if (!select) return;
+	select.innerHTML = '';
+	for (const profile of deviceState.list) {
+		const option = document.createElement('option');
+		option.value = profile.id;
+		option.textContent = profile.label;
+		select.append(option);
+	}
+	if (initialId && deviceState.list.some(p => p.id === initialId)) select.value = initialId;
+}
+
+function applyStageDevice(session) {
+	if (!el.stage) return;
+	const id = session?.device ?? 'desktop';
+	const profile = deviceState.list.find(p => p.id === id);
+	const kind = profile?.kind ?? 'desktop';
+	if (kind === 'desktop') {
+		el.stage.removeAttribute('data-device-kind');
+		el.stage.removeAttribute('data-device-label');
+	} else {
+		el.stage.setAttribute('data-device-kind', kind);
+		el.stage.setAttribute('data-device-label', profile?.label ?? id);
+	}
+}
+
+
 async function selectSession(id) {
 	state.sessionId = id;
 	state.bubbles.clear();
@@ -249,6 +335,7 @@ async function selectSession(id) {
 
 	const session = await api(`/sessions/${id}`);
 	state.session = session;
+	applyStageDevice(session);
 
 	renderHeader();
 	renderTranscript();
@@ -258,6 +345,9 @@ async function selectSession(id) {
 	renderTodos();
 	renderFindings();
 	renderReport();
+	syncSqaDetailMode();
+	renderSqa();
+	renderFounder();
 
 	if (session.frame) {
 		applyFrame(session.frame);
@@ -273,14 +363,37 @@ async function selectSession(id) {
 	await refreshRuns();
 }
 
-async function startRun() {
-	const session = await api('/sessions', { method: 'POST' });
+async function startRun() { openQaStart(); }
+
+async function createQaRun({ targetUrl, device, deviceLandscape }) {
+	const session = await api('/sessions', { method: 'POST', body: JSON.stringify({ device, deviceLandscape }) });
 	await selectSession(session.id);
+	if (targetUrl) {
+		await api(`/sessions/${session.id}/message`, { method: 'POST', body: JSON.stringify({ text: targetUrl }) }).catch(fail);
+	}
 	el.composerInput.focus();
+	return session;
 }
 
 function renderHeader() {
 	const session = state.session;
+	if (session.mode === 'founder') {
+		const target = session.founder?.scope?.target ?? session.founder?.report?.target ?? {};
+		const context = session.founder?.scope?.productContext ?? {};
+		el.chatTitle.textContent = target.name ?? session.title ?? 'Founder review';
+		el.chatTarget.textContent = [context.stage, context.businessModel, target.environment].filter(Boolean).join(' · ')
+			|| 'Evidence-informed product and go-to-market review';
+		setStatus(session.status);
+		return;
+	}
+	if (session.mode === 'sqa') {
+		const target = session.sqa?.scope?.target ?? session.sqa?.assessment?.target ?? {};
+		el.chatTitle.textContent = target.name ?? session.title ?? 'SQA assessment';
+		el.chatTarget.textContent = [target.release, target.environment].filter(Boolean).join(' · ')
+			|| 'Standards-informed software quality assessment';
+		setStatus(session.status);
+		return;
+	}
 	el.chatTitle.textContent = session.targetUrl ? hostOf(session.targetUrl) : session.title;
 	el.chatTarget.textContent = session.targetUrl ?? 'Send a URL to begin';
 	setStatus(session.status);
@@ -542,7 +655,7 @@ function credentialForm() {
 	skip.type = 'button';
 	skip.className = 'btn btn-ghost btn-sm';
 	skip.textContent = 'Skip login';
-	skip.onclick = () => sendAnswer('No credentials available. Skip anything behind the login and test what is reachable while signed out.');
+	skip.onclick = () => sendAnswer('Continue with a public-only review. No credentials are available. Treat authenticated surfaces as not observed, do not attempt login, and do not ask for credentials again during this review.');
 	const submit = document.createElement('button');
 	submit.type = 'submit';
 	submit.className = 'btn btn-primary btn-sm';
@@ -840,6 +953,26 @@ function renderFinding(finding) {
 		body.append(pre);
 	}
 
+	const fixPrompt = buildFindingFixPrompt(finding, {
+		targetUrl: state.session?.targetUrl,
+		mode: state.session?.mode
+	});
+	const fixWrap = document.createElement('section');
+	fixWrap.className = 'finding-fix-prompt';
+	const fixHead = document.createElement('div');
+	fixHead.className = 'finding-fix-prompt-head';
+	const fixTitle = document.createElement('h4');
+	fixTitle.textContent = 'Fix prompt';
+	const fixHint = document.createElement('span');
+	fixHint.className = 'finding-fix-prompt-hint';
+	fixHint.textContent = 'Paste into your coding agent (Cursor / Claude Code / Copilot / Codex).';
+	fixHead.append(fixTitle, fixHint);
+	const fixText = document.createElement('pre');
+	fixText.className = 'finding-fix-prompt-body';
+	fixText.textContent = fixPrompt;
+	fixWrap.append(fixHead, fixText);
+	body.append(fixWrap);
+
 	const actions = document.createElement('div');
 	actions.className = 'finding-actions';
 	const copy = document.createElement('button');
@@ -847,10 +980,19 @@ function renderFinding(finding) {
 	copy.type = 'button';
 	copy.textContent = 'Copy as ticket';
 	copy.onclick = async () => {
-		await navigator.clipboard.writeText(findingAsTicket(finding));
-		toast('Finding copied to the clipboard.', 'good');
+		try { await navigator.clipboard.writeText(findingAsTicket(finding)); toast('Finding copied to the clipboard.', 'good'); }
+		catch { toast('Clipboard is blocked in this browser.', 'bad'); }
 	};
-	actions.append(copy);
+	const copyPrompt = document.createElement('button');
+	copyPrompt.className = 'btn btn-primary btn-sm finding-fix';
+	copyPrompt.type = 'button';
+	copyPrompt.textContent = 'Copy fix prompt';
+	copyPrompt.title = 'Copies the diagnose-and-fix prompt above for one coding agent.';
+	copyPrompt.onclick = async () => {
+		try { await navigator.clipboard.writeText(fixPrompt); toast('Fix prompt copied.', 'good'); }
+		catch { toast('Clipboard is blocked in this browser.', 'bad'); }
+	};
+	actions.append(copy, copyPrompt);
 	body.append(actions);
 
 	node.append(head, body);
@@ -880,8 +1022,17 @@ const VERDICTS = {
 };
 
 function renderReport() {
-	const report = state.session.report;
 	el.reportView.replaceChildren();
+	if (state.session?.mode === 'sqa') {
+		renderSqaReportTab();
+		return;
+	}
+	if (state.session?.mode === 'founder') {
+		renderFounderReportTab();
+		return;
+	}
+
+	const report = state.session.report;
 	if (!report) {
 		el.reportView.innerHTML = '<div class="feed-empty">The report is published when the run finishes</div>';
 		return;
@@ -958,36 +1109,623 @@ function renderReport() {
 			fail(error);
 		}
 	};
-	actions.append(download, copy);
+	const pdf = document.createElement('button');
+	pdf.className = 'btn btn-primary btn-sm';
+	pdf.type = 'button';
+	pdf.textContent = 'Download PDF';
+	pdf.onclick = async () => { try { await downloadReportPdf('qase-qa-report.pdf'); } catch (error) { fail(error); } };
+
+	const findings = Array.isArray(state.session?.findings) ? state.session.findings : [];
+	const copyFixes = document.createElement('button');
+	copyFixes.className = 'btn btn-ghost btn-sm';
+	copyFixes.type = 'button';
+	copyFixes.textContent = 'Copy all fix prompts';
+	copyFixes.disabled = findings.length === 0;
+	copyFixes.title = findings.length === 0
+		? 'No findings to generate fix prompts for.'
+		: 'Copies one long markdown block containing a fix prompt for every finding.';
+	copyFixes.onclick = async () => {
+		const markdown = buildAllFixPromptsMarkdown(state.session);
+		if (!markdown) { toast('No findings to build fix prompts from.', 'bad'); return; }
+		try { await navigator.clipboard.writeText(markdown); toast('All fix prompts copied.', 'good'); }
+		catch { toast('Clipboard is blocked in this browser.', 'bad'); }
+	};
+	const downloadFixes = document.createElement('button');
+	downloadFixes.className = 'btn btn-ghost btn-sm';
+	downloadFixes.type = 'button';
+	downloadFixes.textContent = 'Download fix prompts (.md)';
+	downloadFixes.disabled = findings.length === 0;
+	downloadFixes.onclick = () => {
+		const markdown = buildAllFixPromptsMarkdown(state.session);
+		if (!markdown) { toast('No findings to build fix prompts from.', 'bad'); return; }
+		const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }));
+		const save = document.createElement('a');
+		save.href = url;
+		save.download = 'qase-fix-prompts.md';
+		document.body.append(save);
+		save.click();
+		save.remove();
+		window.setTimeout(() => URL.revokeObjectURL(url), 0);
+	};
+
+	actions.append(download, copy, copyFixes, downloadFixes, pdf);
 	el.reportView.append(actions);
 }
 
-function section(heading, body) {
-	const node = document.createElement('div');
-	node.className = 'report-section';
-	const title = document.createElement('h3');
-	title.textContent = heading;
-	node.append(title, body);
+function renderSqaReportTab() {
+	const sqa = state.session?.sqa ?? {};
+	const assessment = sqa.assessment;
+	const lifecycle = describeSqaLifecycle(sqa, state.session?.status, state.session?.activities?.length ?? 0);
+	if (!lifecycle.finalized || !assessment) {
+		const pending = document.createElement('div');
+		pending.className = 'feed-empty';
+		pending.textContent = lifecycle.detail || 'The SQA report is available after the assessment is finalized.';
+		el.reportView.append(pending);
+		return;
+	}
+
+	const notice = document.createElement('aside');
+	notice.className = 'sqa-notice';
+	const noticeTitle = document.createElement('strong');
+	noticeTitle.textContent = 'SQA assessment report';
+	const noticeText = document.createElement('p');
+	noticeText.textContent = assessment.disclaimer
+		?? 'This scoped engineering assessment is not legal advice, regulatory approval, accreditation, an audit opinion, or certification.';
+	notice.append(noticeTitle, noticeText);
+
+	el.reportView.append(notice, renderSqaVerdict(assessment, lifecycle), renderSqaScope(sqa.scope ?? {}, assessment));
+	if (assessment.technicalSummary) el.reportView.append(renderSqaTechnicalSummary(assessment.technicalSummary));
+	el.reportView.append(
+		renderSqaCoverage(assessment),
+		renderSqaUnresolved(assessment),
+		renderSqaControls(assessment.results ?? []),
+		renderSqaSources(assessment.frameworkCoverage ?? []),
+		renderSqaReportActions()
+	);
+}
+
+/* ── Event stream ────────────────────────────────────────────────── */
+
+/* ── Software quality assurance ─────────────────────────────────────────── */
+
+const SQA_RESULT_META = Object.freeze({
+	pass: { label: 'Pass', mark: '✓' },
+	fail: { label: 'Fail', mark: '×' },
+	blocked: { label: 'Blocked', mark: '!' },
+	not_assessed: { label: 'Not assessed', mark: '—' },
+	not_applicable: { label: 'Not applicable', mark: '—' }
+});
+
+function humanizeSqaId(value) {
+	return String(value ?? '')
+		.replaceAll('_', ' ')
+		.replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function sqaValues(value) {
+	if (Array.isArray(value)) return value;
+	if (value && typeof value === 'object') return Object.values(value);
+	return [];
+}
+
+function syncSqaDetailMode() {
+	const isSqa = state.session?.mode === 'sqa';
+	const isFounder = state.session?.mode === 'founder';
+	el.sqaTab.hidden = !isSqa;
+	el.founderTab.hidden = !isFounder;
+	if (isSqa && !el.sqaTab.classList.contains('is-active')) {
+		activateDetailTab(el.sqaTab);
+	} else if (isFounder && !el.founderTab.classList.contains('is-active')) {
+		activateDetailTab(el.founderTab);
+	} else if ((!isSqa && el.sqaTab.classList.contains('is-active'))
+		|| (!isFounder && el.founderTab.classList.contains('is-active'))) {
+		activateDetailTab(el.activityTab);
+	}
+	syncFeatureDock();
+}
+
+function syncFeatureDock() {
+	const activeMode = state.session?.mode === 'sqa' || state.session?.mode === 'founder'
+		? state.session.mode
+		: 'qa';
+	for (const action of document.querySelectorAll('.feature-action')) {
+		const active = action.dataset.feature === activeMode;
+		action.classList.toggle('is-active', active);
+		if (active) action.setAttribute('aria-current', 'page');
+		else action.removeAttribute('aria-current');
+	}
+}
+
+function renderSqa() {
+	el.sqaView.replaceChildren();
+	if (state.session?.mode !== 'sqa') {
+		el.countSqa.textContent = '';
+		return;
+	}
+
+	const sqa = state.session.sqa ?? {};
+	const scope = sqa.scope ?? {};
+	const assessment = sqa.assessment;
+	const lifecycle = describeSqaLifecycle(sqa, state.session.status, state.session.activities?.length ?? 0);
+	el.countSqa.textContent = lifecycle.badge;
+
+	const notice = document.createElement('aside');
+	notice.className = 'sqa-notice';
+	const noticeTitle = document.createElement('strong');
+	noticeTitle.textContent = 'Assessment boundary';
+	const noticeText = document.createElement('p');
+	noticeText.textContent = assessment?.disclaimer ?? scope.disclaimer
+		?? 'This scoped engineering assessment is not legal advice, regulatory approval, accreditation, an audit opinion, or certification.';
+	notice.append(noticeTitle, noticeText);
+	el.sqaView.append(notice);
+
+	el.sqaView.append(renderSqaVerdict(assessment, lifecycle));
+	el.sqaView.append(renderSqaScope(scope, assessment));
+	if (lifecycle.finalized && assessment) el.sqaView.append(renderSqaReportActions());
+
+	if (!lifecycle.finalized && lifecycle.phase === 'ready') {
+		const pending = document.createElement('div');
+		pending.className = 'sqa-pending';
+		const label = document.createElement('strong');
+		label.textContent = 'Ready to begin';
+		const text = document.createElement('p');
+		text.textContent = 'Paste the target URL in the command line below and press Send. A final pass, fail, or blocked verdict appears only after the agent completes the assessment.';
+		pending.append(label, text);
+		el.sqaView.append(pending);
+		return;
+	}
+	if (!assessment) return;
+
+	if (assessment.technicalSummary) el.sqaView.append(renderSqaTechnicalSummary(assessment.technicalSummary));
+	el.sqaView.append(renderSqaCoverage(assessment));
+	el.sqaView.append(renderSqaUnresolved(assessment));
+	el.sqaView.append(renderSqaControls(assessment.results ?? []));
+	el.sqaView.append(renderSqaSources(assessment.frameworkCoverage ?? []));
+}
+
+function renderSqaReportActions() {
+	const actions = document.createElement('div');
+	actions.className = 'report-actions sqa-report-actions';
+	actions.setAttribute('aria-label', 'SQA assessment report actions');
+
+	const download = document.createElement('button');
+	download.className = 'btn btn-ghost btn-sm';
+	download.type = 'button';
+	download.textContent = 'Download .md';
+	download.onclick = async () => {
+		try {
+			const markdownText = await apiText(`/sessions/${state.sessionId}/report.md`);
+			const url = URL.createObjectURL(new Blob([markdownText], { type: 'text/markdown;charset=utf-8' }));
+			const save = document.createElement('a');
+			save.href = url;
+			save.download = 'qase-sqa-assessment.md';
+			document.body.append(save);
+			save.click();
+			save.remove();
+			window.setTimeout(() => URL.revokeObjectURL(url), 0);
+		} catch (error) {
+			fail(error);
+		}
+	};
+
+	const copy = document.createElement('button');
+	copy.className = 'btn btn-ghost btn-sm';
+	copy.type = 'button';
+	copy.textContent = 'Copy report';
+	copy.onclick = async () => {
+		try {
+			const markdownText = await apiText(`/sessions/${state.sessionId}/report.md`);
+			await navigator.clipboard.writeText(markdownText);
+			toast('SQA assessment copied to the clipboard.', 'good');
+		} catch (error) {
+			fail(error);
+		}
+	};
+
+	const pdf = document.createElement('button');
+	pdf.className = 'btn btn-primary btn-sm';
+	pdf.type = 'button';
+	pdf.textContent = 'Download PDF';
+	pdf.onclick = async () => {
+		try { await downloadReportPdf('qase-sqa-assessment.pdf'); }
+		catch (error) { fail(error); }
+	};
+	actions.append(download, copy, pdf);
+	return actions;
+}
+
+function renderSqaVerdict(assessment, lifecycle) {
+	const node = document.createElement('section');
+	node.className = 'sqa-verdict';
+	node.dataset.status = lifecycle.status;
+
+	const mark = document.createElement('span');
+	mark.className = 'sqa-verdict-mark';
+	mark.setAttribute('aria-hidden', 'true');
+	mark.textContent = lifecycle.mark;
+
+	const body = document.createElement('div');
+	const eyebrow = document.createElement('span');
+	eyebrow.className = 'sqa-eyebrow';
+	eyebrow.textContent = lifecycle.eyebrow;
+	const title = document.createElement('strong');
+	title.textContent = lifecycle.label;
+	const detail = document.createElement('p');
+	if (lifecycle.finalized && assessment) {
+		if (lifecycle.evidenceIncomplete) {
+			detail.textContent = `Deterministic verdict: Blocked. No control failures were recorded; ${lifecycle.evidenceGapCount} reviewer or mixed-evidence control${lifecycle.evidenceGapCount === 1 ? '' : 's'} remain incomplete.`;
+		} else {
+			const gates = assessment.gates ?? [];
+			const passed = gates.filter(gate => gate.status === 'pass').length;
+			const risk = assessment.risk?.level ? ` Residual risk: ${humanizeSqaId(assessment.risk.level)}.` : '';
+			detail.textContent = `${passed}/${gates.length} decision gates passed.${risk}`;
+		}
+	} else if (lifecycle.phase === 'ready') {
+		detail.textContent = 'The scope is saved. Testing has not started and no final verdict exists yet.';
+	} else if (lifecycle.phase === 'waiting') {
+		detail.textContent = 'Answer the agent\'s question to continue collecting assessment evidence.';
+	} else {
+		detail.textContent = 'Evidence collection is underway. Current control results remain provisional.';
+	}
+	body.append(eyebrow, title, detail);
+
+	const id = document.createElement('code');
+	id.className = 'sqa-assessment-id';
+	id.textContent = lifecycle.finalized ? (assessment?.assessmentId ?? 'result-unavailable') : 'draft-assessment';
+	node.append(mark, body, id);
 	return node;
 }
 
-function paragraph(text) {
-	const node = document.createElement('p');
-	node.textContent = text ?? '';
+function renderSqaTechnicalSummary(summary) {
+	const applicable = Number(summary?.applicableControls) || 0;
+	const verdict = summary?.verdict ?? 'not_applicable';
+	const meta = SQA_RESULT_META[verdict] ?? { label: humanizeSqaId(verdict), mark: '•' };
+	const node = sqaSection(
+		'Automated web checks',
+		applicable ? `${applicable} controlled-browser check${applicable === 1 ? '' : 's'} evaluated separately from reviewer evidence.` : 'No automated web checks applied to this scope.'
+	);
+	node.classList.add('sqa-technical');
+
+	const summaryRow = document.createElement('div');
+	summaryRow.className = 'sqa-technical-summary';
+	summaryRow.dataset.status = verdict;
+	const status = document.createElement('span');
+	status.className = 'sqa-status';
+	status.textContent = meta.label;
+	const copy = document.createElement('p');
+	copy.textContent = verdict === 'pass'
+		? 'All applicable browser checks completed successfully.'
+		: verdict === 'fail'
+			? 'At least one automated browser check produced an evidence-backed failure.'
+			: verdict === 'blocked'
+				? 'At least one automated browser check could not complete or lacks technical evidence.'
+				: 'This assessment scope contains no automated web controls.';
+	summaryRow.append(status, copy);
+	node.append(summaryRow);
+
+	const counts = document.createElement('dl');
+	counts.className = 'sqa-technical-counts';
+	for (const [label, key] of [['Passed', 'pass'], ['Failed', 'fail'], ['Blocked', 'blocked'], ['Not run', 'not_assessed']]) {
+		const item = document.createElement('div');
+		const value = document.createElement('dd');
+		value.textContent = String(Number(summary?.[key]) || 0);
+		const term = document.createElement('dt');
+		term.textContent = label;
+		item.append(value, term);
+		counts.append(item);
+	}
+	node.append(counts);
 	return node;
 }
 
-function list(items) {
-	const node = document.createElement('ul');
-	for (const item of items) {
-		const entry = document.createElement('li');
-		entry.textContent = item;
-		node.append(entry);
+function renderSqaScope(scope, assessment) {
+	const target = assessment?.target ?? scope.target ?? {};
+	const profiles = assessment?.profiles ?? scope.profiles ?? [];
+	const attributes = assessment?.attributes ?? scope.attributes ?? [];
+	const node = sqaSection('Assessment scope', 'Target, release, and declared applicability inputs.');
+	const grid = document.createElement('dl');
+	grid.className = 'sqa-scope-grid';
+	appendSqaDefinition(grid, 'Target', target.name ?? state.session.title ?? 'Not provided');
+	appendSqaDefinition(grid, 'Release', target.release ?? 'Not provided');
+	appendSqaDefinition(grid, 'Environment', target.environment ?? 'Not provided');
+	appendSqaDefinition(grid, 'Catalog', assessment?.catalogVersion ?? scope.catalogVersion ?? 'Current server catalog');
+	appendSqaDefinition(grid, 'Profiles', profiles.length ? profiles.map(humanizeSqaId).join(', ') : 'Universal core');
+	appendSqaDefinition(grid, 'Attributes', attributes.length ? attributes.map(humanizeSqaId).join(', ') : 'None declared');
+	node.append(grid);
+
+	const notesText = assessment?.scopeNotes ?? scope.scopeNotes;
+	if (notesText) {
+		const notes = document.createElement('p');
+		notes.className = 'sqa-scope-notes';
+		notes.textContent = notesText;
+		node.append(notes);
 	}
 	return node;
 }
 
-/* ── Event stream ────────────────────────────────────────────────── */
+function appendSqaDefinition(listNode, term, value) {
+	const dt = document.createElement('dt');
+	dt.textContent = term;
+	const dd = document.createElement('dd');
+	dd.textContent = String(value);
+	listNode.append(dt, dd);
+}
+
+function renderSqaCoverage(assessment) {
+	const node = sqaSection('Coverage and decision gates', 'Conclusive results require pass or fail; blocked and not assessed remain unresolved.');
+	const metrics = document.createElement('div');
+	metrics.className = 'sqa-metric-grid';
+	for (const [label, value] of [
+		['Observed controls', assessment.coverage?.observed],
+		['Conclusive controls', assessment.coverage?.conclusive],
+		['Mandatory passed', assessment.coverage?.mandatoryPassed],
+		['Evidence satisfied', assessment.coverage?.evidence]
+	]) {
+		metrics.append(renderSqaMetric(label, value));
+	}
+	node.append(metrics);
+
+	const gates = document.createElement('div');
+	gates.className = 'sqa-gates';
+	for (const gate of assessment.gates ?? []) {
+		const row = document.createElement('div');
+		row.className = 'sqa-gate';
+		row.dataset.status = gate.status;
+		const status = document.createElement('span');
+		status.className = 'sqa-status';
+		status.textContent = SQA_RESULT_META[gate.status]?.label ?? humanizeSqaId(gate.status);
+		const content = document.createElement('div');
+		const title = document.createElement('strong');
+		title.textContent = gate.title;
+		const detail = document.createElement('p');
+		detail.textContent = gate.detail ?? '';
+		content.append(title, detail);
+		row.append(status, content);
+		gates.append(row);
+	}
+	node.append(gates);
+	return node;
+}
+
+function renderSqaMetric(label, value) {
+	const numeric = Number(value);
+	const percent = Number.isFinite(numeric) ? Math.max(0, Math.min(100, numeric)) : 0;
+	const card = document.createElement('div');
+	card.className = 'sqa-metric';
+	const head = document.createElement('div');
+	const name = document.createElement('span');
+	name.textContent = label;
+	const amount = document.createElement('strong');
+	amount.textContent = Number.isFinite(numeric) ? `${numeric}%` : '—';
+	head.append(name, amount);
+	const track = document.createElement('span');
+	track.className = 'sqa-meter';
+	const fill = document.createElement('i');
+	fill.style.width = `${percent}%`;
+	track.append(fill);
+	card.append(head, track);
+	return card;
+}
+
+function renderSqaUnresolved(assessment) {
+	const unresolved = (assessment.results ?? []).filter(result => result.status !== 'pass');
+	const groups = groupSqaUnresolvedResults(assessment.results);
+	const evidenceGaps = groups.reviewer.length + groups.mixed.length;
+	const node = sqaSection('Failures and evidence gaps', `${groups.failures.length} failed · ${evidenceGaps} reviewer/mixed evidence gaps · ${groups.automated.length} automated incomplete`);
+
+	if (unresolved.length === 0) {
+		const empty = document.createElement('p');
+		empty.className = 'sqa-section-empty';
+		empty.textContent = 'No unresolved controls in this assessment.';
+		node.append(empty);
+		return node;
+	}
+
+	const list = document.createElement('div');
+	list.className = 'sqa-unresolved-groups';
+	for (const group of [
+		{ title: 'Confirmed failures', description: 'Evidence-backed control failures that affect the product verdict.', results: groups.failures, kind: 'failures' },
+		{ title: 'Reviewer evidence required', description: 'Documents, approvals, records, or independent review must be supplied by an authorized reviewer.', results: groups.reviewer, kind: 'reviewer' },
+		{ title: 'Mixed evidence incomplete', description: 'This control combines browser-observable checks with external reviewer artifacts.', results: groups.mixed, kind: 'mixed' },
+		{ title: 'Automated check blocked / not run', description: 'The controlled browser check did not complete or lacks agent-capable technical evidence.', results: groups.automated, kind: 'automated' }
+	]) {
+		if (!group.results.length) continue;
+		const section = document.createElement('section');
+		section.className = 'sqa-unresolved-group';
+		section.dataset.kind = group.kind;
+		const heading = document.createElement('h4');
+		heading.textContent = `${group.title} (${group.results.length})`;
+		const description = document.createElement('p');
+		description.className = 'sqa-unresolved-group-description';
+		description.textContent = group.description;
+		const rows = document.createElement('div');
+		rows.className = 'sqa-unresolved-list';
+		for (const result of group.results) rows.append(renderSqaUnresolvedRow(result));
+		section.append(heading, description, rows);
+		list.append(section);
+	}
+	node.append(list);
+	return node;
+}
+
+function renderSqaUnresolvedRow(result) {
+	const row = document.createElement('div');
+	row.className = 'sqa-unresolved';
+	row.dataset.status = result.status;
+	const status = document.createElement('span');
+	status.className = 'sqa-status';
+	status.textContent = SQA_RESULT_META[result.status]?.label ?? humanizeSqaId(result.status);
+	const body = document.createElement('div');
+	const title = document.createElement('strong');
+	title.textContent = `${result.controlId} · ${result.title}`;
+	const reason = document.createElement('p');
+	const missing = result.evidenceCoverage?.missing ?? [];
+	reason.textContent = result.decisionNotes?.[0] ?? result.rationale
+		?? (missing.length ? `Missing evidence: ${missing.join(', ')}.` : 'A conclusive evidence-backed result is not available.');
+	body.append(title, reason);
+	row.append(status, body);
+	return row;
+}
+
+function renderSqaControls(results) {
+	const node = sqaSection('Control results', `${results.length} applicable control${results.length === 1 ? '' : 's'}`);
+	const list = document.createElement('div');
+	list.className = 'sqa-control-list';
+	for (const result of results) list.append(renderSqaControl(result));
+	if (!results.length) {
+		const empty = document.createElement('p');
+		empty.className = 'sqa-section-empty';
+		empty.textContent = 'No control results were returned.';
+		list.append(empty);
+	}
+	node.append(list);
+	return node;
+}
+
+function renderSqaControl(result) {
+	const item = document.createElement('details');
+	item.className = 'sqa-control';
+	item.dataset.status = result.status;
+	const summary = document.createElement('summary');
+	const id = document.createElement('code');
+	id.textContent = result.controlId;
+	const title = document.createElement('span');
+	title.textContent = result.title;
+	const status = document.createElement('span');
+	status.className = 'sqa-status';
+	status.textContent = SQA_RESULT_META[result.status]?.label ?? humanizeSqaId(result.status);
+	summary.append(id, title, status);
+
+	const body = document.createElement('div');
+	body.className = 'sqa-control-body';
+	const meta = document.createElement('p');
+	meta.className = 'sqa-control-meta';
+	meta.textContent = `${humanizeSqaId(result.domain)} · ${humanizeSqaId(result.severity)} severity · ${humanizeSqaId(result.automationLevel)}${result.mandatory ? ' · Mandatory' : ''}`;
+	body.append(meta);
+	if (result.rationale) body.append(sqaLabeledText('Rationale', result.rationale));
+	for (const note of result.decisionNotes ?? []) body.append(sqaLabeledText('Decision note', note));
+
+	const evidenceTitle = document.createElement('h4');
+	evidenceTitle.textContent = `Evidence (${result.evidenceCoverage?.satisfied ?? 0}/${result.evidenceCoverage?.required ?? 0} requirements)`;
+	body.append(evidenceTitle);
+	const evidence = result.evidence ?? [];
+	if (!evidence.length) {
+		const none = document.createElement('p');
+		none.className = 'sqa-section-empty';
+		none.textContent = 'No evidence artifact was attached.';
+		body.append(none);
+	} else {
+		const evidenceList = document.createElement('ul');
+		evidenceList.className = 'sqa-evidence-list';
+		for (const artifact of evidence) {
+			const entry = document.createElement('li');
+			const type = document.createElement('strong');
+			type.textContent = humanizeSqaId(artifact.type);
+			const reference = safeSqaLink(artifact.reference, artifact.reference);
+			entry.append(type, reference);
+			if (artifact.summary) {
+				const description = document.createElement('span');
+				description.textContent = artifact.summary;
+				entry.append(description);
+			}
+			evidenceList.append(entry);
+		}
+		body.append(evidenceList);
+	}
+
+	const requirements = result.evidenceCoverage?.requirements ?? [];
+	if (requirements.length) {
+		const requirementsList = document.createElement('ul');
+		requirementsList.className = 'sqa-requirement-list';
+		for (const requirement of requirements) {
+			const entry = document.createElement('li');
+			entry.dataset.satisfied = String(Boolean(requirement.satisfied));
+			entry.textContent = `${requirement.satisfied ? '✓' : '○'} ${requirement.description}`;
+			requirementsList.append(entry);
+		}
+		body.append(requirementsList);
+	}
+
+	if (result.sources?.length) {
+		const sources = document.createElement('div');
+		sources.className = 'sqa-source-tags';
+		for (const source of result.sources) {
+			const tag = document.createElement('code');
+			tag.textContent = source;
+			sources.append(tag);
+		}
+		body.append(sources);
+	}
+	item.append(summary, body);
+	return item;
+}
+
+function renderSqaSources(frameworks) {
+	const node = sqaSection('Source coverage', 'Control crosswalk coverage; source publications remain authoritative.');
+	const grid = document.createElement('div');
+	grid.className = 'sqa-source-grid';
+	for (const framework of frameworks) {
+		const card = document.createElement('article');
+		card.className = 'sqa-source-card';
+		card.dataset.status = framework.status;
+		const title = safeSqaLink(framework.title ?? framework.sourceId, framework.url);
+		title.classList.add('sqa-source-title');
+		const meta = document.createElement('p');
+		meta.textContent = `${framework.controls ?? 0} mapped controls · ${framework.coverage ?? 0}% conclusive`;
+		const status = document.createElement('span');
+		status.className = 'sqa-status';
+		status.textContent = SQA_RESULT_META[framework.status]?.label ?? humanizeSqaId(framework.status);
+		card.append(title, meta, status);
+		grid.append(card);
+	}
+	if (!frameworks.length) {
+		const empty = document.createElement('p');
+		empty.className = 'sqa-section-empty';
+		empty.textContent = 'No source crosswalk was returned.';
+		grid.append(empty);
+	}
+	node.append(grid);
+	return node;
+}
+
+function sqaSection(titleText, subtitleText) {
+	const node = document.createElement('section');
+	node.className = 'sqa-section';
+	const head = document.createElement('header');
+	const title = document.createElement('h3');
+	title.textContent = titleText;
+	const subtitle = document.createElement('p');
+	subtitle.textContent = subtitleText;
+	head.append(title, subtitle);
+	node.append(head);
+	return node;
+}
+
+function sqaLabeledText(labelText, text) {
+	const node = document.createElement('p');
+	const label = document.createElement('strong');
+	label.textContent = `${labelText}: `;
+	node.append(label, document.createTextNode(text));
+	return node;
+}
+
+function safeSqaLink(label, href) {
+	let safeUrl;
+	try {
+		const candidate = new URL(String(href ?? ''));
+		if (['http:', 'https:'].includes(candidate.protocol)) safeUrl = candidate.href;
+	} catch {
+		// Render untrusted references as text rather than active links.
+	}
+	const node = document.createElement(safeUrl ? 'a' : 'span');
+	node.textContent = String(label ?? href ?? 'Reference');
+	if (safeUrl) {
+		node.href = safeUrl;
+		node.target = '_blank';
+		node.rel = 'noreferrer noopener';
+	}
+	return node;
+}
 
 function connect(id) {
 	state.stream?.close();
@@ -1001,9 +1739,6 @@ function connect(id) {
 	stream.onerror = () => {
 		el.connDot.className = 'dot';
 		el.connLabel.textContent = 'reconnecting…';
-		void api('/auth/session').then(session => {
-			if (!session.authenticated) window.dispatchEvent(new Event('qase:auth-expired'));
-		}).catch(() => {});
 	};
 	stream.onmessage = event => {
 		const data = JSON.parse(event.data);
@@ -1059,6 +1794,7 @@ function handleEvent(event) {
 					.filter(Boolean).join(' — ');
 				updateThinkingStrip();
 			}
+			if (session.mode === 'founder') renderFounder();
 			break;
 		}
 
@@ -1081,6 +1817,72 @@ function handleEvent(event) {
 			toast('Report published.', 'good');
 			break;
 
+		case 'sqa':
+			session.mode = 'sqa';
+			session.sqa ??= { scope: {} };
+			session.sqa.assessment = event.assessment;
+			if (event.final) session.sqa.finalizedAt = new Date(event.ts ?? Date.now()).toISOString();
+			else delete session.sqa.finalizedAt;
+			syncSqaDetailMode();
+			renderHeader();
+			renderSqa();
+			renderReport();
+			void refreshRuns();
+			if (event.final) toast('SQA assessment published.', 'good');
+			break;
+
+		case 'founder.created':
+			session.mode = 'founder';
+			session.founder ??= { scope: {} };
+			if (event.schemaVersion) session.founder.schemaVersion = event.schemaVersion;
+			if (event.categories) session.founder.scope.categories = event.categories;
+			syncSqaDetailMode();
+			renderHeader();
+			renderFounder();
+			renderReport();
+			void refreshRuns();
+			break;
+
+		case 'founder.target_bound':
+			session.mode = 'founder';
+			session.targetUrl = event.targetUrl;
+			session.title = event.title;
+			session.founder ??= { scope: { target: {} }, observations: [] };
+			session.founder.scope ??= { target: {} };
+			session.founder.scope.target ??= {};
+			session.founder.scope.target.url = event.authorizedTargetUrl ?? event.targetUrl;
+			syncSqaDetailMode();
+			renderHeader();
+			renderFounder();
+			void refreshRuns();
+			break;
+
+		case 'founder.observation': {
+			session.mode = 'founder';
+			session.founder ??= { scope: {}, observations: [] };
+			session.founder.observations ??= [];
+			const index = session.founder.observations.findIndex(item => item.id === event.observation?.id);
+			if (event.observation && index === -1) session.founder.observations.push(event.observation);
+			else if (event.observation) session.founder.observations[index] = event.observation;
+			syncSqaDetailMode();
+			renderHeader();
+			renderFounder();
+			break;
+		}
+
+		case 'founder.finalized':
+			session.mode = 'founder';
+			session.founder ??= { scope: {}, observations: [] };
+			session.founder.report = event.report;
+			session.founder.finalizedAt = event.report?.generatedAt ?? new Date(event.ts ?? Date.now()).toISOString();
+			syncSqaDetailMode();
+			renderHeader();
+			renderFounder();
+			renderReport();
+			void refreshRuns();
+			toast('Founder brief published.', 'good');
+			break;
+
 		case 'question':
 			session.pendingQuestion = event.question;
 			renderQuestion();
@@ -1088,6 +1890,14 @@ function handleEvent(event) {
 
 		case 'status':
 			setStatus(event.status);
+			if (session.mode === 'sqa') {
+				renderSqa();
+				renderReport();
+			}
+			if (session.mode === 'founder') {
+				renderFounder();
+				renderReport();
+			}
 			if (event.status !== 'running') {
 				void refreshRuns();
 			}
@@ -1106,7 +1916,11 @@ function handleEvent(event) {
 			if (event.targetUrl) {
 				session.targetUrl = event.targetUrl;
 				session.title = event.title;
+				if (session.mode === 'founder' && session.founder?.scope?.target) {
+					session.founder.scope.target.url = event.targetUrl;
+				}
 				renderHeader();
+				if (session.mode === 'founder') renderFounder();
 				void refreshRuns();
 			}
 			break;
@@ -1116,7 +1930,484 @@ function handleEvent(event) {
 	}
 }
 
+/* ── QA start dialog ─────────────────────────────────────────────── */
+
+const qaUi = {
+	dialog: $('qa-start'),
+	form: $('qa-form'),
+	close: $('qa-close'),
+	cancel: $('qa-cancel'),
+	submit: $('qa-submit'),
+	targetUrl: $('qa-target-url'),
+	deviceSelect: $('qa-device-select'),
+	deviceLandscape: $('qa-device-landscape'),
+	error: $('qa-form-error')
+};
+
+function setQaFormError(message = '') {
+	if (!qaUi.error) return;
+	qaUi.error.className = `test-result${message ? ' bad' : ''}`;
+	qaUi.error.textContent = message;
+}
+
+function openQaStart() {
+	if (!qaUi.dialog) return;
+	setQaFormError();
+	qaUi.form.reset();
+	populateDeviceSelect(qaUi.deviceSelect, pendingDeviceId());
+	if (qaUi.deviceLandscape) qaUi.deviceLandscape.checked = pendingLandscape();
+	qaUi.submit.dataset.busy = 'false';
+	qaUi.submit.disabled = false;
+	qaUi.submit.textContent = 'Start QA run';
+	if (!qaUi.dialog.open) qaUi.dialog.showModal();
+	setTimeout(() => qaUi.targetUrl?.focus(), 0);
+}
+
+function closeQaStart() {
+	if (qaUi.dialog?.open) qaUi.dialog.close();
+}
+
+if (qaUi.dialog) {
+	qaUi.close.onclick = closeQaStart;
+	qaUi.cancel.onclick = closeQaStart;
+
+	qaUi.form.onsubmit = async event => {
+		event.preventDefault();
+		setQaFormError();
+		if (!qaUi.form.reportValidity()) return;
+		let targetUrl;
+		try {
+			const parsed = new URL(qaUi.targetUrl.value.trim());
+			if (!['http:', 'https:'].includes(parsed.protocol)) throw new TypeError();
+			targetUrl = parsed.toString();
+		} catch {
+			setQaFormError('Enter a valid http(s) URL.');
+			qaUi.targetUrl.focus();
+			return;
+		}
+		const device = (qaUi.deviceSelect?.value) || pendingDeviceId();
+		const deviceLandscape = (qaUi.deviceLandscape?.checked) === true;
+		qaUi.submit.dataset.busy = 'true';
+		qaUi.submit.disabled = true;
+		qaUi.submit.textContent = 'Starting run…';
+		try {
+			await createQaRun({ targetUrl, device, deviceLandscape });
+			closeQaStart();
+		} catch (error) {
+			setQaFormError(error instanceof Error ? error.message : String(error));
+		} finally {
+			qaUi.submit.dataset.busy = 'false';
+			qaUi.submit.disabled = false;
+			qaUi.submit.textContent = 'Start QA run';
+		}
+	};
+}
+
 /* ── Settings ────────────────────────────────────────────────────── */
+
+const sqaUi = {
+	dialog: $('sqa-start'),
+	form: $('sqa-form'),
+	close: $('sqa-close'),
+	cancel: $('sqa-cancel'),
+	submit: $('sqa-submit'),
+	catalogState: $('sqa-catalog-state'),
+	catalogVersion: $('sqa-catalog-version'),
+	disclaimer: $('sqa-catalog-disclaimer'),
+	deviceSelect: $('sqa-device-select'),
+	deviceLandscape: $('sqa-device-landscape'),
+	profilesFieldset: $('sqa-profiles-fieldset'),
+	attributesFieldset: $('sqa-attributes-fieldset'),
+	profileOptions: $('sqa-profile-options'),
+	attributeOptions: $('sqa-attribute-options'),
+	targetName: $('sqa-target-name'),
+	targetUrl: $('sqa-target-url'),
+	targetRelease: $('sqa-target-release'),
+	targetEnvironment: $('sqa-target-environment'),
+	scopeNotes: $('sqa-scope-notes'),
+	authorization: $('sqa-authorization'),
+	error: $('sqa-form-error')
+};
+
+function setSqaFormError(message = '') {
+	sqaUi.error.className = `test-result${message ? ' bad' : ''}`;
+	sqaUi.error.textContent = message;
+}
+
+async function loadSqaCatalog() {
+	if (state.sqaCatalog) return state.sqaCatalog;
+	if (!state.sqaCatalogPromise) {
+		state.sqaCatalogPromise = api('/sqa/catalog')
+			.then(catalog => {
+				if (!catalog || typeof catalog !== 'object' || !catalog.catalogVersion) {
+					throw new Error('The SQA catalog response is invalid.');
+				}
+				state.sqaCatalog = catalog;
+				return catalog;
+			})
+			.finally(() => {
+				state.sqaCatalogPromise = undefined;
+			});
+	}
+	return state.sqaCatalogPromise;
+}
+
+function paintSqaCatalog(catalog) {
+	const profiles = sqaValues(catalog.profiles);
+	const attributes = sqaValues(catalog.attributes);
+	const sources = sqaValues(catalog.sources);
+	const controls = sqaValues(catalog.controls);
+	sqaUi.disclaimer.textContent = catalog.disclaimer
+		?? 'This is a scoped engineering assessment and does not represent regulatory approval, an audit opinion, or certification.';
+	sqaUi.catalogVersion.textContent = `catalog ${catalog.catalogVersion} · ${controls.length} controls · ${sources.length} sources`;
+
+	sqaUi.profileOptions.replaceChildren(...profiles.map(profile => {
+		const id = typeof profile === 'string' ? profile : profile.id;
+		const title = typeof profile === 'string' ? humanizeSqaId(profile) : (profile.title ?? humanizeSqaId(id));
+		const description = typeof profile === 'string' ? '' : (profile.description ?? '');
+		const isCore = id === 'core';
+		const count = controls.filter(control => control.applicability?.profiles?.includes(id)).length;
+		return sqaCatalogOption({
+			name: 'sqa-profile', value: id, title, description,
+			meta: `${count} mapped control${count === 1 ? '' : 's'}${isCore ? ' · required' : ''}`,
+			checked: isCore, disabled: isCore
+		});
+	}));
+
+	sqaUi.attributeOptions.replaceChildren(...attributes.map(attribute => {
+		const id = typeof attribute === 'string' ? attribute : attribute.id;
+		const title = typeof attribute === 'string' ? humanizeSqaId(attribute) : (attribute.title ?? humanizeSqaId(id));
+		return sqaCatalogOption({ name: 'sqa-attribute', value: id, title });
+	}));
+	sqaUi.profilesFieldset.disabled = false;
+	sqaUi.attributesFieldset.disabled = false;
+	sqaUi.catalogState.hidden = true;
+	syncSqaSubmitState();
+}
+
+function sqaCatalogOption({ name, value, title, description = '', meta = '', checked = false, disabled = false }) {
+	const label = document.createElement('label');
+	label.className = `sqa-option${disabled ? ' is-required' : ''}`;
+	const input = document.createElement('input');
+	input.type = 'checkbox';
+	input.name = name;
+	input.value = value;
+	input.checked = checked;
+	input.defaultChecked = checked;
+	input.disabled = disabled;
+
+	const copy = document.createElement('span');
+	const heading = document.createElement('strong');
+	heading.textContent = title;
+	copy.append(heading);
+	if (description) {
+		const text = document.createElement('small');
+		text.textContent = description;
+		copy.append(text);
+	}
+	if (meta) {
+		const metadata = document.createElement('em');
+		metadata.textContent = meta;
+		copy.append(metadata);
+	}
+	label.append(input, copy);
+	return label;
+}
+
+function syncSqaSubmitState() {
+	sqaUi.submit.disabled = !state.sqaCatalog || !sqaUi.authorization.checked || sqaUi.submit.dataset.busy === 'true';
+}
+
+async function openSqaStart() {
+	setSqaFormError();
+	sqaUi.form.reset();
+	populateDeviceSelect(sqaUi.deviceSelect, pendingDeviceId());
+	if (sqaUi.deviceLandscape) sqaUi.deviceLandscape.checked = pendingLandscape();
+	sqaUi.profilesFieldset.disabled = true;
+	sqaUi.attributesFieldset.disabled = true;
+	sqaUi.catalogState.hidden = false;
+	sqaUi.catalogState.textContent = 'Loading assessment catalog…';
+	sqaUi.submit.dataset.busy = 'false';
+	syncSqaSubmitState();
+	if (!sqaUi.dialog.open) sqaUi.dialog.showModal();
+
+	try {
+		paintSqaCatalog(await loadSqaCatalog());
+	} catch (error) {
+		sqaUi.catalogState.hidden = false;
+		sqaUi.catalogState.textContent = 'The assessment catalog could not be loaded.';
+		setSqaFormError(error instanceof Error ? error.message : String(error));
+	}
+}
+
+function closeSqaStart() {
+	if (sqaUi.dialog.open) sqaUi.dialog.close();
+}
+
+sqaUi.close.onclick = closeSqaStart;
+sqaUi.cancel.onclick = closeSqaStart;
+sqaUi.authorization.onchange = syncSqaSubmitState;
+
+sqaUi.form.onsubmit = async event => {
+	event.preventDefault();
+	setSqaFormError();
+	if (!sqaUi.form.reportValidity()) return;
+	const target = {
+		name: sqaUi.targetName.value.trim(),
+		release: sqaUi.targetRelease.value.trim(),
+		environment: sqaUi.targetEnvironment.value.trim()
+	};
+	let targetUrl;
+	try {
+		targetUrl = new URL(sqaUi.targetUrl.value.trim());
+		if (!['http:', 'https:'].includes(targetUrl.protocol)) throw new TypeError();
+		targetUrl = targetUrl.href;
+	} catch {
+		setSqaFormError('Enter a complete HTTP or HTTPS target URL.');
+		sqaUi.targetUrl.focus();
+		return;
+	}
+	const emptyTarget = Object.entries(target).find(([, value]) => !value);
+	if (emptyTarget) {
+		setSqaFormError('Product, release, and environment must contain visible text.');
+		sqaUi.targetName.focus();
+		return;
+	}
+	if (!sqaUi.authorization.checked) {
+		setSqaFormError('Confirm testing authorization and the non-destructive boundary first.');
+		sqaUi.authorization.focus();
+		return;
+	}
+
+	const profiles = [...sqaUi.profileOptions.querySelectorAll('input:checked')].map(input => input.value);
+	if (!profiles.includes('core')) profiles.unshift('core');
+	const attributes = [...sqaUi.attributeOptions.querySelectorAll('input:checked')].map(input => input.value);
+	sqaUi.submit.dataset.busy = 'true';
+	sqaUi.submit.textContent = 'Creating assessment…';
+	syncSqaSubmitState();
+	try {
+		const result = await api('/sqa/sessions', {
+			method: 'POST',
+			body: JSON.stringify({
+				profiles,
+				attributes,
+				target,
+				scopeNotes: sqaUi.scopeNotes.value.trim(),
+				authorizationConfirmed: true,
+				device: (sqaUi.deviceSelect?.value) || pendingDeviceId(),
+				deviceLandscape: (sqaUi.deviceLandscape?.checked) === true
+			})
+		});
+		const session = result?.session ?? result;
+		if (!session?.id) throw new Error('The server did not return the new assessment session.');
+		closeSqaStart();
+		await selectSession(session.id);
+		const startError = await api(`/sessions/${session.id}/message`, {
+			method: 'POST',
+			body: JSON.stringify({ text: targetUrl })
+		}).then(() => undefined, error => error);
+		if (startError) {
+			fail(new Error(`The assessment scope was created, but the test could not start: ${startError.message}`));
+			el.composerInput.value = targetUrl;
+			el.composerInput.focus();
+		}
+	} catch (error) {
+		setSqaFormError(error instanceof Error ? error.message : String(error));
+	} finally {
+		sqaUi.submit.dataset.busy = 'false';
+		sqaUi.submit.textContent = 'Start assessment';
+		syncSqaSubmitState();
+	}
+};
+
+const founderUi = {
+	dialog: $('founder-start'),
+	form: $('founder-form'),
+	close: $('founder-close'),
+	cancel: $('founder-cancel'),
+	submit: $('founder-submit'),
+	catalogMeta: $('founder-catalog-meta'),
+	deviceSelect: $('founder-device-select'),
+	deviceLandscape: $('founder-device-landscape'),
+	targetName: $('founder-target-name'),
+	targetUrl: $('founder-target-url'),
+	targetRelease: $('founder-target-release'),
+	targetEnvironment: $('founder-target-environment'),
+	stage: $('founder-stage'),
+	businessModel: $('founder-business-model'),
+	targetCustomer: $('founder-target-customer'),
+	primaryGoal: $('founder-primary-goal'),
+	constraints: $('founder-constraints'),
+	competitors: $('founder-competitors'),
+	authorization: $('founder-authorization'),
+	error: $('founder-form-error')
+};
+
+function setFounderFormError(message = '') {
+	founderUi.error.className = `test-result${message ? ' bad' : ''}`;
+	founderUi.error.textContent = message;
+}
+
+async function loadFounderCatalog() {
+	if (state.founderCatalog) return state.founderCatalog;
+	if (!state.founderCatalogPromise) {
+		state.founderCatalogPromise = api('/founder/catalog')
+			.then(catalog => {
+				if (!catalog || typeof catalog !== 'object' || !catalog.schemaVersion || !Array.isArray(catalog.categories)) {
+					throw new Error('The Founder review catalog response is invalid.');
+				}
+				state.founderCatalog = catalog;
+				return catalog;
+			})
+			.finally(() => {
+				state.founderCatalogPromise = undefined;
+			});
+	}
+	return state.founderCatalogPromise;
+}
+
+function paintFounderCatalog(catalog) {
+	founderUi.catalogMeta.textContent = `${catalog.schemaVersion} · ${catalog.categories.length} review lenses · browser evidence required`;
+	syncFounderSubmitState();
+	if (state.session?.mode === 'founder') renderFounder();
+}
+
+function syncFounderSubmitState() {
+	founderUi.submit.disabled = !state.founderCatalog
+		|| !founderUi.authorization.checked
+		|| founderUi.submit.dataset.busy === 'true';
+}
+
+async function openFounderStart() {
+	setFounderFormError();
+	founderUi.form.reset();
+	populateDeviceSelect(founderUi.deviceSelect, pendingDeviceId());
+	if (founderUi.deviceLandscape) founderUi.deviceLandscape.checked = pendingLandscape();
+	founderUi.submit.dataset.busy = 'false';
+	founderUi.catalogMeta.textContent = 'Loading review catalog…';
+	syncFounderSubmitState();
+	if (!founderUi.dialog.open) founderUi.dialog.showModal();
+	try {
+		paintFounderCatalog(await loadFounderCatalog());
+	} catch (error) {
+		founderUi.catalogMeta.textContent = 'Review catalog unavailable.';
+		setFounderFormError(error instanceof Error ? error.message : String(error));
+	}
+}
+
+function closeFounderStart() {
+	if (founderUi.dialog.open) founderUi.dialog.close();
+}
+
+function founderOptional(value) {
+	const text = String(value ?? '').trim();
+	return text || undefined;
+}
+
+function readFounderCompetitors() {
+	const lines = founderUi.competitors.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+	if (lines.length > 20) throw new TypeError('Enter no more than 20 competitors.');
+	if (lines.some(value => value.length > 500)) throw new TypeError('Each competitor must be 500 characters or fewer.');
+	const seen = new Set();
+	const unique = [];
+	for (const value of lines) {
+		const key = value.toLocaleLowerCase();
+		if (seen.has(key)) continue;
+		seen.add(key);
+		unique.push(value);
+	}
+	return unique;
+}
+
+founderUi.close.onclick = closeFounderStart;
+founderUi.cancel.onclick = closeFounderStart;
+founderUi.authorization.onchange = syncFounderSubmitState;
+
+founderUi.form.onsubmit = async event => {
+	event.preventDefault();
+	setFounderFormError();
+	if (!founderUi.form.reportValidity()) return;
+	let targetUrl;
+	try {
+		targetUrl = new URL(founderUi.targetUrl.value.trim());
+		if (!['http:', 'https:'].includes(targetUrl.protocol)) throw new TypeError();
+		targetUrl = targetUrl.href;
+	} catch {
+		setFounderFormError('Enter a complete HTTP or HTTPS target URL.');
+		founderUi.targetUrl.focus();
+		return;
+	}
+	if (!founderUi.targetName.value.trim()) {
+		setFounderFormError('Enter the product or project name.');
+		founderUi.targetName.focus();
+		return;
+	}
+	if (!founderUi.authorization.checked) {
+		setFounderFormError('Confirm review authorization and the non-destructive boundary first.');
+		founderUi.authorization.focus();
+		return;
+	}
+
+	let competitors;
+	try {
+		competitors = readFounderCompetitors();
+	} catch (error) {
+		setFounderFormError(error instanceof Error ? error.message : String(error));
+		founderUi.competitors.focus();
+		return;
+	}
+	const target = {
+		name: founderUi.targetName.value.trim(),
+		url: targetUrl,
+		...(founderOptional(founderUi.targetRelease.value) ? { release: founderUi.targetRelease.value.trim() } : {}),
+		...(founderOptional(founderUi.targetEnvironment.value) ? { environment: founderUi.targetEnvironment.value.trim() } : {})
+	};
+	const productContext = {
+		...(founderOptional(founderUi.stage.value) ? { stage: founderUi.stage.value.trim() } : {}),
+		...(founderOptional(founderUi.businessModel.value) ? { businessModel: founderUi.businessModel.value.trim() } : {}),
+		...(founderOptional(founderUi.targetCustomer.value) ? { targetCustomer: founderUi.targetCustomer.value.trim() } : {}),
+		...(founderOptional(founderUi.primaryGoal.value) ? { primaryGoal: founderUi.primaryGoal.value.trim() } : {}),
+		...(founderOptional(founderUi.constraints.value) ? { constraints: founderUi.constraints.value.trim() } : {}),
+		...(competitors.length ? { competitors } : {})
+	};
+
+	founderUi.submit.dataset.busy = 'true';
+	founderUi.submit.textContent = 'Creating review…';
+	founderUi.form.setAttribute('aria-busy', 'true');
+	syncFounderSubmitState();
+	try {
+		const result = await api('/founder/sessions', {
+			method: 'POST',
+			body: JSON.stringify({
+				authorizationConfirmed: true,
+				target,
+				device: (founderUi.deviceSelect?.value) || pendingDeviceId(),
+				deviceLandscape: (founderUi.deviceLandscape?.checked) === true,
+				...(Object.keys(productContext).length ? { productContext } : {})
+			})
+		});
+		const session = result?.session ?? result;
+		if (!session?.id) throw new Error('The server did not return the new Founder review session.');
+		closeFounderStart();
+		await selectSession(session.id);
+		const startError = await api(`/sessions/${session.id}/message`, {
+			method: 'POST',
+			body: JSON.stringify({ text: `Review ${targetUrl}` })
+		}).then(() => undefined, error => error);
+		if (startError) {
+			fail(new Error(`The review scope was created, but evidence collection could not start: ${startError.message}`));
+			el.composerInput.value = `Review ${targetUrl}`;
+			el.composerInput.focus();
+		}
+	} catch (error) {
+		setFounderFormError(error instanceof Error ? error.message : String(error));
+	} finally {
+		founderUi.submit.dataset.busy = 'false';
+		founderUi.submit.textContent = 'Start founder review';
+		founderUi.form.removeAttribute('aria-busy');
+		syncFounderSubmitState();
+	}
+};
 
 const cfg = {
 	dialog: $('settings'),
@@ -1127,7 +2418,7 @@ const cfg = {
 	baseUrlField: $('cfg-baseurl-field'),
 	baseUrl: $('cfg-baseurl'),
 	model: $('cfg-model'),
-	modelList: $('cfg-model-list'),
+	modelCustom: $('cfg-model-custom'),
 	reasoning: $('cfg-reasoning'),
 	maxTurns: $('cfg-maxturns'),
 	headless: $('cfg-headless'),
@@ -1139,6 +2430,42 @@ const cfg = {
 /** Providers whose endpoint the user supplies themselves. */
 const BASE_URL_REQUIRED = new Set(['custom', 'azureOpenAI']);
 const BASE_URL_OPTIONAL = new Set(['openai', 'openrouter', 'nvidia', 'grok']);
+const CUSTOM_MODEL_VALUE = '__qase_custom_model__';
+
+function selectedModelId() {
+	return (cfg.model.value === CUSTOM_MODEL_VALUE ? cfg.modelCustom.value : cfg.model.value).trim();
+}
+
+function syncCustomModelField() {
+	const custom = cfg.model.value === CUSTOM_MODEL_VALUE;
+	cfg.modelCustom.hidden = !custom;
+	cfg.modelCustom.required = custom;
+	if (custom) cfg.modelCustom.focus();
+}
+
+function fillModelOptions(models = [], selected = '') {
+	const uniqueModels = [...new Set(models.filter(model => typeof model === 'string' && model.trim()).map(model => model.trim()))];
+	const selectedIsListed = uniqueModels.includes(selected);
+	const options = uniqueModels.map(id => {
+		const option = document.createElement('option');
+		option.value = id;
+		option.textContent = id;
+		return option;
+	});
+	const customOption = document.createElement('option');
+	customOption.value = CUSTOM_MODEL_VALUE;
+	customOption.textContent = 'Custom model ID…';
+	options.push(customOption);
+	cfg.model.replaceChildren(...options);
+	if (selected && !selectedIsListed) {
+		cfg.model.value = CUSTOM_MODEL_VALUE;
+		cfg.modelCustom.value = selected;
+	} else {
+		cfg.model.value = selectedIsListed ? selected : (uniqueModels[0] ?? CUSTOM_MODEL_VALUE);
+		if (selectedIsListed) cfg.modelCustom.value = '';
+	}
+	syncCustomModelField();
+}
 
 function paintConfig(config) {
 	state.config = config;
@@ -1158,7 +2485,7 @@ function fillSettings(config) {
 	}));
 	cfg.provider.value = config.provider;
 	cfg.baseUrl.value = config.baseUrl ?? '';
-	cfg.model.value = config.model ?? '';
+	fillModelOptions([], config.model ?? '');
 	cfg.reasoning.value = config.reasoning ?? 'medium';
 	cfg.maxTurns.value = config.maxTurns ?? 120;
 	cfg.headless.checked = config.headless !== false;
@@ -1190,7 +2517,7 @@ function readSettings() {
 	const patch = {
 		provider: cfg.provider.value,
 		baseUrl: cfg.baseUrl.value.trim(),
-		model: cfg.model.value.trim(),
+		model: selectedModelId(),
 		reasoning: cfg.reasoning.value,
 		maxTurns: Number(cfg.maxTurns.value),
 		headless: cfg.headless.checked
@@ -1202,36 +2529,46 @@ function readSettings() {
 }
 
 cfg.provider.onchange = syncProviderFields;
+cfg.model.onchange = syncCustomModelField;
+
+async function probeModelEndpoint({ announce = true } = {}) {
+	if (announce) {
+		cfg.test.className = 'test-result busy';
+		cfg.test.textContent = 'Probing the endpoint…';
+	}
+	const requestedModel = selectedModelId();
+	const result = await api('/config/test', {
+		method: 'POST',
+		body: JSON.stringify(readSettings())
+	}).catch(error => ({ ok: false, error: error.message }));
+
+	if (!result.ok) {
+		if (announce) {
+			cfg.test.className = 'test-result bad';
+			cfg.test.textContent = result.error;
+		}
+		return result;
+	}
+	fillModelOptions(result.models ?? [], requestedModel);
+	cfg.test.className = 'test-result ok';
+	cfg.test.textContent = result.matched === false
+		? `${result.message} But "${requestedModel}" is not in the list — choose another model or keep it as a custom ID.`
+		: result.message;
+	return result;
+}
 
 async function openSettings() {
-	fillSettings(await api('/config'));
+	const config = await api('/config');
+	fillSettings(config);
 	cfg.dialog.showModal();
+	if (config.ready) void probeModelEndpoint({ announce: false });
 }
 
 $('open-settings').onclick = openSettings;
 el.modelBadge.onclick = openSettings;
 
 cfg.testBtn.onclick = async () => {
-	cfg.test.className = 'test-result busy';
-	cfg.test.textContent = 'Probing the endpoint…';
-	const result = await api('/config/test', {
-		method: 'POST',
-		body: JSON.stringify(readSettings())
-	}).catch(error => ({ ok: false, error: error.message }));
-
-	cfg.test.className = `test-result ${result.ok ? 'ok' : 'bad'}`;
-	if (!result.ok) {
-		cfg.test.textContent = result.error;
-		return;
-	}
-	cfg.modelList.replaceChildren(...(result.models ?? []).map(id => {
-		const option = document.createElement('option');
-		option.value = id;
-		return option;
-	}));
-	cfg.test.textContent = result.matched === false
-		? `${result.message} But "${cfg.model.value.trim()}" is not in the list — check the model name.`
-		: result.message;
+	await probeModelEndpoint();
 };
 
 cfg.saveBtn.onclick = async () => {
@@ -1291,20 +2628,10 @@ el.composerInput.addEventListener('keydown', event => {
 
 window.addEventListener('resize', fitStageFrame, { passive: true });
 
-el.newRun.onclick = startRun;
+el.newRun.onclick = openQaStart;
+el.newSqa.onclick = openSqaStart;
+el.newFounder.onclick = openFounderStart;
 el.stopRun.onclick = () => api(`/sessions/${state.sessionId}/stop`, { method: 'POST' }).catch(fail);
-el.signOut.onclick = async () => {
-	el.signOut.disabled = true;
-	try {
-		await api('/auth/logout', { method: 'POST' });
-		state.stream?.close();
-		localStorage.removeItem('qase.session');
-		window.location.reload();
-	} catch (error) {
-		el.signOut.disabled = false;
-		fail(error);
-	}
-};
 
 el.thinkingHead.onclick = () => {
 	if (el.thinkingStrip.classList.contains('has-detail')) {
@@ -1342,30 +2669,50 @@ function activateDetailTab(tab, moveFocus = false) {
 for (const tab of detailTabs) {
 	tab.onclick = () => activateDetailTab(tab);
 	tab.onkeydown = event => {
-		const index = detailTabs.indexOf(tab);
+		const availableTabs = detailTabs.filter(candidate => !candidate.hidden);
+		const index = availableTabs.indexOf(tab);
 		let next = index;
-		if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % detailTabs.length;
-		else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (index - 1 + detailTabs.length) % detailTabs.length;
+		if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % availableTabs.length;
+		else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (index - 1 + availableTabs.length) % availableTabs.length;
 		else if (event.key === 'Home') next = 0;
-		else if (event.key === 'End') next = detailTabs.length - 1;
+		else if (event.key === 'End') next = availableTabs.length - 1;
 		else return;
 		event.preventDefault();
-		activateDetailTab(detailTabs[next], true);
+		activateDetailTab(availableTabs[next], true);
 	};
 }
 
 /* ── Boot ────────────────────────────────────────────────────────── */
 
 (async function boot() {
-	const authentication = await window.qaseAuthReady;
-	if (!authentication?.authenticated) return;
+	await window.qaseEntryReady;
 
 	const config = await api('/config').catch(() => undefined);
 	if (config) {
 		paintConfig(config);
 	}
 
+	await loadDevices();
+
 	const runs = await api('/sessions').catch(() => []);
+	const launchParameters = new URLSearchParams(window.location.search);
+	const requestedRunId = launchParameters.get('run');
+	if (requestedRunId && RUN_ID_PATTERN.test(requestedRunId)) {
+		try {
+			await selectSession(requestedRunId.toLowerCase());
+			launchParameters.delete('run');
+			const query = launchParameters.toString();
+			window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+			el.composerInput.focus();
+			return;
+		} catch {
+			// A stale or cross-project launch handle cannot select a run. Fall back
+			// to the user's own latest visible run without leaking whether it exists.
+			launchParameters.delete('run');
+			const query = launchParameters.toString();
+			window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+		}
+	}
 	const remembered = localStorage.getItem('qase.session');
 	const target = runs.find(run => run.id === remembered) ?? runs[0];
 

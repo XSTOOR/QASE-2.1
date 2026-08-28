@@ -9,6 +9,18 @@ import { redact } from './secrets.js';
  */
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
+const MAX_LIST_ITEMS = 100;
+
+function boundedText(value, maximum, fallback = '') {
+	const text = String(value ?? fallback).trim();
+	return text.length > maximum ? text.slice(0, maximum) : text;
+}
+
+function boundedList(value, maximum = 5_000) {
+	return Array.isArray(value)
+		? value.slice(0, MAX_LIST_ITEMS).map(item => boundedText(item, maximum)).filter(Boolean)
+		: [];
+}
 
 export function createQaTools(session, runStore) {
 	const reportFinding = {
@@ -34,14 +46,14 @@ export function createQaTools(session, runStore) {
 			const finding = redact(session.id, {
 				id: randomUUID(),
 				ts: Date.now(),
-				title: String(input.title ?? '').trim(),
+				title: boundedText(input.title, 1_000),
 				severity,
-				category: String(input.category ?? 'general').trim(),
-				url: input.url ?? session.targetUrl,
-				steps: Array.isArray(input.steps) ? input.steps.map(String) : [],
-				expected: String(input.expected ?? '').trim(),
-				actual: String(input.actual ?? '').trim(),
-				evidence: input.evidence ? String(input.evidence) : undefined
+				category: boundedText(input.category, 200, 'general'),
+				url: boundedText(input.url ?? session.targetUrl, 8_192) || undefined,
+				steps: boundedList(input.steps),
+				expected: boundedText(input.expected, 20_000),
+				actual: boundedText(input.actual, 20_000),
+				evidence: input.evidence ? boundedText(input.evidence, 20_000) : undefined
 			});
 
 			if (!finding.title) {
@@ -70,18 +82,34 @@ export function createQaTools(session, runStore) {
 				summary: { type: 'string', description: 'A short paragraph a product owner could read: what was tested, what state the site is in.' },
 				covered: { type: 'array', items: { type: 'string' }, description: 'The areas and flows actually exercised.' },
 				not_covered: { type: 'array', items: { type: 'string' }, description: 'Anything planned but skipped, and why.' },
-				recommendations: { type: 'array', items: { type: 'string' }, description: 'What to fix or investigate first.' }
+				recommendations: { type: 'array', items: { type: 'string' }, description: 'What to fix or investigate first.' },
+				force: { type: 'boolean', description: 'Only set to true when the user has explicitly instructed you to end the run early despite an incomplete plan. Never use this to shortcut work.' }
 			},
 			required: ['verdict', 'summary']
 		},
 		async run(input) {
+			const remainingTodos = Array.isArray(session.todos)
+				? session.todos.filter(item => item && item.text && item.status !== 'completed')
+				: [];
+			if (remainingTodos.length > 0 && input.force !== true) {
+				return {
+					success: false,
+					error: 'finish_qa_report cannot be called until every plan item is completed. Work the remaining items, mark them completed with update_todo, then call finish_qa_report again. If a plan item genuinely cannot be executed, mark it completed with a short note explaining why it was skipped.',
+					remaining_plan_items: remainingTodos.map(item => ({ text: item.text, status: item.status })),
+					remaining_count: remainingTodos.length
+				};
+			}
+			let verdict = input.verdict ?? 'pass_with_issues';
+			if (verdict === 'pass' && session.findings.length > 0) verdict = 'pass_with_issues';
+			if (verdict === 'pass_with_issues'
+				&& session.findings.some(finding => ['critical', 'high'].includes(finding.severity))) verdict = 'fail';
 			const report = redact(session.id, {
 				ts: Date.now(),
-				verdict: input.verdict ?? 'pass_with_issues',
-				summary: String(input.summary ?? '').trim(),
-				covered: Array.isArray(input.covered) ? input.covered.map(String) : [],
-				notCovered: Array.isArray(input.not_covered) ? input.not_covered.map(String) : [],
-				recommendations: Array.isArray(input.recommendations) ? input.recommendations.map(String) : [],
+				verdict,
+				summary: boundedText(input.summary, 20_000),
+				covered: boundedList(input.covered),
+				notCovered: boundedList(input.not_covered),
+				recommendations: boundedList(input.recommendations),
 				targetUrl: session.targetUrl,
 				findings: session.findings.length,
 				bySeverity: SEVERITIES.reduce((counts, severity) => {

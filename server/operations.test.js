@@ -55,6 +55,29 @@ test('mutation concurrency rejects excess work without limiting reads', async t 
 	assert.match(await controls.render(), /qase_http_overload_rejections_total 1/);
 });
 
+test('Drytis source-review mutations share the bounded API concurrency guard', async t => {
+	let release;
+	const held = new Promise(resolve => { release = resolve; });
+	let enter;
+	const entered = new Promise(resolve => { enter = resolve; });
+	const controls = createOperationalControls({ environment: {}, mutationLimit: 1 });
+	const app = express();
+	app.use(controls.middleware);
+	app.post('/internal/v1/drytis/reviews', async (_request, response) => {
+		enter();
+		await held;
+		response.json({ ok: true });
+	});
+	const server = await listen(app);
+	t.after(server.close);
+	const first = fetch(`${server.origin}/internal/v1/drytis/reviews`, { method: 'POST' });
+	await entered;
+	const rejected = await fetch(`${server.origin}/internal/v1/drytis/reviews`, { method: 'POST' });
+	assert.equal(rejected.status, 503);
+	release();
+	assert.equal((await first).status, 200);
+});
+
 test('metrics endpoint is disabled without a token and protected when enabled', async t => {
 	assert.throws(() => createOperationalControls({ metricsToken: 'short' }), /at least 32 bytes/);
 	const controls = createOperationalControls({ metricsToken: TOKEN });

@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
 import { test } from 'node:test';
 import { createApplication } from './app.js';
-import { createAuthentication } from './auth.js';
+import { createInstanceAccess } from './instanceAccess.js';
+import { finishSqaAssessment } from './sqaService.js';
+
+const TEST_TENANT = Object.freeze({
+	organizationId: '55c15025-8ef4-4ce8-8ad5-4562f33f1852',
+	projectId: 'f2964599-fb3a-4c4e-acec-ee84d74fab55',
+	actorUserId: '9e2fb678-423e-41a0-ae19-e9cae143c606',
+	actorEmail: 'owner@drytis.example',
+	actorName: 'Drytis Owner'
+});
 
 function createMemoryServices(options = {}) {
 	const sessions = new Map();
@@ -85,6 +91,7 @@ function createMemoryServices(options = {}) {
 					id: session.id,
 					title: session.title,
 					status: session.status,
+					mode: session.mode === 'sqa' || session.mode === 'founder' ? session.mode : 'qa',
 					targetUrl: session.targetUrl,
 					createdAt: session.createdAt,
 					updatedAt: session.updatedAt,
@@ -235,30 +242,15 @@ function createMemoryServices(options = {}) {
 	return { services, state };
 }
 
-function createTestAuthentication({ authenticated = true } = {}) {
-	return {
-		mount(app) {
-			app.get('/api/auth/session', (_request, response) => {
-				response.json({ authenticated, configured: true });
-			});
-			app.use('/api', (request, response, next) => {
-				if (!authenticated) {
-					response.status(401).json({ error: 'Authentication required.' });
-					return;
-				}
-				request.auth = { email: 'owner@example.com', sessionId: 'test-session' };
-				next();
-			});
-		},
-		isSessionActive: () => authenticated
-	};
+function createTestAccess() {
+	return createInstanceAccess({ tenantContext: TEST_TENANT });
 }
 
 async function startFixture(options = {}) {
 	const memory = options.memory ?? createMemoryServices(options);
 	const application = createApplication({
 		services: memory.services,
-		authentication: options.authentication ?? createTestAuthentication(),
+		access: options.access ?? createTestAccess(),
 		demoEnabled: options.demoEnabled,
 		environment: options.environment ?? {},
 		isDraining: options.isDraining,
@@ -296,13 +288,13 @@ test('application construction has no startup side effects and validates its ser
 	const memory = createMemoryServices();
 	const application = createApplication({
 		services: memory.services,
-		authentication: createTestAuthentication(),
+		access: createTestAccess(),
 		demoEnabled: false
 	});
 	assert.equal(memory.state.loadCalls, 0);
 	assert.equal(application.app.listening, undefined);
 	assert.throws(
-		() => createApplication({ services: {}, authentication: createTestAuthentication() }),
+		() => createApplication({ services: {}, access: createTestAccess() }),
 		/Application service group is missing/
 	);
 });
@@ -310,7 +302,6 @@ test('application construction has no startup side effects and validates its ser
 test('health and readiness are public, minimal, and reflect the injected readiness check', async t => {
 	let draining = false;
 	const fixture = await startFixture({
-		authentication: createTestAuthentication({ authenticated: false }),
 		isDraining: () => draining
 	});
 	t.after(() => fixture.close());
@@ -336,45 +327,24 @@ test('health and readiness are public, minimal, and reflect the injected readine
 	assert.deepEqual(await body(unavailable), { status: 'not_ready' });
 });
 
-test('auth status stays public while application APIs remain protected', async t => {
-	const fixture = await startFixture({ authentication: createTestAuthentication({ authenticated: false }) });
+test('embedded instance APIs need no Qase login and reject cross-origin browser mutations', async t => {
+	const fixture = await startFixture();
 	t.after(() => fixture.close());
 
-	assert.equal((await fixture.request('/api/auth/session')).status, 200);
-	assert.equal((await fixture.request('/api/sessions')).status, 401);
-	assert.equal((await fixture.request('/api/sessions/missing/report.md')).status, 401);
-	assert.equal((await fixture.request('/api/sessions/missing/events')).status, 401);
-});
-
-test('the real owner authentication and CSRF middleware protect extracted run routes', async t => {
-	const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-app-auth-test-'));
-	const authentication = createAuthentication({
-		filePath: path.join(directory, 'auth.json'),
-		cookieSecure: false
-	});
-	const fixture = await startFixture({ authentication });
-	t.after(async () => {
-		await fixture.close();
-		fs.rmSync(directory, { recursive: true, force: true });
-	});
-
-	assert.equal((await fixture.request('/api/sessions')).status, 401);
-	const setup = await fixture.request('/api/auth/setup', {
+	assert.equal((await fixture.request('/api/sessions')).status, 200);
+	assert.equal((await fixture.request('/api/sessions', { method: 'POST' })).status, 201);
+	const rejected = await fixture.request('/api/sessions', {
 		method: 'POST',
-		json: { email: 'owner@example.com', password: 'correct horse battery staple' }
+		headers: { origin: 'https://attacker.example' }
 	});
-	assert.equal(setup.status, 201);
-	const session = await body(setup);
-	const cookie = setup.headers.get('set-cookie').split(';', 1)[0];
-
-	assert.equal((await fixture.request('/api/sessions', { headers: { cookie } })).status, 200);
-	assert.equal((await fixture.request('/api/sessions', {
-		method: 'POST', headers: { cookie }
-	})).status, 403);
-	assert.equal((await fixture.request('/api/sessions', {
-		method: 'POST',
-		headers: { cookie, 'x-qase-csrf-token': session.csrfToken }
-	})).status, 201);
+	assert.equal(rejected.status, 403);
+	assert.deepEqual(await body(rejected), { error: 'Cross-origin request rejected.' });
+	assert.equal((await fixture.request('/api/auth/session')).status, 404);
+	for (const action of ['setup', 'login', 'logout']) {
+		const response = await fixture.request(`/api/auth/${action}`, { method: 'POST' });
+		assert.equal(response.status, 404);
+		assert.equal(response.headers.get('set-cookie'), null);
+	}
 });
 
 test('production cannot enable the practice site or its relaxed script policy', async t => {
@@ -387,6 +357,23 @@ test('production cannot enable the practice site or its relaxed script policy', 
 	const response = await fixture.request('/demo', { redirect: 'manual' });
 	assert.equal(response.status, 404);
 	assert.doesNotMatch(response.headers.get('content-security-policy'), /script-src[^;]*unsafe-inline/);
+});
+
+test('Drytis embedding is disabled by default and can only allow one exact HTTPS origin', async t => {
+	const fixture = await startFixture({
+		environment: { NODE_ENV: 'production', QASE_DRYTIS_EMBED_ORIGIN: 'https://studio.drytis.ai' }
+	});
+	t.after(() => fixture.close());
+	const response = await fixture.request('/healthz');
+	assert.match(response.headers.get('content-security-policy'), /frame-ancestors https:\/\/studio\.drytis\.ai/);
+	assert.equal(response.headers.get('x-frame-options'), null);
+
+	const memory = createMemoryServices();
+	assert.throws(() => createApplication({
+		services: memory.services,
+		access: createTestAccess(),
+		environment: { QASE_DRYTIS_EMBED_ORIGIN: 'https://*.drytis.ai' }
+	}), /one exact HTTPS origin/);
 });
 
 test('development retains the isolated practice site', async t => {
@@ -438,6 +425,246 @@ test('run CRUD preserves summaries, derived detail fields, cleanup, and 404 beha
 	const removedAgain = await body(await fixture.request(`/api/sessions/${created.id}`, { method: 'DELETE' }));
 	assert.deepEqual(removedAgain, { deleted: false });
 	assert.equal((await fixture.request(`/api/sessions/${created.id}`)).status, 404);
+});
+
+test('SQA catalog and authorized scope creation stay pending until evidence is evaluated', async t => {
+	const fixture = await startFixture();
+	t.after(() => fixture.close());
+
+	const catalogResponse = await fixture.request('/api/sqa/catalog');
+	assert.equal(catalogResponse.status, 200);
+	const catalog = await body(catalogResponse);
+	assert.match(catalog.catalogVersion, /^2026\./);
+	assert.ok(catalog.controls.length >= 40);
+	assert.match(catalog.disclaimer, /not legal advice/i);
+
+	const unauthorized = await fixture.request('/api/sqa/sessions', {
+		method: 'POST',
+		json: {
+			profiles: ['core'],
+			attributes: ['web_application'],
+			target: { name: 'Example', release: '1.0', environment: 'staging' }
+		}
+	});
+	assert.equal(unauthorized.status, 400);
+	assert.match((await body(unauthorized)).error, /authorized/i);
+
+	const createdResponse = await fixture.request('/api/sqa/sessions', {
+		method: 'POST',
+		json: {
+			authorizationConfirmed: true,
+			profiles: ['core'],
+			attributes: ['web_application', 'user_interface'],
+			target: { name: 'Example product', release: '1.0.0', environment: 'staging' },
+			scopeNotes: 'Non-destructive browser assessment of the staging release.'
+		}
+	});
+	assert.equal(createdResponse.status, 201);
+	const created = await body(createdResponse);
+        assert.equal(created.mode, 'sqa');
+        assert.equal(created.sqa.scope.authorization.confirmed, true);
+        assert.equal(created.sqa.assessment, undefined);
+		assert.equal(created.todos.length, 6);
+		assert.ok(created.todos.every(item => item.status === 'pending'));
+		assert.match(created.todos[0].text, /authorized target.*assessment boundary/i);
+		assert.match(created.todos.at(-1).text, /publish the professional SQA report/i);
+		const initialPlan = fixture.state.events.find(event => (
+			event.type === 'todos' && event.sessionId === created.id
+		));
+		assert.equal(initialPlan.todos.length, 6);
+
+        const report = await fixture.request(`/api/sessions/${created.id}/report.md`);
+	assert.equal(report.status, 409);
+	assert.match((await body(report)).error, /pending/i);
+
+	const stored = fixture.services.runs.get(created.id);
+	await finishSqaAssessment(stored, fixture.services.runs, () => Date.parse('2026-08-15T00:00:00.000Z'));
+	const finalizedAt = stored.sqa.finalizedAt;
+	delete stored.sqa.finalizedAt;
+	const unpublishedReport = await fixture.request(`/api/sessions/${created.id}/report.md`);
+	assert.equal(unpublishedReport.status, 409);
+	assert.match((await body(unpublishedReport)).error, /not been finalized/i);
+	stored.sqa.finalizedAt = finalizedAt;
+	const finalReport = await fixture.request(`/api/sessions/${created.id}/report.md`);
+	assert.equal(finalReport.status, 200);
+	assert.match(await finalReport.text(), /^# SQA assessment/);
+});
+
+test('a pending SQA scope accepts its first target URL and starts the agent', async t => {
+	const fixture = await startFixture();
+	t.after(() => fixture.close());
+
+	const createdResponse = await fixture.request('/api/sqa/sessions', {
+		method: 'POST',
+		json: {
+			authorizationConfirmed: true,
+			profiles: ['core'],
+			attributes: ['web_application', 'user_interface'],
+			target: { name: 'Example product', release: '1.0.0', environment: 'staging' }
+		}
+	});
+	assert.equal(createdResponse.status, 201);
+	const session = await body(createdResponse);
+	assert.equal(session.status, 'idle');
+	assert.equal(session.sqa.assessment, undefined);
+
+	const startResponse = await fixture.request(`/api/sessions/${session.id}/message`, {
+		method: 'POST',
+		json: { text: 'Run the SQA assessment against https://example.com/releases/1.0.0.' }
+	});
+	assert.equal(startResponse.status, 200);
+	assert.deepEqual(await body(startResponse), { ok: true });
+	const started = await body(await fixture.request(`/api/sessions/${session.id}`));
+	assert.equal(started.mode, 'sqa');
+	assert.equal(started.targetUrl, 'https://example.com/releases/1.0.0');
+	assert.equal(fixture.state.ensureCalls.at(-1), session.id);
+	assert.deepEqual(fixture.state.runCalls.at(-1), {
+		sessionId: session.id,
+		options: { task: 'Run the SQA assessment against https://example.com/releases/1.0.0.' }
+	});
+	await fixture.whenIdle();
+});
+
+test('Founder Mode creates an authorized pending review and starts only from a target URL message', async t => {
+	const fixture = await startFixture();
+	t.after(() => fixture.close());
+
+	const catalogResponse = await fixture.request('/api/founder/catalog');
+	assert.equal(catalogResponse.status, 200);
+	const catalog = await body(catalogResponse);
+	assert.match(catalog.schemaVersion, /^2026\./);
+	assert.equal(catalog.categories.length, 17);
+	assert.deepEqual(catalog.observationTypes, ['strength', 'friction', 'opportunity', 'risk']);
+	assert.deepEqual(catalog.confidenceLevels, ['low', 'medium', 'high']);
+	assert.match(catalog.caveat, /hypotheses to validate/i);
+
+	const unauthorized = await fixture.request('/api/founder/sessions', {
+		method: 'POST',
+		json: { target: { name: 'Example product' } }
+	});
+	assert.equal(unauthorized.status, 400);
+	assert.match((await body(unauthorized)).error, /authorized/i);
+
+	const createdResponse = await fixture.request('/api/founder/sessions', {
+		method: 'POST',
+		json: {
+			authorizationConfirmed: true,
+			tenantId: 'request-controlled-tenant',
+			organizationId: 'request-controlled-organization',
+			target: { name: 'Example product', release: '1.0.0', environment: 'staging' },
+			productContext: {
+				stage: 'mvp',
+				businessModel: 'B2B SaaS',
+				targetCustomer: 'Product teams',
+				primaryGoal: 'Improve activation',
+				competitors: ['Incumbent suite']
+			}
+		}
+	});
+	assert.equal(createdResponse.status, 201);
+	const created = await body(createdResponse);
+	assert.equal(created.mode, 'founder');
+	assert.equal(created.status, 'idle');
+	assert.equal(created.targetUrl, undefined);
+	assert.equal(created.founder.scope.authorization.confirmed, true);
+	assert.deepEqual(created.founder.observations, []);
+	assert.equal(created.todos.length, 8);
+	assert.ok(created.todos.every(item => item.status === 'pending'));
+	assert.match(created.todos[0].text, /evidence baseline/i);
+	assert.equal(created.founder.report, undefined);
+	assert.equal(created.founder.finalizedAt, undefined);
+	assert.equal(JSON.stringify(created).includes('request-controlled-tenant'), false);
+	assert.equal(JSON.stringify(created).includes('request-controlled-organization'), false);
+	assert.equal(fixture.state.runCalls.length, 0);
+	assert.equal(fixture.state.events.at(-1).type, 'founder.created');
+	const initialPlan = fixture.state.events.find(event => (
+		event.type === 'todos' && event.sessionId === created.id
+	));
+	assert.equal(initialPlan.todos.length, 8);
+	const missingTarget = await fixture.request(`/api/sessions/${created.id}/message`, {
+		method: 'POST', json: { text: 'Please begin the review.' }
+	});
+	assert.equal(missingTarget.status, 400);
+	assert.match((await body(missingTarget)).error, /target URL/i);
+	assert.equal(fixture.state.runCalls.length, 0);
+	assert.equal(fixture.services.runs.get(created.id).messages.length, 0);
+
+	const summaries = await body(await fixture.request('/api/sessions'));
+	assert.equal(summaries[0].mode, 'founder');
+	const pendingReport = await fixture.request(`/api/sessions/${created.id}/report.md`);
+	assert.equal(pendingReport.status, 409);
+	assert.match((await body(pendingReport)).error, /pending/i);
+
+	const instruction = 'Review the complete product at https://example.com/app.';
+	const startResponse = await fixture.request(`/api/sessions/${created.id}/message`, {
+		method: 'POST',
+		json: { text: instruction }
+	});
+	assert.equal(startResponse.status, 200);
+	const started = await body(await fixture.request(`/api/sessions/${created.id}`));
+	assert.equal(started.targetUrl, 'https://example.com/app');
+	assert.equal(started.founder.scope.target.url, 'https://example.com/app');
+	const targetBinding = fixture.state.events.find(event => (
+		event.type === 'founder.target_bound' && event.sessionId === created.id
+	));
+	assert.equal(targetBinding.authorizedTargetUrl, 'https://example.com/app');
+	assert.deepEqual(fixture.state.runCalls.at(-1), {
+		sessionId: created.id,
+		options: { task: instruction }
+	});
+	await fixture.whenIdle();
+
+	const preauthorizedResponse = await fixture.request('/api/founder/sessions', {
+		method: 'POST',
+		json: {
+			authorizationConfirmed: true,
+			target: { name: 'Bound product', url: 'https://authorized.example/product' }
+		}
+	});
+	assert.equal(preauthorizedResponse.status, 201);
+	const preauthorized = await body(preauthorizedResponse);
+	assert.equal(fixture.state.events.at(-1).authorizedTargetUrl, 'https://authorized.example/product');
+	const runsBeforeMismatch = fixture.state.runCalls.length;
+	const mismatchResponse = await fixture.request(`/api/sessions/${preauthorized.id}/message`, {
+		method: 'POST', json: { text: 'Review https://different.example/product' }
+	});
+	assert.equal(mismatchResponse.status, 400);
+	assert.match((await body(mismatchResponse)).error, /does not match the authorized/i);
+	assert.equal(fixture.state.runCalls.length, runsBeforeMismatch);
+	assert.equal(fixture.services.runs.get(preauthorized.id).messages.length, 0);
+	assert.equal(fixture.services.runs.get(preauthorized.id).targetUrl, undefined);
+
+	const authorizedStart = await fixture.request(`/api/sessions/${preauthorized.id}/message`, {
+		method: 'POST', json: { text: 'Review https://authorized.example/product' }
+	});
+	assert.equal(authorizedStart.status, 200);
+	assert.equal(fixture.services.runs.get(preauthorized.id).targetUrl, 'https://authorized.example/product');
+	const preauthorizedBinding = fixture.state.events.find(event => (
+		event.type === 'founder.target_bound' && event.sessionId === preauthorized.id
+	));
+	assert.equal(preauthorizedBinding.authorizedTargetUrl, 'https://authorized.example/product');
+	await fixture.whenIdle();
+
+	const stored = fixture.services.runs.get(created.id);
+	stored.founder.finalizedAt = '2026-08-18T00:00:00.000Z';
+	stored.founder.report = {
+		generatedAt: stored.founder.finalizedAt,
+		target: { name: 'Example product' },
+		coverage: { categoriesReviewed: [], totalCategories: 17, evidenceBackedObservations: 0 },
+		executiveSummary: 'A bounded product review.',
+		icp: { primary: 'Product teams', users: ['Operators'], buyers: ['Leaders'], jobs: ['Ship'], pains: ['Friction'] },
+		positioning: { oneLiner: 'Ship with confidence.', valueProposition: 'Evidence-informed decisions.' },
+		recommendations: [],
+		marketing: { channels: [] },
+		sales: { motion: 'Founder-led discovery.' },
+		risks: [],
+		plan: { days30: [], days60: [], days90: [] },
+		metrics: { northStar: { name: 'Activation', definition: 'First successful run.' }, experiments: [] },
+		caveat: 'Recommendations are hypotheses to validate.'
+	};
+	const finalReport = await fixture.request(`/api/sessions/${created.id}/report.md`);
+	assert.equal(finalReport.status, 200);
+	assert.match(await finalReport.text(), /^# Founder review — Example product/);
 });
 
 test('run deletion remains hidden while durable cleanup records a sanitized failure', async t => {
@@ -550,6 +777,41 @@ test('answers and credentials require pending input and never expose raw credent
 	await fixture.whenIdle();
 });
 
+test('Founder credential refusal persists a public-only boundary and cannot re-open the login gate', async t => {
+	const fixture = await startFixture();
+	t.after(() => fixture.close());
+	const created = await body(await fixture.request('/api/founder/sessions', {
+		method: 'POST',
+		json: {
+			authorizationConfirmed: true,
+			target: { name: 'Public product', url: 'https://example.com/' }
+		}
+	}));
+	const session = fixture.services.runs.get(created.id);
+	session.pendingQuestion = {
+		question: 'Provide credentials to continue.',
+		credentialLike: true
+	};
+
+	const response = await fixture.request(`/api/sessions/${session.id}/answer`, {
+		method: 'POST',
+		json: { answer: 'No credentials available. Skip anything behind the login.' }
+	});
+	assert.equal(response.status, 200);
+	assert.deepEqual(session.founder.scope.access, {
+		decision: 'public_only',
+		authenticatedSurfaces: 'excluded',
+		decidedAt: session.founder.scope.access.decidedAt,
+		source: 'user'
+	});
+	assert.match(session.messages.at(-1).text, /public-only review/i);
+	assert.match(session.messages.at(-1).text, /do not ask for credentials again/i);
+	assert.deepEqual(fixture.state.runCalls.at(-1).options, {
+		resumeAnswer: session.messages.at(-1).text
+	});
+	await fixture.whenIdle();
+});
+
 test('stop, report, configuration, malformed JSON, and API 404 contracts remain stable', async t => {
 	const fixture = await startFixture();
 	t.after(() => fixture.close());
@@ -586,7 +848,7 @@ test('stop, report, configuration, malformed JSON, and API 404 contracts remain 
 	assert.deepEqual(await body(await fixture.request('/api/unknown')), { error: 'API route not found.' });
 });
 
-test('SSE sends the current frame and removes its subscription on disconnect', async t => {
+test('SSE stays live without login sessions and removes its subscription on disconnect', { timeout: 5_000 }, async t => {
 	const fixture = await startFixture();
 	t.after(() => fixture.close());
 	const session = fixture.services.runs.create();
@@ -605,6 +867,9 @@ test('SSE sends the current frame and removes its subscription on disconnect', a
 	assert.match(text, /"type":"frame"/);
 	assert.match(text, /data:image\/jpeg;base64,current/);
 	assert.equal(fixture.state.listenerCount(session.id), 1);
+	const heartbeat = await reader.read();
+	assert.equal(heartbeat.done, false);
+	assert.match(new TextDecoder().decode(heartbeat.value), /: ping/);
 
 	controller.abort();
 	await reader.cancel().catch(() => {});

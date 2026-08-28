@@ -4,7 +4,7 @@ import { buildReportMarkdown } from './report.js';
 import { clearSecrets, secretNames, storeSecrets } from './secrets.js';
 import {
 	addActivity, addMessage, bus, createSession, deleteSession, emit, getSession,
-	dropLive, flushSessions, listSessions, liveFor, loadSessions, peekLive, setStatus, updateActivity
+	dropLive, flushSessions, listSessions, liveEntries, liveFor, loadSessions, peekLive, setStatus, updateActivity
 } from './store.js';
 import { purgeRunWorkspace } from './workspaceLifecycle.js';
 
@@ -60,19 +60,22 @@ export function createRuntimeApplicationServices(runStore, options = {}) {
 			ensureRuntime: session => ensureRuntime(session, runStore),
 			runTurn: (session, turnOptions) => runTurn(session, turnOptions, runStore),
 			getLiveState(sessionId) {
-				const record = runStore.liveFor(sessionId);
+				const record = runStore.peekLive?.(sessionId);
 				return {
-					running: Boolean(record.running),
-					frame: record.bridge?.getLastFrame?.()
+					running: Boolean(record?.running),
+					frame: record?.bridge?.getLastFrame?.()
 				};
 			},
 			stop(sessionId) {
-				runStore.liveFor(sessionId).controller?.abort();
+				runStore.peekLive?.(sessionId)?.controller?.abort();
 			},
 			async invalidateIdleRuntimes() {
 				let kept = 0;
-				for (const summary of await runStore.list()) {
-					const record = runStore.liveFor(summary.id);
+				const entries = typeof runStore.listLive === 'function'
+					? runStore.listLive()
+					: (await runStore.list({ limit: 100 })).map(summary => ({ id: summary.id, record: runStore.peekLive?.(summary.id) }));
+				for (const { record } of entries) {
+					if (!record) continue;
 					if (!record.runtime) continue;
 					if (record.running) {
 						kept++;
@@ -112,14 +115,18 @@ export function createLocalApplicationServices() {
 			loadSessions();
 			initialized = true;
 		},
-		async create(title) {
-			return createSession(title);
+		async create(title, options = {}) {
+			const session = createSession(title, options);
+			if (options.eventType) {
+				emit(session, options.eventType, options.eventPayload ?? {});
+			}
+			return session;
 		},
 		async get(id) {
 			return getSession(id);
 		},
-		async list() {
-			return listSessions();
+		async list(options) {
+			return listSessions(options);
 		},
 		async delete(id) {
 			return deleteSession(id);
@@ -148,6 +155,7 @@ export function createLocalApplicationServices() {
 		liveFor,
 		peekLive,
 		dropLive,
+		listLive: liveEntries,
 		check() {
 			return {
 				ready: initialized && !closed,

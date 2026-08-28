@@ -1,5 +1,5 @@
 import express from 'express';
-import { securityHeaders } from './auth.js';
+import { securityHeaders } from './instanceAccess.js';
 import { createOperationalControls } from './operations.js';
 
 function probePort(value) {

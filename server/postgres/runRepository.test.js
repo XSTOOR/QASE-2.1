@@ -5,6 +5,7 @@ import {
 	TenantInactiveError,
 	createPostgresRunRepository
 } from './runRepository.js';
+import { createFounderState } from '../founderService.js';
 
 const TENANT = Object.freeze({
 	organizationId: '4a7f5cf0-813d-4e3c-8d5d-4b4b9fc88c01',
@@ -37,6 +38,9 @@ const FINDING_ID = '0d9156f8-b0f3-4f35-ae55-74070310de64';
 const CORRELATION_ID = '08ddf3b0-4499-4101-a20f-d87d3eebcd52';
 const SOURCE_HASH = 'a'.repeat(64);
 const NOW = Date.parse('2026-08-06T10:00:00.000Z');
+const CHILD_TABLE_NAMES = [
+	'qa_messages', 'qa_activities', 'qa_plan_items', 'qa_findings', 'qa_reports'
+];
 
 function sqlText(value) {
 	return String(value).replace(/\s+/g, ' ').trim();
@@ -106,6 +110,18 @@ function session(overrides = {}) {
 		},
 		...overrides
 	};
+}
+
+function founderSession(overrides = {}) {
+	return session({
+		mode: 'founder',
+		founder: createFounderState({
+			authorizationConfirmed: true,
+			target: { name: 'Drytis Studio', release: '1.0.0', environment: 'staging' },
+			productContext: { stage: 'growth', targetCustomer: 'Software teams' }
+		}, () => NOW),
+		...overrides
+	});
 }
 
 test('repository requires a frozen trusted tenant context', () => {
@@ -200,6 +216,64 @@ test('create replaces normalized children and commits its durable event before s
 	assert.equal(fake.calls.at(-1).text, 'COMMIT');
 });
 
+test('Founder Mode persists in its isolated bounded aggregate column', async () => {
+	const fake = scriptedPool(call => call.text.startsWith('INSERT INTO qa_runs')
+		? { rows: [{ lock_version: '0', updated_at: new Date(NOW) }], rowCount: 1 }
+		: { rows: [], rowCount: 1 });
+	const repository = createPostgresRunRepository({ pool: fake.pool, tenantContext: TENANT, now: () => NOW });
+	const aggregate = founderSession();
+
+	await repository.create(aggregate, {
+		eventType: 'founder.created', actorType: 'user', actorUserId: TENANT.actorUserId
+	});
+	const insert = fake.calls.find(call => call.text.startsWith('INSERT INTO qa_runs'));
+	assert.equal(insert.params[7], 'founder');
+	assert.deepEqual(insert.params[8], []);
+	assert.equal(insert.params[9], null);
+	assert.deepEqual(insert.params[10], aggregate.founder);
+
+	// {"payload":""} contributes 14 UTF-8 bytes, so this aggregate is exactly
+	// the authoritative 1,000,000-byte application boundary and must fail.
+	await assert.rejects(
+		repository.save(founderSession({ founder: { payload: 'x'.repeat(999_986) } }), {
+			expectedVersion: 0, eventType: 'founder.observation'
+		}),
+		/one-megabyte storage limit/
+	);
+	await assert.rejects(
+		repository.save(founderSession({ sqa: {} }), { expectedVersion: 0 }),
+		/cannot contain an SQA assessment/
+	);
+});
+
+test('Drytis integration persists only bounded derived metadata on QA runs', async () => {
+	const fake = scriptedPool(call => call.text.startsWith('INSERT INTO qa_runs')
+		? { rows: [{ lock_version: '0', updated_at: new Date(NOW) }], rowCount: 1 }
+		: { rows: [], rowCount: 1 });
+	const repository = createPostgresRunRepository({ pool: fake.pool, tenantContext: TENANT, now: () => NOW });
+	const integration = {
+		schemaVersion: '2026-08-1',
+		externalReviewId: RUN_ID,
+		whiteBox: { snapshotSha256: `sha256:${'b'.repeat(64)}`, summary: { high: 1 } }
+	};
+	await repository.create(session({ mode: 'qa', drytisIntegration: integration }), {
+		eventType: 'drytis.review.created', actorType: 'system'
+	});
+	const insert = fake.calls.find(call => call.text.startsWith('INSERT INTO qa_runs'));
+	assert.equal(insert.params[7], 'qa');
+	assert.deepEqual(insert.params[11], integration);
+	assert.doesNotMatch(JSON.stringify(insert.params[11]), /sourceSnapshot|fileContent/);
+
+	await assert.rejects(
+		repository.create(session({ mode: 'sqa', sqa: { scope: { profiles: ['core'] } }, drytisIntegration: integration })),
+		/Drytis integration can only be attached to a QA run/
+	);
+	await assert.rejects(
+		repository.create(session({ drytisIntegration: { payload: 'x'.repeat(1_000_000) } })),
+		/bounded JSON object/
+	);
+});
+
 test('event attribution requires canonical trusted user IDs and forbids user IDs on agent/system events', async () => {
 	const fake = scriptedPool();
 	const repository = createPostgresRunRepository({ pool: fake.pool, tenantContext: TENANT, now: () => NOW });
@@ -259,6 +333,108 @@ test('save enforces optimistic lock version and rolls back without an event on c
 	assert.equal(fake.state.releases, 1);
 });
 
+test('save rewrites only the normalized child group owned by a known child event', async t => {
+	const cases = [
+		['message', 'qa_messages'],
+		['message_done', 'qa_messages'],
+		['activity', 'qa_activities'],
+		['todos', 'qa_plan_items'],
+		['finding', 'qa_findings'],
+		['report', 'qa_reports']
+	];
+	for (const [eventType, expectedTable] of cases) {
+		await t.test(eventType, async () => {
+			const fake = scriptedPool(call => call.text.startsWith('UPDATE qa_runs')
+				? {
+					rows: [{ lock_version: '3', updated_at: new Date(NOW), next_event_sequence: '7' }],
+					rowCount: 1
+				}
+				: { rows: [], rowCount: 1 });
+			const repository = createPostgresRunRepository({
+				pool: fake.pool, tenantContext: TENANT, now: () => NOW
+			});
+
+			await repository.save(session(), { expectedVersion: 2, eventType });
+
+			for (const table of CHILD_TABLE_NAMES) {
+				const expected = table === expectedTable;
+				assert.equal(
+					fake.calls.some(call => call.text.startsWith(`DELETE FROM ${table}`)),
+					expected,
+					`${eventType} DELETE ownership for ${table}`
+				);
+				assert.equal(
+					fake.calls.some(call => call.text.startsWith(`INSERT INTO ${table}`)),
+					expected,
+					`${eventType} INSERT ownership for ${table}`
+				);
+			}
+			const childIndex = fake.calls.findIndex(call => call.text.startsWith(`DELETE FROM ${expectedTable}`));
+			const eventIndex = fake.calls.findIndex(call => call.text.startsWith('INSERT INTO qa_run_events'));
+			const commitIndex = fake.calls.findIndex(call => call.text === 'COMMIT');
+			assert.ok(childIndex < eventIndex && eventIndex < commitIndex,
+				'child state and its durable event must commit atomically');
+		});
+	}
+});
+
+test('known metadata events skip child writes while unknown events retain the safe full fallback', async t => {
+	const metadataEvents = [
+		'browser', 'context', 'question', 'run.recovered', 'run.stop_requested',
+		'secrets', 'session', 'sqa', 'sqa.created', 'founder.created', 'founder.target_bound',
+		'founder.observation', 'founder.finalized', 'status', 'task_complete',
+		'drytis.review.created', 'drytis.review.start_requested', 'drytis.review.start_completed', 'drytis.review.start_failed',
+		'drytis.review.stop_requested', 'drytis.review.stopped',
+		'drytis.blackbox.started', 'drytis.blackbox.queued', 'drytis.blackbox.failed', 'drytis.blackbox.settled',
+		'drytis.delivery.requested', 'drytis.delivery.completed', 'drytis.delivery.failed'
+	];
+	for (const eventType of metadataEvents) {
+		await t.test(`${eventType} skips children`, async () => {
+			const fake = scriptedPool(call => call.text.startsWith('UPDATE qa_runs')
+				? {
+					rows: [{ lock_version: '3', updated_at: new Date(NOW), next_event_sequence: '7' }],
+					rowCount: 1
+				}
+				: { rows: [], rowCount: 1 });
+			const repository = createPostgresRunRepository({
+				pool: fake.pool, tenantContext: TENANT, now: () => NOW
+			});
+
+			await repository.save(session(), { expectedVersion: 2, eventType });
+
+			for (const table of CHILD_TABLE_NAMES) {
+				assert.equal(fake.calls.some(call => call.text.startsWith(`DELETE FROM ${table}`)), false);
+				assert.equal(fake.calls.some(call => call.text.startsWith(`INSERT INTO ${table}`)), false);
+			}
+			const eventIndex = fake.calls.findIndex(call => call.text.startsWith('INSERT INTO qa_run_events'));
+			const commitIndex = fake.calls.findIndex(call => call.text === 'COMMIT');
+			assert.ok(eventIndex > 0 && eventIndex < commitIndex);
+		});
+	}
+
+	await t.test('unknown event replaces every child group', async () => {
+		const fake = scriptedPool(call => call.text.startsWith('UPDATE qa_runs')
+			? {
+				rows: [{ lock_version: '3', updated_at: new Date(NOW), next_event_sequence: '7' }],
+				rowCount: 1
+			}
+			: { rows: [], rowCount: 1 });
+		const repository = createPostgresRunRepository({
+			pool: fake.pool, tenantContext: TENANT, now: () => NOW
+		});
+
+		await repository.save(session(), { expectedVersion: 2, eventType: 'extension.aggregate_changed' });
+
+		for (const table of CHILD_TABLE_NAMES) {
+			assert.ok(fake.calls.some(call => call.text.startsWith(`DELETE FROM ${table}`)));
+			assert.ok(fake.calls.some(call => call.text.startsWith(`INSERT INTO ${table}`)));
+		}
+		const eventIndex = fake.calls.findIndex(call => call.text.startsWith('INSERT INTO qa_run_events'));
+		const commitIndex = fake.calls.findIndex(call => call.text === 'COMMIT');
+		assert.ok(eventIndex > 0 && eventIndex < commitIndex);
+	});
+});
+
 test('a normalized child failure rolls back the run update and always releases the client', async () => {
 	const fake = scriptedPool(call => {
 		if (call.text.startsWith('UPDATE qa_runs')) {
@@ -273,9 +449,13 @@ test('a normalized child failure rolls back the run update and always releases t
 	const repository = createPostgresRunRepository({ pool: fake.pool, tenantContext: TENANT, now: () => NOW });
 
 	await assert.rejects(
-		repository.save(session(), { expectedVersion: 2, eventType: 'finding.created' }),
+		repository.save(session(), { expectedVersion: 2, eventType: 'finding' }),
 		/finding insert failed/
 	);
+	for (const table of CHILD_TABLE_NAMES.filter(table => table !== 'qa_findings')) {
+		assert.equal(fake.calls.some(call => call.text.startsWith(`DELETE FROM ${table}`)), false);
+		assert.equal(fake.calls.some(call => call.text.startsWith(`INSERT INTO ${table}`)), false);
+	}
 	assert.equal(fake.calls.at(-1).text, 'ROLLBACK');
 	assert.equal(fake.calls.some(call => call.text === 'COMMIT'), false);
 	assert.equal(fake.state.releases, 1);
@@ -493,6 +673,36 @@ test('loadAll hydrates the exact current aggregate shape and keeps version separ
 	assert.equal(fake.calls.at(-1).text, 'COMMIT');
 });
 
+test('loadAll hydrates Founder Mode state without leaking SQA shape', async () => {
+	const founder = founderSession().founder;
+	const fake = scriptedPool(call => {
+		if (call.text.includes('FROM qa_runs')) return { rows: [{
+			id: RUN_ID,
+			title: 'Founder — Drytis Studio',
+			target_url: 'https://studio.drytis.ai/',
+			status: 'idle',
+			run_mode: 'founder',
+			sqa_profiles: [],
+			sqa_assessment: null,
+			founder_assessment: founder,
+			pending_question: null,
+			context_usage: null,
+			secret_names: [],
+			created_at: new Date(NOW - 1_000),
+			updated_at: new Date(NOW),
+			lock_version: '4'
+		}], rowCount: 1 };
+		return { rows: [], rowCount: 0 };
+	});
+	const repository = createPostgresRunRepository({ pool: fake.pool, tenantContext: TENANT });
+	const [record] = await repository.loadAll();
+
+	assert.equal(record.version, 4);
+	assert.equal(record.session.mode, 'founder');
+	assert.deepEqual(record.session.founder, founder);
+	assert.equal(record.session.sqa, undefined);
+});
+
 test('get and list read PostgreSQL authoritatively without crossing tenant scope', async () => {
 	const row = {
 		id: RUN_ID,
@@ -526,6 +736,7 @@ test('get and list read PostgreSQL authoritatively without crossing tenant scope
 		id: RUN_ID,
 		title: 'Other tenant run',
 		status: 'idle',
+		mode: 'qa',
 		targetUrl: 'https://other.example/',
 		createdAt: NOW - 1_000,
 		updatedAt: NOW,

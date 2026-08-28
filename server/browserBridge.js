@@ -1,4 +1,7 @@
 import { hasUnresolvedPlaceholder, resolveSecrets } from './secrets.js';
+import { createBrowserPolicy } from './browserPolicy.js';
+import { contextOptionsFor, getDeviceProfile, DEFAULT_DEVICE_ID } from './deviceProfiles.js';
+import { runMobileAudit } from './mobileAudit.js';
 
 /**
  * Makes the agent's browser watchable.
@@ -39,12 +42,20 @@ const POINTER_ACTIONS = {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-export function attachBrowserBridge(session, service, runStore) {
+export function attachBrowserBridge(session, service, runStore, options = {}) {
+	const policy = options.policy ?? createBrowserPolicy({ getTargetUrl: () => session.targetUrl });
+	const deviceId = options.device ?? session.device ?? DEFAULT_DEVICE_ID;
+	const deviceLandscape = options.deviceLandscape ?? session.deviceLandscape === true;
+	const deviceProfile = getDeviceProfile(deviceId);
+	const emulationOptions = contextOptionsFor(deviceId, { landscape: deviceLandscape });
 	const bridge = {
 		service,
 		frameTimer: undefined,
+		frameCapture: undefined,
+		capturedInactiveFrame: false,
 		subscribers: 0,
 		lastFrame: undefined,
+		securityBlocks: [],
 		disposed: false
 	};
 
@@ -152,6 +163,112 @@ export function attachBrowserBridge(session, service, runStore) {
 	 * The session is captured on the way out and replayed on the way in.
 	 */
 	let knownContext;
+	const protectedContexts = new WeakSet();
+
+	const recordSecurityBlock = (decision, detail = {}) => {
+		const entry = {
+			code: decision.code,
+			message: decision.message,
+			requiresConfirmation: Boolean(decision.requiresConfirmation),
+			topLevel: Boolean(detail.topLevel),
+			method: detail.method,
+			resourceType: detail.resourceType,
+			ts: Date.now()
+		};
+		bridge.securityBlocks.push(entry);
+		if (bridge.securityBlocks.length > 100) {
+			bridge.securityBlocks.splice(0, bridge.securityBlocks.length - 100);
+		}
+		runStore.publish(session, 'browser_policy', { browserPolicy: entry });
+		return entry;
+	};
+
+	/**
+	 * Applies request policy to every context, including popups. Public
+	 * third-party assets remain available; private/reserved destinations and
+	 * out-of-scope top-level navigations are aborted before bytes leave Chrome.
+	 */
+	const installNetworkPolicy = async context => {
+		if (!context || protectedContexts.has(context)) return;
+		if (policy.isProduction && typeof context.addInitScript === 'function') {
+			// Playwright routing cannot observe requests intercepted by a Service
+			// Worker. A new Qase browser context has no existing registrations, so
+			// disabling registration before the first target navigation closes that
+			// bypass while leaving local/development PWA testing unchanged.
+			await context.addInitScript(() => {
+				const container = globalThis.navigator?.serviceWorker;
+				if (!container) return;
+				const blocked = () => Promise.reject(new DOMException(
+					'Service worker registration is disabled by Qase browser safety policy.',
+					'SecurityError'
+				));
+				try {
+					Object.defineProperty(Object.getPrototypeOf(container), 'register', {
+						value: blocked,
+						configurable: false,
+						writable: false
+					});
+				} catch {
+					try { container.register = blocked; } catch { /* read-only in this browser */ }
+				}
+			});
+			recordSecurityBlock({
+				code: 'BROWSER_SERVICE_WORKERS_DISABLED',
+				message: 'Service worker registration is disabled in production so network policy cannot be bypassed.'
+			}, { resourceType: 'serviceworker' });
+		}
+		await context.route('**/*', async route => {
+			const request = route.request();
+			let topLevel = false;
+			try {
+				topLevel = request.isNavigationRequest() && !request.frame().parentFrame();
+			} catch {
+				// Service-worker requests have no frame and are subresources.
+			}
+
+			let decision;
+			try {
+				decision = await policy.evaluateRequest(request.url(), { topLevel });
+			} catch {
+				decision = {
+					allowed: false,
+					code: 'BROWSER_POLICY_EVALUATION_FAILED',
+					message: 'Browser safety could not validate this network destination.'
+				};
+			}
+			if (decision.allowed) {
+				await route.continue();
+				return;
+			}
+			recordSecurityBlock(decision, {
+				topLevel,
+				method: request.method(),
+				resourceType: request.resourceType()
+			});
+			await route.abort('blockedbyclient').catch(() => undefined);
+		});
+		if (typeof context.routeWebSocket === 'function') {
+			await context.routeWebSocket('**/*', async socket => {
+				let decision;
+				try {
+					decision = await policy.evaluateRequest(socket.url(), { topLevel: false });
+				} catch {
+					decision = {
+						allowed: false,
+						code: 'BROWSER_POLICY_EVALUATION_FAILED',
+						message: 'Browser safety could not validate this WebSocket destination.'
+					};
+				}
+				if (decision.allowed) {
+					socket.connectToServer();
+					return;
+				}
+				recordSecurityBlock(decision, { method: 'CONNECT', resourceType: 'websocket' });
+				await socket.close({ code: 1008, reason: 'Blocked by browser safety policy' }).catch(() => undefined);
+			});
+		}
+		protectedContexts.add(context);
+	};
 
 	bridge.suspend = async () => {
 		const page = currentPage();
@@ -221,11 +338,58 @@ export function attachBrowserBridge(session, service, runStore) {
 		}
 	};
 
+
+	/*
+	 * Real device emulation, not viewport resize.
+	 *
+	 * The CleanSlate SDK's ensureContext() launches Chromium and calls
+	 * newContext({ viewport: 1440×900 }). When the run's device profile is a
+	 * phone or tablet, we intercept immediately after that call: dispose the
+	 * default context and re-create it on the same Browser with the profile's
+	 * User-Agent, viewport, deviceScaleFactor, isMobile and hasTouch. The site
+	 * under test therefore receives a genuine mobile request and touch input
+	 * capability — not a resized desktop window.
+	 */
+	if (emulationOptions && typeof service.ensureContext === 'function') {
+		const originalEnsureContext = service.ensureContext.bind(service);
+		let emulationApplied = false;
+		service.ensureContext = async () => {
+			const context = await originalEnsureContext();
+			if (emulationApplied || !service.browser) {
+				return service.context ?? context;
+			}
+			if (context.pages().length === 0) {
+				try {
+					await context.close();
+				} catch {
+					// Falls back to overlaying options on the existing context.
+				}
+				try {
+					const emulated = await service.browser.newContext(emulationOptions);
+					service.context = emulated;
+					emulationApplied = true;
+					return emulated;
+				} catch (error) {
+					// If Playwright rejects the descriptor for any reason, keep the
+					// SDK's default context rather than leaving the run without one.
+					try {
+						service.context = await service.browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+					} catch {}
+					emulationApplied = true;
+					return service.context ?? context;
+				}
+			}
+			emulationApplied = true;
+			return context;
+		};
+	}
+
 	// Every browser tool goes through ensurePage, which is where a relaunched
 	// browser is first observable.
 	const originalEnsurePage = service.ensurePage.bind(service);
 	service.ensurePage = async () => {
 		const page = await originalEnsurePage();
+		await installNetworkPolicy(service.context);
 		await restoreSession();
 		return currentPage() ?? page;
 	};
@@ -266,6 +430,67 @@ export function attachBrowserBridge(session, service, runStore) {
 		}
 		return input.name || input.text || input.label || input.placeholder ||
 			input.testId || input.selector || input.role || input.elementId;
+	};
+
+	const readElementDescriptor = async locator => locator.first().evaluate(element => ({
+		text: (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+		ariaLabel: element.getAttribute('aria-label') || undefined,
+		title: element.getAttribute('title') || undefined,
+		name: element.getAttribute('name') || undefined,
+		testId: element.getAttribute('data-testid') || element.getAttribute('data-test') || element.getAttribute('data-cy') || undefined,
+		id: element.id || undefined,
+		className: typeof element.className === 'string' ? element.className.slice(0, 160) : undefined,
+		role: element.getAttribute('role') || undefined,
+		tagName: element.tagName?.toLowerCase(),
+		type: element.getAttribute('type') || undefined,
+		destination: element.href || element.formAction || element.form?.action || undefined
+	}));
+
+	/** Reads only labels/attributes — never a field value or typed secret. */
+	const resolveActionDescriptor = async input => {
+		const page = currentPage();
+		const descriptor = {
+			url: page?.url() ?? session.targetUrl,
+			label: describe(input),
+			selector: input?.selector,
+			testId: input?.testId,
+			name: input?.name,
+			key: input?.key
+		};
+		if (!page) return descriptor;
+		try {
+			if (input && service.hasLocator?.(input)) {
+				return { ...descriptor, ...await readElementDescriptor(await service.locator(page, input)) };
+			}
+			if (typeof input?.x === 'number' && typeof input?.y === 'number') {
+				const located = await page.locator(`body`).evaluate((_body, point) => {
+					const hit = document.elementFromPoint(point.x, point.y);
+					const element = hit?.closest?.('button, a, input, select, textarea, [role], [tabindex]') ?? hit;
+					if (!element) return undefined;
+					return {
+						text: (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+						ariaLabel: element.getAttribute('aria-label') || undefined,
+						title: element.getAttribute('title') || undefined,
+						name: element.getAttribute('name') || undefined,
+						testId: element.getAttribute('data-testid') || undefined,
+						id: element.id || undefined,
+						className: typeof element.className === 'string' ? element.className.slice(0, 160) : undefined,
+						role: element.getAttribute('role') || undefined,
+						tagName: element.tagName?.toLowerCase(),
+						type: element.getAttribute('type') || undefined,
+						destination: element.href || element.formAction || element.form?.action || undefined
+					};
+				}, { x: input.x, y: input.y });
+				return { ...descriptor, ...located };
+			}
+			const focused = page.locator(':focus');
+			if (await focused.count() > 0) {
+				return { ...descriptor, ...await readElementDescriptor(focused) };
+			}
+		} catch {
+			// The explicit input description still provides a useful policy label.
+		}
+		return descriptor;
 	};
 
 	const publishCursor = (verb, target, input) => {
@@ -319,6 +544,22 @@ export function attachBrowserBridge(session, service, runStore) {
 			let target;
 			const page = currentPage();
 			const urlBefore = page?.url();
+			const descriptor = await resolveActionDescriptor(input);
+			const canSubmit = method === 'click' ||
+				(method === 'pressKey' && /^(?:Enter|NumpadEnter|Space)$/i.test(String(input?.key ?? '')));
+			if (navigates && canSubmit && descriptor.destination) {
+				const navigation = await policy.evaluateNavigation(descriptor.destination);
+				if (!navigation.allowed) {
+					recordSecurityBlock(navigation, { topLevel: true, method });
+					return policy.asBlockedResult(navigation);
+				}
+			}
+			const authorization = policy.authorizeAction(method, descriptor, session.messages);
+			if (!authorization.allowed) {
+				recordSecurityBlock(authorization, { method });
+				return policy.asBlockedResult(authorization);
+			}
+			const securityMarker = bridge.securityBlocks.length;
 
 			try {
 				target = await resolveTarget(input);
@@ -330,7 +571,20 @@ export function attachBrowserBridge(session, service, runStore) {
 				// Fall through to the real action.
 			}
 
-			const result = await original(surface, input);
+			let result;
+			try {
+				result = await original(surface, input);
+			} catch (error) {
+				const navigationBlock = bridge.securityBlocks.slice(securityMarker).find(entry => entry.topLevel);
+				if (navigationBlock) {
+					return policy.asBlockedResult({
+						allowed: false,
+						code: navigationBlock.code,
+						message: navigationBlock.message
+					});
+				}
+				throw error;
+			}
 
 			try {
 				publishCursor(`${verb}:done`, target, input);
@@ -349,6 +603,14 @@ export function attachBrowserBridge(session, service, runStore) {
 				}
 			} catch {
 				// Ignore.
+			}
+			const navigationBlock = bridge.securityBlocks.slice(securityMarker).find(entry => entry.topLevel);
+			if (navigationBlock) {
+				return policy.asBlockedResult({
+					allowed: false,
+					code: navigationBlock.code,
+					message: navigationBlock.message
+				});
 			}
 			return result;
 		};
@@ -379,17 +641,56 @@ export function attachBrowserBridge(session, service, runStore) {
 				error: `No stored credential matches the placeholder in that text. Ask the user with ask_question first.`
 			};
 		}
+		const descriptor = await resolveActionDescriptor();
+		const authorization = policy.authorizeAction('typeText', descriptor, session.messages);
+		if (!authorization.allowed) {
+			recordSecurityBlock(authorization, { method: 'typeText' });
+			return policy.asBlockedResult(authorization);
+		}
 		return originalType(surface, resolveSecrets(session.id, text));
 	};
 
 	// Navigation is worth showing even though no pointer is involved.
-	for (const method of ['open', 'openInAgentManager', 'navigateBack', 'navigateForward', 'reload']) {
+	for (const method of ['open', 'openInAgentManager', 'navigateBack', 'navigateForward', 'reload', 'newTab']) {
 		const original = service[method]?.bind(service);
 		if (!original) {
 			continue;
 		}
 		service[method] = async (...args) => {
-			const result = await original(...args);
+			const requestedUrl = method === 'newTab' ? args[1]?.url :
+				(method === 'open' || method === 'openInAgentManager' ? args[0] : undefined);
+			if (requestedUrl) {
+				const decision = await policy.evaluateNavigation(requestedUrl);
+				if (!decision.allowed) {
+					recordSecurityBlock(decision, { topLevel: true, method });
+					return policy.asBlockedResult(decision);
+				}
+			}
+			// newTab otherwise creates its context directly, bypassing ensurePage.
+			if (method === 'newTab') await service.ensurePage();
+			const securityMarker = bridge.securityBlocks.length;
+			let result;
+			try {
+				result = await original(...args);
+			} catch (error) {
+				const navigationBlock = bridge.securityBlocks.slice(securityMarker).find(entry => entry.topLevel);
+				if (navigationBlock) {
+					return policy.asBlockedResult({
+						allowed: false,
+						code: navigationBlock.code,
+						message: navigationBlock.message
+					});
+				}
+				throw error;
+			}
+			const navigationBlock = bridge.securityBlocks.slice(securityMarker).find(entry => entry.topLevel);
+			if (navigationBlock) {
+				return policy.asBlockedResult({
+					allowed: false,
+					code: navigationBlock.code,
+					message: navigationBlock.message
+				});
+			}
 			await runStore.commit(session, 'browser', {
 				browser: { url: result?.url, title: result?.title, loading: result?.loading, action: method }
 			});
@@ -398,35 +699,90 @@ export function attachBrowserBridge(session, service, runStore) {
 		};
 	}
 
-	/** Captures one JPEG of the live page and pushes it to whoever is watching. */
-	const captureFrame = async () => {
+	// Make policy-enforced network failures distinguishable from defects in the
+	// target application. Otherwise the agent could report a broken asset when
+	// Qase deliberately blocked that asset from reaching a private address.
+	const originalDiagnostics = service.getDiagnostics?.bind(service);
+	if (originalDiagnostics) {
+		service.getDiagnostics = async (surface, diagnosticOptions = {}) => {
+			const result = await originalDiagnostics(surface, diagnosticOptions);
+			const securityBlocks = bridge.securityBlocks.map(entry => ({ ...entry }));
+			if (diagnosticOptions.clear) bridge.securityBlocks.length = 0;
+			// A live mobile/tablet run gets a bounded DOM-only audit attached so the
+			// agent sees viewport-meta, overflow, and tap-target evidence alongside
+			// console/network. Desktop runs skip the audit entirely.
+			let mobileAudit;
+			if (deviceProfile?.kind && deviceProfile.kind !== 'desktop') {
+				mobileAudit = await runMobileAudit(currentPage());
+			}
+			return { ...result, securityBlocks, ...(mobileAudit ? { mobileAudit } : {}) };
+		};
+	}
+
+	const sameFrame = (left, right) => Boolean(left && right &&
+		left.base64 === right.base64 &&
+		left.mimeType === right.mimeType &&
+		left.url === right.url &&
+		left.title === right.title &&
+		left.loading === right.loading &&
+		left.viewport?.width === right.viewport?.width &&
+		left.viewport?.height === right.viewport?.height);
+
+	/**
+	 * Captures one JPEG of the live page and pushes it to whoever is watching.
+	 *
+	 * Screenshot work may take longer than the frame interval on a busy worker.
+	 * Sharing the in-flight promise prevents the timer from building an
+	 * unbounded screenshot backlog. Identical frames are retained locally but
+	 * not republished, since replaying the same JPEG cannot change the preview.
+	 */
+	const captureFrame = () => {
+		if (bridge.frameCapture) return bridge.frameCapture;
 		const page = currentPage();
-		if (!page || bridge.disposed) {
-			return;
-		}
-		try {
-			const shot = await service.screenshot('ide', { quality: FRAME_QUALITY });
-			bridge.lastFrame = {
-				base64: shot.base64,
-				mimeType: shot.mimeType,
-				url: shot.url,
-				title: shot.title,
-				loading: shot.loading,
-				viewport: viewportOf(page),
-				ts: Date.now()
-			};
-			runStore.publish(session, 'frame', { frame: bridge.lastFrame });
-		} catch {
-			// A screenshot taken across a navigation throws; the next tick recovers.
-		}
+		if (!page || bridge.disposed) return Promise.resolve();
+
+		bridge.frameCapture = (async () => {
+			try {
+				const shot = await service.screenshot('ide', { quality: FRAME_QUALITY });
+				if (bridge.disposed) return;
+				const frame = {
+					base64: shot.base64,
+					mimeType: shot.mimeType,
+					url: shot.url,
+					title: shot.title,
+					loading: shot.loading,
+					viewport: viewportOf(page),
+					ts: Date.now()
+				};
+				if (sameFrame(bridge.lastFrame, frame)) return;
+				bridge.lastFrame = frame;
+				runStore.publish(session, 'frame', { frame });
+			} catch {
+				// A screenshot taken across a navigation throws; the next tick recovers.
+			}
+		})().finally(() => {
+			bridge.frameCapture = undefined;
+		});
+		return bridge.frameCapture;
 	};
 
 	function startFrames() {
 		if (bridge.frameTimer || bridge.disposed) {
 			return;
 		}
+		void captureFrame();
 		bridge.frameTimer = setInterval(() => {
-			void captureFrame();
+			// Once a run pauses or finishes, keep one final frame and then stop
+			// spending browser CPU until it resumes. The timer remains inexpensive
+			// so resuming a run does not require a separate lifecycle signal.
+			const active = !session.status || session.status === 'running';
+			if (active) {
+				bridge.capturedInactiveFrame = false;
+				void captureFrame();
+			} else if (!bridge.capturedInactiveFrame) {
+				bridge.capturedInactiveFrame = true;
+				void captureFrame();
+			}
 		}, FRAME_INTERVAL_MS);
 		bridge.frameTimer.unref?.();
 	}
@@ -434,12 +790,14 @@ export function attachBrowserBridge(session, service, runStore) {
 	function stopFrames() {
 		clearInterval(bridge.frameTimer);
 		bridge.frameTimer = undefined;
+		bridge.capturedInactiveFrame = false;
 	}
 
 	bridge.startFrames = startFrames;
 	bridge.stopFrames = stopFrames;
 	bridge.captureFrame = captureFrame;
 	bridge.getLastFrame = () => bridge.lastFrame;
+	bridge.getSecurityBlocks = () => [...bridge.securityBlocks];
 	bridge.hasPage = () => Boolean(currentPage());
 	bridge.dispose = () => {
 		bridge.disposed = true;

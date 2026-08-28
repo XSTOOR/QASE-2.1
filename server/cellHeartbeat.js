@@ -36,12 +36,19 @@ function endpoint(value, label, pathRequired = false, httpsOnly = false) {
 export function createCellHeartbeatConfig(environment = process.env) {
 	const id = required(environment.QASE_CELL_ID, 'QASE_CELL_ID').toLowerCase();
 	if (!UUID_PATTERN.test(id)) throw new TypeError('QASE_CELL_ID must be a canonical UUID.');
+	const organizationId = required(environment.QASE_BOOTSTRAP_ORGANIZATION_ID, 'QASE_BOOTSTRAP_ORGANIZATION_ID').toLowerCase();
+	const projectId = required(environment.QASE_BOOTSTRAP_PROJECT_ID, 'QASE_BOOTSTRAP_PROJECT_ID').toLowerCase();
+	if (!UUID_PATTERN.test(organizationId)) throw new TypeError('QASE_BOOTSTRAP_ORGANIZATION_ID must be a canonical UUID.');
+	if (!UUID_PATTERN.test(projectId)) throw new TypeError('QASE_BOOTSTRAP_PROJECT_ID must be a canonical UUID.');
+	if (organizationId === projectId) throw new TypeError('Cell organization and project IDs must differ.');
 	const region = required(environment.QASE_CELL_REGION, 'QASE_CELL_REGION').toLowerCase();
 	if (!REGION_PATTERN.test(region)) throw new TypeError('QASE_CELL_REGION must be a DNS-safe slug.');
 	const name = required(environment.QASE_CELL_NAME, 'QASE_CELL_NAME');
 	if (name.length > 120 || /[\u0000-\u001f\u007f]/.test(name)) throw new TypeError('QASE_CELL_NAME is invalid.');
 	return Object.freeze({
 		id,
+		organizationId,
+		projectId,
 		name,
 		region,
 		baseUrl: endpoint(environment.QASE_CELL_PUBLIC_URL, 'QASE_CELL_PUBLIC_URL', false, true),
@@ -142,7 +149,8 @@ export function createCellHeartbeatController(options = {}) {
 					name: config.name,
 					region: config.region,
 					baseUrl: config.baseUrl,
-					status: 'active',
+					organizationId: config.organizationId,
+					projectId: config.projectId,
 					capacityWeight: config.capacityWeight
 				});
 				registered = true;

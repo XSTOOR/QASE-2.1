@@ -35,7 +35,8 @@ test('real control PostgreSQL registers, places, resolves, audits, and disables 
 		repository = createControlPlaneRepository({ pool: scoped, staleAfterSeconds: 90 });
 		await repository.upsertCell({
 			id: CELL, name: 'Integration cell', region: 'eu-west-1',
-			baseUrl: 'https://qase-integration.example.com', capacityWeight: 100
+			baseUrl: 'https://qase-integration.example.com', capacityWeight: 100,
+			organizationId: ORG, projectId: PROJECT
 		}, { requestId: 'fb139801-54e8-4289-ad10-f70c92967967' });
 		const placed = await repository.place({ organizationId: ORG, projectId: PROJECT, preferredRegion: 'eu-west-1' });
 		assert.equal(placed.cell.id, CELL);

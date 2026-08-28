@@ -47,7 +47,9 @@ function hydrateCell(row) {
 		heartbeatAt: new Date(row.heartbeat_at).getTime(),
 		queueDepth: Number(row.observed_queue_depth),
 		oldestQueuedAgeSeconds: Number(row.observed_oldest_queue_age_seconds),
-		version: Number(row.lock_version)
+		version: Number(row.lock_version),
+		organizationId: row.bound_organization_id,
+		projectId: row.bound_project_id
 	} : undefined;
 }
 
@@ -80,12 +82,13 @@ export function createControlPlaneRepository(options = {}) {
 		} finally { client.release(); }
 	}
 
-	async function selectCell(client, cellId, preferredRegion) {
+	async function selectCell(client, cellId, preferredRegion, organizationId, projectId) {
 		if (cellId) {
 			const selected = await client.query(
 				`SELECT * FROM qase_cells WHERE id = $1 AND status = 'active'
+				 AND bound_organization_id = $3 AND bound_project_id = $4
 				 AND heartbeat_at > CURRENT_TIMESTAMP - ($2 * INTERVAL '1 second') FOR UPDATE`,
-				[uuid(cellId, 'cellId'), staleAfterSeconds]
+				[uuid(cellId, 'cellId'), staleAfterSeconds, organizationId, projectId]
 			);
 			return selected.rows[0];
 		}
@@ -96,33 +99,55 @@ export function createControlPlaneRepository(options = {}) {
 			  WHERE p.cell_id = c.id AND p.status = 'active'
 			 ) assigned ON true
 			 WHERE c.status = 'active'
+			 AND c.bound_organization_id = $3 AND c.bound_project_id = $4
 			 AND c.heartbeat_at > CURRENT_TIMESTAMP - ($2 * INTERVAL '1 second')
 			 AND ($1::text IS NULL OR c.region = $1)
 			 ORDER BY ((assigned.placements + c.observed_queue_depth)::numeric / c.capacity_weight),
 			 c.observed_oldest_queue_age_seconds, c.id
 			 FOR UPDATE OF c SKIP LOCKED LIMIT 1`,
-			[region(preferredRegion, true) ?? null, staleAfterSeconds]
+			[region(preferredRegion, true) ?? null, staleAfterSeconds, organizationId, projectId]
 		);
 		return selected.rows[0];
 	}
 
 	return Object.freeze({
 		async upsertCell(input, context = {}) {
+			const statusSpecified = input?.status !== undefined;
 			const values = {
 				id: uuid(input?.id, 'cellId'), name: name(input?.name), region: region(input?.region),
 				baseUrl: baseUrl(input?.baseUrl), status: cellStatus(input?.status),
-				capacityWeight: integer(input?.capacityWeight, 100, 1, 1000, 'capacityWeight')
+				capacityWeight: integer(input?.capacityWeight, 100, 1, 1000, 'capacityWeight'),
+				organizationId: uuid(input?.organizationId, 'organizationId'),
+				projectId: uuid(input?.projectId, 'projectId')
 			};
+			if (values.organizationId === values.projectId) throw new TypeError('organizationId and projectId must differ.');
 			return transaction(async client => {
 				const result = await client.query(
-					`INSERT INTO qase_cells (id, name, region, base_url, status, capacity_weight)
-					 VALUES ($1, $2, $3, $4, $5, $6)
+					`INSERT INTO qase_cells (
+					 id, name, region, base_url, status, capacity_weight,
+					 bound_organization_id, bound_project_id
+					) VALUES ($1, $2, $3, $4, $5, $6, $8, $9)
 					 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, region = EXCLUDED.region,
-					 base_url = EXCLUDED.base_url, status = EXCLUDED.status,
+					 base_url = EXCLUDED.base_url,
+					 status = CASE WHEN $7 THEN EXCLUDED.status ELSE qase_cells.status END,
+					 bound_organization_id = COALESCE(qase_cells.bound_organization_id, EXCLUDED.bound_organization_id),
+					 bound_project_id = COALESCE(qase_cells.bound_project_id, EXCLUDED.bound_project_id),
 					 capacity_weight = EXCLUDED.capacity_weight, lock_version = qase_cells.lock_version + 1,
-					 updated_at = CURRENT_TIMESTAMP RETURNING *`,
-					[values.id, values.name, values.region, values.baseUrl, values.status, values.capacityWeight]
+					 updated_at = CURRENT_TIMESTAMP
+					 WHERE (qase_cells.bound_organization_id IS NULL AND qase_cells.bound_project_id IS NULL)
+						OR (qase_cells.bound_organization_id = EXCLUDED.bound_organization_id
+							AND qase_cells.bound_project_id = EXCLUDED.bound_project_id)
+					 RETURNING *`,
+					[
+						values.id, values.name, values.region, values.baseUrl, values.status,
+						values.capacityWeight, statusSpecified, values.organizationId, values.projectId
+					]
 				);
+				if (!result.rows?.[0]) {
+					const error = new Error('A registered Qase cell cannot be rebound to another organization or project.');
+					error.code = 'QASE_CELL_TENANT_MISMATCH';
+					throw error;
+				}
 				const cell = hydrateCell(result.rows[0]);
 				await audit(client, {
 					eventType: 'cell.upserted', entityKind: 'cell', entityId: values.id,
@@ -152,7 +177,7 @@ export function createControlPlaneRepository(options = {}) {
 			const project = uuid(projectId, 'projectId');
 			if (organization === project) throw new TypeError('organizationId and projectId must differ.');
 			return transaction(async client => {
-				const cell = await selectCell(client, cellId, preferredRegion);
+				const cell = await selectCell(client, cellId, preferredRegion, organization, project);
 				if (!cell) {
 					const error = new Error('No healthy Qase cell is available for this placement.');
 					error.code = 'QASE_NO_HEALTHY_CELL';
@@ -178,6 +203,8 @@ export function createControlPlaneRepository(options = {}) {
 				const result = await client.query(
 					`SELECT c.* FROM qase_project_placements p JOIN qase_cells c ON c.id = p.cell_id
 					 WHERE p.organization_id = $1 AND p.project_id = $2 AND p.status = 'active'
+					 AND c.bound_organization_id = p.organization_id
+					 AND c.bound_project_id = p.project_id
 					 AND c.status = 'active'
 					 AND c.heartbeat_at > CURRENT_TIMESTAMP - ($3 * INTERVAL '1 second')`,
 					[uuid(organizationId, 'organizationId'), uuid(projectId, 'projectId'), staleAfterSeconds]

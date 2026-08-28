@@ -1,11 +1,31 @@
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { createAuthentication, securityHeaders } from './auth.js';
+import { createInstanceAccess, securityHeaders } from './instanceAccess.js';
+import { isDeviceId, DEFAULT_DEVICE_ID, publicDeviceProfile, DEVICE_PROFILES } from './deviceProfiles.js';
 import { assertApplicationServices } from './contracts.js';
 import { mountDemoSite } from './demoSite.js';
 import { createOperationalControls } from './operations.js';
 import { runWithRequestActor } from './requestActor.js';
+import { sanitizeErrorDetail } from './errorSanitizer.js';
+import {
+	FOUNDER_CATEGORIES,
+	FOUNDER_CAVEAT,
+	FOUNDER_LEVELS,
+	FOUNDER_OBSERVATION_TYPES,
+	FOUNDER_SCHEMA_VERSION
+} from './founderSchema.js';
+import {
+	buildFounderReportMarkdown,
+	createFounderReviewTodos,
+	createFounderState,
+	FOUNDER_PUBLIC_ONLY_ANSWER,
+	recordFounderPublicOnlyDecision
+} from './founderService.js';
+import { buildSqaReportMarkdown } from './sqaAssessment.js';
+import { createSqaState, createSqaTodoPlan, publicSqaCatalog, recordReviewerSqaObservation } from './sqaService.js';
+import { renderReportPdf } from './reportPdf.js';
+import { buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const URL_PATTERN = /\bhttps?:\/\/[^\s<>"']+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>"']*)?/i;
@@ -31,6 +51,23 @@ function readinessPayload(result) {
 	return { ready: result.ready === true };
 }
 
+function configuredFrameAncestors(environment) {
+	const raw = String(environment.QASE_DRYTIS_EMBED_ORIGIN ?? '').trim();
+	if (!raw) return Object.freeze([]);
+	let origin;
+	try {
+		const parsed = new URL(raw);
+		if (parsed.protocol !== 'https:' || parsed.username || parsed.password
+			|| parsed.pathname !== '/' || parsed.search || parsed.hash || parsed.hostname.includes('*')) {
+			throw new Error('invalid origin');
+		}
+		origin = parsed.origin;
+	} catch {
+		throw new TypeError('QASE_DRYTIS_EMBED_ORIGIN must be one exact HTTPS origin.');
+	}
+	return Object.freeze([origin]);
+}
+
 /**
  * Creates the HTTP application without listening or installing process signal
  * handlers. Startup stays in index.js; tests can provide in-memory services.
@@ -38,7 +75,9 @@ function readinessPayload(result) {
 export function createApplication(options = {}) {
 	const services = assertApplicationServices(options.services);
 	const environment = options.environment ?? process.env;
-	const authentication = options.authentication ?? createAuthentication();
+	const access = options.access ?? createInstanceAccess({
+		tenantContext: options.tenantContext ?? services.tenantContext
+	});
 	const demoEnabled = environment.NODE_ENV !== 'production'
 		&& (options.demoEnabled ?? String(environment.QASE_ENABLE_DEMO ?? '').toLowerCase() !== 'false');
 	const heartbeatMs = Math.max(1_000, Number(options.sseHeartbeatMs) || 15_000);
@@ -48,10 +87,15 @@ export function createApplication(options = {}) {
 	if (logger !== undefined && typeof logger?.error !== 'function') throw new TypeError('Application logger is invalid.');
 	const isDraining = typeof options.isDraining === 'function' ? options.isDraining : () => false;
 	const activeTurns = new Set();
+	const drytisIntegrationApi = options.drytisIntegrationApi;
+	if (drytisIntegrationApi !== undefined && typeof drytisIntegrationApi?.mount !== 'function') {
+		throw new TypeError('Drytis integration API must provide mount(app).');
+	}
 
 	const app = express();
 	app.disable('x-powered-by');
 	app.locals.qaseDemoEnabled = demoEnabled;
+	app.locals.qaseFrameAncestors = configuredFrameAncestors(environment);
 	if (options.trustProxy ?? String(environment.QASE_TRUST_PROXY ?? '').toLowerCase() === 'true') {
 		app.set('trust proxy', 1);
 	}
@@ -79,6 +123,9 @@ export function createApplication(options = {}) {
 		}
 	});
 	operations.mount(app, { queue: options.executionQueue });
+	// The service-to-service data plane authenticates the exact raw request
+	// bytes. It must be mounted before any JSON middleware can transform them.
+	drytisIntegrationApi?.mount(app);
 
 	app.use(express.json({ limit: '1mb' }));
 	app.use(express.static(publicDirectory));
@@ -86,9 +133,10 @@ export function createApplication(options = {}) {
 		mountDemoSite(app);
 	}
 
-	// Authentication routes stay public; middleware installed after them protects
-	// every application API route, including reports and event streams.
-	authentication.mount(app);
+	// Drytis owns authentication and routes each user to a dedicated Qase
+	// instance. The in-process boundary rejects cross-origin browser API calls
+	// and attributes work to the trusted instance owner.
+	access.mount(app);
 	app.use('/api', (request, _response, next) => runWithRequestActor({
 		...request.auth,
 		requestId: request.qaseRequestId
@@ -112,7 +160,7 @@ export function createApplication(options = {}) {
 			turn = Promise.reject(error);
 		}
 		const tracked = turn.catch(async error => {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = sanitizeErrorDetail(error);
 			try {
 				await services.runs.addMessage(session, { role: 'system', text: message, kind: 'error' });
 				await services.runs.setStatus(session, 'error', message);
@@ -129,6 +177,22 @@ export function createApplication(options = {}) {
 		response.json(services.configuration.getPublic());
 	});
 
+	app.get('/api/sqa/catalog', (_request, response) => {
+		response.set('Cache-Control', 'private, max-age=300');
+		response.json(publicSqaCatalog());
+	});
+
+	app.get('/api/founder/catalog', (_request, response) => {
+		response.set('Cache-Control', 'private, max-age=300');
+		response.json({
+			schemaVersion: FOUNDER_SCHEMA_VERSION,
+			categories: FOUNDER_CATEGORIES,
+			observationTypes: FOUNDER_OBSERVATION_TYPES,
+			confidenceLevels: FOUNDER_LEVELS,
+			caveat: FOUNDER_CAVEAT
+		});
+	});
+
 	app.put('/api/config', async (request, response) => {
 		try {
 			const config = services.configuration.save(request.body ?? {});
@@ -143,12 +207,88 @@ export function createApplication(options = {}) {
 		response.json(await services.configuration.testConnection(request.body ?? {}));
 	});
 
-	app.get('/api/sessions', async (_request, response) => {
-		response.json(await services.runs.list());
+	app.get('/api/devices', (_request, response) => {
+		response.json({
+			default: DEFAULT_DEVICE_ID,
+			devices: DEVICE_PROFILES.map(profile => publicDeviceProfile(profile.id))
+		});
 	});
 
-	app.post('/api/sessions', async (_request, response) => {
-		response.status(201).json(await services.runs.create());
+	app.get('/api/sessions', async (request, response) => {
+		const limit = request.query.limit === undefined ? 100 : Number(request.query.limit);
+		if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+			response.status(400).json({ error: 'limit must be an integer from 1 through 100.' });
+			return;
+		}
+		response.json(await services.runs.list({ limit }));
+	});
+
+	app.post('/api/sessions', async (request, response) => {
+		const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
+		const deviceLandscape = request.body?.deviceLandscape === true;
+		const session = await services.runs.create(undefined, { device, deviceLandscape });
+		response.status(201).json(session);
+	});
+
+	app.post('/api/sqa/sessions', async (request, response) => {
+		let session;
+		try {
+			const sqa = createSqaState(request.body ?? {});
+			const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
+			const deviceLandscape = request.body?.deviceLandscape === true;
+			session = await services.runs.create(`SQA — ${sqa.scope.target.name}`, { device, deviceLandscape });
+			session.mode = 'sqa';
+			session.sqa = sqa;
+			session.todos = createSqaTodoPlan(sqa);
+			session.device = device;
+			session.deviceLandscape = deviceLandscape;
+			// Persist the host-owned assessment plan before the metadata-only SQA
+			// creation event so PostgreSQL and local mode expose identical progress.
+			await services.runs.commit(session, 'todos', { todos: session.todos });
+			await services.runs.commit(session, 'sqa.created', {
+				catalogVersion: sqa.scope.catalogVersion,
+				profiles: sqa.scope.profiles,
+				attributes: sqa.scope.attributes
+			});
+			response.status(201).json(session);
+		} catch (error) {
+			if (session) await services.runs.delete(session.id).catch(() => undefined);
+			response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+		}
+	});
+
+	app.post('/api/founder/sessions', async (request, response) => {
+		let session;
+		try {
+			// Tenant and actor identity always come from trusted per-instance
+			// context. Only the explicit Founder review scope crosses this boundary.
+			const founder = createFounderState({
+				authorizationConfirmed: request.body?.authorizationConfirmed,
+				target: request.body?.target,
+				productContext: request.body?.productContext
+			});
+			const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
+			const deviceLandscape = request.body?.deviceLandscape === true;
+			session = await services.runs.create(`Founder — ${founder.scope.target.name}`, { device, deviceLandscape });
+			session.mode = 'founder';
+			session.founder = founder;
+			session.todos = createFounderReviewTodos();
+			session.device = device;
+			session.deviceLandscape = deviceLandscape;
+			// `founder.created` intentionally skips relational child rewrites in the
+			// PostgreSQL repository. Persist the host-owned plan explicitly first so
+			// progress is visible before the model's first update_todo call.
+			await services.runs.commit(session, 'todos', { todos: session.todos });
+			await services.runs.commit(session, 'founder.created', {
+				schemaVersion: founder.schemaVersion,
+				categories: founder.scope.categories,
+				authorizedTargetUrl: founder.scope.target.url
+			});
+			response.status(201).json(session);
+		} catch (error) {
+			if (session) await services.runs.delete(session.id).catch(() => undefined);
+			response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+		}
 	});
 
 	app.get('/api/sessions/:id', async (request, response) => {
@@ -161,6 +301,30 @@ export function createApplication(options = {}) {
 			running: liveState.running,
 			frame: liveState.frame
 		});
+	});
+
+	app.post('/api/sessions/:id/sqa/observations', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		if (session.mode !== 'sqa') {
+			response.status(409).json({ error: 'This run is not an SQA assessment.' });
+			return;
+		}
+		if (request.auth?.role && !['owner', 'admin'].includes(request.auth.role)) {
+			response.status(403).json({ error: 'SQA evidence review requires an owner or administrator.' });
+			return;
+		}
+		try {
+			const result = await recordReviewerSqaObservation(
+				session,
+				request.body ?? {},
+				request.auth ?? {},
+				services.runs
+			);
+			response.json({ result, assessment: session.sqa.assessment });
+		} catch (error) {
+			response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+		}
 	});
 
 	app.delete('/api/sessions/:id', async (request, response) => {
@@ -218,18 +382,41 @@ export function createApplication(options = {}) {
 			return;
 		}
 
-		await services.runs.addMessage(session, { role: 'user', text });
 		const url = extractUrl(text);
+		if (session.mode === 'founder' && !session.targetUrl && !url) {
+			response.status(400).json({ error: 'Founder Mode needs a target URL before the review can start.' });
+			return;
+		}
+		if (session.mode === 'founder' && !session.targetUrl && url && session.founder?.scope?.target?.url) {
+			const authorizedTargetUrl = new URL(session.founder.scope.target.url).toString();
+			if (url !== authorizedTargetUrl) {
+				response.status(400).json({ error: 'The requested URL does not match the authorized Founder Mode target.' });
+				return;
+			}
+		}
+		await services.runs.addMessage(session, { role: 'user', text });
 		if (url && !session.targetUrl) {
 			session.targetUrl = url;
 			session.title = new URL(url).host;
-			await services.runs.commit(session, 'session', { targetUrl: url, title: session.title });
+			if (session.mode === 'founder' && session.founder?.scope?.target) {
+				session.founder.scope.target.url = url;
+				session.founder.updatedAt = new Date().toISOString();
+			}
+			await services.runs.commit(
+				session,
+				session.mode === 'founder' ? 'founder.target_bound' : 'session',
+				{
+					targetUrl: url,
+					title: session.title,
+					...(session.mode === 'founder' ? { authorizedTargetUrl: url } : {})
+				}
+			);
 		}
 
 		try {
 			services.agent.ensureRuntime(session);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = sanitizeErrorDetail(error);
 			await services.runs.addMessage(session, { role: 'system', text: message, kind: 'error' });
 			await services.runs.setStatus(session, 'error', message);
 			response.status(500).json({ error: message });
@@ -248,10 +435,14 @@ export function createApplication(options = {}) {
 			response.status(409).json({ error: 'Nothing is waiting on an answer.' });
 			return;
 		}
-		const answer = String(request.body?.answer ?? '').trim();
+		let answer = String(request.body?.answer ?? '').trim();
 		if (!answer) {
 			response.status(400).json({ error: 'Answer is empty.' });
 			return;
+		}
+		if (session.mode === 'founder' && session.pendingQuestion.credentialLike === true) {
+			recordFounderPublicOnlyDecision(session);
+			answer = FOUNDER_PUBLIC_ONLY_ANSWER;
 		}
 		await services.runs.addMessage(session, { role: 'user', text: answer, kind: 'answer' });
 		startTurn(session, { resumeAnswer: answer });
@@ -310,7 +501,54 @@ export function createApplication(options = {}) {
 	app.get('/api/sessions/:id/report.md', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
-		response.type('text/markdown').send(services.reports.buildMarkdown(session));
+		if (session.mode === 'sqa' && (!session.sqa?.assessment || !session.sqa?.finalizedAt)) {
+			response.status(409).json({ error: 'The SQA assessment is pending and has not been finalized yet.' });
+			return;
+		}
+		if (session.mode === 'founder' && (!session.founder?.report || !session.founder?.finalizedAt)) {
+			response.status(409).json({ error: 'The Founder review is pending and has not been finalized yet.' });
+			return;
+		}
+		const markdown = session.mode === 'sqa'
+			? buildSqaReportMarkdown(session.sqa.assessment)
+			: session.mode === 'founder'
+				? buildFounderReportMarkdown(session)
+				: services.reports.buildMarkdown(session);
+		response.type('text/markdown').send(markdown);
+	});
+
+	app.get('/api/sessions/:id/fix-prompts.md', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		const findings = Array.isArray(session.findings) ? session.findings : [];
+		if (findings.length === 0) {
+			response.status(409).json({ error: 'This run has no findings to build fix prompts from.' });
+			return;
+		}
+		const markdown = buildAllFixPromptsMarkdown(session);
+		response.type('text/markdown').send(markdown);
+	});
+
+	app.get('/api/sessions/:id/report.pdf', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		if (session.mode === 'sqa' && (!session.sqa?.assessment || !session.sqa?.finalizedAt)) {
+			response.status(409).json({ error: 'The SQA assessment is pending and has not been finalized yet.' });
+			return;
+		}
+		if (session.mode === 'founder' && (!session.founder?.report || !session.founder?.finalizedAt)) {
+			response.status(409).json({ error: 'The Founder review is pending and has not been finalized yet.' });
+			return;
+		}
+		try {
+			const pdf = await renderReportPdf(session);
+			response.setHeader('Content-Type', 'application/pdf');
+			response.setHeader('Content-Disposition', 'attachment; filename="qase-' + (session.mode || 'qa') + '-report.pdf"');
+			response.send(pdf);
+		} catch (error) {
+			const status = error?.code === 'QASE_PDF_BROWSER_UNAVAILABLE' ? 503 : 500;
+			response.status(status).json({ error: error?.message ?? 'PDF rendering failed.' });
+		}
 	});
 
 	app.get('/api/sessions/:id/events', async (request, response) => {
@@ -326,7 +564,16 @@ export function createApplication(options = {}) {
 		response.write(': connected\n\n');
 
 		const send = event => response.write(`data: ${JSON.stringify(event)}\n\n`);
-		const unsubscribe = services.events.subscribe(session.id, send);
+		let unsubscribe;
+		try {
+			// Distributed transports subscribe to a session-scoped frame channel.
+			// Awaiting it closes the race where the first live frame could be sent
+			// before this API replica had joined that channel.
+			unsubscribe = await services.events.subscribe(session.id, send);
+		} catch {
+			response.end();
+			return;
+		}
 
 		const frame = services.agent.getLiveState(session.id).frame;
 		if (frame) {
@@ -334,30 +581,19 @@ export function createApplication(options = {}) {
 		}
 
 		let closed = false;
-		let checkingSession = false;
 		const cleanup = () => {
 			if (closed) return;
 			closed = true;
 			clearInterval(heartbeat);
 			unsubscribe();
 		};
-		const heartbeat = setInterval(async () => {
-			if (checkingSession) return;
-			checkingSession = true;
+		const heartbeat = setInterval(() => {
+			if (closed) return;
 			try {
-				if (!await authentication.isSessionActive(
-					request.auth?.sessionReference ?? request.auth?.sessionId
-				)) {
-					cleanup();
-					response.end();
-					return;
-				}
 				response.write(': ping\n\n');
 			} catch {
 				cleanup();
 				response.end();
-			} finally {
-				checkingSession = false;
 			}
 		}, heartbeatMs);
 		request.on('close', cleanup);
@@ -396,7 +632,7 @@ export function createApplication(options = {}) {
 
 	return {
 		app,
-		authentication,
+		access,
 		demoEnabled,
 		services,
 		operations,

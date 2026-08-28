@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import express from 'express';
-import { securityHeaders } from '../auth.js';
+import { securityHeaders } from '../instanceAccess.js';
 import { createOperationalControls } from '../operations.js';
 
 function requiredToken(value, label) {
@@ -122,6 +122,7 @@ export function createControlPlaneApplication(options = {}) {
 		if (error instanceof SyntaxError && error?.status === 400) return response.status(400).json({ error: 'Request body is not valid JSON.' });
 		if (error instanceof TypeError) return response.status(400).json({ error: error.message });
 		if (error?.code === 'QASE_NO_HEALTHY_CELL') return response.status(503).json({ error: error.message });
+		if (error?.code === 'QASE_CELL_TENANT_MISMATCH') return response.status(409).json({ error: error.message });
 		if (logger) logger.error('http.request.failed', {
 			requestId: request.qaseRequestId,
 			errorName: error?.name ?? 'Error'

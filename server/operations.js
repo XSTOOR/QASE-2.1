@@ -52,7 +52,7 @@ export function createOperationalControls(options = {}) {
 		options.mutationLimit ?? environment.QASE_MUTATION_MAX_IN_FLIGHT,
 		64, 1, 10_000, 'QASE_MUTATION_MAX_IN_FLIGHT'
 	);
-	const mutationPrefixes = options.mutationPrefixes ?? ['/api/'];
+	const mutationPrefixes = options.mutationPrefixes ?? ['/api/', '/internal/v1/drytis/'];
 	if (!Array.isArray(mutationPrefixes) || mutationPrefixes.length === 0
 		|| mutationPrefixes.some(prefix => typeof prefix !== 'string' || !prefix.startsWith('/') || !prefix.endsWith('/'))) {
 		throw new TypeError('mutationPrefixes must contain absolute path prefixes ending in /.');
