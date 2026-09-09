@@ -19,7 +19,7 @@ function repository() {
 	};
 }
 async function fixture(overrides = {}) {
-	const created = createControlPlaneApplication({ repository: overrides.repository ?? repository(), readToken: READ, writeToken: WRITE, environment: {} });
+	const created = createControlPlaneApplication({ repository: overrides.repository ?? repository(), readToken: READ, writeToken: WRITE, environment: {}, isDraining: overrides.isDraining });
 	const server = await new Promise(resolve => {
 		const candidate = created.app.listen(0, '127.0.0.1', () => resolve(candidate));
 	});
@@ -38,6 +38,17 @@ test('control API keeps probes public and routing metadata bearer protected', as
 	assert.equal((await fetch(`${target.origin}${path}`)).status, 401);
 	const resolved = await fetch(`${target.origin}${path}`, { headers: { authorization: `Bearer ${READ}` } });
 	assert.deepEqual(await resolved.json(), { cellId: CELL, baseUrl: 'https://qase-eu.example.com', region: 'eu-west-1' });
+});
+
+test('control API fails readiness while draining without requiring a database call', async t => {
+	const database = repository();
+	database.check = () => { throw new Error('draining must not query the database'); };
+	const target = await fixture({ repository: database, isDraining: () => true });
+	t.after(target.close);
+	assert.equal((await fetch(`${target.origin}/healthz`)).status, 200);
+	const readiness = await fetch(`${target.origin}/readyz`);
+	assert.equal(readiness.status, 503);
+	assert.deepEqual(await readiness.json(), { status: 'not_ready' });
 });
 
 test('read credential cannot mutate while write credential can register and place', async t => {

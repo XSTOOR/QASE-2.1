@@ -128,7 +128,7 @@ test('browser bridge installs a context-wide route that blocks private subresour
 	const bridge = attachBrowserBridge(session, service, runStore, { policy });
 	await service.ensurePage();
 	assert.equal(typeof context.routeHandler, 'function');
-	assert.equal(context.initScripts.length, 1);
+	assert.equal(context.initScripts.length, 2);
 
 	let aborted;
 	let continued = false;

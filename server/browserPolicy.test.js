@@ -4,6 +4,7 @@ import {
 	BROWSER_POLICY_CODES,
 	classifyDestructiveAction,
 	createBrowserPolicy,
+	isRecognizedMeetingUrl,
 	isPrivateOrReservedAddress
 } from './browserPolicy.js';
 
@@ -188,4 +189,34 @@ test('an explicit refusal never authorizes the destructive action', () => {
 	assert.equal(decision.allowed, false);
 	assert.equal(decision.code, BROWSER_POLICY_CODES.CONFIRMATION_DECLINED);
 	assert.equal(decision.requiresConfirmation, false);
+});
+
+test('observed meeting exceptions are exact paths and preserve DNS and scheme boundaries', async () => {
+	const policy = productionPolicy();
+	const source = 'https://app.example.test/events';
+	const meeting = 'https://meet.google.com/abc-defg-hij?authuser=0';
+	assert.equal((await policy.evaluateNavigation(meeting)).allowed, false);
+	assert.equal((await policy.allowObservedMeetingLink(meeting, source)).allowed, true);
+	assert.equal((await policy.evaluateNavigation(meeting)).allowed, true);
+	assert.equal((await policy.evaluateNavigation('https://meet.google.com/aaa-bbbb-ccc')).allowed, false);
+	assert.equal((await policy.evaluateNavigation('https://meet.google.com/')).allowed, false);
+	assert.equal((await policy.allowObservedMeetingLink('https://meet.google.com.evil.test/abc-defg-hij', source)).allowed, false);
+	assert.equal((await policy.allowObservedMeetingLink('http://meet.google.com/abc-defg-hij', source)).allowed, false);
+	assert.equal((await policy.allowObservedMeetingLink('https://meet.google.com/aaa-bbbb-ccc', 'https://untrusted.test/')).allowed, false);
+	const privateDns = productionPolicy({ resolveHost: async host => [{ address: host === 'meet.google.com' ? '127.0.0.1' : '93.184.216.34' }] });
+	assert.equal((await privateDns.allowObservedMeetingLink(meeting, source)).code, BROWSER_POLICY_CODES.PRIVATE_NETWORK);
+	assert.equal(isRecognizedMeetingUrl('https://us02web.zoom.us/j/123456789'), true);
+	assert.equal(isRecognizedMeetingUrl('https://teams.microsoft.com/l/meetup-join/meeting-id/0?context=abc'), true);
+	assert.equal(isRecognizedMeetingUrl('https://tenant.webex.com/meet/test'), true);
+});
+
+test('meeting participation and recording require explicit confirmation', () => {
+	for (const text of ['Join', 'Ask to join', 'Request to join', 'Join the meeting', 'Join meeting', 'Join now', 'Start call', 'Record meeting']) {
+		assert.equal(classifyDestructiveAction('click', { text })?.category, 'meeting-participation', text);
+	}
+	for (const text of ['Start microphone', 'Start recording', 'Mute microphone', 'Unmute microphone', 'Stop microphone']) {
+		assert.equal(classifyDestructiveAction('click', { text }), undefined, 'Synthetic local audio controls remain testable');
+	}
+	assert.equal(classifyDestructiveAction('click', { text: 'Enable microphone' }), undefined);
+	assert.equal(classifyDestructiveAction('click', { text: 'Mute microphone' }), undefined);
 });

@@ -8,6 +8,7 @@ import { createRedisEventTransport } from './redisEvents.js';
 import { createPostgresExecutionQueue } from './postgres/executionQueue.js';
 import { createDistributedApiAgent } from './distributedExecution.js';
 import { createDistributedSecrets } from './distributedSecrets.js';
+import { createLocalAuthService, createPostgresAuthService } from './auth.js';
 
 export const RUN_STORE_MODES = Object.freeze(['local', 'postgres']);
 export const EXECUTION_MODES = Object.freeze(['local', 'distributed']);
@@ -53,6 +54,8 @@ export function recoverPostgresRunsOnStartup(environment = process.env) {
 /**
  * Selects exactly one authoritative run store. PostgreSQL failures are fatal;
  * silently falling back to local JSON would create split-brain run histories.
+ * The selected store also receives the matching account/profile adapter so
+ * authentication and run ownership cannot diverge between environments.
  */
 export async function createConfiguredApplicationServices(options = {}) {
 	const environment = options.environment ?? process.env;
@@ -64,8 +67,9 @@ export async function createConfiguredApplicationServices(options = {}) {
 
 	if (mode === 'local') {
 		if (executionMode === 'distributed') throw new Error('Distributed execution requires QASE_RUN_STORE=postgres.');
-		const services = (options.createLocalServices ?? createLocalApplicationServices)();
+		const services = (options.createLocalServices ?? createLocalApplicationServices)({ tenantContext });
 		services.tenantContext = tenantContext;
+		await services.auth?.load?.();
 		await services.runs.load();
 		return { mode, executionMode, services, tenantContext, pool: undefined };
 	}
@@ -86,6 +90,10 @@ export async function createConfiguredApplicationServices(options = {}) {
 				? Number(environment.QASE_RUN_RETENTION_DAYS)
 				: undefined
 		});
+		const auth = options.createAuthService
+			? options.createAuthService({ pool, tenantContext })
+			: typeof pool.connect === 'function' ? createPostgresAuthService({ pool, tenantContext }) : undefined;
+		if (auth) await auth.load?.();
 		if (executionMode === 'distributed') {
 			eventTransport = (options.createEventTransport ?? createRedisEventTransport)({
 				environment, tenantContext
@@ -97,7 +105,8 @@ export async function createConfiguredApplicationServices(options = {}) {
 		services = (options.createPostgresServices ?? createPostgresApplicationServices)({
 			repository,
 			tenantContext,
-			eventTransport,
+			 eventTransport,
+			auth,
 			hydrateAll: executionMode !== 'distributed',
 			recoverActiveRuns: executionMode === 'distributed' ? false : recoverPostgresRunsOnStartup(environment)
 		});

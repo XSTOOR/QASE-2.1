@@ -14,6 +14,7 @@ import {
 	recordFounderObservations
 } from './founderService.js';
 import { clearSecrets, storeSecrets } from './secrets.js';
+import { createFounderTools } from './founderTools.js';
 
 const fixedNow = () => Date.parse('2026-08-18T00:00:00.000Z');
 
@@ -88,6 +89,53 @@ test('Founder state requires authorization and exposes the complete bounded taxo
 	assert.ok(todos.every(item => item.status === 'pending'));
 	assert.match(todos[0].text, /evidence baseline/i);
 	assert.match(todos.at(-1).text, /publish the Founder report/i);
+});
+
+test('Founder complete tool workflow records all lenses, finalizes strategy, and exports a traceable report', async () => {
+	const candidate = founderSession();
+	candidate.todos = createFounderReviewTodos().map(todo => ({ ...todo, status: 'completed' }));
+	const persistence = runStore();
+	const tools = createFounderTools(candidate, persistence);
+	const record = tools.find(tool => tool.name === 'record_founder_observation');
+	const finish = tools.find(tool => tool.name === 'finish_founder_review');
+	const recorded = await record.run({ observations: FOUNDER_CATEGORY_IDS.map(category => ({
+		category, type: 'opportunity', title: `Observed ${category} opportunity`,
+		summary: `Deterministic fixture browser observations support a bounded review of ${category}.`,
+		confidence: 'medium', evidence_activity_ids: candidate.activities.map(activity => activity.id)
+	})) });
+	assert.equal(recorded.success, true, recorded.error);
+	assert.equal(recorded.recorded_count, FOUNDER_CATEGORY_IDS.length);
+	const result = await finish.run(reportInput(candidate));
+	assert.equal(result.success, true, result.error);
+	assert.ok(candidate.founder.finalizedAt);
+	assert.equal(candidate.founder.report.coverage.categoriesReviewed.length, FOUNDER_CATEGORY_IDS.length);
+	const markdown = buildFounderReportMarkdown(candidate);
+	assert.match(markdown, /30 \/ 60 \/ 90-day plan/);
+	assert.match(markdown, /Metrics & experiments/);
+	for (const recommendation of candidate.founder.report.recommendations) {
+		for (const id of recommendation.evidenceObservationIds) {
+			assert.ok(candidate.founder.observations.some(observation => observation.id === id));
+			assert.ok(markdown.includes(id));
+		}
+	}
+	const count = persistence.commits.length;
+	assert.equal((await finish.run(reportInput(candidate))).already_finalized, true);
+	assert.equal(persistence.commits.length, count);
+	assert.equal((await record.run({ category: 'activation', type: 'opportunity', title: 'Late change', summary: 'Must stay immutable.', confidence: 'low' })).success, false);
+});
+
+test('Founder finalization storage failure preserves observations and permits a durable retry', async () => {
+	const candidate = founderSession();
+	populateObservations(candidate);
+	const previous = structuredClone(candidate.founder);
+	await assert.rejects(finishFounderReview(candidate, reportInput(candidate), {
+		async commit() { throw new Error('persistence unavailable'); }
+	}, fixedNow), /persistence unavailable/);
+	assert.deepEqual(candidate.founder, previous);
+	const persistence = runStore();
+	await finishFounderReview(candidate, reportInput(candidate), persistence, fixedNow);
+	assert.ok(candidate.founder.finalizedAt);
+	assert.equal(persistence.commits.length, 1);
 });
 
 test('Founder public-only access decisions are durable, bounded, and idempotent', () => {

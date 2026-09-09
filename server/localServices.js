@@ -7,15 +7,18 @@ import {
 	dropLive, flushSessions, listSessions, liveEntries, liveFor, loadSessions, peekLive, setStatus, updateActivity
 } from './store.js';
 import { purgeRunWorkspace } from './workspaceLifecycle.js';
+import { createLocalAuthService } from './auth.js';
+import { currentRequestActor } from './requestActor.js';
 
 /**
-	* Builds the non-persistence services around a run store. Both the rollback
-	* file adapter and PostgreSQL adapter use this composition so the agent cannot
-	* accidentally bypass the selected durable store.
+ * Builds the non-persistence services around a run store. Both the rollback
+ * file adapter and PostgreSQL adapter use this composition so the agent cannot
+ * accidentally bypass the selected durable store. Authentication is injected
+ * as a peer service so account data never enters the run aggregate.
  */
 export function createRuntimeApplicationServices(runStore, options = {}) {
 	const purgeWorkspace = options.purgeRunWorkspace ?? purgeRunWorkspace;
-	return {
+	const services = {
 		runs: runStore,
 		events: {
 			publish: runStore.publish,
@@ -90,15 +93,27 @@ export function createRuntimeApplicationServices(runStore, options = {}) {
 			}
 		},
 		readiness: {
-			check: () => runStore.check()
+			async check() {
+				const runs = await runStore.check();
+				if (!options.auth?.check) return runs;
+				const auth = await options.auth.check();
+				return {
+					...runs,
+					ready: runs?.ready === true && auth?.ready === true,
+					checks: { ...(runs?.checks ?? {}), auth: auth?.ready === true ? 'ready' : 'error' }
+				};
+			}
 		},
 		lifecycle: {
 			close: async () => {
 				await runStore.close?.();
+				await options.auth?.close?.();
 				await options.close?.();
 			}
 		}
 	};
+	if (options.auth) services.auth = options.auth;
+	return services;
 }
 
 /**
@@ -106,9 +121,10 @@ export function createRuntimeApplicationServices(runStore, options = {}) {
  * run contract. Methods remain behavior-compatible, but callers now await them
  * just as they will await PostgreSQL transactions.
  */
-export function createLocalApplicationServices() {
+export function createLocalApplicationServices(options = {}) {
 	let initialized = false;
 	let closed = false;
+	const ownerUserId = () => currentRequestActor()?.actorUserId ?? options.tenantContext?.actorUserId;
 
 	const runStore = {
 		async load() {
@@ -116,20 +132,20 @@ export function createLocalApplicationServices() {
 			initialized = true;
 		},
 		async create(title, options = {}) {
-			const session = createSession(title, options);
+			const session = createSession(title, { ...options, ownerUserId: options.ownerUserId ?? ownerUserId() });
 			if (options.eventType) {
 				emit(session, options.eventType, options.eventPayload ?? {});
 			}
 			return session;
 		},
 		async get(id) {
-			return getSession(id);
+			return getSession(id, ownerUserId());
 		},
 		async list(options) {
-			return listSessions(options);
+			return listSessions({ ...options, ownerUserId: ownerUserId() });
 		},
 		async delete(id) {
-			return deleteSession(id);
+			return deleteSession(id, ownerUserId());
 		},
 		async commit(session, type, payload = {}) {
 			emit(session, type, payload);
@@ -168,5 +184,9 @@ export function createLocalApplicationServices() {
 		}
 	};
 
-	return createRuntimeApplicationServices(runStore);
+	const auth = createLocalAuthService({
+		tenantContext: options.tenantContext,
+		file: options.authFile
+	});
+	return createRuntimeApplicationServices(runStore, { auth });
 }

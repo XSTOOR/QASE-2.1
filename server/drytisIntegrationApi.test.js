@@ -202,6 +202,36 @@ async function nextTurn() {
 	await new Promise(resolve => setImmediate(resolve));
 }
 
+for (const requestedChecks of [{ blackBox: true, whiteBox: false }, { blackBox: false, whiteBox: true }, { blackBox: true, whiteBox: true }]) {
+	test(`Drytis create-to-result workflow: blackBox=${requestedChecks.blackBox}, whiteBox=${requestedChecks.whiteBox}`, async t => {
+		const target = await fixture();
+		t.after(target.close);
+		const payload = reviewPayload({
+			requestedChecks,
+			...(requestedChecks.whiteBox ? {} : { sourceSnapshot: undefined }),
+			...(requestedChecks.blackBox ? {} : { previewUrl: undefined })
+		});
+		const created = await signedRequest(target, `${DRYTIS_INTEGRATION_BASE_PATH}/reviews`, { method: 'POST', json: payload });
+		assert.equal(created.status, 201, JSON.stringify(await created.clone().json()));
+		await created.json();
+		await nextTurn();
+		const response = await signedRequest(target, `${DRYTIS_INTEGRATION_BASE_PATH}/reviews/${REVIEW_ID}`);
+		assert.equal(response.status, 200);
+		const result = await response.json();
+		assert.equal(result.status, 'completed');
+		assert.equal(result.checks.blackBox.requested, requestedChecks.blackBox);
+		assert.equal(result.checks.blackBox.status, requestedChecks.blackBox ? 'completed' : 'not_requested');
+		assert.equal(result.checks.whiteBox.requested, requestedChecks.whiteBox);
+		assert.equal(result.checks.whiteBox.status, requestedChecks.whiteBox ? 'completed' : 'not_requested');
+		assert.equal(target.calls.turns.length, Number(requestedChecks.blackBox));
+		assert.equal(target.calls.ensures.length, Number(requestedChecks.blackBox));
+		assert.equal(result.repairTasks.some(task => task.type === 'white_box'), requestedChecks.whiteBox);
+		assert.equal(result.repairTasks.some(task => task.type === 'black_box'), requestedChecks.blackBox);
+		assert.equal(JSON.stringify(target.sessions.get(REVIEW_ID)).includes('source-content-marker-must-not-be-retained'), false);
+		assert.equal(JSON.stringify(result).includes('source-content-marker-must-not-be-retained'), false);
+	});
+}
+
 test('all integration endpoints require a signature and capabilities declare the source-retention boundary', async t => {
 	const target = await fixture();
 	t.after(target.close);

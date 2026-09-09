@@ -407,13 +407,21 @@ export async function finishSqaAssessment(session, runStore, now = () => Date.no
 		if (session.sqa.assessment) return session.sqa.assessment;
 		throw new TypeError('This SQA assessment is finalized and cannot be recalculated without an authorized reopen.');
 	}
-	const normalized = normalizePendingSqaState(session.sqa);
-	if (normalized !== session.sqa) session.sqa = normalized;
+	const previous = session.sqa;
+	const normalized = normalizePendingSqaState(previous);
 	const assessedAt = new Date(now()).toISOString();
-	session.sqa.updatedAt = assessedAt;
-	session.sqa.finalizedAt = assessedAt;
-	session.sqa.assessment = evaluateSqaAssessment(assessmentInput(session.sqa, assessedAt));
-	await runStore.commit(session, 'sqa', { assessment: session.sqa.assessment, final: true });
+	session.sqa = {
+		...normalized,
+		updatedAt: assessedAt,
+		finalizedAt: assessedAt,
+		assessment: evaluateSqaAssessment(assessmentInput(normalized, assessedAt))
+	};
+	try {
+		await runStore.commit(session, 'sqa', { assessment: session.sqa.assessment, final: true });
+	} catch (error) {
+		session.sqa = previous;
+		throw error;
+	}
 	return session.sqa.assessment;
 }
 

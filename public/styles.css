@@ -2183,6 +2183,37 @@ a {
   pointer-events: none;
 }
 
+/* First-party account gate */
+.auth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(3, 7, 12, .92);
+  backdrop-filter: blur(16px);
+}
+.auth-gate[hidden] { display: none; }
+.auth-card {
+  width: min(100%, 430px);
+  padding: 30px;
+  border: 1px solid rgba(103, 232, 166, .28);
+  border-radius: 8px;
+  background: #091118;
+  box-shadow: 0 24px 90px rgba(0, 0, 0, .5);
+}
+.auth-eyebrow { margin: 0 0 10px; color: #67e8a6; font: 11px var(--font-mono); letter-spacing: .14em; }
+.auth-card h1 { margin: 0; color: #eaf3f5; font-size: 25px; }
+.auth-copy { margin: 10px 0 22px; color: #8ca2ab; line-height: 1.5; }
+.auth-card label { display: block; margin: 14px 0 6px; color: #a9c0c8; font: 12px var(--font-mono); }
+.auth-card input { width: 100%; box-sizing: border-box; padding: 11px 12px; border: 1px solid #263c47; border-radius: 4px; color: #eaf3f5; background: #050b10; font: 14px var(--font-mono); }
+.auth-card input:focus { outline: 2px solid #67e8a6; outline-offset: 1px; }
+.auth-submit { width: 100%; margin-top: 22px; }
+.auth-switch { width: 100%; margin-top: 14px; padding: 8px; border: 0; color: #8ed9b1; background: transparent; font: 12px var(--font-mono); cursor: pointer; }
+.auth-switch:hover { color: #c4f7d7; }
+.auth-error { margin: 14px 0 0; color: #ff9494; font: 12px var(--font-mono); }
+
 .toast {
   position: relative;
   padding: 12px 14px 12px 38px;
@@ -6940,7 +6971,7 @@ body.cli-theme {
 
 .cli-theme .panel-foot {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   gap: 5px;
   padding-right: 7px;
   padding-left: 10px;
@@ -6948,7 +6979,7 @@ body.cli-theme {
 
 .cli-theme .panel-foot .foot-btn {
   margin-left: 0;
-  grid-column: 3;
+  grid-column: auto;
 }
 
 .cli-theme .panel-foot .btn {
@@ -7052,7 +7083,7 @@ body.cli-theme {
   }
 
   .cli-theme .panel-foot {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
   }
 }
 

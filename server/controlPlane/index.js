@@ -5,6 +5,7 @@ import { createControlPlaneRepository } from './repository.js';
 import { createOperationalControls } from '../operations.js';
 import { createOperationalLogger } from '../operationalLogger.js';
 import { createPostgresPool } from '../postgres/pool.js';
+import { drainHttpServer, installShutdownHandlers } from '../processLifecycle.js';
 
 const environment = process.env;
 const logger = createOperationalLogger({ component: 'qase-control', environment });
@@ -24,6 +25,7 @@ const pool = createPostgresPool({
 });
 let repository;
 let server;
+let closing = false;
 try {
 	const migrate = String(environment.QASE_CONTROL_DATABASE_MIGRATE_ON_START
 		?? (environment.NODE_ENV === 'production' ? 'false' : 'true')).toLowerCase() === 'true';
@@ -33,7 +35,7 @@ try {
 		staleAfterSeconds: environment.QASE_CONTROL_CELL_STALE_SECONDS
 			? Number(environment.QASE_CONTROL_CELL_STALE_SECONDS) : undefined
 	});
-	const { app } = createControlPlaneApplication({ repository, environment, operations, logger });
+	const { app } = createControlPlaneApplication({ repository, environment, operations, logger, isDraining: () => closing });
 	const host = String(environment.QASE_CONTROL_HOST ?? '127.0.0.1').trim() || '127.0.0.1';
 	const port = Number(environment.QASE_CONTROL_PORT ?? 5180);
 	if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new TypeError('QASE_CONTROL_PORT is invalid.');
@@ -51,14 +53,11 @@ try {
 	throw error;
 }
 
-let closing = false;
-for (const signal of ['SIGINT', 'SIGTERM']) {
-	process.on(signal, async () => {
-		if (closing) return;
+installShutdownHandlers({
+	logger, timeoutMs: 20_000,
+	onDraining: signal => {
 		closing = true;
 		logger.info('process.draining', { signal });
-		await new Promise(resolve => server.close(resolve));
-		await repository.close();
-		process.exit(0);
-	});
-}
+	},
+	steps: [() => drainHttpServer(server), () => repository.close()]
+});

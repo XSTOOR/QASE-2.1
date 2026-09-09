@@ -5,6 +5,7 @@ import { createConfiguredApplicationServices } from './serviceFactory.js';
 import { createOperationalLogger } from './operationalLogger.js';
 import { createOperationalControls } from './operations.js';
 import { createWorkerProbe } from './workerProbe.js';
+import { closeApplicationBrowsers, installShutdownHandlers } from './processLifecycle.js';
 
 const logger = createOperationalLogger({ component: 'qase-worker' });
 const result = await createConfiguredApplicationServices({ executionRole: 'worker' });
@@ -37,18 +38,16 @@ try {
 	throw error;
 }
 
-let shuttingDown = false;
-for (const signal of ['SIGINT', 'SIGTERM']) {
-	process.on(signal, async () => {
-		if (shuttingDown) return;
-		shuttingDown = true;
-		logger.info('process.draining', { signal, workerId });
-		await worker.stop();
-		await probe.close();
-		await result.services.lifecycle.close();
-		process.exit(0);
-	});
-}
+installShutdownHandlers({
+	logger, timeoutMs: 45_000,
+	onDraining: signal => logger.info('process.draining', { signal, workerId }),
+	steps: [
+		() => worker.stop(),
+		() => probe.close(),
+		() => closeApplicationBrowsers(result.services),
+		() => result.services.lifecycle.close()
+	]
+});
 
 logger.info('process.started', { workerId, host: probe.host, port: probeServer.address().port });
 try {

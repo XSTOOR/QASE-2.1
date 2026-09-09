@@ -21,6 +21,9 @@
     "deployment:release-gate": "node scripts/release-gate.mjs",
     "capacity:evaluate": "node scripts/evaluate-capacity.mjs",
     "verify": "node scripts/verify.mjs",
+    "test:browser": "node scripts/test-browser.mjs",
+    "test:dashboard": "node scripts/qualify-dashboard.mjs",
+    "qualify:agent": "node scripts/qualify-agent.mjs",
     "install-browser": "playwright install chromium",
     "package": "node scripts/package.mjs"
   },
@@ -32,6 +35,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "pg": "^8.22.0",
+    "playwright": "1.62.0",
     "redis": "6.2.0"
   }
 }

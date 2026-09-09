@@ -1,5 +1,6 @@
 import express from 'express';
 import { securityHeaders } from './instanceAccess.js';
+import { drainHttpServer } from './processLifecycle.js';
 
 function probePort(value) {
 	const port = value === undefined || value === '' ? 9_175 : Number(value);
@@ -41,7 +42,7 @@ export function createCellHeartbeatProbe(options = {}) {
 			if (!server) return;
 			const closing = server;
 			server = undefined;
-			await new Promise((resolve, reject) => closing.close(error => error ? reject(error) : resolve()));
+			await drainHttpServer(closing);
 		}
 	});
 }

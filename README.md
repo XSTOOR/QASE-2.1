@@ -148,22 +148,24 @@ perform the run; values are never written to PostgreSQL or the local workspace.
 Qase clears the envelope on completion or deletion, and its bounded TTL is a
 backstop for interrupted cleanup.
 
-## Drytis-owned instance boundary
+## First-party accounts and Drytis embedding
 
-Qase intentionally has no separate login page, owner password, session cookie,
-or sign-out action. Drytis authenticates the user and routes that user to a
-private Qase instance. Selecting **Begin transmission** only moves from the
-landing experience into that instance's workspace.
+Qase now exposes a first-party account gate. Registration and login create a
+server-side session with an opaque, hashed token; every account has its own
+profile, memory entries, and run history. Authenticated writes require the
+paired CSRF token. See [`docs/auth-architecture-2026-09-10.md`](docs/auth-architecture-2026-09-10.md)
+for the API contract and PostgreSQL migration.
 
-This is a deployment boundary, not public anonymous access. Keep a local
-instance on the default `127.0.0.1` listener. A Drytis deployment must prevent
-direct public access at its gateway, provision an isolated instance identity,
-isolate its runtime storage, and set `QASE_DRYTIS_EMBED_ORIGIN` to the one Studio
-origin allowed to frame it. Different users must not share a local `.qase`
-directory or the same project-scoped database binding when their data must be
-isolated.
-Qase still rejects cross-origin API requests and emits restrictive browser
-security headers, but it does not replace Drytis identity or authorization.
+Drytis can still authenticate users upstream and frame a private Qase instance.
+Set `QASE_AUTH_REQUIRED=false` only for that explicitly trusted compatibility
+host. Keep a local instance on the default `127.0.0.1` listener. A Drytis
+deployment must prevent direct public access at its gateway, provision an
+isolated instance identity, isolate its runtime storage, and set
+`QASE_DRYTIS_EMBED_ORIGIN` to the one Studio origin allowed to frame it.
+Different users must not share a local `.qase` directory or the same
+project-scoped database binding when their data must be isolated.
+Qase rejects cross-origin API requests and emits restrictive browser security
+headers in both modes.
 
 `GET /healthz` is a public process-liveness probe. `GET /readyz` is a public
 readiness probe for the configured storage adapter. Neither endpoint exposes
@@ -238,6 +240,66 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 | `QASE_BROWSER_ALLOWED_PRIVATE_HOSTS` | unset | Explicit private-network host exceptions for reviewed internal production targets; exact hosts or `*.example.com` only |
 | `QASE_MAX_TURNS` | `120` | Hard ceiling on agent turns per run |
 
+## Microphone and meeting checks
+
+QA, SQA, and Founder agents can use `browser_media` to grant or deny microphone
+permission, probe native browser capture, and inspect the application's actual
+audio tracks. Chromium supplies synthetic input. The agent must also exercise
+the app's start, mute/unmute, and stop controls, check permission denial and
+recovery, and distinguish a successful probe from successful application use.
+Muted MediaRecorder output can still grow while encoding silence.
+
+`browser_test_meeting_link` opens one observed, visible meeting anchor in a tracked
+tab. It supports same-origin meeting flows and narrowly scoped HTTPS Google Meet,
+Zoom, Teams, and Webex entry routes. The agent inspects prejoin, authentication,
+and expired-link states; opening a URL alone cannot establish a meeting pass.
+Production network restrictions remain active. Joining live meetings requires
+explicit authorization. Synthetic tests do not verify physical microphones,
+remote participants, audio delivery, or speech recognition accuracy.
+
+## Verification
+
+```bash
+npm ci --ignore-scripts
+npm run install-browser
+npm run verify
+npm run test:browser
+npm run test:dashboard
+```
+
+`verify` runs syntax, source credential-signature, ignore-rule, and automated
+tests. `test:browser` runs real Chromium microphone, meeting, native form-validity,
+and mobile restore checks against local fixtures. `test:dashboard` drives all
+three launchers, stream reconnection, responsive dialogs, and available completed
+fixture-report exports through the real HTTP application with a stub model.
+Set `PLAYWRIGHT_BROWSERS_PATH` when Chromium uses a nondefault installation path.
+
+Configured-model qualification is opt-in, sends generated fixture content to the
+configured model gateway, and consumes model usage. It keeps its sessions separate
+from saved user history and writes evidence under ignored `test-results/`:
+
+```bash
+npm run qualify:agent -- qa
+npm run qualify:agent -- sqa
+npm run qualify:agent -- founder
+npm run qualify:agent -- qa --media-only
+```
+
+Use `QASE_QUALIFY_TIMEOUT_MS` to bound a run (default 15 minutes, maximum 30).
+An unfinished controlled Founder qualification can resume report synthesis with
+`npm run qualify:agent -- founder --resume test-results/<run>/session.json`.
+Recovery reuses existing observations and is not a new browser qualification.
+SQA recovery uses `npm run qualify:agent -- sqa --resume test-results/<run>/session.json`;
+it restores this script's fixture at the original loopback port and completes
+remaining checks using the saved evidence. The original port must be available.
+
+The verification workflow provisions PostgreSQL and a restricted, non-superuser
+test role for tenant-isolation tests. Locally, those integration tests skip unless
+`QASE_TEST_DATABASE_URL` and `QASE_TEST_CONTROL_DATABASE_URL` point to suitable test
+databases. CI itself and staging deployment qualification must pass before release.
+See [the production-readiness report](docs/production-readiness-report-2026-09-10.md)
+for measured results and remaining release requirements.
+
 ## Sharing it
 
 `npm run package` writes `qase-share.zip` — the source only, without
@@ -275,8 +337,9 @@ scheduler is enabled; `npm run data:governance -- runs-preview` is read-only.
 The runtime supplies the agent loop, a structured tool protocol, and an isolated
 Playwright browser. This app adds four things around it:
 
-- **A tool gate** (`server/agent.js`) that narrows 59 tools down to browser
-  automation plus two of its own — `report_finding` and `finish_qa_report`.
+- **A tool gate** (`server/agent.js`) that exposes only browser automation,
+  planning/questions, media/meeting checks, and the active mode's evidence and
+  finalization tools. Shell and filesystem tools are absent from the registry.
 - **A browser bridge** (`server/browserBridge.js`) that publishes where each
   action is about to land before performing it, enforces target/network scope,
   requires explicit confirmation for destructive actions, and waits for

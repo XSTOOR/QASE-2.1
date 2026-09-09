@@ -54,6 +54,19 @@ test('SQA state requires explicit authorization and resolves the universal core'
 	assert.equal(state.assessment, undefined);
 });
 
+test('SQA finalization storage failure preserves the pending assessment and permits a durable retry', async () => {
+	const candidate = session();
+	const previous = structuredClone(candidate.sqa);
+	await assert.rejects(finishSqaAssessment(candidate, {
+		async commit() { throw new Error('persistence unavailable'); }
+	}, fixedNow), /persistence unavailable/);
+	assert.deepEqual(candidate.sqa, previous);
+	const persistence = store();
+	await finishSqaAssessment(candidate, persistence, fixedNow);
+	assert.ok(candidate.sqa.finalizedAt);
+	assert.equal(persistence.commits.length, 1);
+});
+
 test('SQA sessions receive a canonical non-empty host plan before the model starts', () => {
 	const plan = createSqaTodoPlan(session().sqa);
 	assert.equal(plan.length, 6);

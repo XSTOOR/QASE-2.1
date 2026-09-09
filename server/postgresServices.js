@@ -32,7 +32,8 @@ function createSession(title, now, options = {}) {
 		report: undefined,
 		pendingQuestion: undefined,
 		contextUsage: undefined,
-		secretNames: []
+		secretNames: [],
+		ownerUserId: options.ownerUserId ?? currentRequestActor()?.actorUserId ?? options.tenantContext?.actorUserId
 	};
 	if (options.drytisIntegration !== undefined) {
 		session.drytisIntegration = structuredClone(options.drytisIntegration);
@@ -85,6 +86,7 @@ export function createPostgresApplicationServices({
 	repository,
 	tenantContext,
 	eventTransport,
+	auth,
 	hydrateAll = true,
 	now = () => Date.now(),
 	recoverActiveRuns = true
@@ -227,7 +229,7 @@ export function createPostgresApplicationServices({
 			}
 		},
 		async create(title = 'New test run', options = {}) {
-			const session = createSession(title, now, options);
+			const session = createSession(title, now, { ...options, tenantContext });
 			const eventType = options.eventType ?? 'run.created';
 			const eventPayload = options.eventPayload ?? { title: session.title };
 			const result = await repository.create(clone(session), {
@@ -370,7 +372,7 @@ export function createPostgresApplicationServices({
 		}
 	};
 
-	const services = createRuntimeApplicationServices(runStore);
+	const services = createRuntimeApplicationServices(runStore, { auth });
 	services.tenantContext = tenantContext;
 	services.realtime = eventTransport;
 	return services;

@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { normalizeFounderState } from './founderService.js';
 import { normalizePendingSqaState } from './sqaService.js';
 import { DEFAULT_DEVICE_ID, isDeviceId } from './deviceProfiles.js';
+import { DEFAULT_ACTOR_USER_ID } from './tenancy.js';
 
 /**
  * In-memory session store with a JSON mirror on disk.
@@ -67,8 +68,9 @@ export function loadSessions() {
 				delete session.sqa;
 				session.founder = normalizeFounderState(session.founder);
 			}
-			session.device = isDeviceId(session.device) ? session.device : DEFAULT_DEVICE_ID;
-			session.deviceLandscape = session.deviceLandscape === true;
+				session.device = isDeviceId(session.device) ? session.device : DEFAULT_DEVICE_ID;
+				session.deviceLandscape = session.deviceLandscape === true;
+				session.ownerUserId = typeof session.ownerUserId === 'string' ? session.ownerUserId : DEFAULT_ACTOR_USER_ID;
 			// Nothing survives a restart mid-run, so anything that was in flight is stale.
 			if (session.status === 'running' || session.status === 'awaiting_input') {
 				session.status = 'interrupted';
@@ -136,6 +138,7 @@ export function createSession(title = 'New test run', options = {}) {
 		/** Names of secrets held for this session — never the values. */
 		secretNames: []
 	};
+	session.ownerUserId = options.ownerUserId ?? DEFAULT_ACTOR_USER_ID;
 	if (options.drytisIntegration !== undefined) {
 		session.drytisIntegration = structuredClone(options.drytisIntegration);
 	}
@@ -144,13 +147,15 @@ export function createSession(title = 'New test run', options = {}) {
 	return session;
 }
 
-export function getSession(id) {
-	return sessions.get(id);
+export function getSession(id, ownerUserId) {
+	const session = sessions.get(id);
+	return !ownerUserId || session?.ownerUserId === ownerUserId ? session : undefined;
 }
 
-export function listSessions({ limit = 100 } = {}) {
+export function listSessions({ limit = 100, ownerUserId } = {}) {
 	const bounded = Number.isSafeInteger(limit) ? Math.min(100, Math.max(1, limit)) : 100;
 	return [...sessions.values()]
+		.filter(session => !ownerUserId || session.ownerUserId === ownerUserId)
 		.sort((a, b) => b.updatedAt - a.updatedAt)
 		.slice(0, bounded)
 		.map(session => ({
@@ -168,7 +173,9 @@ export function listSessions({ limit = 100 } = {}) {
 		}));
 }
 
-export function deleteSession(id) {
+export function deleteSession(id, ownerUserId) {
+	const session = sessions.get(id);
+	if (!session || (ownerUserId && session.ownerUserId !== ownerUserId)) return false;
 	const record = live.get(id);
 	record?.controller?.abort();
 	record?.dispose?.();

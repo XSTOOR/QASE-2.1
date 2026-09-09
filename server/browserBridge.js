@@ -2,6 +2,9 @@ import { hasUnresolvedPlaceholder, resolveSecrets } from './secrets.js';
 import { createBrowserPolicy } from './browserPolicy.js';
 import { contextOptionsFor, getDeviceProfile, DEFAULT_DEVICE_ID } from './deviceProfiles.js';
 import { runMobileAudit } from './mobileAudit.js';
+import { inspectFormValidation } from './browserFormAudit.js';
+import { chromium } from 'playwright';
+import { SYNTHETIC_MEDIA_ARGS, installMediaObserver, inspectMedia, setMicrophonePermission, probeMicrophone } from './browserMedia.js';
 
 /**
  * Makes the agent's browser watchable.
@@ -58,6 +61,7 @@ export function attachBrowserBridge(session, service, runStore, options = {}) {
 		securityBlocks: [],
 		disposed: false
 	};
+	let syntheticMedia = false;
 
 	/*
 	 * Snapshots hand back selectors that actually identify one element.
@@ -190,6 +194,9 @@ export function attachBrowserBridge(session, service, runStore, options = {}) {
 	 */
 	const installNetworkPolicy = async context => {
 		if (!context || protectedContexts.has(context)) return;
+		if (typeof context.addInitScript === 'function') await context.addInitScript(installMediaObserver);
+		// SDK-created tabs register diagnostics; window.open popups did not.
+		context.on?.('page', page => service.registerPage?.(page));
 		if (policy.isProduction && typeof context.addInitScript === 'function') {
 			// Playwright routing cannot observe requests intercepted by a Service
 			// Worker. A new Qase browser context has no existing registrations, so
@@ -340,47 +347,48 @@ export function attachBrowserBridge(session, service, runStore, options = {}) {
 
 
 	/*
-	 * Real device emulation, not viewport resize.
-	 *
-	 * The CleanSlate SDK's ensureContext() launches Chromium and calls
-	 * newContext({ viewport: 1440×900 }). When the run's device profile is a
-	 * phone or tablet, we intercept immediately after that call: dispose the
-	 * default context and re-create it on the same Browser with the profile's
-	 * User-Agent, viewport, deviceScaleFactor, isMobile and hasTouch. The site
-	 * under test therefore receives a genuine mobile request and touch input
-	 * capability — not a resized desktop window.
+	 * One isolated Chromium context per run, with synthetic native media and
+	 * the selected device profile. Apply options on every relaunch so restoring
+	 * an idle mobile run cannot silently turn it into desktop emulation.
 	 */
-	if (emulationOptions && typeof service.ensureContext === 'function') {
-		const originalEnsureContext = service.ensureContext.bind(service);
-		let emulationApplied = false;
+	if (typeof service.ensureContext === 'function') {
+		let creatingContext;
 		service.ensureContext = async () => {
-			const context = await originalEnsureContext();
-			if (emulationApplied || !service.browser) {
-				return service.context ?? context;
-			}
-			if (context.pages().length === 0) {
+			if (service.context) return service.context;
+			if (creatingContext) return creatingContext;
+			creatingContext = (async () => {
+				const headless = process.env.CLEANSLATE_BROWSER_HEADLESS === undefined
+					? service.options?.headless ?? true : process.env.CLEANSLATE_BROWSER_HEADLESS !== 'false';
+				// Full Chromium supports native media on Windows; the separate
+				// headless-shell build can expose getUserMedia but reject every call.
+				const bundledExecutable = chromium.executablePath();
+				const executablePath = process.env.CLEANSLATE_BROWSER_EXECUTABLE?.trim() || bundledExecutable;
+				// Launch ourselves because the SDK exposes no Chromium argument hook.
+				// Native getUserMedia can only receive synthetic devices in this process.
+				const launch = { headless, args: [...SYNTHETIC_MEDIA_ARGS] };
 				try {
-					await context.close();
-				} catch {
-					// Falls back to overlaying options on the existing context.
-				}
-				try {
-					const emulated = await service.browser.newContext(emulationOptions);
-					service.context = emulated;
-					emulationApplied = true;
-					return emulated;
+					service.browser = await chromium.launch({ ...launch, executablePath });
 				} catch (error) {
-					// If Playwright rejects the descriptor for any reason, keep the
-					// SDK's default context rather than leaving the run without one.
-					try {
-						service.context = await service.browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
-					} catch {}
-					emulationApplied = true;
-					return service.context ?? context;
+					if (executablePath === bundledExecutable) throw error;
+					service.browser = await chromium.launch({ ...launch, executablePath: bundledExecutable });
 				}
-			}
-			emulationApplied = true;
-			return context;
+				try {
+					service.context = await service.browser.newContext({
+						...(emulationOptions ?? { viewport: { width: 1440, height: 900 }, acceptDownloads: true }),
+						...(policy.isProduction ? { serviceWorkers: 'block' } : {})
+					});
+					syntheticMedia = true;
+					await installNetworkPolicy(service.context);
+					return service.context;
+				} catch (error) {
+					await service.browser.close().catch(() => {});
+					service.browser = undefined;
+					service.context = undefined;
+					syntheticMedia = false;
+					throw error;
+				}
+			})().finally(() => { creatingContext = undefined; });
+			return creatingContext;
 		};
 	}
 
@@ -392,6 +400,65 @@ export function attachBrowserBridge(session, service, runStore, options = {}) {
 		await installNetworkPolicy(service.context);
 		await restoreSession();
 		return currentPage() ?? page;
+	};
+
+	bridge.media = async (input = {}) => {
+		if (!['inspect', 'set_permission', 'probe'].includes(input.action)) return { success: false, error: 'Choose inspect, set_permission or probe.' };
+		if (input.action === 'set_permission' && !['granted', 'denied', 'prompt'].includes(input.permission)) return { success: false, error: 'Choose granted, denied or prompt permission.' };
+		await service.ensurePage();
+		const page = currentPage();
+		const decision = await policy.evaluateNavigation(page.url());
+		if (!decision.allowed) return policy.asBlockedResult(decision);
+		if (!syntheticMedia) return { success: false, code: 'BROWSER_SYNTHETIC_MEDIA_UNAVAILABLE', error: 'This browser was not launched with synthetic devices. Restart the run browser before media testing.' };
+		try {
+			if (input.action === 'set_permission') await setMicrophonePermission(service.context, page, input.permission);
+			const before = await inspectMedia(page);
+			const result = { success: true, synthetic: true, action: input.action, origin: new URL(page.url()).origin, permission: before.permission };
+			if (input.action === 'probe') {
+				if (before.permission === 'prompt') return { ...result, success: false, code: 'BROWSER_MICROPHONE_PERMISSION_REQUIRED', error: 'Set microphone permission to granted or denied before probing; browser permission prompts are not DOM dialogs.' };
+				result.probe = await probeMicrophone(page, input.durationMs);
+			}
+			result.observed = await inspectMedia(page);
+			result.limitations = 'Synthetic browser capture only. A successful probe does not prove the application used its microphone, transmitted audio, or reached another participant. Inspect application requests and UI mute/stop behavior separately.';
+			await runStore.commit(session, 'browser_media', { browserMedia: result });
+			return result;
+		} catch (error) {
+			return { success: false, synthetic: true, code: 'BROWSER_MEDIA_CHECK_FAILED', error: `Media check could not complete (${error.name || 'Error'}). Inspect browser diagnostics and retry after the page settles.` };
+		}
+	};
+
+	bridge.testMeetingLink = async (input = {}) => {
+		await service.ensurePage();
+		const page = currentPage();
+		let link;
+		try {
+			const locator = input.selector ? page.locator(input.selector) : page.locator('a[href]');
+			const matches = await locator.evaluateAll((nodes, expected) => nodes
+				.filter(node => node.tagName === 'A' && node.getClientRects().length && node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) && (!expected || node.href === expected))
+				.map(node => ({ url: node.href, text: (node.innerText || '').trim().slice(0, 160) })), input.url ?? null);
+			if (matches.length !== 1) return { success: false, code: 'BROWSER_MEETING_LINK_NOT_UNIQUE', error: 'Select one visible meeting anchor from the current page snapshot, or provide its exact href.' };
+			link = matches[0];
+		} catch {
+			return { success: false, code: 'BROWSER_MEETING_LINK_NOT_FOUND', error: 'The meeting link could not be resolved from the current page.' };
+		}
+		const decision = await policy.allowObservedMeetingLink(link.url, page.url());
+		if (!decision.allowed) return policy.asBlockedResult(decision);
+		const sourceTabId = service.idFor?.(page);
+		try {
+			const opened = await service.newTab('ide', { url: link.url });
+			if (opened.success === false) return opened;
+			const destination = new URL(currentPage().url());
+			const result = {
+				success: true, action: 'meeting_link_prejoin', sourceTabId, tabId: opened.tabId,
+				url: `${destination.origin}${destination.pathname}`, title: opened.title,
+				joined: false, synthetic: syntheticMedia,
+				limitations: 'Only the observed link and landing page were opened. Inspect the snapshot for invalid/expired links, authentication, lobby and media UI; navigation success alone is not a meeting pass.'
+			};
+			await runStore.commit(session, 'browser_meeting', { browserMeeting: result });
+			return result;
+		} catch (error) {
+			return { success: false, code: 'BROWSER_MEETING_NAVIGATION_FAILED', error: `The observed meeting link could not load (${error.name || 'Error'}). Check diagnostics; do not report a meeting pass.` };
+		}
 	};
 
 	const viewportOf = page => page?.viewportSize() ?? { width: 1440, height: 900 };
@@ -515,19 +582,31 @@ export function attachBrowserBridge(session, service, runStore, options = {}) {
 	 * still the old one. Without this the agent clicks a working link, reads the
 	 * unchanged URL, and reports a navigation bug that does not exist.
 	 */
-	const settleNavigation = async (page, urlBefore) => {
+	const settleNavigation = async (page, urlBefore, pagesBefore = []) => {
 		const deadline = Date.now() + NAV_SETTLE_MS;
 		while (Date.now() < deadline) {
+			for (const candidate of [...(service.context?.pages?.() ?? [])].reverse()) {
+				if (pagesBefore.includes(candidate) || candidate.isClosed() || await candidate.opener?.() !== page) continue;
+				if (/^about:/.test(candidate.url())) continue;
+				await candidate.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => undefined);
+				const decision = await policy.evaluateNavigation(candidate.url());
+				if (decision.allowed) {
+					service.registerPage?.(candidate);
+					service.activePage = candidate;
+					return candidate;
+				}
+			}
 			if (page.isClosed()) {
-				return;
+				return currentPage();
 			}
 			if (page.url() !== urlBefore) {
 				// It moved — let the new document get far enough to be readable.
 				await page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => undefined);
-				return;
+				return page;
 			}
 			await sleep(100);
 		}
+		return page;
 	};
 
 	/**
@@ -541,8 +620,10 @@ export function attachBrowserBridge(session, service, runStore, options = {}) {
 			return;
 		}
 		service[method] = async (surface, input) => {
+			await service.ensurePage();
 			let target;
 			const page = currentPage();
+			const pagesBefore = service.context?.pages?.() ?? [];
 			const urlBefore = page?.url();
 			const descriptor = await resolveActionDescriptor(input);
 			const canSubmit = method === 'click' ||
@@ -594,11 +675,15 @@ export function attachBrowserBridge(session, service, runStore, options = {}) {
 				// Correct the reported location once the page has caught up, so
 				// the model judges the click on where it actually ended up.
 				if (navigates && page && urlBefore !== undefined) {
-					await settleNavigation(page, urlBefore);
-					if (!page.isClosed()) {
-						result.url = page.url();
-						result.title = await page.title().catch(() => result.title);
-						result.navigated = result.url !== urlBefore;
+					const landed = await settleNavigation(page, urlBefore, pagesBefore);
+					if (landed && !landed.isClosed()) {
+						result.url = landed.url();
+						result.title = await landed.title().catch(() => result.title);
+						result.navigated = result.url !== urlBefore || landed !== page;
+						if (landed !== page) {
+							result.openedTab = true;
+							result.tabId = service.idFor?.(landed);
+						}
 					}
 				}
 			} catch {
@@ -715,7 +800,8 @@ export function attachBrowserBridge(session, service, runStore, options = {}) {
 			if (deviceProfile?.kind && deviceProfile.kind !== 'desktop') {
 				mobileAudit = await runMobileAudit(currentPage());
 			}
-			return { ...result, securityBlocks, ...(mobileAudit ? { mobileAudit } : {}) };
+			const formValidation = await inspectFormValidation(currentPage());
+			return { ...result, securityBlocks, ...(mobileAudit ? { mobileAudit } : {}), ...(formValidation ? { formValidation } : {}) };
 		};
 	}
 

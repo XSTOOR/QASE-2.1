@@ -13,11 +13,13 @@ export const BROWSER_POLICY_CODES = Object.freeze({
 	OUT_OF_SCOPE_NAVIGATION: 'BROWSER_OUT_OF_SCOPE_NAVIGATION',
 	PRIVATE_NETWORK: 'BROWSER_PRIVATE_NETWORK_BLOCKED',
 	DNS_FAILED: 'BROWSER_DNS_RESOLUTION_FAILED',
+	MEETING_LINK_NOT_SUPPORTED: 'BROWSER_MEETING_LINK_NOT_SUPPORTED',
 	CONFIRMATION_REQUIRED: 'DESTRUCTIVE_ACTION_CONFIRMATION_REQUIRED',
 	CONFIRMATION_DECLINED: 'DESTRUCTIVE_ACTION_CONFIRMATION_DECLINED'
 });
 
 const DESTRUCTIVE_PATTERNS = [
+	{ category: 'meeting-participation', pattern: /\b((?:ask|request) to join|join (?:a |the )?(?:now|meeting|call|room)|start (?:a |the )?(?:meeting|call)|record (?:meeting|call))\b/i },
 	{ category: 'delete', pattern: /\b(delete|destroy|erase|wipe|purge)\b/i },
 	{ category: 'remove', pattern: /\bremove\b/i },
 	{ category: 'reset', pattern: /\b(reset|factory[ -]?reset)\b/i },
@@ -54,6 +56,22 @@ function safeOriginLabel(input) {
 	} catch {
 		return '(unknown origin)';
 	}
+}
+
+/** Only known web meeting entry paths qualify for an observed-link exception. */
+export function isRecognizedMeetingUrl(input) {
+	let url;
+	try { url = new URL(String(input)); } catch { return false; }
+	if (url.protocol !== 'https:' || url.username || url.password || url.port) return false;
+	const host = cleanHost(url.hostname);
+	return (host === 'meet.google.com' && /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}\/?$/.test(url.pathname)) ||
+		((host === 'zoom.us' || host.endsWith('.zoom.us')) && /^\/(?:j\/\d+|wc\/(?:join\/\d+|\d+\/join))\/?$/.test(url.pathname)) ||
+		(['teams.microsoft.com', 'teams.live.com'].includes(host) && /^\/(?:l\/meetup-join\/[^/]+\/[^/]+|meet\/[^/]+)\/?$/.test(url.pathname)) ||
+		(host.endsWith('.webex.com') && /^\/(?:meet|join)\/[^/]+\/?$/.test(url.pathname));
+}
+
+function meetingDestinationKey(url) {
+	return `${url.origin}${url.pathname}`;
 }
 
 function parseOriginRule(value) {
@@ -221,6 +239,10 @@ export function classifyDestructiveAction(action, descriptor = {}) {
 	}
 
 	const text = descriptorText(descriptor);
+	if (['click', 'pressKey'].includes(normalizedAction) &&
+		[descriptor.text, descriptor.ariaLabel, descriptor.label, descriptor.name].some(label => /^\s*join\s*$/i.test(String(label ?? '')))) {
+		return { category: 'meeting-participation', phrase: 'Join', label: text || 'Join' };
+	}
 	for (const candidate of DESTRUCTIVE_PATTERNS) {
 		const match = text.match(candidate.pattern);
 		if (match) {
@@ -247,6 +269,7 @@ export function createBrowserPolicy({
 	const allowedPrivateHosts = splitCsv(environment.QASE_BROWSER_ALLOWED_PRIVATE_HOSTS);
 	let pendingConfirmation;
 	let grant;
+	const observedMeetingLinks = new Set();
 
 	const privateHostAllowed = hostname => allowedPrivateHosts.some(rule => hostRuleMatches(hostname, rule));
 
@@ -325,6 +348,7 @@ export function createBrowserPolicy({
 			return success(url);
 		}
 		if (allowedOrigins.some(rule => originRuleMatches(url, rule))) return success(url);
+		if (observedMeetingLinks.has(meetingDestinationKey(url))) return success(url);
 		return blocked(
 			BROWSER_POLICY_CODES.OUT_OF_SCOPE_NAVIGATION,
 			`Browser safety blocked top-level navigation outside the declared target: ${safeUrlLabel(url)}. An operator can add a trusted origin to QASE_BROWSER_ALLOWED_ORIGINS.`
@@ -408,6 +432,20 @@ export function createBrowserPolicy({
 		isProduction: production,
 		evaluateNavigation: input => evaluate(input, { topLevel: true }),
 		evaluateRequest: (input, options) => evaluate(input, options),
+		async allowObservedMeetingLink(input, sourceUrl) {
+			const source = await evaluate(sourceUrl, { topLevel: true });
+			if (!source.allowed) return source;
+			const regular = await evaluate(input, { topLevel: true });
+			if (regular.allowed || regular.code !== BROWSER_POLICY_CODES.OUT_OF_SCOPE_NAVIGATION) return regular;
+			if (!isRecognizedMeetingUrl(input)) return blocked(BROWSER_POLICY_CODES.MEETING_LINK_NOT_SUPPORTED,
+				'This external link is outside the target scope and is not a recognized HTTPS meeting entry link. Configure its trusted origin to test it.');
+			const parsed = parseDestination(input);
+			const destination = await validatePublicDestination(parsed.url);
+			if (!destination.allowed) return destination;
+			if (observedMeetingLinks.size >= 50) return blocked(BROWSER_POLICY_CODES.MEETING_LINK_NOT_SUPPORTED, 'The run has reached its observed meeting link limit.');
+			observedMeetingLinks.add(meetingDestinationKey(parsed.url));
+			return destination;
+		},
 		authorizeAction,
 		asBlockedResult,
 		getPendingConfirmation: () => pendingConfirmation && { ...pendingConfirmation }

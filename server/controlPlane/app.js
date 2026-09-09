@@ -29,6 +29,8 @@ export function createControlPlaneApplication(options = {}) {
 	if (same(readToken, writeToken)) throw new TypeError('Control-plane read and write tokens must be different.');
 	const operations = options.operations ?? createOperationalControls({ environment, mutationPrefixes: ['/internal/'] });
 	const logger = options.logger;
+	const isDraining = options.isDraining ?? (() => false);
+	if (typeof isDraining !== 'function') throw new TypeError('Control-plane drain state must be a function.');
 	if (logger !== undefined && typeof logger?.error !== 'function') throw new TypeError('Control-plane logger is invalid.');
 	const app = express();
 	app.disable('x-powered-by');
@@ -44,7 +46,7 @@ export function createControlPlaneApplication(options = {}) {
 	app.get('/readyz', async (_request, response) => {
 		response.setHeader('Cache-Control', 'no-store');
 		let ready = false;
-		try { ready = await repository.check() === true; } catch { /* fail closed */ }
+		try { ready = !isDraining() && await repository.check() === true; } catch { /* fail closed */ }
 		response.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready' });
 	});
 	operations.mount(app);

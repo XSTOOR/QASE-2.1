@@ -313,10 +313,14 @@ export async function finishFounderReview(session, input, runStore, now = () => 
 		generatedAt
 	});
 	assertFounderStateSize({ ...session.founder, report, updatedAt: generatedAt, finalizedAt: generatedAt });
-	session.founder.report = report;
-	session.founder.updatedAt = generatedAt;
-	session.founder.finalizedAt = generatedAt;
-	await runStore.commit(session, 'founder.finalized', { report });
+	const previous = session.founder;
+	session.founder = { ...previous, report, updatedAt: generatedAt, finalizedAt: generatedAt };
+	try {
+		await runStore.commit(session, 'founder.finalized', { report });
+	} catch (error) {
+		session.founder = previous;
+		throw error;
+	}
 	return report;
 }
 

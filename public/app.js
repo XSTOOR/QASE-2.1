@@ -24,6 +24,7 @@ const el = {
 	connDot: $('conn-dot'),
 	connLabel: $('conn-label'),
 	modelBadge: $('model-badge'),
+	signOut: $('sign-out'),
 
 	chatTitle: $('chat-title'),
 	chatTarget: $('chat-target'),
@@ -67,7 +68,18 @@ const el = {
 	countFindings: $('count-findings'),
 	countSqa: $('count-sqa'),
 	countFounder: $('count-founder'),
-	toasts: $('toasts')
+	toasts: $('toasts'),
+	authGate: $('auth-gate'),
+	authForm: $('auth-form'),
+	authEmail: $('auth-email'),
+	authPassword: $('auth-password'),
+	authDisplay: $('auth-display'),
+	authDisplayLabel: $('auth-display-label'),
+	authTitle: $('auth-title'),
+	authCopy: $('auth-copy'),
+	authSubmit: $('auth-submit'),
+	authSwitch: $('auth-switch'),
+	authError: $('auth-error')
 };
 
 const state = {
@@ -84,14 +96,16 @@ const state = {
 	founderCatalog: undefined,
 	founderCatalogPromise: undefined,
 	/** Live reasoning for the current turn. Never kept once the agent replies. */
-	thinking: { text: '', action: '' }
+	thinking: { text: '', action: '' },
+	user: undefined
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
 async function apiResponse(path, options = {}) {
 	const method = String(options.method ?? 'GET').toUpperCase();
-	const headers = { 'Content-Type': 'application/json', ...(options.headers ?? {}) };
+	const csrf = document.cookie.match(/(?:^|; )qase_csrf=([^;]+)/)?.[1];
+	const headers = { 'Content-Type': 'application/json', ...(csrf && !['GET', 'HEAD', 'OPTIONS'].includes(method) ? { 'X-CSRF-Token': decodeURIComponent(csrf) } : {}), ...(options.headers ?? {}) };
 	const response = await fetch(`/api${path}`, {
 		...options,
 		method,
@@ -106,7 +120,9 @@ async function apiResponse(path, options = {}) {
 		} catch {
 			message = text;
 		}
-		throw new Error(message || `Request failed (${response.status})`);
+		const error = new Error(message || `Request failed (${response.status})`);
+		error.status = response.status;
+		throw error;
 	}
 	return response;
 }
@@ -334,6 +350,14 @@ async function selectSession(id) {
 	localStorage.setItem('qase.session', id);
 
 	const session = await api(`/sessions/${id}`);
+	if (state.sessionId !== id) return;
+	applySessionSnapshot(session);
+	await connect(id);
+	await refreshRuns();
+}
+
+function applySessionSnapshot(session) {
+	state.bubbles.clear();
 	state.session = session;
 	applyStageDevice(session);
 
@@ -359,8 +383,6 @@ async function selectSession(id) {
 		el.browserTitle.textContent = '';
 	}
 
-	connect(id);
-	await refreshRuns();
 }
 
 async function startRun() { openQaStart(); }
@@ -1731,21 +1753,57 @@ function connect(id) {
 	state.stream?.close();
 	const stream = new EventSource(`/api/sessions/${id}/events`);
 	state.stream = stream;
+	let finishReady;
+	const ready = new Promise(resolve => { finishReady = resolve; });
+	// An unavailable stream must not lock the workspace; EventSource will keep
+	// reconnecting. Healthy launchers wait for subscription before starting work.
+	const timer = setTimeout(finishReady, 5000);
+	const connected = () => { clearTimeout(timer); finishReady(); };
+	let eventRevision = 0;
+	let resyncTimer;
+	const resync = async () => {
+		if (state.stream !== stream || state.sessionId !== id) return;
+		const revision = eventRevision;
+		try {
+			const snapshot = await api(`/sessions/${id}`);
+			if (state.stream !== stream || state.sessionId !== id) return;
+			// Never overwrite events that arrived while the snapshot was in flight.
+			// Retry after a quiet interval; EventSource keeps applying live updates.
+			if (revision !== eventRevision) {
+				resyncTimer = setTimeout(resync, 250);
+				return;
+			}
+			applySessionSnapshot(snapshot);
+		} catch {
+			if (state.stream === stream) resyncTimer = setTimeout(resync, 1000);
+		} finally {
+			connected();
+		}
+	};
 
 	stream.onopen = () => {
+		if (state.stream !== stream) return;
 		el.connDot.className = 'dot is-live';
 		el.connLabel.textContent = 'connected';
+		clearTimeout(resyncTimer);
+		void resync();
 	};
 	stream.onerror = () => {
+		connected();
+		clearTimeout(resyncTimer);
+		if (state.stream !== stream) return;
 		el.connDot.className = 'dot';
 		el.connLabel.textContent = 'reconnecting…';
 	};
 	stream.onmessage = event => {
+		if (state.stream !== stream) return;
 		const data = JSON.parse(event.data);
 		if (data.sessionId === state.sessionId) {
+			eventRevision += 1;
 			handleEvent(data);
 		}
 	};
+	return ready;
 }
 
 function handleEvent(event) {
@@ -1778,6 +1836,12 @@ function handleEvent(event) {
 			break;
 
 		case 'message_done':
+			if (event.message) {
+				const index = session.messages.findIndex(message => message.id === event.message.id);
+				if (index < 0) session.messages.push(event.message);
+				else session.messages[index] = event.message;
+				renderTranscript();
+			}
 			break;
 
 		case 'activity': {
@@ -2564,6 +2628,67 @@ async function openSettings() {
 	if (config.ready) void probeModelEndpoint({ announce: false });
 }
 
+let authRegisterMode = false;
+let workspaceBooted = false;
+
+function renderAuthMode() {
+	if (!el.authGate) return;
+	const register = authRegisterMode;
+	if (el.authTitle) el.authTitle.textContent = register ? 'Create your workspace' : 'Sign in to your workspace';
+	if (el.authCopy) el.authCopy.textContent = register
+		? 'Your runs, profile, and saved memory are isolated to this account.'
+		: 'Your runs, profile, and saved memory stay isolated to your account.';
+	if (el.authDisplay) el.authDisplay.hidden = !register;
+	if (el.authDisplayLabel) el.authDisplayLabel.hidden = !register;
+	if (el.authPassword) el.authPassword.autocomplete = register ? 'new-password' : 'current-password';
+	if (el.authSubmit) el.authSubmit.textContent = register ? 'Create account' : 'Sign in';
+	if (el.authSwitch) el.authSwitch.textContent = register ? 'I already have an account' : 'Create an account';
+}
+
+function showAuthGate() {
+	if (!el.authGate) return;
+	el.authGate.hidden = false;
+	renderAuthMode();
+	el.authEmail?.focus();
+}
+
+function hideAuthGate() {
+	if (el.authGate) el.authGate.hidden = true;
+}
+
+el.authSwitch?.addEventListener('click', () => {
+	authRegisterMode = !authRegisterMode;
+	if (el.authError) el.authError.hidden = true;
+	renderAuthMode();
+	el.authPassword?.focus();
+});
+
+el.authForm?.addEventListener('submit', async event => {
+	event.preventDefault();
+	if (!el.authEmail || !el.authPassword || !el.authSubmit) return;
+	if (el.authError) el.authError.hidden = true;
+	el.authSubmit.disabled = true;
+	try {
+		state.user = await api(authRegisterMode ? '/auth/register' : '/auth/login', {
+			method: 'POST',
+			body: JSON.stringify({
+				email: el.authEmail.value.trim(),
+				password: el.authPassword.value,
+				displayName: el.authDisplay?.value.trim()
+			})
+		});
+		hideAuthGate();
+		await bootWorkspace();
+	} catch (error) {
+		if (el.authError) {
+			el.authError.textContent = error instanceof Error ? error.message : String(error);
+			el.authError.hidden = false;
+		}
+	} finally {
+		el.authSubmit.disabled = false;
+	}
+});
+
 $('open-settings').onclick = openSettings;
 el.modelBadge.onclick = openSettings;
 
@@ -2632,6 +2757,12 @@ el.newRun.onclick = openQaStart;
 el.newSqa.onclick = openSqaStart;
 el.newFounder.onclick = openFounderStart;
 el.stopRun.onclick = () => api(`/sessions/${state.sessionId}/stop`, { method: 'POST' }).catch(fail);
+el.signOut?.addEventListener('click', async () => {
+		await api('/auth/logout', { method: 'POST' }).catch(() => undefined);
+		workspaceBooted = false;
+		state.user = undefined;
+		showAuthGate();
+});
 
 el.thinkingHead.onclick = () => {
 	if (el.thinkingStrip.classList.contains('has-detail')) {
@@ -2684,7 +2815,9 @@ for (const tab of detailTabs) {
 
 /* ── Boot ────────────────────────────────────────────────────────── */
 
-(async function boot() {
+async function bootWorkspace() {
+	if (workspaceBooted) return;
+	workspaceBooted = true;
 	await window.qaseEntryReady;
 
 	const config = await api('/config').catch(() => undefined);
@@ -2722,4 +2855,23 @@ for (const tab of detailTabs) {
 		await startRun();
 	}
 	el.composerInput.focus();
+}
+
+(async function boot() {
+	await window.qaseEntryReady;
+	try {
+		state.user = await api('/auth/me');
+	} catch (error) {
+		if (error?.status === 401) {
+			showAuthGate();
+			return;
+		}
+		// Older embedded hosts can omit the first-party auth adapter. Keep the
+		// dashboard usable there while production instances always expose it.
+		if (error?.status !== 404) {
+			showAuthGate();
+			return;
+		}
+	}
+	await bootWorkspace();
 })();

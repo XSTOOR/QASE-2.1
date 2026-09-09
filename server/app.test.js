@@ -876,3 +876,93 @@ test('SSE stays live without login sessions and removes its subscription on disc
 	await new Promise(resolve => setTimeout(resolve, 25));
 	assert.equal(fixture.state.listenerCount(session.id), 0);
 });
+
+test('SSE waits for asynchronous subscription readiness before sending its handshake', { timeout: 5_000 }, async t => {
+	const fixture = await startFixture();
+	const controller = new AbortController();
+	t.after(async () => { controller.abort(); fixture.server.closeAllConnections(); await fixture.close(); });
+	const session = fixture.services.runs.create();
+	const started = Promise.withResolvers();
+	const gate = Promise.withResolvers();
+	const disconnected = Promise.withResolvers();
+	const writes = [];
+	fixture.server.on('request', (_request, response) => {
+		const write = response.write;
+		response.write = function (chunk, ...args) { writes.push(String(chunk)); return write.call(this, chunk, ...args); };
+		response.once('close', disconnected.resolve);
+	});
+	const subscribe = fixture.services.events.subscribe;
+	fixture.services.events.subscribe = async (id, listener) => {
+		started.resolve();
+		listener({ type: 'before-ready' });
+		await gate.promise;
+		return subscribe(id, listener);
+	};
+	const pendingResponse = fixture.request(`/api/sessions/${session.id}/events`, { signal: controller.signal });
+	await started.promise;
+	assert.deepEqual(writes, [], 'neither handshake nor early bus events can acknowledge a pending subscription');
+	gate.resolve();
+	const response = await pendingResponse;
+	const reader = response.body.getReader();
+	assert.equal(new TextDecoder().decode((await reader.read()).value), ': connected\n\n');
+	assert.equal(fixture.state.listenerCount(session.id), 1);
+	fixture.services.events.publish(session, 'status', { status: 'running' });
+	assert.match(new TextDecoder().decode((await reader.read()).value), /"status":"running"/);
+	controller.abort();
+	await reader.cancel().catch(() => {});
+	await disconnected.promise;
+	assert.equal(fixture.state.listenerCount(session.id), 0);
+});
+
+test('SSE disposes a subscription that resolves after the client already disconnected', { timeout: 5_000 }, async t => {
+	const fixture = await startFixture();
+	const controller = new AbortController();
+	t.after(async () => { controller.abort(); fixture.server.closeAllConnections(); await fixture.close(); });
+	const session = fixture.services.runs.create();
+	const started = Promise.withResolvers();
+	const gate = Promise.withResolvers();
+	const disconnected = Promise.withResolvers();
+	const released = Promise.withResolvers();
+	let unsubscribeCalls = 0;
+	let frameReads = 0;
+	fixture.services.agent.getLiveState = () => { frameReads++; return {}; };
+	fixture.server.on('request', (_request, response) => response.once('close', disconnected.resolve));
+	const subscribe = fixture.services.events.subscribe;
+	fixture.services.events.subscribe = async (id, listener) => {
+		started.resolve();
+		await gate.promise;
+		const unsubscribe = subscribe(id, listener);
+		return () => { unsubscribeCalls++; unsubscribe(); released.resolve(); };
+	};
+	const pendingResponse = fixture.request(`/api/sessions/${session.id}/events`, { signal: controller.signal }).catch(error => error);
+	await started.promise;
+	controller.abort();
+	await pendingResponse;
+	await disconnected.promise;
+	gate.resolve();
+	await released.promise;
+	assert.equal(unsubscribeCalls, 1);
+	assert.equal(fixture.state.listenerCount(session.id), 0);
+	assert.equal(frameReads, 0, 'a disconnected client must not restart frame or heartbeat work');
+});
+
+test('SSE subscription rejection ends safely without a ready handshake', { timeout: 5_000 }, async t => {
+	const fixture = await startFixture();
+	t.after(async () => { fixture.server.closeAllConnections(); await fixture.close(); });
+	const session = fixture.services.runs.create();
+	fixture.services.events.subscribe = async () => { throw new Error('private Redis details'); };
+	const response = await fixture.request(`/api/sessions/${session.id}/events`);
+	assert.equal(response.status, 200);
+	assert.equal(await response.text(), '');
+	assert.equal(fixture.state.listenerCount(session.id), 0);
+});
+
+test('SSE releases its subscription if initial frame retrieval fails', { timeout: 5_000 }, async t => {
+	const fixture = await startFixture();
+	t.after(async () => { fixture.server.closeAllConnections(); await fixture.close(); });
+	const session = fixture.services.runs.create();
+	fixture.services.agent.getLiveState = () => { throw new Error('frame unavailable'); };
+	const response = await fixture.request(`/api/sessions/${session.id}/events`);
+	assert.equal(await response.text(), ': connected\n\n');
+	assert.equal(fixture.state.listenerCount(session.id), 0);
+});

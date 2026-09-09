@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { MAX_FOUNDER_STATE_BYTES, normalizeFounderState } from '../founderService.js';
 import { normalizePendingSqaState } from '../sqaService.js';
+import { currentRequestActor } from '../requestActor.js';
 
 /**
  * PostgreSQL persistence for the current Qase run aggregate.
@@ -386,7 +387,8 @@ function hydrateRun(row, children) {
 		report: hydrateReport(children.reports.get(row.id)?.[0]),
 		pendingQuestion: row.pending_question ?? undefined,
 		contextUsage: row.context_usage ?? undefined,
-		secretNames: names(row.secret_names)
+		secretNames: names(row.secret_names),
+		ownerUserId: row.created_by_user_id ?? undefined
 	};
 	if (session.mode === 'sqa') {
 		session.sqa = normalizePendingSqaState(row.sqa_assessment ?? {
@@ -569,7 +571,7 @@ async function insertAggregate(client, tenant, session, event, nowValue) {
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,0,$18,$19,$20)
 		 RETURNING lock_version, updated_at`,
 		[
-			session.id, tenant.organizationId, tenant.projectId, tenant.actorUserId,
+			session.id, tenant.organizationId, tenant.projectId, session.ownerUserId ?? event.actorUserId ?? tenant.actorUserId,
 			String(session.title ?? 'New test run'), session.targetUrl ?? null,
 			session.status ?? 'idle', runMode(session), sqaProfiles(session),
 			runMode(session) === 'sqa' ? json(session.sqa) : null,
@@ -689,7 +691,7 @@ export function createPostgresRunRepository({
 		return transaction(async client => {
 			const scope = [tenant.organizationId, tenant.projectId];
 			const runs = await client.query(
-				`SELECT id, title, target_url, status, run_mode, sqa_profiles, sqa_assessment, founder_assessment, drytis_integration,
+				`SELECT id, created_by_user_id, title, target_url, status, run_mode, sqa_profiles, sqa_assessment, founder_assessment, drytis_integration,
 					pending_question, context_usage, secret_names, created_at, updated_at, lock_version
 				 FROM qa_runs
 				 WHERE organization_id = $1 AND project_id = $2 AND deleted_at IS NULL
@@ -706,12 +708,13 @@ export function createPostgresRunRepository({
 		}
 		return transaction(async client => {
 			const result = await client.query(
-				`SELECT id, title, target_url, status, run_mode, sqa_profiles, sqa_assessment, founder_assessment, drytis_integration,
+				`SELECT id, created_by_user_id, title, target_url, status, run_mode, sqa_profiles, sqa_assessment, founder_assessment, drytis_integration,
 					pending_question, context_usage, secret_names, created_at, updated_at, lock_version
 				 FROM qa_runs
 				 WHERE organization_id = $1 AND project_id = $2 AND id = $3
-					AND deleted_at IS NULL`,
-				[tenant.organizationId, tenant.projectId, runId]
+					AND deleted_at IS NULL
+					AND ($4::uuid IS NULL OR created_by_user_id = $4)`,
+				[tenant.organizationId, tenant.projectId, runId, currentRequestActor()?.actorUserId ?? null]
 			);
 			const hydrated = await hydrateRows(client, tenant, result.rows);
 			return hydrated[0];
@@ -724,11 +727,12 @@ export function createPostgresRunRepository({
 			const result = await client.query(
 				`SELECT id, title, status, run_mode, target_url, created_at, updated_at,
 					message_count, finding_count
-				 FROM qa_runs
-				 WHERE organization_id = $1 AND project_id = $2 AND deleted_at IS NULL
-				 ORDER BY updated_at DESC, id ASC
-				 LIMIT $3`,
-				[tenant.organizationId, tenant.projectId, limit]
+					FROM qa_runs
+					WHERE organization_id = $1 AND project_id = $2 AND deleted_at IS NULL
+					AND ($4::uuid IS NULL OR created_by_user_id = $4)
+					ORDER BY updated_at DESC, id ASC
+					LIMIT $3`,
+				[tenant.organizationId, tenant.projectId, limit, currentRequestActor()?.actorUserId ?? null]
 			);
 			return (result.rows ?? []).map(row => ({
 				id: row.id,
@@ -841,9 +845,10 @@ export function createPostgresRunRepository({
 					message_count = $15, finding_count = $16, updated_at = $17,
 					lock_version = lock_version + 1,
 					next_event_sequence = next_event_sequence + $18
-				 WHERE organization_id = $1 AND project_id = $2 AND id = $3
-					AND lock_version = $19 AND deleted_at IS NULL
-				 RETURNING lock_version, updated_at, next_event_sequence`,
+					WHERE organization_id = $1 AND project_id = $2 AND id = $3
+					AND lock_version = $20 AND deleted_at IS NULL
+					AND ($19::uuid IS NULL OR created_by_user_id = $19)
+					RETURNING lock_version, updated_at, next_event_sequence`,
 				[
 					tenant.organizationId, tenant.projectId, session.id,
 					String(session.title ?? 'New test run'), session.targetUrl ?? null,
@@ -852,7 +857,9 @@ export function createPostgresRunRepository({
 					runMode(session) === 'founder' ? json(session.founder) : null,
 					json(session.drytisIntegration), json(session.pendingQuestion), json(session.contextUsage), names(session.secretNames),
 					session.messages?.length ?? 0, session.findings?.length ?? 0,
-					updatedAt, eventIncrement, expectedVersion
+					updatedAt, eventIncrement,
+					currentRequestActor()?.actorUserId ?? null,
+					expectedVersion
 				]
 			);
 			if (!result.rows?.length) {
@@ -889,9 +896,10 @@ export function createPostgresRunRepository({
 			);
 			const existing = await client.query(
 				`SELECT lock_version, next_event_sequence, deleted_at FROM qa_runs
-				 WHERE organization_id = $1 AND project_id = $2 AND id = $3
-				 FOR UPDATE`,
-				parameters
+					 WHERE organization_id = $1 AND project_id = $2 AND id = $3
+					 AND ($4::uuid IS NULL OR created_by_user_id = $4)
+					 FOR UPDATE`,
+				[...parameters, currentRequestActor()?.actorUserId ?? null]
 			);
 			const row = existing.rows?.[0];
 			if (!row) return false;

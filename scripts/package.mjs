@@ -20,7 +20,7 @@ const EXCLUDED_ROOTS = new Set([
 	'coverage', 'test-results', 'playwright-report', 'dist', 'tmp', 'temp'
 ]);
 const EXCLUDED_EXTENSIONS = new Set(['.zip', '.log', '.pem', '.key', '.p12', '.pfx']);
-const INCLUDED_DIRECTORIES = ['public', 'server', 'scripts', 'docs', 'deploy', 'load', 'integrations'];
+const INCLUDED_DIRECTORIES = ['public', 'server', 'scripts', 'docs', 'deploy', 'load', 'integrations', '.github'];
 const INCLUDED_FILES = [
 	'package.json', 'package-lock.json', 'README.md', '.env.example',
 	'.gitignore', '.gitattributes', '.dockerignore', '.nvmrc', 'Dockerfile'
@@ -96,6 +96,7 @@ if (leaked.length > 0) {
 
 for (const required of [
 	'package.json', 'package-lock.json', '.env.example', '.nvmrc', 'Dockerfile',
+	'.github/workflows/verify.yml',
 	'deploy/kubernetes/base/qase.yaml', 'deploy/kubernetes/base/migrations.yaml',
 	'deploy/observability/service-monitors.yaml',
 	'deploy/observability/prometheus-rules.yaml',

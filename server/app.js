@@ -26,6 +26,14 @@ import { buildSqaReportMarkdown } from './sqaAssessment.js';
 import { createSqaState, createSqaTodoPlan, publicSqaCatalog, recordReviewerSqaObservation } from './sqaService.js';
 import { renderReportPdf } from './reportPdf.js';
 import { buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
+import {
+	AuthError,
+	clearAuthCookies,
+	requestAuthToken,
+	requestCookieCsrfToken,
+	requestCsrfToken,
+	setAuthCookies
+} from './auth.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const URL_PATTERN = /\bhttps?:\/\/[^\s<>"']+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>"']*)?/i;
@@ -137,16 +145,112 @@ export function createApplication(options = {}) {
 	// instance. The in-process boundary rejects cross-origin browser API calls
 	// and attributes work to the trusted instance owner.
 	access.mount(app);
-	app.use('/api', (request, _response, next) => runWithRequestActor({
-		...request.auth,
-		requestId: request.qaseRequestId
-	}, next));
+	const authService = services.auth;
+	const authRequired = options.authRequired ?? (Boolean(authService)
+		&& String(environment.QASE_AUTH_REQUIRED ?? 'true').toLowerCase() !== 'false');
+	const safeCookies = request => Boolean(request.secure || request.headers['x-forwarded-proto'] === 'https'
+		|| String(environment.NODE_ENV ?? '').toLowerCase() === 'production');
+	app.use('/api/auth', (_request, response, next) => {
+		response.set('Cache-Control', 'no-store');
+		next();
+	});
+	app.use('/api', (request, response, next) => {
+		const publicAuthRoute = request.path === '/auth/register' || request.path === '/auth/login';
+		if (!authService || !authRequired || publicAuthRoute) {
+			return runWithRequestActor({ ...request.auth, requestId: request.qaseRequestId }, next);
+		}
+		void (async () => {
+			const identity = await authService.authenticate(requestAuthToken(request));
+			if (!identity) {
+				response.status(401).json({ error: 'Authentication required.' });
+				return;
+			}
+			if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
+				const headerToken = requestCsrfToken(request);
+				const cookieToken = requestCookieCsrfToken(request);
+				if (!headerToken || !cookieToken || headerToken !== cookieToken) {
+					response.status(403).json({ error: 'A valid CSRF token is required.' });
+					return;
+				}
+			}
+			request.auth = { ...request.auth, ...identity };
+			runWithRequestActor({ ...request.auth, requestId: request.qaseRequestId }, next);
+		})().catch(next);
+	});
+
+	function authFailure(response, error) {
+		const status = error instanceof AuthError ? error.status : 400;
+		response.status(status).json({ error: error instanceof Error ? error.message : 'Authentication failed.' });
+	}
+
+	app.post('/api/auth/register', async (request, response) => {
+		if (!authService) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		try {
+			const result = await authService.register(request.body ?? {});
+			setAuthCookies(response, result.token, result.csrf, { secure: safeCookies(request) });
+			response.status(201).json(result.user);
+		} catch (error) { authFailure(response, error); }
+	});
+
+	app.post('/api/auth/login', async (request, response) => {
+		if (!authService) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		try {
+			const result = await authService.login(request.body ?? {});
+			setAuthCookies(response, result.token, result.csrf, { secure: safeCookies(request) });
+			response.json(result.user);
+		} catch (error) { authFailure(response, error); }
+	});
+
+	app.get('/api/auth/me', async (request, response) => {
+		if (!authService) { response.json(request.auth); return; }
+		if (!authRequired) { response.json(request.auth); return; }
+		const identity = await authService.authenticate(requestAuthToken(request));
+		if (!identity) { response.status(401).json({ error: 'Authentication required.' }); return; }
+		response.json(await authService.profile(identity.userId));
+	});
+
+	app.post('/api/auth/logout', async (request, response) => {
+		if (!authService) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		try { await authService?.logout(requestAuthToken(request)); } finally { clearAuthCookies(response, { secure: safeCookies(request) }); }
+		response.status(204).end();
+	});
+
+	app.get('/api/profile', async (request, response) => {
+		if (!authService) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		response.json(await authService.profile(request.auth.userId));
+	});
+
+	app.put('/api/profile', async (request, response) => {
+		if (!authService) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		try { response.json(await authService.updateProfile(request.auth.userId, request.body ?? {})); }
+		catch (error) { authFailure(response, error); }
+	});
+
+	app.get('/api/memory', async (request, response) => {
+		if (!authService) { response.json([]); return; }
+		response.json(await authService.listMemory(request.auth.userId));
+	});
+
+	app.put('/api/memory', async (request, response) => {
+		if (!authService) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		try { response.status(201).json(await authService.putMemory(request.auth.userId, request.body ?? {})); }
+		catch (error) { authFailure(response, error); }
+	});
+
+	app.delete('/api/memory/:id', async (request, response) => {
+		if (!authService) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		try { response.json({ deleted: await authService.deleteMemory(request.auth.userId, request.params.id) }); }
+		catch (error) { authFailure(response, error); }
+	});
 
 	async function requireSession(request, response) {
 		const session = await services.runs.get(request.params.id);
 		if (!session) {
 			response.status(404).json({ error: 'No such session.' });
 			return undefined;
+		}
+		if (authService && request.auth?.userId) {
+			session.userMemory = await authService.listMemory(request.auth.userId);
 		}
 		return session;
 	}
@@ -226,7 +330,7 @@ export function createApplication(options = {}) {
 	app.post('/api/sessions', async (request, response) => {
 		const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
 		const deviceLandscape = request.body?.deviceLandscape === true;
-		const session = await services.runs.create(undefined, { device, deviceLandscape });
+		const session = await services.runs.create(undefined, { device, deviceLandscape, ownerUserId: request.auth?.userId });
 		response.status(201).json(session);
 	});
 
@@ -236,7 +340,7 @@ export function createApplication(options = {}) {
 			const sqa = createSqaState(request.body ?? {});
 			const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
 			const deviceLandscape = request.body?.deviceLandscape === true;
-			session = await services.runs.create(`SQA — ${sqa.scope.target.name}`, { device, deviceLandscape });
+			session = await services.runs.create(`SQA — ${sqa.scope.target.name}`, { device, deviceLandscape, ownerUserId: request.auth?.userId });
 			session.mode = 'sqa';
 			session.sqa = sqa;
 			session.todos = createSqaTodoPlan(sqa);
@@ -269,7 +373,7 @@ export function createApplication(options = {}) {
 			});
 			const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
 			const deviceLandscape = request.body?.deviceLandscape === true;
-			session = await services.runs.create(`Founder — ${founder.scope.target.name}`, { device, deviceLandscape });
+			session = await services.runs.create(`Founder — ${founder.scope.target.name}`, { device, deviceLandscape, ownerUserId: request.auth?.userId });
 			session.mode = 'founder';
 			session.founder = founder;
 			session.todos = createFounderReviewTodos();
@@ -552,8 +656,31 @@ export function createApplication(options = {}) {
 	});
 
 	app.get('/api/sessions/:id/events', async (request, response) => {
+		let closed = false;
+		let ready = false;
+		let heartbeat;
+		let unsubscribe;
+		const cleanup = () => {
+			closed = true;
+			clearInterval(heartbeat);
+			// Cleanup can precede asynchronous subscription completion. Clearing the
+			// handle, rather than returning when closed, also disposes a late handle.
+			const dispose = unsubscribe;
+			unsubscribe = undefined;
+			if (typeof dispose === 'function') {
+				try { Promise.resolve(dispose()).catch(() => {}); } catch { /* connection already ended */ }
+			}
+		};
+		const endStream = () => {
+			cleanup();
+			if (!response.destroyed && !response.writableEnded) response.end();
+		};
+		// A client can leave while either storage or Redis is still awaiting I/O.
+		response.once('close', cleanup);
+		response.once('error', cleanup);
+		request.once('aborted', cleanup);
 		const session = await requireSession(request, response);
-		if (!session) return;
+		if (!session || closed || response.destroyed || response.writableEnded) return;
 
 		response.writeHead(200, {
 			'Content-Type': 'text/event-stream',
@@ -561,42 +688,44 @@ export function createApplication(options = {}) {
 			Connection: 'keep-alive',
 			'X-Accel-Buffering': 'no'
 		});
-		response.write(': connected\n\n');
 
-		const send = event => response.write(`data: ${JSON.stringify(event)}\n\n`);
-		let unsubscribe;
+		const write = chunk => {
+			if (closed || response.destroyed || response.writableEnded) {
+				cleanup();
+				return;
+			}
+			try { response.write(chunk); } catch { endStream(); }
+		};
+		const send = event => {
+			if (!ready || closed) return;
+			try { write(`data: ${JSON.stringify(event)}\n\n`); } catch { endStream(); }
+		};
 		try {
 			// Distributed transports subscribe to a session-scoped frame channel.
 			// Awaiting it closes the race where the first live frame could be sent
 			// before this API replica had joined that channel.
 			unsubscribe = await services.events.subscribe(session.id, send);
 		} catch {
-			response.end();
+			endStream();
 			return;
 		}
-
-		const frame = services.agent.getLiveState(session.id).frame;
-		if (frame) {
-			send({ type: 'frame', sessionId: session.id, frame });
+		if (closed || response.destroyed || response.writableEnded) {
+			cleanup();
+			return;
 		}
+		// The first bytes are the client's subscription-ready handshake. Sending
+		// them before subscribing can lose a newly launched run's initial events.
+		ready = true;
+		write(': connected\n\n');
 
-		let closed = false;
-		const cleanup = () => {
-			if (closed) return;
-			closed = true;
-			clearInterval(heartbeat);
-			unsubscribe();
-		};
-		const heartbeat = setInterval(() => {
-			if (closed) return;
-			try {
-				response.write(': ping\n\n');
-			} catch {
-				cleanup();
-				response.end();
-			}
-		}, heartbeatMs);
-		request.on('close', cleanup);
+		try {
+			const frame = services.agent.getLiveState(session.id).frame;
+			if (frame) send({ type: 'frame', sessionId: session.id, frame });
+		} catch {
+			endStream();
+			return;
+		}
+		if (!closed) heartbeat = setInterval(() => write(': ping\n\n'), heartbeatMs);
 	});
 
 	app.use('/api', (_request, response) => {

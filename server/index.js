@@ -5,11 +5,15 @@ import { createOperationalControls } from './operations.js';
 import { createOperationalLogger } from './operationalLogger.js';
 import { createConfiguredApplicationServices } from './serviceFactory.js';
 import { createConfiguredDrytisIntegration } from './drytisIntegrationFactory.js';
+import { closeApplicationBrowsers, drainHttpServer, installShutdownHandlers } from './processLifecycle.js';
 
 // Validate process-local operational limits and metrics credentials before
 // opening PostgreSQL or Redis clients.
 const logger = createOperationalLogger({ component: 'qase-api' });
 const operations = createOperationalControls({ logger });
+const port = Number(process.env.PORT ?? 5173);
+if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new TypeError('PORT must be an integer from 1 to 65535.');
+const host = String(process.env.QASE_HOST ?? '127.0.0.1').trim() || '127.0.0.1';
 const {
 	services, mode: runStoreMode, executionMode, tenantContext, pool, executionQueue
 } = await createConfiguredApplicationServices();
@@ -28,45 +32,21 @@ const { app, demoEnabled } = createApplication({
 	drytisIntegrationApi: drytisIntegration?.api,
 	isDraining: () => shuttingDown
 });
-const port = Number(process.env.PORT ?? 5173);
-const host = String(process.env.QASE_HOST ?? '127.0.0.1').trim() || '127.0.0.1';
 
 // Chromium is a child process; without this it can outlive the server process.
 let server;
-for (const signal of ['SIGINT', 'SIGTERM']) {
-	process.on(signal, async () => {
-		if (shuttingDown) {
-			process.exit(1);
-		}
+installShutdownHandlers({
+	logger,
+	onDraining: signal => {
 		shuttingDown = true;
 		logger.info('process.draining', { signal });
-		let closeHttp = Promise.resolve();
-		if (server) {
-			closeHttp = new Promise(resolve => server.close(() => resolve()));
-			const completed = await Promise.race([
-				closeHttp.then(() => true),
-				new Promise(resolve => setTimeout(() => resolve(false), 10_000))
-			]);
-			if (!completed) {
-				server.closeAllConnections?.();
-				await closeHttp;
-			}
-		}
-		let summaries = [];
-		try {
-			summaries = await services.runs.list();
-		} catch {
-			// Database readiness may be the reason for shutdown; pool cleanup and
-			// process-local browser cleanup must still continue.
-		}
-		await Promise.all(summaries.map(summary => {
-			if (!services.agent.isRemote) services.agent.stop(summary.id);
-			return services.agent.closeBrowser(summary.id);
-		}));
-		await services.lifecycle.close();
-		process.exit(0);
-	});
-}
+	},
+	steps: [
+		() => drainHttpServer(server),
+		() => closeApplicationBrowsers(services),
+		() => services.lifecycle.close()
+	]
+});
 
 server = app.listen(port, host, () => {
 	const config = services.configuration.getPublic();

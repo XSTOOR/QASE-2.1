@@ -77,6 +77,25 @@
   <p class="sr-only" id="entry-announcer" aria-live="polite"></p>
 </div>
 
+<section class="auth-gate" id="auth-gate" hidden aria-labelledby="auth-title">
+  <div class="auth-card">
+    <p class="auth-eyebrow">QASE / PRIVATE WORKSPACE</p>
+    <h1 id="auth-title">Sign in to your workspace</h1>
+    <p class="auth-copy" id="auth-copy">Your runs, profile, and saved memory stay isolated to your account.</p>
+    <form id="auth-form" novalidate>
+      <label for="auth-email">Email</label>
+      <input id="auth-email" name="email" type="email" autocomplete="email" required maxlength="254">
+      <label for="auth-password">Password</label>
+      <input id="auth-password" name="password" type="password" autocomplete="current-password" required minlength="12" maxlength="200">
+      <label for="auth-display" id="auth-display-label" hidden>Display name</label>
+      <input id="auth-display" name="displayName" type="text" autocomplete="name" maxlength="120" hidden>
+      <p class="auth-error" id="auth-error" role="alert" hidden></p>
+      <button class="btn btn-primary auth-submit" id="auth-submit" type="submit">Sign in</button>
+    </form>
+    <button class="auth-switch" id="auth-switch" type="button">Create an account</button>
+  </div>
+</section>
+
 <a class="skip-link" href="#composer-input" inert aria-hidden="true">Skip to agent input</a>
 
 <div class="app" inert aria-hidden="true">
@@ -101,6 +120,7 @@
     <footer class="panel-foot">
       <span class="dot" id="conn-dot" aria-hidden="true"></span>
       <span id="conn-label" role="status" aria-live="polite">connecting…</span>
+      <button class="btn btn-ghost btn-sm foot-btn" id="sign-out" title="Sign out">Sign out</button>
       <button class="btn btn-ghost btn-sm foot-btn" id="open-settings" title="Model and endpoint settings">Settings</button>
     </footer>
   </aside>
