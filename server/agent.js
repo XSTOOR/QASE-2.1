@@ -210,15 +210,17 @@ export async function closeBrowser(sessionId, runStore) {
 	await record.bridge.suspend();
 }
 
-/** Closes every other session's browser, so only one is ever running. */
-async function closeOtherBrowsers(keepSessionId, runStore) {
+/** Suspend idle browsers belonging to this account only. */
+async function closeOtherBrowsers(keepSession, runStore) {
 	const live = typeof runStore.listLive === 'function'
 		? runStore.listLive()
 		: (await runStore.list({ limit: 100 })).map(summary => ({ id: summary.id, record: runStore.peekLive?.(summary.id) }));
 	await Promise.all(
 		live
-			.filter(entry => entry.id !== keepSessionId)
-			.map(entry => {
+			.filter(entry => entry.id !== keepSession.id)
+			.map(async entry => {
+				const candidate = await runStore.get(entry.id);
+				if (!candidate || candidate.ownerUserId !== keepSession.ownerUserId) return;
 				return !entry.record || entry.record.running ? undefined : closeBrowser(entry.id, runStore);
 			})
 	);
@@ -388,7 +390,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	}
 
 	// Only the session being worked on keeps a browser open.
-	void closeOtherBrowsers(session.id, runStore).catch(() => undefined);
+	void closeOtherBrowsers(session, runStore).catch(() => undefined);
 
 	// Message-shaped placeholders the streamed text accumulates into. Reasoning
 	// gets its own bubble so the transcript can show the agent's thinking

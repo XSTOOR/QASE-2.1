@@ -104,6 +104,30 @@ async function flushAsyncStart() {
 	await Promise.resolve();
 }
 
+test('an in-flight cached run is invisible to another account and its runtime is preserved', async () => {
+	const owner = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+	const intruder = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+	const row = session({ ownerUserId: owner });
+	const fake = createFakeRepository({ rows: [{ session: row, version: 1 }] });
+	const services = createPostgresApplicationServices({ repository: fake.repository, tenantContext: DEFAULT_TENANT_CONTEXT });
+	await services.runs.load();
+	const own = await runWithRequestActor({ actorUserId: owner }, () => services.runs.get(row.id));
+	const runtime = services.runs.liveFor(row.id);
+	let disposed = false;
+	runtime.dispose = () => { disposed = true; };
+	const gate = deferred();
+	fake.state.saveImplementation = () => gate.promise;
+	const pending = runWithRequestActor({ actorUserId: owner }, () => services.runs.setStatus(own, 'running', 'Started'));
+	await flushAsyncStart();
+	assert.equal(await runWithRequestActor({ actorUserId: intruder }, () => services.runs.get(row.id)), undefined);
+	assert.equal(disposed, false);
+	gate.resolve({ version: 2, updatedAt: 200 });
+	await pending;
+	assert.equal(await runWithRequestActor({ actorUserId: intruder }, () => services.runs.get(row.id)), undefined);
+	assert.deepEqual(await runWithRequestActor({ actorUserId: intruder }, () => services.runs.list()), []);
+	assert.equal(disposed, false);
+});
+
 test('create, save, and delete await repository durability before visible publication or removal', async () => {
 	const fake = createFakeRepository();
 	const createGate = deferred();

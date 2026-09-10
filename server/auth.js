@@ -2,10 +2,13 @@ import { promisify } from 'node:util';
 import { randomBytes, randomUUID, createHash, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { accountSettingsCodec } from './accountSettings.js';
+import { createAuthThrottle } from './authThrottle.js';
 
 const scrypt = promisify(scryptCallback);
 const AUTH_FILE = path.join(process.cwd(), '.qase', 'auth.json');
 const PASSWORD_MIN_LENGTH = 12;
+const DUMMY_PASSWORD_HASH = 'scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const PASSWORD_MAX_LENGTH = 200;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MEMORY_KEY = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/;
@@ -87,6 +90,7 @@ function passwordRecord(password) {
 }
 
 async function verifyPassword(password, encoded) {
+	if (typeof password !== 'string' || password.length > PASSWORD_MAX_LENGTH) return false;
 	if (typeof password !== 'string' || typeof encoded !== 'string') return false;
 	const [, n, r, p, saltText, digestText] = encoded.split('$');
 	const N = Number(n);
@@ -163,7 +167,7 @@ function cleanProfilePatch(input) {
 		throw new AuthError('Profile settings must be an object.', 'invalid_profile', 400);
 	}
 	const next = {};
-	if (profile?.timezone !== undefined) next.timezone = assertText(profile.timezone, 'Timezone', 100);
+	if (profile?.timezone !== undefined) { next.timezone = assertText(profile.timezone, 'Timezone', 100); try { new Intl.DateTimeFormat('en', { timeZone: next.timezone }); } catch { throw new AuthError('Enter a valid IANA timezone, such as Asia/Kolkata.', 'invalid_profile', 400); } }
 	if (profile?.locale !== undefined) next.locale = assertText(profile.locale, 'Locale', 20);
 	if (profile?.onboardingComplete !== undefined) {
 		if (typeof profile.onboardingComplete !== 'boolean') throw new AuthError('onboardingComplete must be boolean.', 'invalid_profile', 400);
@@ -208,10 +212,13 @@ async function withLock(state, work) {
 	let release;
 	state.lock = new Promise(resolve => { release = resolve; });
 	await prior;
-	try { return await work(); } finally { release(); }
+	const snapshot = structuredClone(state.data);
+	try { return await work(); } catch (error) { state.data = snapshot; throw error; } finally { release(); }
 }
 
 function createLocalDataStore({ tenantContext, now = () => Date.now(), file = AUTH_FILE } = {}) {
+	const settingsCodec = accountSettingsCodec({ file });
+	const consumeAuthAttempt = createAuthThrottle({ now });
 	const state = { loaded: false, data: { version: 1, users: [], sessions: [], memory: [] }, lock: Promise.resolve() };
 	async function persist() {
 		await fs.promises.mkdir(path.dirname(file), { recursive: true });
@@ -219,8 +226,13 @@ function createLocalDataStore({ tenantContext, now = () => Date.now(), file = AU
 		await fs.promises.writeFile(temporary, JSON.stringify(state.data), { mode: 0o600 });
 		await fs.promises.rename(temporary, file);
 	}
+	let loading;
 	async function load() {
 		if (state.loaded) return;
+		if (!loading) loading = loadData().catch(error => { loading = undefined; throw error; });
+		return loading;
+	}
+	async function loadData() {
 		try {
 			const parsed = JSON.parse(await fs.promises.readFile(file, 'utf8'));
 			if (parsed?.version === 1 && Array.isArray(parsed.users) && Array.isArray(parsed.sessions)) {
@@ -242,7 +254,7 @@ function findUser(id) { return state.data.users.find(user => user.id === id); }
 		return withLock(state, async () => {
 			const normalized = normalizeEmail(email);
 			if (state.data.users.some(user => user.email === normalized)) throw new AuthError('An account with that email already exists.', 'email_taken', 409);
-			const user = { id: randomUUID(), email: normalized, displayName: normalizeDisplayName(displayName || normalized.split('@')[0]), passwordHash: await passwordRecord(password), status: 'active', role: 'owner', createdAt: now(), updatedAt: now(), profile: defaultProfile() };
+			const user = { id: randomUUID(), email: normalized, displayName: normalizeDisplayName(displayName || normalized.split('@')[0]), passwordHash: await passwordRecord(password), status: 'active', role: 'developer', createdAt: now(), updatedAt: now(), profile: defaultProfile() };
 			state.data.users.push(user);
 			await persist();
 			return user;
@@ -271,16 +283,21 @@ function findUser(id) { return state.data.users.find(user => user.id === id); }
 		async login(input) {
 			await load();
 			const user = state.data.users.find(candidate => candidate.email === normalizeEmail(input?.email));
-			if (!user || !(await verifyPassword(input?.password, user.passwordHash))) throw new AuthError('Email or password is incorrect.', 'invalid_credentials', 401);
+			const valid = await verifyPassword(input?.password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
+			if (!user || user.status !== 'active' || !valid) throw new AuthError('Email or password is incorrect.', 'invalid_credentials', 401);
 			return issueSession(user);
 		},
 		authenticate,
-		async logout(token) { await load(); state.data.sessions = state.data.sessions.filter(session => session.tokenHash !== tokenHash(String(token ?? ''))); await persist(); },
+		consumeAuthAttempt,
+		async getSettings(userId) { await load(); return settingsCodec.open(userId, findUser(userId)?.settings); },
+		async saveSettings(userId, settings) { await load(); return withLock(state, async () => { const user = findUser(userId); if (!user) throw new AuthError('Account not found.', 'not_found', 404); user.settings = await settingsCodec.seal(userId, settings); await persist(); }); },
+		async changePassword(userId, input) { await load(); return withLock(state, async () => { const user = findUser(userId); if (!user || !(await verifyPassword(input?.currentPassword, user.passwordHash))) throw new AuthError('Current password is incorrect.', 'invalid_credentials', 401); const passwordHash = await passwordRecord(input?.password); user.passwordHash = passwordHash; state.data.sessions = state.data.sessions.filter(session => session.userId !== userId); await persist(); }); },
+		async logout(token) { await load(); return withLock(state, async () => { state.data.sessions = state.data.sessions.filter(session => session.tokenHash !== tokenHash(String(token ?? ''))); await persist(); }); },
 		async profile(userId) { await load(); const user = findUser(userId); return user ? { ...safeUser(user), profile: structuredClone(user.profile ?? defaultProfile()) } : undefined; },
-		async updateProfile(userId, input) { await load(); const user = findUser(userId); if (!user) throw new AuthError('Profile not found.', 'not_found', 404); if (input?.displayName !== undefined) user.displayName = normalizeDisplayName(input.displayName); user.profile = { ...defaultProfile(), ...user.profile, ...cleanProfilePatch(input) }; user.updatedAt = now(); await persist(); return { ...safeUser(user), profile: structuredClone(user.profile) }; },
+		async updateProfile(userId, input) { await load(); return withLock(state, async () => { const user = findUser(userId); if (!user) throw new AuthError('Profile not found.', 'not_found', 404); const name = input?.displayName === undefined ? user.displayName : normalizeDisplayName(input.displayName); const patch = cleanProfilePatch(input); user.displayName = name; user.profile = { ...defaultProfile(), ...user.profile, ...patch }; user.updatedAt = now(); await persist(); return { ...safeUser(user), profile: structuredClone(user.profile) }; }); },
 		async listMemory(userId) { await load(); return (state.data.memory ?? []).filter(entry => entry.userId === userId).sort((a, b) => b.updatedAt - a.updatedAt).map(publicMemory); },
-		async putMemory(userId, input) { await load(); const clean = cleanMemoryInput(input); const timestamp = now(); let entry = (state.data.memory ?? []).find(candidate => candidate.userId === userId && candidate.scope === clean.scope && candidate.key === clean.key); if (!entry && (state.data.memory ?? []).filter(candidate => candidate.userId === userId).length >= 100) throw new AuthError('Memory is limited to 100 entries per account.', 'memory_limit', 400); if (entry) Object.assign(entry, clean, { updatedAt: timestamp }); else { entry = { id: randomUUID(), userId, ...clean, createdAt: timestamp, updatedAt: timestamp }; (state.data.memory ??= []).push(entry); } await persist(); return publicMemory(entry); },
-		async deleteMemory(userId, id) { await load(); const index = (state.data.memory ?? []).findIndex(entry => entry.userId === userId && entry.id === id); if (index < 0) return false; state.data.memory.splice(index, 1); await persist(); return true; },
+		async putMemory(userId, input) { await load(); return withLock(state, async () => { const clean = cleanMemoryInput(input); const timestamp = now(); let entry = (state.data.memory ?? []).find(candidate => candidate.userId === userId && candidate.scope === clean.scope && candidate.key === clean.key); if (!entry && (state.data.memory ?? []).filter(candidate => candidate.userId === userId).length >= 100) throw new AuthError('Memory is limited to 100 entries per account.', 'memory_limit', 400); if (entry) Object.assign(entry, clean, { updatedAt: timestamp }); else { entry = { id: randomUUID(), userId, ...clean, createdAt: timestamp, updatedAt: timestamp }; (state.data.memory ??= []).push(entry); } await persist(); return publicMemory(entry); }); },
+		async deleteMemory(userId, id) { await load(); return withLock(state, async () => { const index = (state.data.memory ?? []).findIndex(entry => entry.userId === userId && entry.id === id); if (index < 0) return false; state.data.memory.splice(index, 1); await persist(); return true; }); },
 		async check() { await load(); return { ready: true, backend: 'local', users: state.data.users.length }; },
 		async close() { if (state.loaded) await persist(); }
 	};
@@ -289,6 +306,7 @@ function findUser(id) { return state.data.users.find(user => user.id === id); }
 function pgDate(value) { return value instanceof Date ? value : new Date(value); }
 
 export function createPostgresAuthService({ pool, tenantContext, now = () => Date.now() } = {}) {
+	const settingsCodec = accountSettingsCodec();
 	if (!pool || typeof pool.connect !== 'function') throw new TypeError('A PostgreSQL pool is required for authentication.');
 	const tenant = tenantContext;
 	async function transaction(work) {
@@ -319,6 +337,17 @@ export function createPostgresAuthService({ pool, tenantContext, now = () => Dat
 	}
 	return {
 		async load() {},
+		async consumeAuthAttempt(key, limit) { return transaction(async client => {
+			await client.query('DELETE FROM qase_auth_attempts WHERE expires_at < CURRENT_TIMESTAMP');
+			const result = await client.query(`INSERT INTO qase_auth_attempts (organization_id, project_id, key, attempts, expires_at)
+				VALUES ($1,$2,$3,1,CURRENT_TIMESTAMP + INTERVAL '15 minutes')
+				ON CONFLICT (organization_id,project_id,key) DO UPDATE SET attempts = qase_auth_attempts.attempts + 1
+				RETURNING attempts`, [tenant.organizationId, tenant.projectId, key]);
+			return result.rows[0].attempts <= limit;
+		}); },
+		async getSettings(userId) { return transaction(async client => { const result = await client.query('SELECT settings FROM qase_user_profiles WHERE user_id = $1', [userId]); return settingsCodec.open(userId, result.rows[0]?.settings); }); },
+		async saveSettings(userId, settings) { const sealed = await settingsCodec.seal(userId, settings); return transaction(async client => { const result = await client.query('UPDATE qase_user_profiles SET settings = $2, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1', [userId, sealed]); if (!result.rowCount) throw new AuthError('Account not found.', 'not_found', 404); }); },
+		async changePassword(userId, input) { return transaction(async client => { if (!await selectUser(client, userId)) throw new AuthError('Account not found.', 'not_found', 404); const result = await client.query('SELECT password_hash FROM users WHERE id = $1 FOR UPDATE', [userId]); if (!await verifyPassword(input?.currentPassword, result.rows[0]?.password_hash)) throw new AuthError('Current password is incorrect.', 'invalid_credentials', 401); const hash = await passwordRecord(input?.password); await client.query('UPDATE users SET password_hash = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1', [userId, hash]); await client.query('UPDATE qase_auth_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND revoked_at IS NULL', [userId]); }); },
 		async register(input) {
 			const email = normalizeEmail(input?.email); const displayName = normalizeDisplayName(input?.displayName || email.split('@')[0]); const passwordHash = await passwordRecord(input?.password);
 			return transaction(async client => {
@@ -326,7 +355,7 @@ export function createPostgresAuthService({ pool, tenantContext, now = () => Dat
 				if (existing.rows.length) throw new AuthError('An account with that email already exists.', 'email_taken', 409);
 				const id = randomUUID();
 				await client.query(`INSERT INTO users (id,email,normalized_email,display_name,password_hash,status) VALUES ($1,$2,$2,$3,$4,'active')`, [id, email, displayName, passwordHash]);
-				await client.query(`INSERT INTO organization_memberships (organization_id,user_id,role,status,created_by_user_id) VALUES ($1,$2,'owner','active',$2)`, [tenant.organizationId, id]);
+				await client.query(`INSERT INTO organization_memberships (organization_id,user_id,role,status,created_by_user_id) VALUES ($1,$2,'developer','active',$2)`, [tenant.organizationId, id]);
 				await client.query(`INSERT INTO qase_user_profiles (user_id,organization_id,project_id) VALUES ($1,$2,$3)`, [id, tenant.organizationId, tenant.projectId]);
 				const user = await selectUser(client, id); return issueSession(client, user);
 			});
@@ -338,7 +367,8 @@ export function createPostgresAuthService({ pool, tenantContext, now = () => Dat
 					FROM users JOIN organization_memberships membership ON membership.user_id = users.id
 					WHERE users.normalized_email = $1 AND membership.organization_id = $2 AND membership.status = 'active' AND users.status = 'active'`, [email, tenant.organizationId]);
 				const row = result.rows[0];
-				if (!row || !(await verifyPassword(input?.password, row.password_hash))) throw new AuthError('Email or password is incorrect.', 'invalid_credentials', 401);
+				const valid = await verifyPassword(input?.password, row?.password_hash ?? DUMMY_PASSWORD_HASH);
+				if (!row || !valid) throw new AuthError('Email or password is incorrect.', 'invalid_credentials', 401);
 				return issueSession(client, await selectUser(client, row.id));
 			});
 		},

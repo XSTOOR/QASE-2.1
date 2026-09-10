@@ -7316,3 +7316,40 @@ body.cli-theme {
     width: calc(100vw - 16px);
   }
 }
+
+/* Account entry: responsive, readable, and immediately actionable. */
+.auth-gate { position:fixed; inset:0; z-index:500; display:grid; grid-template-columns:minmax(0,1.1fr) minmax(400px,1fr); overflow:auto; padding:0; background:#0b111a; color:#e9eef5; font-family:Inter,Segoe UI,Arial,sans-serif; }
+.auth-story { display:flex; flex-direction:column; padding:clamp(32px,5vw,80px); background:radial-gradient(ellipse at 0% 75%,#19344a80,transparent 65%),#0c1521; border-right:1px solid #263342; }
+.auth-brand { display:flex; align-items:center; gap:12px; color:#fff; font-size:19px; font-weight:700; letter-spacing:4px; text-decoration:none; }
+.auth-logo { display:grid; place-items:center; width:40px; height:40px; border:1px solid #6edbc0; border-radius:12px; color:#81e9cd; letter-spacing:0; }
+.auth-drytis { margin:62px 0 22px; color:#86d8c5; letter-spacing:3px; font-size:11px; font-weight:700; }
+.auth-story h2 { margin:0; font-size:clamp(44px,5vw,76px); font-weight:600; letter-spacing:-3px; line-height:1.1; }
+.auth-story h2 em { color:#84e4cc; font-style:normal; }
+.auth-description { max-width:460px; color:#a7b6c8; font-size:16px; line-height:1.8; margin:26px 0; }
+.auth-capabilities { display:grid; gap:16px; border-top:1px solid #2b3949; padding-top:26px; color:#c4cedb; font-size:13px; }
+.auth-footer { margin: auto 0 0; padding-top:40px; color:#8193a9; font-size:12px; }
+.auth-panel { display:grid; place-items:center; padding:40px 32px; }
+.auth-card { width:min(100%,410px); padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; }
+.auth-card h1 { font-family:inherit; font-size:30px; letter-spacing:-1px; line-height:1.25; }
+.auth-eyebrow { color:#85cdbb; font:600 10px/1.5 Inter,Segoe UI,sans-serif; letter-spacing:2px; margin:0 0 18px; }
+.auth-copy { color:#9eafc4; font:14px/1.7 Inter,Segoe UI,sans-serif; margin:14px 0 26px; }
+.auth-card label,.account-dialog label { display:block; margin:18px 0 8px; color:#c3cfdf; font:500 13px Inter,Segoe UI,sans-serif; }
+.auth-card input,.account-dialog input,.account-dialog textarea { box-sizing:border-box; width:100%; min-height:48px; padding:12px 14px; border:1px solid #344459; border-radius:8px; background:#101b29; color:#f2f6fb; font:15px Inter,Segoe UI,sans-serif; }
+.auth-card input:focus-visible,.account-dialog input:focus-visible,.account-dialog textarea:focus-visible { outline:2px solid #83e1c9; outline-offset:3px; }
+.auth-card [hidden] { display:none !important; }
+.auth-card .auth-show { display:flex; align-items:center; gap:9px; font-size:12px; }
+.auth-show input { width:16px; min-height:16px; height:16px; accent-color:#80dfc6; }
+.auth-hint { color:#899bb1; font-size:12px; line-height:1.6; }
+.auth-submit { width:100%; min-height:48px; margin-top:18px; border-radius:8px; background:#83e1c9 !important; color:#09231f !important; font:600 14px Inter,Segoe UI,sans-serif; }
+.auth-switch { display:block; width:100%; margin-top:24px; padding:10px; color:#c9d6e6; font:14px Inter,Segoe UI,sans-serif; text-align:center; }
+.auth-error { padding:12px; background:#3c2028; border:1px solid #a74d63; border-radius:8px; color:#ffbfcb; font:13px/1.5 Inter,Segoe UI,sans-serif; }
+.account-dialog { width:min(540px,calc(100vw - 32px)); max-height:85vh; overflow:auto; box-sizing:border-box; padding:28px; border:1px solid #344459; border-radius:16px; background:#101924; color:#e9eef5; }
+.account-dialog::backdrop { background:#02070dcc; }
+.account-dialog header { display:flex; align-items:center; justify-content:space-between; gap:20px; }
+.account-dialog h2 { margin:0; }.account-dialog .btn { margin-top:18px; }.account-dialog hr { margin:28px 0; border:0; border-top:1px solid #344459; }
+#profile-memory { padding-left:18px; overflow-wrap:anywhere; }#profile-message { color:#92e1ca; }
+@media(max-width:800px) { .auth-gate { grid-template-columns:1fr; }.auth-story { padding:28px; border-right:0; border-bottom:1px solid #263342; }.auth-drytis { margin-top:26px; }.auth-story h2 { font-size:42px; letter-spacing:-2px; }.auth-description { margin:18px 0 0; font-size:14px; }.auth-capabilities,.auth-footer { display:none; }.auth-panel { padding:32px 24px 48px; }.auth-card h1 { font-size:27px; } }
+
+.app[inert], .skip-link[inert] { display:none !important; }
+.cli-theme .auth-gate { place-items:stretch; }
+.cli-theme .auth-gate button { font-family:Inter,Segoe UI,Arial,sans-serif; font-size:14px; min-height:44px; border-radius:8px; }

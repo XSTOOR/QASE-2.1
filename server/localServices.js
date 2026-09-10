@@ -1,5 +1,5 @@
 import { closeBrowser, ensureRuntime, runTurn } from './agent.js';
-import { getPublicConfig, saveConfig, testConnection } from './config.js';
+import { getPublicConfig, saveConfig, testConnection, withUserConfiguration } from './config.js';
 import { buildReportMarkdown } from './report.js';
 import { clearSecrets, secretNames, storeSecrets } from './secrets.js';
 import {
@@ -17,6 +17,13 @@ import { currentRequestActor } from './requestActor.js';
  * as a peer service so account data never enters the run aggregate.
  */
 export function createRuntimeApplicationServices(runStore, options = {}) {
+	async function inWorkspace(work, session) {
+		const userId = session?.ownerUserId ?? currentRequestActor()?.actorUserId;
+		if (!userId || !options.auth?.getSettings) return work();
+		const settings = await options.auth.getSettings(userId);
+		if (session) session.userMemory = await options.auth.listMemory(userId);
+		return withUserConfiguration(settings, next => options.auth.saveSettings(userId, next), work);
+	}
 	const purgeWorkspace = options.purgeRunWorkspace ?? purgeRunWorkspace;
 	const services = {
 		runs: runStore,
@@ -25,9 +32,9 @@ export function createRuntimeApplicationServices(runStore, options = {}) {
 			subscribe: runStore.subscribe
 		},
 		configuration: {
-			getPublic: getPublicConfig,
-			save: saveConfig,
-			testConnection
+			getPublic: () => inWorkspace(getPublicConfig),
+			save: patch => inWorkspace(() => saveConfig(patch)),
+			testConnection: patch => inWorkspace(() => testConnection(patch))
 		},
 		secrets: {
 			clear: clearSecrets,
@@ -60,8 +67,8 @@ export function createRuntimeApplicationServices(runStore, options = {}) {
 				}
 				if (disposalError) throw disposalError;
 			},
-			ensureRuntime: session => ensureRuntime(session, runStore),
-			runTurn: (session, turnOptions) => runTurn(session, turnOptions, runStore),
+			ensureRuntime: session => inWorkspace(() => ensureRuntime(session, runStore), session),
+			runTurn: (session, turnOptions) => inWorkspace(() => runTurn(session, turnOptions, runStore), session),
 			getLiveState(sessionId) {
 				const record = runStore.peekLive?.(sessionId);
 				return {
@@ -77,7 +84,8 @@ export function createRuntimeApplicationServices(runStore, options = {}) {
 				const entries = typeof runStore.listLive === 'function'
 					? runStore.listLive()
 					: (await runStore.list({ limit: 100 })).map(summary => ({ id: summary.id, record: runStore.peekLive?.(summary.id) }));
-				for (const { record } of entries) {
+				for (const { id, record } of entries) {
+					if (currentRequestActor()?.actorUserId && !(await runStore.get(id))) continue;
 					if (!record) continue;
 					if (!record.runtime) continue;
 					if (record.running) {

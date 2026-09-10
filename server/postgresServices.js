@@ -246,6 +246,8 @@ export function createPostgresApplicationServices({
 			return session;
 		},
 		async get(id) {
+			const owner = currentRequestActor()?.actorUserId;
+			if (owner && sessions.has(id) && sessions.get(id).ownerUserId !== owner) return undefined;
 			// Keep this process's in-flight aggregate visible until its queued
 			// transaction settles. Afterwards PostgreSQL is authoritative again.
 			if (queues.has(id) && sessions.has(id)) return sessions.get(id);
@@ -268,6 +270,7 @@ export function createPostgresApplicationServices({
 		async list(options) {
 			if (typeof repository.list === 'function') return repository.list(options);
 			return [...sessions.values()]
+				.filter(session => !currentRequestActor()?.actorUserId || session.ownerUserId === currentRequestActor().actorUserId)
 				.sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
 				.slice(0, Math.min(100, Math.max(1, Number(options?.limit) || 100)))
 				.map(summary);

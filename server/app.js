@@ -7,6 +7,7 @@ import { assertApplicationServices } from './contracts.js';
 import { mountDemoSite } from './demoSite.js';
 import { createOperationalControls } from './operations.js';
 import { runWithRequestActor } from './requestActor.js';
+import { authThrottleKey, createAuthThrottle } from './authThrottle.js';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
 import {
 	FOUNDER_CATEGORIES,
@@ -148,7 +149,7 @@ export function createApplication(options = {}) {
 	const authService = services.auth;
 	const authRequired = options.authRequired ?? (Boolean(authService)
 		&& String(environment.QASE_AUTH_REQUIRED ?? 'true').toLowerCase() !== 'false');
-	const safeCookies = request => Boolean(request.secure || request.headers['x-forwarded-proto'] === 'https'
+	const safeCookies = request => Boolean(request.secure
 		|| String(environment.NODE_ENV ?? '').toLowerCase() === 'production');
 	app.use('/api/auth', (_request, response, next) => {
 		response.set('Cache-Control', 'no-store');
@@ -179,9 +180,20 @@ export function createApplication(options = {}) {
 	});
 
 	function authFailure(response, error) {
-		const status = error instanceof AuthError ? error.status : 400;
-		response.status(status).json({ error: error instanceof Error ? error.message : 'Authentication failed.' });
+		const status = error instanceof AuthError ? error.status : 500;
+		response.status(status).json({ error: error instanceof AuthError ? error.message : 'Authentication is temporarily unavailable. Please try again.' });
 	}
+	const fallbackAuthThrottle = createAuthThrottle();
+	app.use('/api/auth', async (request, response, next) => {
+		if (request.method !== 'POST' || !['/login', '/register', '/password'].includes(request.path)) return next();
+		const consume = authService?.consumeAuthAttempt ?? fallbackAuthThrottle;
+		try {
+			const ipAllowed = await consume(authThrottleKey(`ip:${request.ip}`), 40);
+			const accountAllowed = await consume(authThrottleKey(`account:${request.auth?.userId ?? String(request.body?.email ?? '').trim().toLowerCase()}`), 10);
+			if (!ipAllowed || !accountAllowed) { response.set('Retry-After', '900').status(429).json({ error: 'Too many attempts. Please try again in 15 minutes.' }); return; }
+			next();
+		} catch (error) { authFailure(response, error); }
+	});
 
 	app.post('/api/auth/register', async (request, response) => {
 		if (!authService) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
@@ -213,6 +225,14 @@ export function createApplication(options = {}) {
 		if (!authService) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
 		try { await authService?.logout(requestAuthToken(request)); } finally { clearAuthCookies(response, { secure: safeCookies(request) }); }
 		response.status(204).end();
+	});
+	app.post('/api/auth/password', async (request, response) => {
+		if (!authService?.changePassword) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		try {
+			await authService.changePassword(request.auth.userId, request.body ?? {});
+			clearAuthCookies(response, { secure: safeCookies(request) });
+			response.status(204).end();
+		} catch (error) { authFailure(response, error); }
 	});
 
 	app.get('/api/profile', async (request, response) => {
@@ -277,8 +297,8 @@ export function createApplication(options = {}) {
 		return tracked;
 	}
 
-	app.get('/api/config', (_request, response) => {
-		response.json(services.configuration.getPublic());
+	app.get('/api/config', async (_request, response) => {
+		response.json(await services.configuration.getPublic());
 	});
 
 	app.get('/api/sqa/catalog', (_request, response) => {
@@ -299,7 +319,7 @@ export function createApplication(options = {}) {
 
 	app.put('/api/config', async (request, response) => {
 		try {
-			const config = services.configuration.save(request.body ?? {});
+			const config = await services.configuration.save(request.body ?? {});
 			const kept = await services.agent.invalidateIdleRuntimes();
 			response.json({ ...config, runsKeepingOldSettings: kept });
 		} catch (error) {
@@ -725,7 +745,12 @@ export function createApplication(options = {}) {
 			endStream();
 			return;
 		}
-		if (!closed) heartbeat = setInterval(() => write(': ping\n\n'), heartbeatMs);
+		if (!closed) heartbeat = setInterval(async () => {
+			try {
+				if (authRequired && !await authService.authenticate(requestAuthToken(request))) { endStream(); return; }
+				if (!closed) write(': ping\n\n');
+			} catch { endStream(); }
+		}, heartbeatMs);
 	});
 
 	app.use('/api', (_request, response) => {

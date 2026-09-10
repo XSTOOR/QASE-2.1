@@ -25,7 +25,8 @@
     "test:dashboard": "node scripts/qualify-dashboard.mjs",
     "qualify:agent": "node scripts/qualify-agent.mjs",
     "install-browser": "playwright install chromium",
-    "package": "node scripts/package.mjs"
+    "package": "node scripts/package.mjs",
+    "test:auth": "node scripts/test-auth-browser.mjs"
   },
   "engines": {
     "node": ">=22 <25"

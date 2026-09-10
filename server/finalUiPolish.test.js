@@ -7,25 +7,13 @@ const entry = readFileSync(new URL('../public/entry.js', import.meta.url), 'utf8
 const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
 
-test('cinematic entry hands off to the authenticated workspace', () => {
-	assert.equal((html.match(/id="entry-welcome"/g) ?? []).length, 1);
-	assert.equal((html.match(/id="entry-begin"/g) ?? []).length, 1);
-	assert.match(html, /id="entry-begin"[\s\S]*?Begin transmission/);
-	assert.match(html, /class="entry-index">01 \/ 01<\/span>/);
-	assert.match(html, /id="auth-gate"/);
-	assert.match(html, /id="auth-form"/);
-	assert.match(html, /id="sign-out"/);
-
-	assert.match(entry, /window\.qaseEntryReady = new Promise/);
-	assert.match(entry, /beginButton\.addEventListener\('click', revealWorkspace\)/);
-	assert.match(entry, /setWorkspaceLocked\(false\)/);
-	assert.doesNotMatch(entry, /\/api\/auth|qaseAuth|auth-expired/);
-
-	assert.match(app, /await window\.qaseEntryReady/);
-	assert.match(app, /\/auth\/me/);
-	assert.match(app, /\/auth\/logout/);
-	assert.match(app, /X-CSRF-Token/);
-	assert.match(styles, /\.auth-gate/);
+test('professional entry gates the private workspace through authentication', () => {
+  assert.match(html, /CREATED FOR DRYTIS/);
+  assert.match(html, /id="auth-form"/);
+  assert.match(html, /id="open-profile"/);
+  assert.match(app, /\/auth\/me/);
+  assert.match(app, /X-CSRF-Token/);
+  assert.match(styles, /\.auth-gate/);
 });
 
 test('workspace chrome is visually quiet while preserving the window controls', () => {

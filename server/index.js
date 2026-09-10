@@ -48,8 +48,8 @@ installShutdownHandlers({
 	]
 });
 
+const config = await services.configuration.getPublic();
 server = app.listen(port, host, () => {
-	const config = services.configuration.getPublic();
 	if (process.env.NODE_ENV === 'production') {
 		logger.info('process.started', {
 			host, port, storeMode: runStoreMode, executionMode,

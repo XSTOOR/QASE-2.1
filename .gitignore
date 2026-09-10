@@ -9,6 +9,7 @@ tmp/
 temp/
 *.log
 *.zip
+artifacts/
 
 # Private runtime state and credentials
 .env

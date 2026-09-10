@@ -2,6 +2,12 @@ import * as fs from 'node:fs';
 import { lookup as lookupDns } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import * as path from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+const userConfiguration = new AsyncLocalStorage();
+export function withUserConfiguration(settings, save, work) {
+	return userConfiguration.run({ settings, save }, work);
+}
 
 /**
  * Model settings, resolved from the settings file first and the environment
@@ -32,6 +38,7 @@ const RESERVED_HOST_SUFFIXES = [
 let stored;
 
 function readStored() {
+	if (userConfiguration.getStore()) return userConfiguration.getStore().settings;
 	if (stored) {
 		return stored;
 	}
@@ -68,7 +75,7 @@ const DEFAULTS = {
 /** The effective settings the agent runs with. Includes the key — server only. */
 export function getConfig() {
 	const merged = { ...DEFAULTS };
-	for (const source of [fromEnv(), readStored()]) {
+	for (const source of [userConfiguration.getStore() ? {} : fromEnv(), readStored()]) {
 		for (const [key, value] of Object.entries(source)) {
 			if (value !== undefined && value !== null && value !== '') {
 				merged[key] = value;
@@ -90,7 +97,7 @@ export function getPublicConfig() {
 		headless: config.headless,
 		hasApiKey: Boolean(config.apiKey),
 		apiKeyHint: config.apiKey ? `••••${config.apiKey.slice(-4)}` : '',
-		apiKeyFromEnv: Boolean(fromEnv().apiKey) && !readStored().apiKey,
+		apiKeyFromEnv: !userConfiguration.getStore() && Boolean(fromEnv().apiKey) && !readStored().apiKey,
 		providers: PROVIDERS,
 		ready: isReady(config),
 		problem: describeProblem(config)
@@ -130,7 +137,15 @@ export function saveConfig(patch) {
 	if (next.provider && !PROVIDERS.includes(next.provider)) {
 		throw new Error(`Unknown provider: ${next.provider}`);
 	}
+	if (userConfiguration.getStore() && next.provider === 'bedrock') {
+		throw new Error('Private workspaces require an explicit API key provider. Shared AWS credentials are not supported.');
+	}
 
+	const scope = userConfiguration.getStore();
+	if (scope) return scope.save(next).then(() => {
+		scope.settings = next;
+		return getPublicConfig();
+	});
 	stored = next;
 	fs.mkdirSync(CONFIG_DIR, { recursive: true });
 	fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, undefined, '\t'), { mode: 0o600 });

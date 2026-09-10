@@ -112,6 +112,7 @@ async function apiResponse(path, options = {}) {
 		headers,
 		credentials: 'same-origin'
 	});
+	if (response.status === 401 && state.user && !path.startsWith('/auth/')) { window.location.reload(); throw new Error('Your session has expired. Sign in again.'); }
 	if (!response.ok) {
 		const text = await response.text();
 		let message;
@@ -2638,9 +2639,9 @@ function renderAuthMode() {
 	if (el.authCopy) el.authCopy.textContent = register
 		? 'Your runs, profile, and saved memory are isolated to this account.'
 		: 'Your runs, profile, and saved memory stay isolated to your account.';
-	if (el.authDisplay) el.authDisplay.hidden = !register;
+	if (el.authDisplay) { el.authDisplay.hidden = !register; el.authDisplay.required = register; }
 	if (el.authDisplayLabel) el.authDisplayLabel.hidden = !register;
-	if (el.authPassword) el.authPassword.autocomplete = register ? 'new-password' : 'current-password';
+	if (el.authPassword) { el.authPassword.autocomplete = register ? 'new-password' : 'current-password'; el.authPassword.minLength = register ? 12 : 1; }
 	if (el.authSubmit) el.authSubmit.textContent = register ? 'Create account' : 'Sign in';
 	if (el.authSwitch) el.authSwitch.textContent = register ? 'I already have an account' : 'Create an account';
 }
@@ -2648,12 +2649,15 @@ function renderAuthMode() {
 function showAuthGate() {
 	if (!el.authGate) return;
 	el.authGate.hidden = false;
+	document.querySelector('.app').inert = true;
+	document.querySelector('.app').setAttribute('aria-hidden', 'true');
 	renderAuthMode();
 	el.authEmail?.focus();
 }
 
 function hideAuthGate() {
 	if (el.authGate) el.authGate.hidden = true;
+	for (const node of document.querySelectorAll('.app, .skip-link, #settings, #toasts')) { node.inert = false; node.removeAttribute('aria-hidden'); }
 }
 
 el.authSwitch?.addEventListener('click', () => {
@@ -2668,6 +2672,8 @@ el.authForm?.addEventListener('submit', async event => {
 	if (!el.authEmail || !el.authPassword || !el.authSubmit) return;
 	if (el.authError) el.authError.hidden = true;
 	el.authSubmit.disabled = true;
+	el.authSwitch.disabled = true;
+	el.authForm.setAttribute('aria-busy', 'true');
 	try {
 		state.user = await api(authRegisterMode ? '/auth/register' : '/auth/login', {
 			method: 'POST',
@@ -2677,6 +2683,7 @@ el.authForm?.addEventListener('submit', async event => {
 				displayName: el.authDisplay?.value.trim()
 			})
 		});
+		el.authPassword.value = '';
 		hideAuthGate();
 		await bootWorkspace();
 	} catch (error) {
@@ -2686,6 +2693,8 @@ el.authForm?.addEventListener('submit', async event => {
 		}
 	} finally {
 		el.authSubmit.disabled = false;
+		el.authSwitch.disabled = false;
+		el.authForm.removeAttribute('aria-busy');
 	}
 });
 
@@ -2758,10 +2767,13 @@ el.newSqa.onclick = openSqaStart;
 el.newFounder.onclick = openFounderStart;
 el.stopRun.onclick = () => api(`/sessions/${state.sessionId}/stop`, { method: 'POST' }).catch(fail);
 el.signOut?.addEventListener('click', async () => {
-		await api('/auth/logout', { method: 'POST' }).catch(() => undefined);
-		workspaceBooted = false;
-		state.user = undefined;
-		showAuthGate();
+  el.signOut.disabled = true;
+  try {
+    await api('/auth/logout', { method: 'POST' });
+    state.stream?.close();
+    localStorage.removeItem('qase.session');
+    window.location.reload();
+  } catch (error) { fail(error); el.signOut.disabled = false; }
 });
 
 el.thinkingHead.onclick = () => {
@@ -2772,6 +2784,7 @@ el.thinkingHead.onclick = () => {
 };
 
 document.addEventListener('keydown', event => {
+	if (!el.authGate.hidden) return;
 	if ((event.metaKey || event.ctrlKey) && event.key === 'n') {
 		event.preventDefault();
 		void startRun();
@@ -2818,6 +2831,7 @@ for (const tab of detailTabs) {
 async function bootWorkspace() {
 	if (workspaceBooted) return;
 	workspaceBooted = true;
+	hideAuthGate();
 	await window.qaseEntryReady;
 
 	const config = await api('/config').catch(() => undefined);
@@ -2875,3 +2889,43 @@ async function bootWorkspace() {
 	}
 	await bootWorkspace();
 })();
+
+$('auth-show-password').onchange = event => { el.authPassword.type = event.target.checked ? 'text' : 'password'; };
+const profileDialog = $('profile-dialog');
+$('profile-close').onclick = () => profileDialog.close();
+profileDialog.addEventListener('close', () => { $('password-form').reset(); });
+async function refreshMemory() {
+  const entries = await api('/memory');
+  $('profile-memory').replaceChildren();
+  if (!entries.length) $('profile-memory').textContent = 'No saved memory yet.';
+  for (const entry of entries) {
+    const item = document.createElement('li');
+    item.textContent = entry.key + ': ' + entry.value + ' ';
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn btn-ghost'; remove.textContent = 'Delete';
+    remove.setAttribute('aria-label', 'Delete memory ' + entry.key);
+    remove.onclick = () => accountAction(remove, async () => { await api('/memory/' + entry.id, { method:'DELETE' }); await refreshMemory(); });
+    item.append(remove); $('profile-memory').append(item);
+  }
+}
+async function accountAction(button, work) {
+  button.disabled = true; $('profile-message').textContent = '';
+  try { await work(); } catch(error) { $('profile-message').textContent = error.message; }
+  finally { button.disabled = false; }
+}
+$('open-profile').onclick = () => accountAction($('open-profile'), async () => {
+  const user = await api('/profile');
+  $('profile-name').value = user.displayName; $('profile-timezone').value = user.profile.timezone; $('profile-email').textContent = user.email;
+  profileDialog.showModal(); await refreshMemory();
+});
+$('profile-form').onsubmit = event => { event.preventDefault(); accountAction(event.submitter, async () => {
+  state.user = await api('/profile', { method:'PUT', body:JSON.stringify({displayName:$('profile-name').value,profile:{timezone:$('profile-timezone').value}}) });
+  $('profile-message').textContent = 'Profile saved.';
+}); };
+$('password-form').onsubmit = event => { event.preventDefault(); accountAction(event.submitter, async () => {
+  await api('/auth/password', { method:'POST', body:JSON.stringify({currentPassword:$('current-password').value,password:$('new-password').value}) });
+  state.stream?.close(); window.location.reload();
+}); };
+$('memory-form').onsubmit = event => { event.preventDefault(); accountAction(event.submitter, async () => {
+  await api('/memory', { method:'PUT', body:JSON.stringify({key:$('memory-key').value,value:$('memory-value').value}) });
+  $('memory-form').reset(); await refreshMemory(); $('profile-message').textContent = 'Memory saved.';
+}); };
