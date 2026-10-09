@@ -8,7 +8,7 @@ const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'u
 
 test('Quality launcher exposes an accessible recommended review with optional advanced scope', () => {
 	assert.match(html, /id="new-sqa"[^>]+aria-label="Start quality review"[^>]+data-feature="sqa"/);
-	assert.match(html, /class="feature-label">Quality<\/span>/);
+	assert.match(html, /class="feature-label">SQA<\/span>/);
 	assert.match(html, /<dialog[^>]+id="sqa-start"[^>]+aria-labelledby="sqa-start-title"/);
 	assert.match(html, /id="sqa-authorization"[^>]+type="checkbox"[^>]+required/);
 	assert.match(html, /id="sqa-target-url"[^>]+type="url"[^>]+required/);

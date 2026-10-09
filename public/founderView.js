@@ -336,7 +336,9 @@ export function createFounderView({
 		const recommendations = founderValues(report.recommendations);
 		// Phase 4: a finalized report's own recommendations are selectable too —
 		// the founder most often reopens exactly this view. Selections persist
-		// through the same project state as the restored view.
+		// through the same project state as the restored view (the project-level
+		// save is consulted via getProjectState, scoped to this closure).
+		const saved = getProjectState?.();
 		const selections = new Set(saved?.selections ?? []);
 		const section = founderSection('What to build next', `${recommendations.length} recommendations ordered by impact, effort, and confidence. Each includes the reason it matters.`);		const listNode = doc.createElement('div');
 		listNode.className = 'founder-priority-list';

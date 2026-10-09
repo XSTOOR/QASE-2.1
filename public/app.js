@@ -74,10 +74,6 @@ const el = {
 	newFounder: $('new-founder'),
 	openBugs: $('open-bugs'),
 	bugsView: $('bugs-view'),
-	connDot: $('conn-dot'),
-	connLabel: $('conn-label'),
-	modelBadge: $('model-badge'),
-	signOut: $('sign-out'),
 
 	chatTitle: $('chat-title'),
 	chatTarget: $('chat-target'),
@@ -105,15 +101,6 @@ const el = {
 	runTimer: $('run-timer'),
 	runTimerLabel: $('run-timer-label'),
 	runTimerClock: $('run-timer-clock'),
-	perfPanel: $('perf-panel'),
-	perfGrid: $('perf-grid'),
-	perfCompare: $('perf-compare'),
-	perfCompareTitle: $('perf-compare-title'),
-	perfCompareList: $('perf-compare-list'),
-	perfMinimize: $('perf-minimize'),
-	perfClose: $('perf-close'),
-	perfRestore: $('perf-restore'),
-	perfBody: $('perf-body'),
 	feedbackModal: $('feedback-modal'),
 	feedbackForm: $('feedback-form'),
 	feedbackClose: $('feedback-close'),
@@ -127,18 +114,6 @@ const el = {
 	feedbackError: $('feedback-error'),
 	feedbackSuccess: $('feedback-success'),
 	feedbackRunMeta: $('feedback-run-meta'),
-	// Admin feedback review panel (owner/admin only).
-	feedbackPanel: $('feedback-panel'),
-	feedbackAdminBody: $('feedback-admin-body'),
-	feedbackStats: $('feedback-stats'),
-	feedbackSearch: $('feedback-search'),
-	feedbackFilterRating: $('feedback-filter-rating'),
-	feedbackFilterCategory: $('feedback-filter-category'),
-	feedbackFilterStatus: $('feedback-filter-status'),
-	feedbackList: $('feedback-list'),
-	feedbackMinimize: $('feedback-minimize'),
-	feedbackCloseCtl: $('feedback-close-ctl'),
-	feedbackRestore: $('feedback-restore'),
 	stopRun: $('stop-run'),
 	thinkingStrip: $('thinking-strip'),
 	thinkingHead: $('thinking-head'),
@@ -249,29 +224,12 @@ const state = {
 		/** run id -> live duration node in the runs list. */
 		runLiveTimers: new Map()
 	},
-	/** Performance panel UI state — visibility only, never data. */
-	perfUi: { minimized: false, closed: false },
 	/**
 	 * Post-run feedback UI state. `existing` is the submitter's record for the
 	 * current run (null = not submitted yet); `rating` mirrors the star row;
 	 * `submitting` guards duplicate submissions while a request is in flight.
 	 */
 	feedback: { runId: undefined, existing: undefined, existingLoadedFor: undefined, rating: 0, submitting: false, editing: false, notified: '' },
-	/**
-	 * Admin feedback review panel. Visibility-only UI state plus the loaded
-	 * list/stats; `feedbackAdmin.allowed` flips true only for owner/admin.
-	 */
-	feedbackAdmin: {
-		allowed: false,
-		minimized: false,
-		closed: false,
-		search: '',
-		rating: '',
-		category: '',
-		status: '',
-		records: [],
-		stats: undefined
-	},
 	/** run id -> the current user's own feedback record (run-list badges). */
 	runRatings: new Map(),
 	/**
@@ -280,29 +238,12 @@ const state = {
 	 * Every live-view component reads this — never its own fallback chain.
 	 */
 	activeRuntimeEnvironment: undefined,
-	/** Performance panel UI state — visibility only, never data. */
-	perfUi: { minimized: false, closed: false },
 	/**
 	 * Post-run feedback UI state. `existing` is the submitter's record for the
 	 * current run (null = not submitted yet); `rating` mirrors the star row;
 	 * `submitting` guards duplicate submissions while a request is in flight.
 	 */
 	feedback: { runId: undefined, existing: undefined, existingLoadedFor: undefined, rating: 0, submitting: false, editing: false },
-	/**
-	 * Admin feedback review panel. Visibility-only UI state plus the loaded
-	 * list/stats; `feedbackAdmin.allowed` flips true only for owner/admin.
-	 */
-	feedbackAdmin: {
-		allowed: false,
-		minimized: false,
-		closed: false,
-		search: '',
-		rating: '',
-		category: '',
-		status: '',
-		records: [],
-		stats: undefined
-	},
 	/** run id -> the current user's own feedback record (run-list badges). */
 	runRatings: new Map(),
 	/**
@@ -310,9 +251,7 @@ const state = {
 	 * device/browser context, resolved by activeRuntimeEnvironment.js.
 	 * Every live-view component reads this — never its own fallback chain.
 	 */
-	activeRuntimeEnvironment: undefined,
-	/** Performance panel UI state — visibility only, never data. */
-	perfUi: { minimized: false, closed: false }
+	activeRuntimeEnvironment: undefined
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
@@ -1126,7 +1065,6 @@ async function selectSession(id) {
 		state.founderProjectState = null;
 	}	await connect(id);
 	await refreshRuns();
-	void refreshPerformance();
 }
 
 let _runEnvHook = null;
@@ -2154,101 +2092,8 @@ function startTimerInterval() {
 }
 
 /* ── Performance analytics & run-time comparison ─────────────────── */
-
-function perfRow(label, value) {
-	const dt = document.createElement('dt');
-	dt.textContent = label;
-	const dd = document.createElement('dd');
-	dd.textContent = value ?? '—';
-	return [dt, dd];
-}
-
-/**
- * Render the Performance panel from the analytics API. Shows real aggregates
- * only; when there are no completed runs the panel stays hidden.
- *
- * Panel visibility is pure UI state: `state.perfUi.closed` (set by the Close
- * button) only hides the panel — run results and stored metrics are never
- * touched. Minimize (`state.perfUi.minimized`) collapses the body while the
- * header stays available for restoring.
- */
-async function refreshPerformance() {
-	const aggregate = await api('/analytics/durations').catch(() => undefined);
-	if (!aggregate || !aggregate.runCount) {
-		el.perfPanel.hidden = true;
-		el.perfRestore.hidden = true;
-		return;
-	}
-	// Update the data regardless of panel visibility so a later restore shows
-	// current numbers; visibility controls below only toggle display.
-	el.perfGrid.replaceChildren(
-		...perfRow('Completed runs', String(aggregate.runCount)),
-		...perfRow('Average execution', formatDurationShort(aggregate.avgDurationSeconds)),
-		...perfRow('Median execution', formatDurationShort(aggregate.medianDurationSeconds)),
-		...perfRow('Fastest run', formatDurationShort(aggregate.minDurationSeconds)),
-		...perfRow('Slowest run', formatDurationShort(aggregate.maxDurationSeconds)),
-		...perfRow('Avg / test item', aggregate.avgSecondsPerItem !== undefined
-			? `${aggregate.avgSecondsPerItem.toFixed(1)}s`
-			: undefined)
-	);
-	// Same-target comparison for the currently selected run's target.
-	const session = state.session;
-	let showCompare = false;
-	if (session?.targetUrl && typeof session.targetUrl === 'string') {
-		const history = await api(`/analytics/targets/durations?targetUrl=${encodeURIComponent(session.targetUrl)}`)
-			.catch(() => []);
-		if (Array.isArray(history) && history.length >= 2) {
-			showCompare = true;
-			el.perfCompareTitle.textContent = `${hostOf(session.targetUrl)} — run comparison`;
-			const items = history.map((entry, index) => {
-				const li = document.createElement('li');
-				const trend = index === 0 ? '' : (
-					entry.durationSeconds < history[index - 1].durationSeconds ? ' ▼ faster'
-						: entry.durationSeconds > history[index - 1].durationSeconds ? ' ▲ slower'
-							: ' → stable');
-				li.textContent = `Run #${index + 1} · ${formatDurationShort(entry.durationSeconds)}${trend}`;
-				if (entry.id === session.id) li.classList.add('is-current');
-				return li;
-			});
-			el.perfCompareList.replaceChildren(...items);
-		}
-	}
-	el.perfCompare.hidden = !showCompare;
-	// Close wins over show: the panel stays hidden until the user restores it.
-	el.perfPanel.hidden = state.perfUi.closed;
-	el.perfRestore.hidden = !state.perfUi.closed;
-	applyPerfMinimize();
-}
-
-/* ── Performance panel visibility controls ───────────────────────── */
-
-function applyPerfMinimize() {
-	const minimized = state.perfUi.minimized;
-	el.perfBody.hidden = minimized;
-	el.perfMinimize.textContent = minimized ? '▸' : '▾';
-	el.perfMinimize.title = minimized ? 'Restore' : 'Minimize';
-	el.perfMinimize.setAttribute('aria-expanded', minimized ? 'false' : 'true');
-	el.perfPanel.classList.toggle('is-minimized', minimized);
-}
-
-function togglePerfMinimize() {
-	state.perfUi.minimized = !state.perfUi.minimized;
-	applyPerfMinimize();
-}
-
-function closePerfPanel() {
-	// Visibility only: metrics, run results and analytics stay intact.
-	state.perfUi.closed = true;
-	el.perfPanel.hidden = true;
-	el.perfRestore.hidden = false;
-}
-
-function restorePerfPanel() {
-	state.perfUi.closed = false;
-	el.perfPanel.hidden = false;
-	el.perfRestore.hidden = true;
-	applyPerfMinimize();
-}
+/* The Performance sidebar panel was removed from the UI; the analytics
+ * API remains available for reports. */
 
 /* ── Post-run feedback ──────────────────────────────────────────── */
 
@@ -2572,196 +2417,6 @@ async function submitFeedback(event) {
 		state.feedback.submitting = false;
 		updateFeedbackSubmitEnabled();
 	}
-}
-
-/* ── Admin feedback review panel ────────────────────────────────── */
-
-const FEEDBACK_REVIEW_STATUSES = [
-	{ value: 'new', label: 'New' },
-	{ value: 'reviewed', label: 'Reviewed' },
-	{ value: 'in_progress', label: 'In Progress' },
-	{ value: 'resolved', label: 'Resolved' },
-	{ value: 'closed', label: 'Closed' }
-];
-
-/**
- * Loads stats + filtered records for the review panel. A 403 means the user is
- * not an owner/admin — the panel stays hidden instead of erroring.
- */
-async function refreshFeedbackAdmin() {
-	if (!state.feedbackAdmin.allowed) return;
-	const admin = state.feedbackAdmin;
-	const params = new URLSearchParams();
-	if (admin.rating) params.set('rating', admin.rating);
-	if (admin.category) params.set('category', admin.category);
-	if (admin.status) params.set('status', admin.status);
-	if (admin.search.trim()) params.set('search', admin.search.trim());
-	try {
-		const [stats, page] = await Promise.all([
-			api('/feedback/stats'),
-			api(`/feedback?${params.toString()}`)
-		]);
-		admin.stats = stats;
-		admin.records = page.records ?? [];
-	} catch (error) {
-		if (error?.status === 403) { state.feedbackAdmin.allowed = false; }
-		return;
-	}
-	renderFeedbackAdmin();
-}
-
-function renderFeedbackAdmin() {
-	const admin = state.feedbackAdmin;
-	el.feedbackPanel.hidden = admin.closed || !admin.allowed;
-	el.feedbackRestore.hidden = !admin.closed || !admin.allowed;
-	el.feedbackAdminBody.hidden = admin.minimized;
-	el.feedbackMinimize.textContent = admin.minimized ? '▸' : '▾';
-	el.feedbackMinimize.setAttribute('aria-expanded', String(!admin.minimized));
-
-	// Stats row: total + average, then the per-star distribution.
-	el.feedbackStats.replaceChildren();
-	if (admin.stats) {
-		const avg = Number.isFinite(admin.stats.averageRating)
-			? admin.stats.averageRating.toFixed(1)
-			: '—';
-		for (const [value, name] of [
-			[admin.stats.total ?? 0, 'submissions'],
-			[`${avg}★`, 'average']
-		]) {
-			const div = document.createElement('div');
-			const b = document.createElement('b');
-			b.textContent = value;
-			const span = document.createElement('span');
-			span.textContent = name;
-			div.append(b, span);
-			el.feedbackStats.append(div);
-		}
-		const byRating = admin.stats.byRating ?? {};
-		const dist = document.createElement('div');
-		dist.className = 'feedback-rating-dist';
-		for (let rating = 5; rating >= 1; rating -= 1) {
-			const row = document.createElement('div');
-			row.className = 'feedback-rating-row';
-			const stars = document.createElement('span');
-			stars.textContent = `${rating}★`;
-			stars.className = 'feedback-rating-row-stars';
-			const bar = document.createElement('span');
-			bar.className = 'feedback-rating-bar';
-			const count = Number(byRating[rating] ?? 0);
-			const total = Math.max(1, Number(admin.stats.total ?? 0));
-			const pct = Math.round((count / total) * 100);
-			const fill = document.createElement('i');
-			fill.style.width = `${pct}%`;
-			bar.append(fill);
-			const num = document.createElement('span');
-			num.textContent = count;
-			row.append(stars, bar, num);
-			row.title = `${count} × ${rating}-star feedback`;
-			dist.append(row);
-		}
-		el.feedbackStats.append(dist);
-	}
-
-	// Category filter options follow the server stats keys.
-	const categorySelect = el.feedbackFilterCategory;
-	if (categorySelect.options.length <= 1) {
-		for (const { value, label } of FEEDBACK_CATEGORIES) {
-			const option = document.createElement('option');
-			option.value = value;
-			option.textContent = label;
-			categorySelect.append(option);
-		}
-	}
-
-	el.feedbackList.replaceChildren();
-	if (!admin.records.length) {
-		const empty = document.createElement('li');
-		empty.className = 'feedback-empty';
-		empty.textContent = 'No feedback matches the current filters.';
-		el.feedbackList.append(empty);
-		return;
-	}
-	for (const record of admin.records) {
-		el.feedbackList.append(renderFeedbackRow(record));
-	}
-}
-
-/** One reviewable feedback card, linked back to its test run. */
-function renderFeedbackRow(record) {
-	const row = document.createElement('li');
-	row.className = 'feedback-row';
-	const head = document.createElement('div');
-	head.className = 'feedback-row-head';
-	const stars = document.createElement('span');
-	stars.className = 'feedback-row-stars';
-	stars.textContent = '★'.repeat(record.rating) + '☆'.repeat(5 - record.rating);
-	stars.title = `${record.rating} of 5`;
-	const category = document.createElement('span');
-	category.className = 'feedback-row-cat';
-	category.textContent = FEEDBACK_CATEGORIES.find(c => c.value === record.category)?.label ?? record.category;
-	const status = document.createElement('select');
-	status.className = 'feedback-row-status';
-	status.setAttribute('aria-label', `Review status for run ${record.runId?.slice(0, 8)}`);
-	for (const { value, label } of FEEDBACK_REVIEW_STATUSES) {
-		const option = document.createElement('option');
-		option.value = value;
-		option.textContent = label;
-		status.append(option);
-	}
-	status.value = record.status;
-	status.addEventListener('change', async () => {
-		try {
-			await api(`/feedback/${record.id}`, { method: 'PUT', body: JSON.stringify({ status: status.value }) });
-			record.status = status.value;
-			toast('Feedback status updated.', 'good');
-			void refreshFeedbackAdmin();
-		} catch (error) {
-			status.value = record.status;
-			fail(error);
-		}
-	});
-	head.append(stars, category, status);
-	const comments = document.createElement('p');
-	comments.className = 'feedback-row-comments';
-	comments.textContent = record.comments ?? '';
-	const meta = document.createElement('div');
-	meta.className = 'feedback-row-meta';
-	const bits = [];
-	if (record.runId) bits.push(`Run ${record.runId.slice(0, 8)}`);
-	if (record.targetUrl) bits.push(String(record.targetUrl));
-	if (record.runStatus) bits.push(record.runStatus === 'done' ? 'completed' : 'failed');
-	if (Number.isFinite(record.durationSeconds)) bits.push(formatClock(record.durationSeconds));
-	if (record.improvement) bits.push(`improve: ${record.improvement}`);
-	meta.textContent = bits.join(' · ');
-	row.append(head, comments, meta);
-	return row;
-}
-
-function toggleFeedbackAdminMinimize() {
-	state.feedbackAdmin.minimized = !state.feedbackAdmin.minimized;
-	renderFeedbackAdmin();
-}
-
-function closeFeedbackAdminPanel() {
-	state.feedbackAdmin.closed = true;
-	renderFeedbackAdmin();
-}
-
-function restoreFeedbackAdminPanel() {
-	state.feedbackAdmin.closed = false;
-	el.feedbackPanel.closest('details').open = true;
-	renderFeedbackAdmin();
-}
-
-/**
- * Called once after login: an owner/admin sees the review panel; everyone else
- * never does (the API also enforces this server-side).
- */
-async function initFeedbackAdmin() {
-	const role = state.user?.role;
-	if (role && !['owner', 'admin'].includes(role)) return;
-	state.feedbackAdmin.allowed = true;
-	await refreshFeedbackAdmin();
 }
 
 /* ── Transcript ──────────────────────────────────────────────────── */
@@ -4940,19 +4595,12 @@ function connect(id) {
 
 	stream.onopen = () => {
 		if (state.stream !== stream) return;
-		el.connDot.className = 'dot is-live';
-		el.connLabel.textContent = 'connected';
 		clearTimeout(resyncTimer);
 		void resync();
 	};
 	stream.onerror = () => {
 		connected();
 		clearTimeout(resyncTimer);
-		if (state.stream !== stream) return;
-		el.connDot.className = 'dot';
-		el.connLabel.textContent = state.session?.status === 'done'
-			? 'results ready'
-			: ['error', 'interrupted'].includes(state.session?.status) ? 'updates paused' : 'reconnecting…';
 	};
 	stream.onmessage = event => {
 		if (state.stream !== stream) return;
@@ -5166,7 +4814,6 @@ function handleEvent(event) {
 			}
 		if (event.status !== 'running') {
 			void refreshRuns();
-			void refreshPerformance();
 			if (FEEDBACK_TERMINAL_STATUSES.has(event.status) && feedbackEligible(session)) {
 				renderReport();
 				showCompletedQaResults();
@@ -6866,11 +6513,8 @@ function fillModelOptions(models = [], selected = '') {
 
 function paintConfig(config) {
 	state.config = config;
-	el.modelBadge.textContent = config.ready ? config.model : (config.problem ?? 'not configured');
-	el.modelBadge.style.color = config.ready ? '' : 'var(--danger)';
-	el.modelBadge.title = config.ready
-		? `${config.provider}${config.baseUrl ? ` · ${config.baseUrl}` : ''}`
-		: 'Open settings to finish configuring';
+	// #15643: the sidebar model badge was removed with the Advanced section;
+	// model status surfaces via Settings and the launcher gate instead.
 }
 
 /**
@@ -7045,7 +6689,6 @@ el.authForm?.addEventListener('submit', async event => {
 		});
 		el.authPassword.value = '';
 		hideAuthGate();
-		void initFeedbackAdmin();
 		await bootWorkspace();
 	} catch (error) {
 		if (el.authError) {
@@ -7059,8 +6702,32 @@ el.authForm?.addEventListener('submit', async event => {
 	}
 });
 
-const openSettingsButton = $('nav-settings');
-if (openSettingsButton) openSettingsButton.onclick = openSettings;
+// Sidebar footer (#15651): Settings / Account / Sign out.
+const openSettingsButton = $('sidebar-open-settings');
+if (openSettingsButton) openSettingsButton.onclick = () => void openSettings();
+const openProfileButton = $('sidebar-open-profile');
+if (openProfileButton) openProfileButton.onclick = () => accountAction(openProfileButton, async () => {
+	const user = await api('/profile');
+	$('profile-name').value = user.displayName;
+	$('profile-timezone').value = user.profile.timezone;
+	$('profile-email').textContent = user.email;
+	const dialog = $('profile-dialog');
+	dialog.showModal();
+	await refreshMemory();
+});
+const sidebarSignOut = $('sidebar-sign-out');
+sidebarSignOut?.addEventListener('click', async () => {
+	sidebarSignOut.disabled = true;
+	try {
+		await api('/auth/logout', { method: 'POST' });
+		state.stream?.close();
+		localStorage.removeItem('qase.session');
+		window.location.reload();
+	} catch (error) {
+		fail(error);
+		sidebarSignOut.disabled = false;
+	}
+});
 
 const openDeviceMatrixButton = $('open-device-matrix');
 
@@ -8022,17 +7689,6 @@ el.progressFindings?.addEventListener('click', () => {
 
 el.newRun.onclick = openQaStart;
 $('sidebar-new-run').onclick = openQaStart;
-$('sidebar-view-findings')?.addEventListener('click', () => {
-	activateDetailTab($('tab-findings'), true);
-	if (matchMedia('(max-width: 720px)').matches) setWorkspaceView('results');
-	el.viewer.scrollIntoView({ block: 'nearest' });
-});
-$('sidebar-view-report')?.addEventListener('click', () => {
-	activateDetailTab($('tab-report'), true);
-	if (matchMedia('(max-width: 720px)').matches) setWorkspaceView('results');
-	el.viewer.scrollIntoView({ block: 'nearest' });
-});
-$('sidebar-retest')?.addEventListener('click', openQaStart);
 el.newSqa.onclick = openSqaStart;
 el.newFounder.onclick = openFounderStart;
 el.stopRun.onclick = async () => {
@@ -8065,15 +7721,6 @@ el.resumeRun.onclick = async () => {
 		el.resumeRun.disabled = false;
 	}
 };
-el.signOut?.addEventListener('click', async () => {
-  el.signOut.disabled = true;
-  try {
-    await api('/auth/logout', { method: 'POST' });
-    state.stream?.close();
-    localStorage.removeItem('qase.session');
-    window.location.reload();
-  } catch (error) { fail(error); el.signOut.disabled = false; }
-});
 
 el.thinkingHead.onclick = () => {
 	if (el.thinkingStrip.classList.contains('has-detail')) {
@@ -8210,10 +7857,6 @@ async function bootWorkspace() {
 	await window.qaseEntryReady;
 	// Test Execution Timer: one shared second-hand for every live timer view.
 	startTimerInterval();
-	// Performance panel controls: minimize/restore/close are visibility-only.
-	el.perfMinimize?.addEventListener('click', togglePerfMinimize);
-	el.perfClose?.addEventListener('click', closePerfPanel);
-	el.perfRestore?.addEventListener('click', restorePerfPanel);
 	el.feedbackForm?.addEventListener('submit', submitFeedback);
 	el.feedbackClose?.addEventListener('click', closeFeedbackModal);
 	el.feedbackCancel?.addEventListener('click', cancelEditFeedback);
@@ -8224,25 +7867,6 @@ async function bootWorkspace() {
 	el.feedbackEdit?.addEventListener('click', startEditFeedback);
 	el.feedbackComments?.addEventListener('input', updateFeedbackSubmitEnabled);
 	el.feedbackCategory?.addEventListener('change', updateFeedbackSubmitEnabled);
-	el.feedbackMinimize?.addEventListener('click', toggleFeedbackAdminMinimize);
-	el.feedbackCloseCtl?.addEventListener('click', closeFeedbackAdminPanel);
-	el.feedbackRestore?.addEventListener('click', restoreFeedbackAdminPanel);
-	el.feedbackSearch?.addEventListener('input', () => {
-		state.feedbackAdmin.search = el.feedbackSearch.value;
-		void refreshFeedbackAdmin();
-	});
-	el.feedbackFilterRating?.addEventListener('change', () => {
-		state.feedbackAdmin.rating = el.feedbackFilterRating.value;
-		void refreshFeedbackAdmin();
-	});
-	el.feedbackFilterCategory?.addEventListener('change', () => {
-		state.feedbackAdmin.category = el.feedbackFilterCategory.value;
-		void refreshFeedbackAdmin();
-	});
-	el.feedbackFilterStatus?.addEventListener('change', () => {
-		state.feedbackAdmin.status = el.feedbackFilterStatus.value;
-		void refreshFeedbackAdmin();
-	});
 	try {
 		const pilot = await api('/pilot-status').catch(() => undefined);
 		if (pilot?.pilot) {
@@ -8264,7 +7888,6 @@ async function bootWorkspace() {
 			return;
 		}
 	}
-	void initFeedbackAdmin();
 	await bootWorkspace();
 })();
 
@@ -8311,11 +7934,6 @@ async function accountAction(button, work) {
   try { await work(); } catch(error) { $('profile-message').textContent = error.message; }
   finally { button.disabled = false; }
 }
-$('open-profile').onclick = () => accountAction($('open-profile'), async () => {
-  const user = await api('/profile');
-  $('profile-name').value = user.displayName; $('profile-timezone').value = user.profile.timezone; $('profile-email').textContent = user.email;
-  profileDialog.showModal(); await refreshMemory();
-});
 $('profile-form').onsubmit = event => { event.preventDefault(); accountAction(event.submitter, async () => {
   state.user = await api('/profile', { method:'PUT', body:JSON.stringify({displayName:$('profile-name').value,profile:{timezone:$('profile-timezone').value}}) });
   $('profile-message').textContent = 'Profile saved.';

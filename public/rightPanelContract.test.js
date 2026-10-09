@@ -42,26 +42,27 @@ test('#13778 contract: queued session auto-launches the run on promotion', async
 	assert.match(fbBody, /trackQueuePanel\(result\.session/, 'queue fallback must track the session for auto-launch');
 });
 
-test('Phase 13A keeps customer navigation primary and moves admin tools under Advanced', async () => {
+test('#15643 contract: Advanced section is fully removed from the sidebar', async () => {
+	// The whole Advanced disclosure (nav buttons, Feedback Inbox, theme,
+	// account, sign-out, connection status) was removed from the left rail
+	// by customer request. The rail keeps only brand, Start testing,
+	// Recent tests and the run action row.
 	const html = await readFile('public/index.html', 'utf8');
+	const asideStart = html.indexOf('<aside class="panel runs"');
+	const asideEnd = html.indexOf('</aside>', asideStart);
+	const aside = html.slice(asideStart, asideEnd);
+	assert.ok(asideStart >= 0, 'sidebar aside must exist');
+	for (const removed of ['sidebar-tools', 'sidebar-nav', 'panel-foot', 'theme-select', 'conn-dot', 'conn-label', 'feedback-panel', 'feedback-restore']) {
+		assert.ok(!aside.includes(removed), `sidebar must not contain ${removed}`);
+	}
+	assert.ok(!/\bid="(open-profile|sign-out)"/.test(aside), 'sidebar must not use the legacy open-profile/sign-out ids');
+	// Device Management stays reachable from the Settings dialog.
 	const settingsBlock = html.slice(html.indexOf('id="settings"'), html.indexOf('</dialog>', html.indexOf('id="settings"')));
 	assert.match(settingsBlock, /id="open-device-matrix"/, 'open-device-matrix must live inside #settings');
-	const footStart = html.indexOf('<footer class="panel-foot">');
-	const foot = html.slice(footStart, html.indexOf('</footer>', footStart));
-	assert.ok(!foot.includes('open-device-matrix'), 'sidebar foot must not list Device Matrix');
-	assert.ok(!foot.includes('open-environments'), 'sidebar foot must not list Environments');
-	for (const customerAccount of ['open-profile', 'sign-out']) {
-		assert.ok(foot.includes(customerAccount), `standalone foot should keep ${customerAccount}`);
-	}
-	for (const duplicate of ['open-settings', 'open-test-cases', 'open-bulk-run']) {
-		assert.ok(!foot.includes(duplicate), `footer must not duplicate ${duplicate}`);
-	}
-	const advancedStart = html.indexOf('<details class="sidebar-tools"');
-	const advanced = html.slice(advancedStart, html.indexOf('</details>', advancedStart));
-	for (const advancedTool of ['nav-test-cases', 'nav-device-matrix', 'nav-bulk-runs', 'nav-environments', 'nav-analytics', 'nav-settings']) {
-		assert.ok(advanced.includes(advancedTool), `Advanced must keep ${advancedTool}`);
-	}
-	assert.match(advanced, /<summary[^>]*>[\s\S]*Advanced/, 'technical tools must be behind one Advanced disclosure');
+	// The streamlined rail keeps its essentials.
+	assert.match(aside, /id="sidebar-collapse-toggle"/);
+	assert.match(aside, /id="sidebar-new-run"/);
+	assert.match(aside, /id="run-list"/);
 });
 
 test('device details entry targets the Settings-hosted Device Management surface', async () => {
@@ -107,7 +108,6 @@ test('Phase 13A sidebar collapse control is shared, accessible and persistent', 
 	const mode = await readFile('public/studioMode.js', 'utf8');
 	assert.match(mode, /sidebarPreferenceKey = 'qase\.sidebar'/);
 	assert.match(mode, /localStorage\.setItem\(sidebarPreferenceKey/);
-	assert.match(mode, /advancedTools\.open && document\.documentElement\.dataset\.qaseSidebar === 'collapsed'/);
 	const workspace = await readFile('public/studio-workspace.css', 'utf8');
 	assert.match(workspace, /data-qase-sidebar="collapsed"/);
 	assert.match(workspace, /grid-template-columns:\s*56px/);

@@ -57,13 +57,11 @@
 
 	window.addEventListener('DOMContentLoaded', () => {
 		const sidebarToggle = document.getElementById('sidebar-collapse-toggle');
-		const advancedTools = document.getElementById('sidebar-tools');
 		const persistPreference = (key, value) => {
 			try { localStorage.setItem(key, String(value)); } catch {}
 		};
 		const setSidebarState = (nextState, persist = true) => {
 			const collapsed = nextState === 'collapsed';
-			if (collapsed && advancedTools?.open) advancedTools.open = false;
 			document.documentElement.dataset.qaseSidebar = collapsed ? 'collapsed' : 'expanded';
 			if (sidebarToggle) {
 				sidebarToggle.setAttribute('aria-expanded', String(!collapsed));
@@ -77,11 +75,6 @@
 		setSidebarState(document.documentElement.dataset.qaseSidebar, false);
 		sidebarToggle?.addEventListener('click', () => {
 			setSidebarState(document.documentElement.dataset.qaseSidebar === 'collapsed' ? 'expanded' : 'collapsed');
-		});
-		advancedTools?.addEventListener('toggle', () => {
-			if (advancedTools.open && document.documentElement.dataset.qaseSidebar === 'collapsed') {
-				setSidebarState('expanded');
-			}
 		});
 
 		if (!enabled) return;

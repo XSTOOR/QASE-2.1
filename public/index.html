@@ -150,7 +150,6 @@
           <span class="brand-glyph" aria-hidden="true">Q</span>
           <span class="brand-mark">Qase</span>
         </span>
-        <button class="brand-sub" id="model-badge" title="Model settings">…</button>
         <button class="sidebar-collapse-toggle" id="sidebar-collapse-toggle" type="button"
                 aria-controls="workspace-runs" aria-expanded="true"
                 aria-label="Collapse recent tests sidebar" title="Collapse sidebar">
@@ -167,100 +166,16 @@
       <p class="run-explorer-label"><span class="sidebar-control-label">Recent tests</span></p>
     </header>
     <div class="run-list" id="run-list" role="list" aria-label="Recent runs"></div>
-    <div class="sidebar-context-actions" aria-label="Current run actions">
-      <button class="sidebar-context-action" id="sidebar-view-findings" type="button" title="View findings">
-        <span class="sidebar-control-icon" aria-hidden="true">◇</span><span class="sidebar-control-label">View findings</span>
+    <footer class="sidebar-foot" aria-label="Account and workspace controls">
+      <button class="sidebar-foot-btn" id="sidebar-open-settings" type="button" title="Settings">
+        <span class="sidebar-control-icon" aria-hidden="true">⚙</span><span class="sidebar-control-label">Settings</span>
       </button>
-      <button class="sidebar-context-action" id="sidebar-view-report" type="button" title="View report">
-        <span class="sidebar-control-icon" aria-hidden="true">▤</span><span class="sidebar-control-label">View report</span>
+      <button class="sidebar-foot-btn" id="sidebar-open-profile" type="button" title="My account">
+        <span class="sidebar-control-icon" aria-hidden="true">◍</span><span class="sidebar-control-label">Account</span>
       </button>
-      <button class="sidebar-context-action" id="sidebar-retest" type="button" title="Retest">
-        <span class="sidebar-control-icon" aria-hidden="true">↻</span><span class="sidebar-control-label">Retest</span>
+      <button class="sidebar-foot-btn sidebar-foot-btn--signout" id="sidebar-sign-out" type="button" title="Sign out">
+        <span class="sidebar-control-icon" aria-hidden="true">⏻</span><span class="sidebar-control-label">Sign out</span>
       </button>
-    </div>
-    <details class="sidebar-tools" id="sidebar-tools">
-      <summary title="Advanced tools">
-        <span class="sidebar-control-icon" aria-hidden="true">•••</span>
-        <span class="sidebar-control-label">Advanced</span>
-      </summary>
-    <nav class="sidebar-nav" aria-label="Advanced tools">
-      <button class="sidebar-nav-btn" id="nav-test-cases" type="button">
-        <span class="sidebar-nav-icon" aria-hidden="true">▤</span><span class="sidebar-control-label">Test cases</span>
-      </button>
-      <button class="sidebar-nav-btn" id="nav-device-matrix" type="button">
-        <span class="sidebar-nav-icon" aria-hidden="true">◧</span><span class="sidebar-control-label">Device matrix</span>
-      </button>
-      <button class="sidebar-nav-btn" id="nav-bulk-runs" type="button">
-        <span class="sidebar-nav-icon" aria-hidden="true">⠿</span><span class="sidebar-control-label">Bulk runs</span>
-      </button>
-      <button class="sidebar-nav-btn" id="nav-environments" type="button">
-        <span class="sidebar-nav-icon" aria-hidden="true">✳</span><span class="sidebar-control-label">Environments</span>
-      </button>
-      <button class="sidebar-nav-btn" id="nav-analytics" type="button">
-        <span class="sidebar-nav-icon" aria-hidden="true">◔</span><span class="sidebar-control-label">Analytics</span>
-      </button>
-      <button class="sidebar-nav-btn" id="nav-settings" type="button">
-        <span class="sidebar-nav-icon" aria-hidden="true">⚙</span><span class="sidebar-control-label">Settings</span>
-      </button>
-    </nav>
-    <section class="perf-panel" id="feedback-panel" aria-label="Feedback Inbox" hidden>      <header class="perf-head">
-        <h2 class="perf-title">💬 Feedback Inbox</h2>
-        <div class="perf-actions">
-          <button class="perf-ctl" id="feedback-minimize" type="button" aria-expanded="true" aria-controls="feedback-admin-body" aria-label="Minimize feedback inbox" title="Minimize">▾</button>
-          <button class="perf-ctl" id="feedback-close-ctl" type="button" aria-label="Close feedback inbox" title="Close">✕</button>
-        </div>
-      </header>
-      <div class="perf-body" id="feedback-admin-body">
-        <dl class="perf-grid" id="feedback-stats"></dl>
-        <div class="feedback-filters">
-          <input id="feedback-search" type="search" placeholder="Search Test Run ID, comment…" maxlength="200" aria-label="Search feedback">
-          <div class="feedback-filter-row">
-            <select id="feedback-filter-rating" aria-label="Filter by rating">
-              <option value="">All ratings</option>
-              <option value="5">5★</option><option value="4">4★</option><option value="3">3★</option><option value="2">2★</option><option value="1">1★</option>
-            </select>
-            <select id="feedback-filter-category" aria-label="Filter by category">
-              <option value="">All categories</option>
-            </select>
-            <select id="feedback-filter-status" aria-label="Filter by review status">
-              <option value="">All statuses</option>
-              <option value="new">New</option>
-              <option value="reviewed">Reviewed</option>
-              <option value="in_progress">In Progress</option>
-              <option value="resolved">Resolved</option>
-              <option value="closed">Closed</option>
-            </select>
-          </div>
-        </div>
-        <ol class="feedback-list" id="feedback-list"></ol>
-      </div>
-    </section>
-    </details>
-    <section class="perf-panel" id="perf-panel" aria-label="Test execution performance" hidden>
-      <header class="perf-head">
-        <h2 class="perf-title">⏱ Performance</h2>
-        <div class="perf-actions">
-          <button class="perf-ctl" id="perf-minimize" type="button" aria-expanded="true" aria-controls="perf-body" aria-label="Minimize performance panel" title="Minimize">▾</button>
-          <button class="perf-ctl" id="perf-close" type="button" aria-label="Close performance panel" title="Close">✕</button>
-        </div>
-      </header>
-      <div class="perf-body" id="perf-body">
-        <dl class="perf-grid" id="perf-grid"></dl>
-        <div class="perf-compare" id="perf-compare" hidden>
-          <h3 class="perf-compare-title" id="perf-compare-title">Same-target runs</h3>
-          <ol class="perf-compare-list" id="perf-compare-list"></ol>
-        </div>
-      </div>
-    </section>
-    <button class="btn btn-ghost btn-sm perf-restore" id="perf-restore" type="button" title="Show performance panel" hidden>⏱ Performance</button>
-
-    <button class="btn btn-ghost btn-sm perf-restore" id="feedback-restore" type="button" title="Show Feedback Inbox" hidden>💬 Feedback Inbox</button>
-    <footer class="panel-foot">
-      <span class="dot" id="conn-dot" aria-hidden="true"></span>
-      <span id="conn-label" role="status" aria-live="polite">connecting…</span>
-      <label class="theme-control" for="theme-select"><span>Theme</span><select id="theme-select" name="theme" data-theme-control><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
-      <button class="btn btn-ghost btn-sm foot-btn" id="open-profile" type="button">My account</button>
-      <button class="btn btn-ghost btn-sm foot-btn" id="sign-out" title="Sign out">Sign out</button>
     </footer>
   </aside>
 
@@ -463,7 +378,6 @@
       <button class="tab is-active" id="tab-activity" data-tab="activity" role="tab" aria-selected="true" aria-controls="pane-activity">Activity</button>
       <button class="tab" id="tab-plan" data-tab="plan" role="tab" aria-selected="false" aria-controls="pane-plan" tabindex="-1">Plan <span class="count" id="count-plan"></span></button>
       <button class="tab" id="tab-findings" data-tab="findings" role="tab" aria-selected="false" aria-controls="pane-findings" tabindex="-1">Findings <span class="count" id="count-findings"></span></button>
-      <button class="tab" id="tab-bugs" data-tab="bugs" role="tab" aria-selected="false" aria-controls="pane-bugs" tabindex="-1">Bugs <span class="count" id="count-bugs"></span></button>
       <button class="tab" id="tab-report" data-tab="report" role="tab" aria-selected="false" aria-controls="pane-report" tabindex="-1">Report</button>
       <button class="tab tab-sqa" id="tab-sqa" data-tab="sqa" role="tab" aria-selected="false" aria-controls="pane-sqa" tabindex="-1" hidden>Quality <span class="count" id="count-sqa"></span></button>
       <button class="tab tab-founder" id="tab-founder" data-tab="founder" role="tab" aria-selected="false" aria-controls="pane-founder" tabindex="-1" hidden>Founder <span class="count" id="count-founder"></span></button>
@@ -472,7 +386,7 @@
       <section class="tab-pane is-active" id="pane-activity" data-pane="activity" role="tabpanel" aria-labelledby="tab-activity"><div class="feed" id="activity-feed" role="list" aria-live="polite" aria-relevant="additions text"></div></section>
       <section class="tab-pane" id="pane-plan" data-pane="plan" role="tabpanel" aria-labelledby="tab-plan"><div class="feed" id="plan-list" role="list"></div></section>
       <section class="tab-pane" id="pane-findings" data-pane="findings" role="tabpanel" aria-labelledby="tab-findings"><div class="feed" id="findings-list" role="list"></div></section>
-      <section class="tab-pane" id="pane-bugs" data-pane="bugs" role="tabpanel" aria-labelledby="tab-bugs"><div class="feed" id="bugs-list" role="list"><div class="feed-empty">No bugs detected yet — use Report bug on a run with findings.</div></div></section>
+      <section class="tab-pane" id="pane-bugs" data-pane="bugs" role="tabpanel" aria-label="Bugs"><div class="feed" id="bugs-list" role="list"><div class="feed-empty">No bugs detected yet — use Report bug on a run with findings.</div></div></section>
       <section class="tab-pane" id="pane-report" data-pane="report" role="tabpanel" aria-labelledby="tab-report"><div class="feed" id="report-view"></div></section>
       <section class="tab-pane" id="pane-sqa" data-pane="sqa" role="tabpanel" aria-labelledby="tab-sqa"><div class="feed sqa-view" id="sqa-view" aria-live="polite"></div></section>
       <section class="tab-pane" id="pane-founder" data-pane="founder" role="tabpanel" aria-labelledby="tab-founder"><div class="feed founder-view" id="founder-view" aria-live="polite"></div></section>
@@ -511,12 +425,12 @@
     </button>
     <button id="new-sqa" class="feature-action" type="button" aria-label="Start quality review" aria-describedby="feature-tip-sqa" data-feature="sqa">
       <span class="feature-icon" aria-hidden="true">◇</span>
-      <span class="feature-label">Quality</span>
+      <span class="feature-label">SQA</span>
       <span class="feature-tooltip" id="feature-tip-sqa" role="tooltip">Review quality and readiness</span>
     </button>
     <button id="new-founder" class="feature-action feature-action--founder" type="button" aria-label="Start Founder Mode review" aria-describedby="feature-tip-founder" data-feature="founder">
       <span class="feature-icon" aria-hidden="true">◆</span>
-      <span class="feature-label">Ideas</span>
+      <span class="feature-label">Founder</span>
       <span class="feature-tooltip" id="feature-tip-founder" role="tooltip">Founder Mode product review</span>
     </button>
     <button id="open-bugs" class="feature-action" type="button" aria-label="Open the bug tracker" aria-describedby="feature-tip-bugs" data-feature="bugs" aria-pressed="false">
