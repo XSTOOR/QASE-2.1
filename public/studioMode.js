@@ -23,6 +23,16 @@
 	const readPreference = (key, fallback) => {
 		try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
 	};
+	const paneWidths = Object.freeze({
+		runs: Object.freeze({ minimum: 180, maximum: 320, step: 24, key: 'qase.pane.runs', property: '--qase-runs-user-width' }),
+		agent: Object.freeze({ minimum: 280, maximum: 620, step: 32, key: 'qase.pane.agent', property: '--qase-agent-user-width' })
+	});
+	for (const settings of Object.values(paneWidths)) {
+		const savedWidth = Number(readPreference(settings.key, ''));
+		if (Number.isFinite(savedWidth) && savedWidth >= settings.minimum && savedWidth <= settings.maximum) {
+			document.documentElement.style.setProperty(settings.property, `${Math.round(savedWidth)}px`);
+		}
+	}
 	const sidebarPreference = readPreference(
 		sidebarPreferenceKey,
 		readPreference(legacySidebarPreferenceKey, 'expanded')
@@ -76,6 +86,92 @@
 		sidebarToggle?.addEventListener('click', () => {
 			setSidebarState(document.documentElement.dataset.qaseSidebar === 'collapsed' ? 'expanded' : 'collapsed');
 		});
+
+		const workspace = document.querySelector('.app');
+		const workspacePanels = {
+			runs: document.getElementById('workspace-runs'),
+			agent: document.getElementById('workspace-agent')
+		};
+		const paneResizers = {
+			runs: document.getElementById('runs-pane-resizer'),
+			agent: document.getElementById('agent-pane-resizer')
+		};
+		const paneWidthFromLayout = pane => Math.round(workspacePanels[pane]?.getBoundingClientRect().width || paneWidths[pane].minimum);
+		const minimumViewerWidth = () => {
+			const status = document.body.dataset.runStatus;
+			return status === 'done' ? 520 : status === 'running' ? 480 : 360;
+		};
+		const maximumPaneWidth = pane => {
+			const settings = paneWidths[pane];
+			if (!workspace) return settings.maximum;
+			const otherPane = pane === 'runs' ? 'agent' : 'runs';
+			const otherWidth = paneWidthFromLayout(otherPane);
+			const dockWidth = Math.round(document.querySelector('.feature-dock')?.getBoundingClientRect().width || 76);
+			const available = workspace.getBoundingClientRect().width - otherWidth - dockWidth - minimumViewerWidth();
+			return Math.max(settings.minimum, Math.min(settings.maximum, Math.floor(available)));
+		};
+		const updatePaneResizers = () => {
+			for (const [pane, resizer] of Object.entries(paneResizers)) {
+				if (!resizer) continue;
+				const width = paneWidthFromLayout(pane);
+				const maximum = maximumPaneWidth(pane);
+				resizer.setAttribute('aria-valuenow', String(width));
+				resizer.setAttribute('aria-valuemax', String(maximum));
+				resizer.title = `Drag to resize ${pane === 'runs' ? 'recent tests' : 'agent'} panel`;
+			}
+		};
+		const setPaneWidth = (pane, requestedWidth, persist = true) => {
+			const settings = paneWidths[pane];
+			const nextWidth = Math.max(settings.minimum, Math.min(maximumPaneWidth(pane), Math.round(requestedWidth)));
+			document.documentElement.style.setProperty(settings.property, `${nextWidth}px`);
+			if (persist) persistPreference(settings.key, nextWidth);
+			requestAnimationFrame(updatePaneResizers);
+			return nextWidth;
+		};
+		for (const [pane, resizer] of Object.entries(paneResizers)) {
+			if (!resizer) continue;
+			let resizing = false;
+			let startX = 0;
+			let startWidth = 0;
+			const finishResize = event => {
+				if (!resizing) return;
+				resizing = false;
+				delete document.documentElement.dataset.paneResizing;
+				if (event?.pointerId !== undefined && resizer.hasPointerCapture?.(event.pointerId)) {
+					resizer.releasePointerCapture(event.pointerId);
+				}
+				setPaneWidth(pane, paneWidthFromLayout(pane), true);
+			};
+			resizer.addEventListener('pointerdown', event => {
+				if (event.button !== 0 || !matchMedia('(min-width: 1101px)').matches) return;
+				resizing = true;
+				startX = event.clientX;
+				startWidth = paneWidthFromLayout(pane);
+				document.documentElement.dataset.paneResizing = pane;
+				resizer.setPointerCapture?.(event.pointerId);
+				event.preventDefault();
+			});
+			resizer.addEventListener('pointermove', event => {
+				if (!resizing) return;
+				setPaneWidth(pane, startWidth + event.clientX - startX, false);
+				event.preventDefault();
+			});
+			resizer.addEventListener('pointerup', finishResize);
+			resizer.addEventListener('pointercancel', finishResize);
+			resizer.addEventListener('keydown', event => {
+				if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+				const settings = paneWidths[pane];
+				const nextWidth = event.key === 'Home'
+					? settings.minimum
+					: event.key === 'End'
+						? maximumPaneWidth(pane)
+						: paneWidthFromLayout(pane) + (event.key === 'ArrowLeft' ? -settings.step : settings.step);
+				setPaneWidth(pane, nextWidth, true);
+				event.preventDefault();
+			});
+		}
+		requestAnimationFrame(updatePaneResizers);
+		window.addEventListener('resize', updatePaneResizers, { passive: true });
 
 		if (!enabled) return;
 		const project = document.getElementById('studio-project-name');

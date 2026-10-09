@@ -110,7 +110,7 @@ test('Phase 13A sidebar collapse control is shared, accessible and persistent', 
 	assert.match(mode, /localStorage\.setItem\(sidebarPreferenceKey/);
 	const workspace = await readFile('public/studio-workspace.css', 'utf8');
 	assert.match(workspace, /data-qase-sidebar="collapsed"/);
-	assert.match(workspace, /grid-template-columns:\s*56px/);
+	assert.match(workspace, /grid-template-columns:\s*64px/);
 });
 
 test('runtime status vocabulary covers the agreed states via one map', async () => {

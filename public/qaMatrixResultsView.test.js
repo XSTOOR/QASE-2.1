@@ -127,6 +127,8 @@ test('renders totals honestly: planned/completed/passed/failed + coverage gap fo
 	const { view, container } = makeHarness(fixtureRun());
 	t.after(() => view.stop());
 	await view.load('matrix-test-1');
+	const subtitle = container.queryAll((n) => String(n.className).includes('qmr-subtitle'))[0]?.text();
+	assert.match(subtitle, /Runs one browser at a time/);
 	const totalsText = container.queryAll((n) => String(n.className).includes('qmr-totals'))[0]?.text();
 	assert.ok(totalsText.includes('Planned'), 'planned shown');
 	assert.ok(totalsText.includes('4'));

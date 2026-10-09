@@ -47,7 +47,7 @@ test('finding and report hierarchy lead with user-facing evidence and action', (
 
 test('empty Qase view keeps one primary launcher and routes composer URLs into setup', () => {
 	assert.match(workspaceStyles, /\.empty-actions #empty-start \{ display: none/);
-	assert.match(app, /if \(!state\.sessionId\) \{\s*openQaStart\(\)/);
+	assert.match(app, /if \(!state\.sessionId\) \{\s*await openQaStart\(\)/);
 	assert.match(app, /qaUi\.targetUrl\.value = target\.href/);
 });
 

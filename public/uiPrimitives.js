@@ -121,7 +121,7 @@ export function miniSummaryText({ usage, status, progress, findings }) {
 	const tokens = usage && Number.isFinite(usage.inputTokens) && Number.isFinite(usage.outputTokens) && total
 		? `✦ ${est}${total} tokens`
 		: '✦ -- tokens';
-	const statusLabels = { running: '● RUNNING', done: '● DONE', awaiting_input: '● waiting for you' };
+	const statusLabels = { running: '● RUNNING', done: '● DONE', blocked: '● BLOCKED', awaiting_input: '● waiting for you' };
 	const statusText = status
 		? (statusLabels[status] ?? `● ${status.toUpperCase()}`)
 		: '';

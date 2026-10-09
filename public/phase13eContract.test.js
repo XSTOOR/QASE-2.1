@@ -23,7 +23,7 @@ test('QA launch enablement includes URL, authorization, checks, configuration an
 test('QA submission is single-flight and only closes after create succeeds', () => {
 	assert.match(launcher, /if \(qaUi\.submit\.dataset\.busy === 'true'\) return/);
 	const request = launcher.indexOf("await api('/qa-matrix-runs'");
-	const close = launcher.indexOf('closeQaStart();', request);
+	const close = launcher.indexOf('closeQaStart({ updateRoute: false });', request);
 	assert.ok(request >= 0 && close > request, 'the dialog closes only after the authoritative create response');
 });
 

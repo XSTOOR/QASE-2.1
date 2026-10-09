@@ -80,6 +80,7 @@ function summary(session) {
 		durationSeconds: liveDurationSeconds(session),
 		findingCount: session.findings.length,
 		messageCount: session.messages.length,
+		...(session.report?.verdict ? { reportVerdict: session.report.verdict } : {}),
 		tokenUsage: session.tokenUsage
 	};
 }

@@ -172,7 +172,7 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 		const run = state.run;
 		title.textContent = run.title ?? 'QA run';
 		const target = run.targetUrl ? ` · ${run.targetUrl}` : '';
-		subtitle.textContent = `${run.itemCount ?? state.rows.length} configurations${target}`;
+		subtitle.textContent = `${run.itemCount ?? state.rows.length} configurations · Runs one browser at a time${target}`;
 		cancelBtn.hidden = !['pending', 'running'].includes(run.status);
 
 		renderTotals();

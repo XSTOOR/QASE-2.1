@@ -282,6 +282,12 @@ html[data-qase-layout="studio-mock"] .studio-tool-workspace {
 	background: var(--studio-host-workspace);
 }
 
+/* The host already owns its context resizer. Product pane resizers are
+   reserved for standalone Qase where the full viewport can absorb the change. */
+html[data-qase-layout="studio-mock"] body.studio-workspace .pane-resizer {
+	display: none;
+}
+
 html[data-qase-layout="studio-mock"] .studio-tool-header {
 	display: flex;
 	min-width: 0;
@@ -636,4 +642,32 @@ html[data-studio-context="collapsed"][data-qase-layout="studio-mock"] .studio-co
 		animation-duration: 0.01ms !important;
 		animation-iteration-count: 1 !important;
 	}
+}
+
+/* A routed results page still fits inside the optional Studio host header. */
+html[data-qase-layout="studio-mock"] body.studio-workspace[data-page="results"] .app {
+	grid-template-columns: minmax(0, 1fr);
+	grid-template-rows: minmax(0, 1fr);
+	height: 100%;
+	padding: 0;
+}
+html[data-qase-layout="studio-mock"] body.studio-workspace[data-page="results"] .viewer {
+	grid-column: 1;
+	height: 100%;
+}
+
+@media (max-width: 720px) {
+	html body.studio-workspace[data-page="results"][data-workspace-view="results"] .app {
+		grid-template-rows: minmax(0, 1fr);
+	}
+	html body.studio-workspace[data-page="results"][data-workspace-view="results"] .app > .viewer {
+		display: grid;
+		grid-row: 1;
+		grid-template-rows: auto auto 44px 43px minmax(0, 1fr);
+	}
+	html body.studio-workspace[data-page="results"][data-workspace-view="results"] .viewer > .stage {
+		display: flex;
+	}
+	html body.studio-workspace[data-page="results"][data-workspace-view="results"] .viewer > .tabs { grid-row: 4; }
+	html body.studio-workspace[data-page="results"][data-workspace-view="results"] .viewer > .tab-body { grid-row: 5; }
 }

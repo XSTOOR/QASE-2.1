@@ -375,6 +375,7 @@ export function listSessions({ limit = 100, ownerUserId, unbounded = false } = {
 			durationSeconds: activeDurationSeconds(session),
 			findingCount: session.findings.length,
 			messageCount: session.messages.length,
+			...(session.report?.verdict ? { reportVerdict: session.report.verdict } : {}),
 			// Plan progress for the sidebar card — derived, never stored.
 			todoTotal: Array.isArray(session.todos) ? session.todos.length : 0,
 			todoCompleted: Array.isArray(session.todos)

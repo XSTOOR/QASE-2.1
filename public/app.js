@@ -53,6 +53,8 @@ import {
 	createBatchTracker, activeBatchRunId
 } from './bulkProgress.js';
 import { formatTokens, hostOf, list, markdown, miniSummaryText, paragraph, relativeTime, section, tokenSummaryText, truncate } from './uiPrimitives.js';
+import { createPageRouter, routeHash } from './pageRouter.js';
+import { blockedRunReason, runPresentationLabel, runPresentationStatus } from './runPresentation.js';
 
 /**
  * Qase dashboard.
@@ -476,7 +478,7 @@ const bugsView = createBugsView({
 bugsView.bind();
 
 el.bugsClose = $('bugs-close');
-el.bugsClose.onclick = () => setBugsViewOpen(false);
+el.bugsClose.onclick = () => pageRouter.leave({ name: 'runs' });
 
 // The SSE stream is per-run, so findings filed by agents in OTHER runs never
 // reach the open backlog view. While it is open, poll on a slow cadence via
@@ -500,7 +502,10 @@ function setBugsViewOpen(open) {
 	}
 }
 
-el.openBugs.onclick = () => setBugsViewOpen(!state.bugsViewOpen);
+el.openBugs.onclick = () => {
+	if (state.bugsViewOpen) pageRouter.leave({ name: 'runs' });
+	else void pageRouter.navigate({ name: 'bugs' });
+};
 /* ── Bugs tab (Phase 6) ──────────────────────────────────────────── */
 
 const bugView = createBugView({
@@ -633,6 +638,7 @@ async function loadRunRatingBadges(runs) {
 }
 
 function renderRun(run) {
+	const displayStatus = runPresentationStatus(run);
 	const row = document.createElement('div');
 	row.className = 'run-row';
 	row.setAttribute('role', 'listitem');
@@ -657,16 +663,20 @@ function renderRun(run) {
 		title.append(' ', chip);
 	}
 	const accessibleTitle = title.textContent || 'Untitled test';
-	const accessibleStatus = run.status === 'done' ? 'Completed' : run.status === 'running' ? 'Running' : String(run.status || 'Idle');
+	const accessibleStatus = runPresentationLabel(run);
 	node.title = `${accessibleTitle} · ${accessibleStatus}`;
 	node.setAttribute('aria-label', `${accessibleTitle}, ${accessibleStatus}`);
+	node.dataset.status = displayStatus;
 
 	const meta = document.createElement('div');
 	meta.className = 'run-meta';
 	const dot = document.createElement('span');
-	dot.className = `dot${run.status === 'running' ? ' is-busy' : run.status === 'done' ? ' is-live' : ''}`;
+	dot.className = `dot${displayStatus === 'running' ? ' is-busy' : displayStatus === 'done' ? ' is-live' : displayStatus === 'blocked' ? ' is-warning' : ''}`;
 	dot.setAttribute('aria-hidden', 'true');
-	meta.append(dot, document.createTextNode(relativeTime(run.updatedAt)));
+	const age = document.createElement('span');
+	age.className = 'run-age';
+	age.textContent = relativeTime(run.updatedAt);
+	meta.append(dot, age);
 	// Per-run timer: live elapsed for running runs (frozen while paused),
 	// stored active duration for finished ones. Each row computes
 	// independently — never a shared clock.
@@ -978,7 +988,7 @@ function renderTestOn(containerId) {
 			name.textContent = 'Full device matrix';
 			const line = document.createElement('span');
 			line.className = 'test-on-line';
-			line.textContent = `${summaryCount.toLocaleString()} configurations · all compatible browsers`;
+			line.textContent = `${summaryCount.toLocaleString()} selected configurations · browsers run one at a time`;
 			box.append(name, line);
 			return;
 		}
@@ -1040,7 +1050,7 @@ function applyStageDevice(session) {
 }
 
 
-async function selectSession(id) {
+async function selectSession(id, { updateRoute = true } = {}) {
 	if (document.body.dataset.workspaceView === 'runs') setWorkspaceView('agent');
 	state.shownFounderReport = undefined;
 	state.shownQaResults = undefined;
@@ -1065,6 +1075,9 @@ async function selectSession(id) {
 		state.founderProjectState = null;
 	}	await connect(id);
 	await refreshRuns();
+	if (updateRoute && pageRouter.started) {
+		await pageRouter.navigate({ name: session.status === 'done' ? 'results' : 'run', runId: id });
+	}
 }
 
 let _runEnvHook = null;
@@ -1613,15 +1626,16 @@ function setRunSummaryCollapsed(collapsed) {
 function renderMiniSummary() {
 	const session = state.session;
 	const usage = session?.tokenUsage;
+	const displayStatus = runPresentationStatus(session);
 	const mini = miniSummaryText({
 		usage,
-		status: session?.status,
+		status: displayStatus,
 		progress: runProgress(),
 		findings: session?.findings?.length ?? 0,
 	});
 	el.miniTokens.textContent = mini.tokens;
 	el.miniStatus.textContent = mini.status;
-	el.miniStatus.dataset.status = session?.status ?? '';
+	el.miniStatus.dataset.status = displayStatus;
 	el.miniProgress.textContent = mini.progress;
 	el.miniFindings.textContent = mini.findings;
 }
@@ -1658,9 +1672,11 @@ function renderHeader() {
 		return;
 	}
 	const targetName = (session.targetUrl ? hostOf(session.targetUrl) : session.title) || 'this website';
+	const displayStatus = runPresentationStatus(session);
 	el.chatTitle.textContent = session.status === 'running'
 		? `Testing ${targetName}`
-		: session.status === 'done' ? 'Testing complete' : targetName;
+		: displayStatus === 'blocked' ? 'Testing blocked'
+			: session.status === 'done' ? 'Testing complete' : targetName;
 	// Keep the engine visible in the header for non-chromium runs (the run
 	// list already carries an engine pill in its meta row).
 	if (session.engine && session.engine !== 'chromium') {
@@ -1727,7 +1743,9 @@ function renderCurrentActivity() {
 		el.currentActivityState.textContent = label || 'Working…';
 		el.currentActivity.hidden = false;
 	} else if (session?.status === 'done') {
-		el.currentActivityState.textContent = 'Testing complete';
+		el.currentActivityState.textContent = runPresentationStatus(session) === 'blocked'
+			? `Testing could not proceed — ${truncate(blockedRunReason(session), 160)}`
+			: 'Testing complete';
 		el.currentActivity.hidden = false;
 	} else {
 		el.currentActivityState.textContent = '';
@@ -1745,11 +1763,13 @@ function setStatus(status) {
 	if (justStarted && matchMedia('(max-width: 720px)').matches) setWorkspaceView('browser');
 	const stopping = status === 'running' && state.stopRequests.has(state.sessionId);
 	const stoppedByUser = status === 'interrupted' && state.session?.statusDetail === 'Stopped by user.';
-	el.statusChip.dataset.status = status;
+	const displayStatus = runPresentationStatus(state.session);
+	el.statusChip.dataset.status = displayStatus;
 	el.statusChip.textContent = stopping ? 'Stopping…' : status === 'awaiting_input'
 		? 'waiting for you'
 		: status === 'running' ? 'Running'
-			: status === 'done' ? 'Complete'
+			: displayStatus === 'blocked' ? 'Blocked'
+				: status === 'done' ? 'Complete'
 				: stoppedByUser ? 'Stopped'
 					: status === 'interrupted' ? 'Paused'
 						: status === 'error' ? 'Needs attention'
@@ -1892,8 +1912,10 @@ function renderStageCollapse() {
 		if (previewAvailable) {
 			const count = state.session?.findings?.length ?? 0;
 			const result = count === 1 ? '1 finding' : `${count} findings`;
-			el.stageNote.textContent = state.session?.status === 'done'
-				? `Run complete · ${result} · Open preview`
+			el.stageNote.textContent = runPresentationStatus(state.session) === 'blocked'
+				? `Run blocked · Review report · Open preview`
+				: state.session?.status === 'done'
+					? `Run complete · ${result} · Open preview`
 				: 'Run ended · Open saved preview';
 			el.stage.setAttribute('role', 'button');
 			el.stage.setAttribute('tabindex', '0');
@@ -2026,7 +2048,11 @@ function updateRunTimer() {
 	const label = paused ? 'Paused' : (TIMER_LABELS[session.status] ?? 'Elapsed');
 	el.runTimerLabel.textContent = session.cancelledAt ? 'Duration (cancelled)' : label;
 	el.runTimerLabel.dataset.state = session.status;
-	if (session.status === 'done') {
+	if (runPresentationStatus(session) === 'blocked') {
+		el.runTimer.dataset.state = 'blocked';
+		el.runTimerLabel.dataset.state = 'blocked';
+		el.runTimerLabel.textContent = '⚠ Testing Blocked';
+	} else if (session.status === 'done') {
 		el.runTimer.dataset.state = 'completed';
 		el.runTimerLabel.textContent = '✓ Test Completed';
 	} else if (session.status === 'error') {
@@ -4704,6 +4730,8 @@ function handleEvent(event) {
 		case 'report':
 			session.report = event.report;
 			renderReport();
+			renderHeader();
+			updateRunTimer();
 			toast('Report published.', 'good');
 			break;
 
@@ -4802,6 +4830,7 @@ function handleEvent(event) {
 					failureReason: event.timing.failureReason
 				});
 			}
+			renderHeader();
 			updateRunTimer();
 			if (session.mode === 'sqa') {
 				renderSqa();
@@ -5151,18 +5180,25 @@ function qaMatrixSetDeviceScope(scope) {
 	qaMatrixState.selectedEnvIds = qaMatrixEffectiveSelection();
 }
 
-/** #15163: readable scope label for the summary — null when unscoped. */
+/**
+ * Customer-readable device scope summary. Browser count means distinct
+ * browser families; run count includes every selected browser/version pair.
+ */
 function qaMatrixScopeLabel() {
 	if (!qaMatrixState.deviceScope) return null;
 	const scope = qaMatrixState.deviceScope;
 	const deviceConfigurations = configurationsForDevice(qaMatrixState.index, scope);
 	const first = deviceConfigurations[0];
 	if (!first) return null;
-	const families = compatibleBrowserFamilies(deviceConfigurations);
+	const selected = new Set(qaMatrixState.selectedEnvIds);
+	const selectedFamilies = new Set(deviceConfigurations
+		.filter(configuration => selected.has(configuration.envId))
+		.map(configuration => configuration.browserCode));
 	const selectedCount = qaMatrixState.selectedEnvIds.length;
 	const osLabel = scope.osVersion ? `${first.os} ${scope.osVersion}` : `${first.os} (all versions)`;
 	const orientation = scope.orientation ?? (first.deviceType === 'desktop' ? 'landscape' : 'portrait');
-	return `${first.manufacturer ? `${first.manufacturer} ` : ''}${scope.device} · ${osLabel} · ${orientation} · ${families.length} browser${families.length === 1 ? '' : 's'} · ${selectedCount.toLocaleString()} config${selectedCount === 1 ? '' : 's'}`;
+	const browserCount = selectedFamilies.size;
+	return `1 device · ${browserCount.toLocaleString()} browser${browserCount === 1 ? '' : 's'} · ${selectedCount.toLocaleString()} run${selectedCount === 1 ? '' : 's'} · ${first.manufacturer ? `${first.manufacturer} ` : ''}${scope.device} · ${osLabel} · ${orientation}`;
 }
 
 function qaMatrixRender() {
@@ -5256,13 +5292,10 @@ function qaMatrixRender() {
 				const activeScopeKey = qaMatrixState.deviceScope
 					? `${qaMatrixState.deviceScope.manufacturer ?? ''}|${qaMatrixState.deviceScope.platform}|${qaMatrixState.deviceScope.device}`
 					: null;
-				if (deviceKey === activeScopeKey) deviceRow.classList.add('is-scoped');
-				// #15163: clicking a device row scopes the whole run
-				// configuration to that device and auto-selects ALL its
-				// compatible browsers — no manual ticking required.
-				deviceRow.classList.add('is-clickable');
-				deviceRow.setAttribute('role', 'button');
-				deviceRow.tabIndex = 0;
+				const isActiveScope = deviceKey === activeScopeKey;
+				if (isActiveScope) deviceRow.classList.add('is-scoped');
+				// Device selection is an explicit action. Metadata and browser
+				// controls must never silently select every compatible browser.
 				const activateScope = () => {
 					qaMatrixSetDeviceScope({
 						platform: device.platform,
@@ -5272,19 +5305,9 @@ function qaMatrixRender() {
 					qaMatrixRender();
 					syncQaSubmitState();
 				};
-				deviceRow.addEventListener('click', (event) => {
-					// Version-checkbox clicks keep their own semantics.
-					if (event.target.closest('label')) return;
-					activateScope();
-				});
-				deviceRow.addEventListener('keydown', (event) => {
-					if (event.key === 'Enter' || event.key === ' ') {
-						event.preventDefault();
-						activateScope();
-					}
-				});
 				const badges = document.createElement('span');
 				badges.className = 'qa-matrix-badges';
+				badges.setAttribute('aria-label', 'Device capabilities');
 				for (const executionType of device.executionTypes) {
 					const badge = document.createElement('span');
 					badge.className = `qa-matrix-badge badge-${executionType}`;
@@ -5293,9 +5316,22 @@ function qaMatrixRender() {
 				}
 				const deviceLine = document.createElement('div');
 				deviceLine.className = 'qa-matrix-device-line';
+				const deviceIdentity = document.createElement('span');
+				deviceIdentity.className = 'qa-matrix-device-identity';
 				const deviceName = document.createElement('span');
+				deviceName.className = 'qa-matrix-device-name';
 				deviceName.textContent = `${device.manufacturer ? `${device.manufacturer} ` : ''}${device.device}`;
-				deviceLine.append(deviceName, badges);
+				deviceIdentity.append(deviceName, badges);
+				const selectDevice = document.createElement('button');
+				selectDevice.type = 'button';
+				selectDevice.className = `qa-matrix-device-select btn btn-ghost btn-sm${isActiveScope ? ' is-selected' : ''}`;
+				selectDevice.textContent = isActiveScope ? 'Selected' : 'Select device';
+				selectDevice.setAttribute('aria-pressed', String(isActiveScope));
+				selectDevice.title = isActiveScope
+					? 'Selected device. Use the browser checkboxes below to adjust this run.'
+					: 'Select this device and its compatible browsers.';
+				selectDevice.addEventListener('click', activateScope);
+				deviceLine.append(deviceIdentity, selectDevice);
 				deviceRow.append(deviceLine);
 				for (const os of device.osVersions) {
 					const osRow = document.createElement('div');
@@ -5317,7 +5353,10 @@ function qaMatrixRender() {
 							if (isSelectable(version)) {
 								versionInput.checked = selected.has(key);
 								versionInput.addEventListener('change', () => {
-									if (versionInput.checked) qaMatrixStore.reselect(key);
+									if (scopeRows) {
+										if (versionInput.checked) qaMatrixState.deviceScopeSessionDeselections.delete(key);
+										else qaMatrixState.deviceScopeSessionDeselections.add(key);
+									} else if (versionInput.checked) qaMatrixStore.reselect(key);
 									else qaMatrixStore.deselect(key);
 									qaMatrixState.selectedEnvIds = qaMatrixEffectiveSelection();
 									qaMatrixRender();
@@ -5358,12 +5397,12 @@ function qaMatrixRender() {
 		? ` · capped at the ${MAX_RUN_CONFIGURATIONS.toLocaleString()}-configuration run limit — ${(summary.availableTotal - MAX_RUN_CONFIGURATIONS).toLocaleString()} more available via filters`
 		: '';
 	matrix.summary.textContent = scopeLabel
-		? `${scopeLabel} · ${summary.total.toLocaleString()}/${summary.availableTotal.toLocaleString()} of this device's configurations selected`
+		? `${scopeLabel} · Runs one browser at a time${overCap ? ` · Narrow the selection to ${MAX_RUN_CONFIGURATIONS.toLocaleString()} runs or fewer` : ''}`
 		: `${summary.total.toLocaleString()} of ${summary.availableTotal.toLocaleString()} available configurations selected`
 			+ (summary.unavailable > 0 ? ` · ${summary.unavailable.toLocaleString()} unavailable` : '')
 			+ (providerNotes.length > 0 ? ` · ${providerNotes.join(', ')}` : '')
 			+ cappedNote
-			+ (overCap ? ` · over the ${MAX_RUN_CONFIGURATIONS.toLocaleString()}-configuration run limit — narrow the selection to start` : '');
+			+ (overCap ? ` · over the ${MAX_RUN_CONFIGURATIONS.toLocaleString()}-configuration run limit — narrow the selection to start` : ' · Runs one browser at a time');
 	matrix.summary.title = Object.entries(summary.byFamily)
 		.filter(([, count]) => count > 0)
 		.map(([code, count]) => `${code}: ${count}`)
@@ -5499,7 +5538,7 @@ function syncQaSelectionSummary() {
 	const detail = loading ? 'Loading browsers and devices…'
 		: configurations === 0 ? 'Choose an available browser and device to start.'
 		: configurations > MAX_RUN_CONFIGURATIONS ? `${configurations.toLocaleString()} configurations selected. Narrow your selection to ${MAX_RUN_CONFIGURATIONS.toLocaleString()} or fewer.`
-		: `${configurations.toLocaleString()} browser configuration${configurations === 1 ? '' : 's'} selected`;
+		: `${configurations.toLocaleString()} browser configuration${configurations === 1 ? '' : 's'} selected · runs one at a time`;
 	summary.textContent = blockedReason
 		? `${checks} check${checks === 1 ? '' : 's'} selected · ${blockedReason}`
 		: `${checks} check${checks === 1 ? '' : 's'} selected · ${detail}`;
@@ -5702,9 +5741,9 @@ function applyStudioTarget(input) {
 	return context;
 }
 
-function openQaStartWithDemo() {
+async function openQaStartWithDemo() {
 	if (!qaUi.dialog) return;
-	openQaStart();
+	await openQaStart();
 	if (qaUi.targetUrl) {
 		qaUi.targetUrl.value = demoSiteUrl();
 		setQaFormError('Demo site loaded — it plants real bugs on purpose (login demo@qase.dev / demo1234).');
@@ -5723,7 +5762,11 @@ async function markOnboarded() {
 	} catch { /* cosmetic — onboarding state does not block a run */ }
 }
 
-function openQaStart() {
+async function openQaStart() {
+	return pageRouter.navigate({ name: 'new-run' });
+}
+
+function showQaStartPage() {
 	if (!qaUi.dialog) return;
 	setQaFormError();
 	qaUi.form.reset();
@@ -5790,7 +5833,11 @@ function openQaStart() {
 		});
 }
 
-function closeQaStart() {
+function closeQaStart({ updateRoute = true } = {}) {
+	if (updateRoute) {
+		pageRouter.leave({ name: 'runs' });
+		return;
+	}
 	if (qaUi.dialog?.open) qaUi.dialog.close();
 }
 
@@ -5832,8 +5879,12 @@ if (qaUi.dialog) {
 	}, true);
 	// URL typing re-evaluates Start gating live (#15013).
 	qaUi.targetUrl?.addEventListener('input', () => syncQaSubmitState());
-	qaUi.close.onclick = closeQaStart;
-	qaUi.cancel.onclick = closeQaStart;
+	qaUi.close.onclick = () => closeQaStart();
+	qaUi.cancel.onclick = () => closeQaStart();
+	qaUi.dialog.addEventListener('cancel', event => {
+		event.preventDefault();
+		closeQaStart();
+	});
 	$('qa-demo-fill')?.addEventListener('click', () => {
 		if (qaUi.targetUrl) {
 			qaUi.targetUrl.value = demoSiteUrl();
@@ -5972,19 +6023,22 @@ if (qaUi.dialog) {
 					testCaseId: qaUi._testCaseId
 				})
 			});
-			closeQaStart();
+				closeQaStart({ updateRoute: false });
 			void markOnboarded();
 			const createdSessionId = await waitForFirstMatrixSession(matrixRun);
 			if (createdSessionId) {
 				await selectSession(createdSessionId);
-				toast(`QA run started — ${selectedEnvIds.length.toLocaleString()} configuration${selectedEnvIds.length === 1 ? '' : 's'} queued.`);
+				toast(`QA run started — ${selectedEnvIds.length.toLocaleString()} browser configuration${selectedEnvIds.length === 1 ? '' : 's'} queued to run one at a time.`);
 			} else {
 				// The matrix run is authoritative even when an execution provider
 				// cannot produce a session promptly. Keep its honest status visible;
 				// never fabricate a selected/running session.
 				toast('QA run created. Review browser and device status for details.');
-				openQaMatrixRunDialog(matrixRun?.id);
 			}
+			// The configuration board is the honest parent view for a matrix run.
+			// Show it after every launch so one active browser is never mistaken
+			// for the whole selection; queued browsers remain visible beside it.
+			openQaMatrixRunDialog(matrixRun?.id);
 			// Optional follow-on flows: the QA run is already underway; each
 			// checked option opens the existing dialog prefilled with the same
 			// target for the user to confirm — nothing starts automatically.
@@ -6629,6 +6683,145 @@ async function openSettings() {
 
 let authRegisterMode = false;
 let workspaceBooted = false;
+const pageRouteNotice = $('page-route-notice');
+const pageRouteMessage = $('page-route-message');
+const pageRouteRetry = $('page-route-retry');
+
+function setPageRouteNotice(message = '', { state: noticeState = 'loading', retry } = {}) {
+	if (!pageRouteNotice || !pageRouteMessage || !pageRouteRetry) return;
+	pageRouteMessage.textContent = message;
+	pageRouteNotice.dataset.state = noticeState;
+	pageRouteNotice.hidden = !message;
+	pageRouteRetry.hidden = typeof retry !== 'function';
+	pageRouteRetry.onclick = typeof retry === 'function' ? retry : null;
+}
+
+function focusPageHeading(node) {
+	requestAnimationFrame(() => node?.focus({ preventScroll: true }));
+}
+
+function closePageDialog(dialog) {
+	if (dialog?.open) dialog.close();
+}
+
+function renderResultsPageHeader() {
+	const session = state.session;
+	if (!session) return;
+	const findings = session.findings?.length ?? 0;
+	$('results-page-title').textContent = session.title || 'Test results';
+	const displayStatus = runPresentationStatus(session);
+	$('results-page-status').textContent = displayStatus === 'blocked'
+		? 'Blocked'
+		: session.status === 'done' ? 'Complete' : 'Results available';
+	$('results-page-status').dataset.status = displayStatus;
+	$('results-page-findings').textContent = `${findings} finding${findings === 1 ? '' : 's'}`;
+	let target = '';
+	try { target = session.targetUrl ? new URL(session.targetUrl).host : ''; } catch { target = session.targetUrl ?? ''; }
+	$('results-page-target').textContent = target;
+	$('results-page-target').hidden = !target;
+}
+
+async function applyPageRoute(route) {
+	if (!workspaceBooted || !el.authGate?.hidden) return;
+	document.body.dataset.page = route.name;
+	document.body.dataset.pageLoading = 'true';
+	document.querySelector('.app')?.setAttribute('aria-busy', 'true');
+	if (route.name !== 'new-run') closePageDialog(qaUi.dialog);
+	if (route.name !== 'account') closePageDialog(profileDialog);
+	if (route.name !== 'bugs' && state.bugsViewOpen) setBugsViewOpen(false);
+
+	try {
+		if (route.name === 'new-run') {
+			setPageRouteNotice('Preparing test setup…');
+			showQaStartPage();
+			document.title = 'Start testing — Qase';
+			focusPageHeading($('qa-start-title'));
+			return;
+		}
+		if (route.name === 'account') {
+			setPageRouteNotice('Loading account settings…');
+			await showAccountPage();
+			document.title = 'My account — Qase';
+			focusPageHeading($('profile-title'));
+			return;
+		}
+		if (route.name === 'bugs') {
+			setPageRouteNotice('Loading bug tracker…');
+			setBugsViewOpen(true);
+			document.title = 'Bug tracker — Qase';
+			focusPageHeading($('bugs-title'));
+			return;
+		}
+		if (route.name === 'run' || route.name === 'results') {
+			setPageRouteNotice(route.name === 'results' ? 'Loading test results…' : 'Loading test run…');
+			if (state.sessionId !== route.runId) await selectSession(route.runId, { updateRoute: false });
+			if (route.name === 'results') {
+				const hasFindings = Boolean(state.session?.findings?.length);
+				const resultTab = state.session?.mode === 'sqa' && !$('tab-sqa').hidden
+					? $('tab-sqa')
+					: state.session?.mode === 'founder' && !$('tab-founder').hidden
+						? $('tab-founder')
+						: hasFindings ? $('tab-findings') : $('tab-report');
+				renderResultsPageHeader();
+				state.stageExpanded.delete(route.runId);
+				renderStageCollapse();
+				activateDetailTab(resultTab);
+				setWorkspaceView('results');
+				focusPageHeading($('results-page-title'));
+				document.title = `Results — ${state.session?.title ?? 'Qase'}`;
+			} else {
+				if (matchMedia('(max-width: 720px)').matches && state.session?.status === 'running') setWorkspaceView('browser');
+				else if (matchMedia('(max-width: 720px)').matches) setWorkspaceView('agent');
+				else if (document.body.dataset.workspaceView === 'runs') setWorkspaceView('agent');
+				focusPageHeading(el.chatTitle);
+				document.title = `${state.session?.title ?? 'Test run'} — Qase`;
+			}
+			return;
+		}
+
+		const narrow = matchMedia('(max-width: 720px)').matches;
+		setWorkspaceView(narrow && state.session?.status === 'done'
+			? 'results'
+			: narrow && state.session?.status === 'running'
+				? 'browser'
+				: 'agent');
+		document.title = 'Qase — autonomous QA agent';
+		focusPageHeading(el.chatTitle);
+	} catch (error) {
+		const message = route.name === 'account'
+			? 'Account settings could not be loaded.'
+			: route.name === 'bugs'
+				? 'The bug tracker could not be loaded.'
+				: 'That test run could not be opened.';
+		setPageRouteNotice(`${message} Try again or return to your runs.`, {
+			state: 'error',
+			retry: () => void applyPageRoute(route)
+		});
+		return;
+	} finally {
+		delete document.body.dataset.pageLoading;
+		document.querySelector('.app')?.removeAttribute('aria-busy');
+		if (pageRouteNotice?.dataset.state !== 'error') setPageRouteNotice();
+	}
+}
+
+const pageRouter = createPageRouter({ onRoute: applyPageRoute });
+
+document.addEventListener('click', event => {
+	const jump = event.target.closest('[data-page-jump]');
+	if (!jump) return;
+	const target = document.getElementById(jump.dataset.pageJump);
+	if (!target) return;
+	if (target instanceof HTMLDetailsElement) target.open = true;
+	const focusTarget = target instanceof HTMLDetailsElement
+		? target.querySelector('summary')
+		: target;
+	target.scrollIntoView({
+		behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+		block: 'start'
+	});
+	focusTarget?.focus({ preventScroll: true });
+});
 
 function renderAuthMode() {
 	if (!el.authGate) return;
@@ -6702,19 +6895,12 @@ el.authForm?.addEventListener('submit', async event => {
 	}
 });
 
-// Sidebar footer (#15651): Settings / Account / Sign out.
+// Sidebar footer (#15651): Settings / Account / Sign out. Account uses the
+// route-backed account page (merged from origin/DEV) so URL + dialog stay in sync.
 const openSettingsButton = $('sidebar-open-settings');
 if (openSettingsButton) openSettingsButton.onclick = () => void openSettings();
 const openProfileButton = $('sidebar-open-profile');
-if (openProfileButton) openProfileButton.onclick = () => accountAction(openProfileButton, async () => {
-	const user = await api('/profile');
-	$('profile-name').value = user.displayName;
-	$('profile-timezone').value = user.profile.timezone;
-	$('profile-email').textContent = user.email;
-	const dialog = $('profile-dialog');
-	dialog.showModal();
-	await refreshMemory();
-});
+if (openProfileButton) openProfileButton.onclick = () => void pageRouter.navigate({ name: 'account' });
 const sidebarSignOut = $('sidebar-sign-out');
 sidebarSignOut?.addEventListener('click', async () => {
 	sidebarSignOut.disabled = true;
@@ -7297,7 +7483,8 @@ function renderRunEnvBlock(session) {
 		const rawLevel = session?.runtimeFacts?.executionLevel
 			?? (snap?.executionProvider === 'local' ? 'SIMULATED' : hasEnv ? 'VIRTUAL_DEVICE' : 'Not recorded');
 		const level = String(rawLevel).toLowerCase().replaceAll('_', ' ').replace(/^./, value => value.toUpperCase());
-		const runState = session?.status === 'done' ? 'Complete'
+		const runState = runPresentationStatus(session) === 'blocked' ? 'Blocked'
+			: session?.status === 'done' ? 'Complete'
 			: session?.status === 'running' ? 'Running'
 				: session?.status === 'interrupted' ? 'Paused' : String(session?.status ?? 'Unknown');
 		executionLine.textContent = `Execution: ${level} · ${runState}`;
@@ -7334,6 +7521,16 @@ function syncThemeControls({ preference, applied }) {
 	document.documentElement.style.colorScheme = applied;
 	document.querySelector('meta[name="theme-color"]').content = applied === 'dark' ? '#101012' : '#ffffff';
 	for (const control of document.querySelectorAll('[data-theme-control]')) control.value = preference;
+	const themeToggle = $('theme-toggle');
+	if (themeToggle) {
+		const dark = applied === 'dark';
+		const nextTheme = dark ? 'light' : 'dark';
+		themeToggle.setAttribute('aria-pressed', String(dark));
+		themeToggle.setAttribute('aria-label', `Switch to ${nextTheme} theme`);
+		themeToggle.title = `Switch to ${nextTheme} theme`;
+		const label = $('theme-toggle-text');
+		if (label) label.textContent = dark ? 'Dark' : 'Light';
+	}
 }
 const themeStore = createThemeStore({
 	onChange: syncThemeControls
@@ -7343,6 +7540,9 @@ globalThis.__qaseThemeStore = themeStore; // Settings UI (Phase T2) + tests
 for (const control of document.querySelectorAll('[data-theme-control]')) {
 	control.addEventListener('change', () => themeStore.set(control.value));
 }
+$('theme-toggle')?.addEventListener('click', () => {
+	themeStore.set(themeStore.applied() === 'dark' ? 'light' : 'dark');
+});
 window.addEventListener('storage', event => {
 	if (event.key !== 'qase.theme' && event.key !== null) return;
 	try { if (event.storageArea !== localStorage) return; } catch { return; }
@@ -7618,7 +7818,7 @@ el.composer.onsubmit = async event => {
 	const text = el.composerInput.value.trim();
 	if (!text) return;
 	if (!state.sessionId) {
-		openQaStart();
+		await openQaStart();
 		try {
 			const target = new URL(text);
 			if (!['http:', 'https:'].includes(target.protocol)) throw new TypeError('Unsupported target protocol');
@@ -7683,12 +7883,18 @@ $('empty-start')?.addEventListener('click', () => { void startRun(); });
 $('empty-demo')?.addEventListener('click', openQaStartWithDemo);
 el.progressFindings?.addEventListener('click', () => {
 	activateDetailTab($('tab-findings'), true);
-	if (matchMedia('(max-width: 720px)').matches) setWorkspaceView('results');
+	if (state.session?.status === 'done' && pageRouter.started) void pageRouter.navigate({ name: 'results', runId: state.sessionId });
+	else if (matchMedia('(max-width: 720px)').matches) setWorkspaceView('results');
 	el.viewer.scrollIntoView({ block: 'nearest' });
 });
 
 el.newRun.onclick = openQaStart;
 $('sidebar-new-run').onclick = openQaStart;
+$('results-page-back')?.addEventListener('click', () => {
+	if (state.sessionId) void pageRouter.navigate({ name: 'run', runId: state.sessionId });
+});
+$('results-page-all')?.addEventListener('click', () => { void pageRouter.navigate({ name: 'runs' }); });
+$('results-page-new')?.addEventListener('click', openQaStart);
 el.newSqa.onclick = openSqaStart;
 el.newFounder.onclick = openFounderStart;
 el.stopRun.onclick = async () => {
@@ -7821,14 +8027,17 @@ async function bootWorkspace() {
 	const runs = await api('/sessions').catch(() => []);
 	const launchParameters = new URLSearchParams(window.location.search);
 	const requestedRunId = launchParameters.get('run');
+	let initialRoute = pageRouter.current();
+	let selectedInitialRun = false;
 	if (requestedRunId && RUN_ID_PATTERN.test(requestedRunId)) {
 		try {
-			await selectSession(requestedRunId.toLowerCase());
+			const runId = requestedRunId.toLowerCase();
+			await selectSession(runId, { updateRoute: false });
+			selectedInitialRun = true;
+			initialRoute = { name: 'run', runId };
 			launchParameters.delete('run');
 			const query = launchParameters.toString();
-			window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
-			el.composerInput.focus();
-			return;
+			window.history.replaceState({ qaseRoute: true, qasePushed: false }, '', `${window.location.pathname}${query ? `?${query}` : ''}${routeHash(initialRoute)}`);
 		} catch {
 			// A stale or cross-project launch handle cannot select a run. Fall back
 			// to the user's own latest visible run without leaking whether it exists.
@@ -7837,20 +8046,39 @@ async function bootWorkspace() {
 			window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
 		}
 	}
-	const remembered = localStorage.getItem('qase.session');
-	const target = runs.find(run => run.id === remembered) ?? runs[0];
-
-	if (target) {
-		await selectSession(target.id);
-	} else {
-		// Fresh account: show the concise empty state behind the launcher dialog.
-		el.transcript.append(el.chatEmpty);
-		el.chatEmpty.hidden = false;
-		renderRunsEmptyState();
-		await startRun();
+	if (!selectedInitialRun && (initialRoute.name === 'run' || initialRoute.name === 'results')) {
+		try {
+			await selectSession(initialRoute.runId, { updateRoute: false });
+			selectedInitialRun = true;
+		} catch {
+			initialRoute = { name: 'runs' };
+			await pageRouter.navigate(initialRoute, { replace: true, applyRoute: false });
+		}
 	}
+	if (!selectedInitialRun) {
+		const remembered = localStorage.getItem('qase.session');
+		const target = runs.find(run => run.id === remembered) ?? runs[0];
+		if (target) {
+			await selectSession(target.id, { updateRoute: false });
+			if (initialRoute.name === 'runs') {
+				initialRoute = { name: state.session?.status === 'done' ? 'results' : 'run', runId: target.id };
+				await pageRouter.navigate(initialRoute, { replace: true, applyRoute: false });
+			}
+		} else {
+			// Fresh account: prepare the empty workspace without forcing a dialog on
+			// direct links such as Account or Bugs.
+			el.transcript.append(el.chatEmpty);
+			el.chatEmpty.hidden = false;
+			renderRunsEmptyState();
+			if (initialRoute.name === 'runs') {
+				initialRoute = { name: 'new-run' };
+				await pageRouter.navigate(initialRoute, { replace: true, applyRoute: false });
+			}
+		}
+	}
+	await pageRouter.start();
 	void refreshBugs();
-	el.composerInput.focus();
+	if (pageRouter.current().name === 'runs') el.composerInput.focus();
 }
 
 (async function boot() {
@@ -7914,12 +8142,21 @@ function renderPilotBanner() {
 
 $('auth-show-password').onchange = event => { el.authPassword.type = event.target.checked ? 'text' : 'password'; };
 const profileDialog = $('profile-dialog');
-$('profile-close').onclick = () => profileDialog.close();
+$('profile-close').onclick = () => pageRouter.leave({ name: 'runs' });
+profileDialog.addEventListener('cancel', event => {
+  event.preventDefault();
+  pageRouter.leave({ name: 'runs' });
+});
 profileDialog.addEventListener('close', () => { $('password-form').reset(); });
 async function refreshMemory() {
   const entries = await api('/memory');
   $('profile-memory').replaceChildren();
-  if (!entries.length) $('profile-memory').textContent = 'No saved memory yet.';
+	  if (!entries.length) {
+	    const empty = document.createElement('li');
+	    empty.className = 'is-empty';
+	    empty.textContent = 'No saved memory yet.';
+	    $('profile-memory').append(empty);
+	  }
   for (const entry of entries) {
     const item = document.createElement('li');
     item.textContent = entry.key + ': ' + entry.value + ' ';
@@ -7933,6 +8170,11 @@ async function accountAction(button, work) {
   button.disabled = true; $('profile-message').textContent = '';
   try { await work(); } catch(error) { $('profile-message').textContent = error.message; }
   finally { button.disabled = false; }
+}
+async function showAccountPage() {
+  const user = await api('/profile');
+  $('profile-name').value = user.displayName; $('profile-timezone').value = user.profile.timezone; $('profile-email').textContent = user.email;
+  profileDialog.showModal(); await refreshMemory();
 }
 $('profile-form').onsubmit = event => { event.preventDefault(); accountAction(event.submitter, async () => {
   state.user = await api('/profile', { method:'PUT', body:JSON.stringify({displayName:$('profile-name').value,profile:{timezone:$('profile-timezone').value}}) });

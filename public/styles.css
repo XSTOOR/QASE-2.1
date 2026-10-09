@@ -632,6 +632,11 @@ a {
   animation: dot-breathe 1.8s ease-in-out infinite;
 }
 
+.dot.is-warning {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.12);
+}
+
 .run-badge {
   display: inline-flex;
   align-items: center;
@@ -832,6 +837,7 @@ a {
 
 .mini-status[data-status="running"] { color: var(--accent); }
 .mini-status[data-status="done"] { color: var(--text-secondary); }
+.mini-status[data-status="blocked"] { color: var(--warning); }
 
 .run-summary-toggle {
   margin-left: auto;
@@ -1030,6 +1036,84 @@ a {
   text-transform: lowercase;
 }
 
+/* One global theme action beside the run state. Detailed Light / Dark /
+   System selection remains available in Settings. */
+.theme-toggle {
+  --theme-icon-bg: #fff3c4;
+  --theme-icon-color: #8a5a00;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  margin: 0;
+  padding: 3px 10px 3px 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font: 600 11.5px/1 var(--font-ui);
+  cursor: pointer;
+  transition: border-color 160ms var(--ease), background-color 160ms var(--ease), color 160ms var(--ease);
+}
+
+[data-theme="dark"] .theme-toggle {
+  --theme-icon-bg: rgba(96, 165, 250, 0.16);
+  --theme-icon-color: #bfdbfe;
+}
+
+.theme-toggle:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.theme-toggle-icon {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--theme-icon-bg);
+  color: var(--theme-icon-color);
+}
+
+.theme-toggle-glyph {
+  display: none;
+  width: 14px;
+  height: 14px;
+}
+
+[data-theme="light"] .theme-toggle-sun,
+[data-theme="dark"] .theme-toggle-moon {
+  display: block;
+}
+
+.theme-toggle-text {
+  min-width: 28px;
+  text-align: left;
+}
+
+@media (max-width: 720px) {
+  .theme-toggle {
+    width: 32px;
+    padding: 3px;
+    justify-content: center;
+  }
+
+  .theme-toggle-text { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-toggle { transition: none; }
+}
+
 /* ── Test Execution Timer ──────────────────────────────────────── */
 .run-timer {
   display: inline-flex;
@@ -1083,6 +1167,16 @@ a {
   border-color: rgba(91, 208, 150, 0.27);
   background: var(--success-soft);
   color: #86dcbb;
+}
+
+.run-timer[data-state="blocked"] {
+  border-color: rgba(217, 119, 6, 0.3);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.run-timer[data-state="blocked"] .run-timer-clock {
+  color: var(--text);
 }
 
 .run-timer[data-state="completed"] .run-timer-clock,
@@ -1280,6 +1374,12 @@ a {
   border-color: rgba(91, 208, 150, 0.27);
   background: var(--success-soft);
   color: #8ce0b6;
+}
+
+.status-chip[data-status="blocked"] {
+  border-color: rgba(217, 119, 6, 0.28);
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .status-chip[data-status="error"] {
@@ -10382,6 +10482,12 @@ background:var(--surface-2);}
   background: rgba(22, 163, 74, 0.08);
   color: #15803d;
 }
+.cli-theme .status-chip[data-status="blocked"],
+.status-chip[data-status="blocked"] {
+  border-color: rgba(217, 119, 6, 0.28);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
 .cli-theme .status-chip[data-status="error"],
 .status-chip[data-status="error"] {
   border-color: rgba(220, 38, 38, 0.28);
@@ -12821,14 +12927,11 @@ dialog:not([open]) { display: none !important; }
   padding: 3px 0;
 }
 
-.qa-matrix-device { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.qa-matrix-device { padding: 8px; border-bottom: 1px solid var(--border); border-radius: 8px; }
 .qa-matrix-device:last-child { border-bottom: none; }
 
-/* #15163: device rows are scope activators — subtle affordance, existing
-   design language (accent used sparingly; no layout/styling overhaul). */
-.qa-matrix-device.is-clickable { cursor: pointer; border-radius: 6px; }
-.qa-matrix-device.is-clickable:hover { background: color-mix(in srgb, var(--accent, #4c8dff) 8%, transparent); }
-.qa-matrix-device.is-clickable:focus-visible { outline: 2px solid var(--accent, #4c8dff); outline-offset: 2px; }
+/* The card is informational. Only the labelled button and browser checkboxes
+   are interactive, preventing metadata clicks from changing run coverage. */
 .qa-matrix-device.is-scoped { box-shadow: inset 2px 0 0 var(--accent, #4c8dff); background: color-mix(in srgb, var(--accent, #4c8dff) 6%, transparent); }
 
 /* #15164: brief highlight when 'Change device' jumps to the in-modal matrix. */
@@ -12844,6 +12947,29 @@ dialog:not([open]) { display: none !important; }
   justify-content: space-between;
   gap: 8px;
   font-size: 12.5px;
+}
+
+.qa-matrix-device-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.qa-matrix-device-name { font-weight: 650; color: var(--text); }
+
+.qa-matrix-device-select {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding-inline: 10px;
+  white-space: nowrap;
+}
+
+.qa-matrix-device-select.is-selected {
+  border-color: color-mix(in srgb, var(--accent, #4c8dff) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent, #4c8dff) 14%, transparent);
+  color: var(--text);
 }
 
 .qa-matrix-badges {
@@ -12914,6 +13040,13 @@ dialog:not([open]) { display: none !important; }
 @media (max-width: 980px) {
   .qa-matrix-filters { grid-template-columns: 1fr 1fr; }
   .qa-matrix-body { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 560px) {
+  .qa-matrix-device-line { align-items: flex-start; flex-wrap: wrap; }
+  .qa-matrix-device-identity { flex: 1 1 100%; }
+  .qa-matrix-device-select { width: 100%; justify-content: center; }
+  .qa-matrix-os { margin-left: 0; }
 }
 
 /* QA matrix windowing (Phase 2 #15013) */

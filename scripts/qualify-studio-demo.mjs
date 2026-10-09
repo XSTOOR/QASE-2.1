@@ -173,7 +173,7 @@ async function open(viewport, studio = true, scenario = 'launcher', overrides = 
 	if (scenario === 'launcher') {
 		await page.locator('#qa-start[open]').waitFor();
 		await page.waitForFunction(() => !document.querySelector('#qa-tests-fieldset').disabled);
-		await page.waitForFunction(() => document.querySelector('#qa-matrix-summary').textContent.includes('3/3 of this device\'s configurations selected'));
+		await page.waitForFunction(() => document.querySelector('#qa-matrix-summary').textContent.includes('1 device · 3 browsers · 3 runs'));
 	} else {
 		try {
 			await page.locator('#chat-target').filter({ hasText: 'preview.example.test' }).waitFor({ state: 'attached' });
@@ -246,7 +246,7 @@ try {
 	const standaloneExpandedWidth = await standalone.locator('#workspace-runs').evaluate(node => node.getBoundingClientRect().width);
 	await standalone.locator('#sidebar-collapse-toggle').click();
 	const standaloneCollapsedWidth = await standalone.locator('#workspace-runs').evaluate(node => node.getBoundingClientRect().width);
-	assert.ok(standaloneCollapsedWidth <= 56.5 && standaloneExpandedWidth - standaloneCollapsedWidth >= 100, 'Default Qase uses the shared collapsible customer navigation');
+	assert.ok(standaloneCollapsedWidth <= 64.5 && standaloneExpandedWidth - standaloneCollapsedWidth >= 100, 'Default Qase uses the shared collapsible customer navigation');
 	assert.equal(await standalone.locator('#sidebar-collapse-toggle').getAttribute('aria-label'), 'Expand recent tests sidebar');
 	assert.equal(await standalone.locator('#sidebar-new-run').getAttribute('title'), 'Start testing');
 	await standalone.screenshot({ path: path.join(output, 'product-sidebar-collapsed-1440.png'), animations: 'disabled' });
@@ -314,7 +314,7 @@ try {
 		assert.equal(await standaloneRunning.locator(`#${tabId}`).getAttribute('aria-selected'), 'true');
 	}
 	await assertVisibleControlsNamed(standaloneRunning, 'Running default Qase');
-	await standaloneRunning.locator('#theme-select').selectOption('dark');
+	await standaloneRunning.locator('#theme-toggle').click();
 	await standaloneRunning.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
 	await standaloneRunning.screenshot({ path: path.join(output, 'qase-default-running-dark-1440.png'), animations: 'disabled' });
 	await standaloneRunning.locator('#stop-run').click();
@@ -331,6 +331,22 @@ try {
 	assert.equal(await standaloneCompleted.locator('.finding.is-fixed').count(), 0);
 	await standaloneCompleted.screenshot({ path: path.join(output, 'qase-default-completed-1440.png'), animations: 'disabled' });
 	await standaloneCompleted.screenshot({ path: path.join(output, 'product-completed-findings-1440.png'), animations: 'disabled' });
+	if (!await standaloneCompleted.locator('#sidebar-collapse-toggle').isVisible()) {
+		await standaloneCompleted.locator('#results-page-back').click();
+		await standaloneCompleted.locator('#sidebar-collapse-toggle').waitFor({ state: 'visible' });
+	}
+	await standaloneCompleted.locator('#sidebar-collapse-toggle').click();
+	assert.equal(await standaloneCompleted.locator('.run-age').isVisible(), false, 'Collapsed run rail hides timestamp text');
+	const [collapsedBrandBox, collapsedToggleBox] = await Promise.all([
+		standaloneCompleted.locator('.brand-glyph').boundingBox(),
+		standaloneCompleted.locator('#sidebar-collapse-toggle').boundingBox()
+	]);
+	assert.ok(collapsedBrandBox && collapsedToggleBox && collapsedBrandBox.y + collapsedBrandBox.height <= collapsedToggleBox.y,
+		'Collapsed brand and expand control occupy separate rows');
+	assert.equal(await standaloneCompleted.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false,
+		'Collapsed completed workspace does not overflow horizontally');
+	await standaloneCompleted.screenshot({ path: path.join(output, 'product-sidebar-collapsed-completed-1440.png'), animations: 'disabled' });
+	await standaloneCompleted.locator('#sidebar-collapse-toggle').click();
 	const standaloneFirstFinding = standaloneCompleted.locator('.finding-select-input').first();
 	await standaloneFirstFinding.uncheck();
 	assert.equal(await standaloneCompleted.locator('.findings-selection-count').textContent(), '1 of 2 selected');
@@ -342,7 +358,7 @@ try {
 	assert.equal(await standaloneCompleted.locator('#stage-toggle').getAttribute('aria-label'), 'Minimize live preview');
 	await standaloneCompleted.locator('#stage-toggle').click();
 	assert.equal(await standaloneCompleted.locator('#stage-toggle').getAttribute('aria-label'), 'Show live preview');
-	await standaloneCompleted.locator('#sidebar-view-report').click();
+	await standaloneCompleted.locator('#tab-report').click();
 	assert.equal(await standaloneCompleted.locator('#tab-report').getAttribute('aria-selected'), 'true');
 	assert.equal(await standaloneCompleted.getByRole('button', { name: 'Generate test cases' }).isVisible(), false, 'Default Qase keeps developer generation out of primary report actions');
 	assert.equal(await standaloneCompleted.locator('.report-developer-actions').evaluate(node => node.open), false);
@@ -357,7 +373,7 @@ try {
 		await standaloneCompleted.locator('#feedback-modal[open]').waitFor();
 		await standaloneCompleted.locator('#feedback-cancel').click();
 	}
-	await standaloneCompleted.locator('#sidebar-retest').click();
+	await standaloneCompleted.locator('#sidebar-new-run').click();
 	await standaloneCompleted.locator('#qa-start[open]').waitFor();
 	await standaloneCompleted.locator('#qa-cancel').click();
 	await assertVisibleControlsNamed(standaloneCompleted, 'Completed default Qase');
@@ -496,7 +512,7 @@ try {
 	assert.equal(await sidebarToggle.getAttribute('aria-label'), 'Expand recent tests sidebar');
 	assert.equal(await desktop.locator('#sidebar-tools').evaluate(node => node.open), false, 'Collapsing closes Advanced content');
 	const collapsedSidebarWidth = await desktop.locator('#workspace-runs').evaluate(node => node.getBoundingClientRect().width);
-	assert.ok(collapsedSidebarWidth <= 56.5, 'Collapsed sidebar becomes a narrow icon rail');
+	assert.ok(collapsedSidebarWidth <= 64.5, 'Collapsed sidebar becomes a narrow icon rail');
 	assert.ok(expandedSidebarWidth - collapsedSidebarWidth >= 100, 'Collapsing gives meaningful width back to the workspace');
 	assert.equal(await desktop.locator('#sidebar-new-run').getAttribute('title'), 'Start testing');
 	await desktop.screenshot({ path: path.join(output, 'studio-sidebar-collapsed-1440.png'), animations: 'disabled' });
@@ -610,7 +626,7 @@ try {
 	assert.equal(await tabletSidebar.locator('#studio-context-resizer').isVisible(), false, 'Desktop resize handle is disabled at tablet width');
 	assert.equal(await tabletSidebar.locator('#studio-context-toggle').isVisible(), false);
 	await tabletSidebar.locator('#sidebar-collapse-toggle').click();
-	assert.equal(await tabletSidebar.locator('#workspace-runs').evaluate(node => Math.round(node.getBoundingClientRect().width)), 56);
+	assert.equal(await tabletSidebar.locator('#workspace-runs').evaluate(node => Math.round(node.getBoundingClientRect().width)), 64);
 	assert.equal(await tabletSidebar.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
 	await tabletSidebar.screenshot({ path: path.join(output, 'studio-sidebar-collapsed-768.png'), animations: 'disabled' });
 	await tabletSidebar.screenshot({ path: path.join(output, 'studio-responsive-768.png'), animations: 'disabled' });
@@ -680,7 +696,7 @@ try {
 	assert.equal(await running.locator('body').evaluate(node=>getComputedStyle(node).textTransform), 'none', 'Body does not inherit stray uppercase declarations');
 	assert.equal(await running.locator('.transcript').evaluate(node=>getComputedStyle(node).backgroundColor), 'rgb(255, 255, 255)', 'Light conversation uses the Studio surface');
 	await running.locator('#studio-theme-select').selectOption('dark');
-	assert.deepEqual(await running.locator('[data-theme-control]').evaluateAll(nodes=>nodes.map(n=>n.value)), ['dark', 'dark', 'dark', 'dark']);
+	assert.deepEqual(await running.locator('[data-theme-control]').evaluateAll(nodes=>nodes.map(n=>n.value)), ['dark', 'dark', 'dark']);
 	assert.equal(await running.locator('.transcript').evaluate(node=>getComputedStyle(node).backgroundColor), 'rgb(26, 26, 29)', 'Dark conversation uses the Studio surface');
 	await running.screenshot({ path: path.join(output, 'studio-running-dark-1440.png'), animations: 'disabled' });
 	await running.reload();
@@ -705,8 +721,9 @@ try {
 	assert.equal(await completed.locator('.findings-selection-count').textContent(), '2 of 2 selected');
 	assert.equal(await completed.locator('.finding.is-fixed').count(), 0, 'Selected findings are not presented as fixed');
 	assert.equal(await completed.locator('#stage-toggle').getAttribute('aria-label'), 'Show live preview');
-	assert.equal(await completed.locator('#sidebar-view-report').isVisible(), true);
-	assert.equal(await completed.locator('#sidebar-retest').isVisible(), true);
+	assert.equal(await completed.locator('#sidebar-view-report').count(), 0);
+	assert.equal(await completed.locator('#sidebar-retest').count(), 0);
+	assert.equal(await completed.locator('#perf-panel').count(), 0);
 	await completed.screenshot({ path: path.join(output, 'studio-completed-findings-1440.png'), animations: 'disabled' });
 	const firstFinding = completed.locator('.finding-select-input').first();
 	await firstFinding.uncheck();
@@ -717,7 +734,7 @@ try {
 	const copyToast = completed.locator('.toast').last();
 	await copyToast.waitFor({ state: 'visible' });
 	await copyToast.evaluate((node) => node.remove());
-	await completed.locator('#sidebar-view-report').click();
+	await completed.locator('#tab-report').click();
 	assert.equal(await completed.locator('#tab-report').getAttribute('aria-selected'), 'true');
 	const reportHeadings = await completed.locator('#report-view .report-section h3').allTextContents();
 	assert.deepEqual(reportHeadings.slice(0, 2), ['Summary', 'Recommended next action'], 'Report leads with result context and next action');
@@ -735,7 +752,11 @@ try {
 		await completed.locator('#feedback-modal[open]').waitFor();
 		await completed.locator('#feedback-cancel').click();
 	}
-	await completed.locator('#sidebar-retest').click();
+	if (!await completed.locator('#sidebar-new-run').isVisible()) {
+		await completed.locator('#results-page-back').click();
+		await completed.locator('#sidebar-new-run').waitFor({ state: 'visible' });
+	}
+	await completed.locator('#sidebar-new-run').click();
 	await completed.locator('#qa-start[open]').waitFor();
 	await completed.locator('#qa-cancel').click();
 	await completed.locator('#tab-findings').click();
@@ -761,7 +782,7 @@ try {
 	await completed.keyboard.press('Home');
 	await completed.screenshot({ path: path.join(output, 'studio-completed-context-narrow-1440.png'), animations: 'disabled' });
 	await completed.screenshot({ path: path.join(output, 'studio-completed-1440.png'), animations: 'disabled' });
-	checks.push('Completed fixture automatically prioritizes findings, preserves exact selection, leads the report with product-owner information, and keeps preview and retest controls functional');
+	checks.push('Completed fixture automatically prioritizes findings, preserves exact selection, leads the report with product-owner information, and keeps preview and primary Start testing controls functional');
 	await completed.close();
 
 	const tabletRunning = await open({ width: 768, height: 900 }, true, 'running');
@@ -811,8 +832,12 @@ try {
 		const mobile = await open({ width: 390, height: 844 }, studio, 'done');
 		assert.equal(await mobile.locator('body').getAttribute('data-workspace-view'), 'results');
 		assert.equal(await mobile.locator('.findings-selection-count').isVisible(), true);
+		if (!await mobile.locator('button[data-workspace-view="agent"]').isVisible()) {
+			await mobile.locator('#results-page-back').click();
+			await mobile.locator('button[data-workspace-view="agent"]').waitFor({ state: 'visible' });
+		}
 		for (const [view, panel] of [['agent', '.chat'], ['runs', '.runs'], ['browser', '.viewer'], ['results', '.viewer']]) {
-			await mobile.locator(`[data-workspace-view="${view}"]`).click();
+			await mobile.locator(`button[data-workspace-view="${view}"]`).click();
 			assert.equal(await mobile.locator(panel).isVisible(), true);
 			assert.equal(await mobile.locator('.app > .panel:visible').count(), 1, 'One main panel is visible on mobile');
 			if (view === 'browser') assert.ok((await mobile.locator('#stage-inner').boundingBox()).width > 200, 'Browser panel expands the saved preview');
