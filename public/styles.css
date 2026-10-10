@@ -146,7 +146,7 @@
 html,
 body {
   width: 100%;
-  min-width: 320px;
+  min-width: 0;
   min-height: 100%;
 }
 
@@ -3914,7 +3914,7 @@ a {
 }
 
 .feature-label {
-  max-width: 42px;
+  max-width: 64px;
   overflow: hidden;
   font-size: 7px;
   font-weight: 700;
@@ -3922,6 +3922,8 @@ a {
   line-height: 1.1;
   text-overflow: ellipsis;
 }
+
+body.studio-workspace .feature-action .feature-label { max-width: 64px; }
 
 .feature-tooltip {
   position: absolute;
@@ -4650,7 +4652,7 @@ html.entry-active body {
   position: fixed;
   z-index: 5000;
   inset: 0;
-  min-width: 320px;
+  min-width: 0;
   min-height: 100vh;
   min-height: 100dvh;
   overflow: hidden;
@@ -9582,7 +9584,7 @@ dio footer nav (R2): the 4-column grid above stays for the layout
 }
 
 /* Account entry: responsive, readable, and immediately actionable. */
-.auth-gate { position:fixed; inset:0; z-index:500; display:grid; grid-template-columns:minmax(0,1.1fr) minmax(400px,1fr); overflow:auto; padding:0; background:#0b111a; color:var(--text); font-family:Inter,Segoe UI,Arial,sans-serif; }
+.auth-gate { position:fixed; inset:0; z-index:500; display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,400px); overflow:auto; padding:0; background:#0b111a; color:var(--text); font-family:Inter,Segoe UI,Arial,sans-serif; }
 .auth-story { display:flex; flex-direction:column; padding:clamp(32px,5vw,80px); background:radial-gradient(ellipse at 0% 75%,#19344a80,transparent 65%),#0c1521; border-right:1px solid var(--border); }
 .auth-brand { display:flex; align-items:center; gap:12px; color:#fff; font-size:19px; font-weight:700; letter-spacing:4px; text-decoration:none; }
 .auth-logo { display:grid; place-items:center; width:40px; height:40px; border:1px solid #6edbc0; border-radius:12px; color:#81e9cd; letter-spacing:0; }

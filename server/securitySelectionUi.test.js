@@ -19,7 +19,11 @@ test('the QA dialog renders grouped test categories with tri-state headers', () 
 	assert.match(html, /<div class="sqa-option-grid" id="qa-security-options"><\/div>/);
 	// Category header toggles for the tri-state select/deselect behavior.
 	assert.match(html, /<input type="checkbox" id="qa-category-standard-toggle" checked>/);
-	assert.match(html, /<input type="checkbox" id="qa-category-security-toggle" checked>/);
+	// Security ships UNCHECKED in the static markup: security checks are opt-in
+	// (they require explicit authorization), and the section starts hidden until
+	// the catalog paints it. syncQaCategoryToggles() drives checked/indeterminate
+	// at runtime; the static default stays unchecked.
+	assert.match(html, /<section class="qa-category" id="qa-category-security" hidden>\s*<h4[^>]*>\s*<label class="check qa-category-toggle">\s*<input type="checkbox" id="qa-category-security-toggle">/);
 	assert.match(html, /<span>Security testing<\/span>/);
 });
 

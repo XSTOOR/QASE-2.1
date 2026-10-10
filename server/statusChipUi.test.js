@@ -21,12 +21,14 @@ test('the run-status (progress-top) row renders no status chip', () => {
 });
 
 test('the live status chip is still wired for all run states', async () => {
-	// The header chip receives dataset.status + label from setStatus().
-	assert.match(app, /el\.statusChip\.dataset\.status = status;/);
+	// The header chip receives the PRESENTATION status (blocked etc.) via
+	// dataset.status — the merged runPresentationStatus() refinement — and its
+	// label from setStatus(). Raw status drives the label ternary.
+	assert.match(app, /const displayStatus = runPresentationStatus\(state\.session\);\s*\n\s*el\.statusChip\.dataset\.status = displayStatus;/);
 	assert.match(app, /el\.statusChip\.textContent = stopping \? 'Stopping…' : status === 'awaiting_input'/);
 	// CSS styling for every run state still targets the chip.
 	const styles = await readFile('public/styles.css', 'utf8');
-	for (const state of ['running', 'awaiting_input', 'done', 'error', 'interrupted']) {
+	for (const state of ['running', 'awaiting_input', 'done', 'error', 'interrupted', 'blocked']) {
 		assert.match(styles, new RegExp(`\\.status-chip\\[data-status="${state}"\\]`), `${state} styling missing`);
 	}
 });

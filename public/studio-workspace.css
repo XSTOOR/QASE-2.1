@@ -1044,7 +1044,12 @@ body.studio-workspace .account-field-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+  align-items: start;
 }
+/* Keep paired inputs on one baseline even when a label carries a hint
+   (e.g. "New password · Use at least 12 characters"): the hint renders
+   below the input instead of stretching the label column. */
+body.studio-workspace .account-field-grid label { grid-template-rows: auto auto auto; }
 body.studio-workspace .account-dialog label {
   display: grid;
   min-width: 0;
@@ -1105,7 +1110,7 @@ body.studio-workspace .account-memory-list li.is-empty {
 body.studio-workspace .account-memory-list .btn { flex: none; min-height: 30px; padding-inline: 9px; }
 body.studio-workspace .account-memory-form {
   grid-template-columns: minmax(150px, .7fr) minmax(220px, 1.3fr) auto;
-  align-items: end;
+  align-items: start;
 }
 body.studio-workspace .account-status {
   padding: 12px 24px;
@@ -1307,6 +1312,7 @@ body.studio-workspace .run-list {
 body.studio-workspace .runs:has(.run-list:empty)::after {
   content: "";
   flex: 1 1 auto;
+}
 
 /* Phase 2 — routed tasks are full product pages. The existing forms and API
    controllers stay shared; only their presentation changes at route level. */
@@ -1746,8 +1752,13 @@ body.studio-workspace[data-page="results"] :is(#pane-findings, #pane-report, #pa
   body.studio-workspace .results-page-actions .btn {
     justify-content: center;
     width: 100%;
+    min-width: 0;
   }
   body.studio-workspace .results-page-actions #results-page-new { grid-column: 1 / -1; }
+  /* Very narrow screens (or heavily zoomed browsers): let action labels
+     ellipsize instead of overlapping when two buttons share a row. */
+  body.studio-workspace .results-page-actions .btn span[aria-hidden] { flex: none; }
+  body.studio-workspace .results-page-actions .btn { overflow: hidden; }
   body.studio-workspace[data-page="results"] .viewer > .panel-head { padding-inline: 16px; }
   body.studio-workspace[data-page="results"] .tabs { padding-inline: 8px; }
   body.studio-workspace[data-page="results"] :is(#pane-findings, #pane-report, #pane-bugs) .feed { padding: 18px 16px 36px; }

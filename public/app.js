@@ -2739,7 +2739,9 @@ function fitStageFrame() {
 
 	const styles = getComputedStyle(el.stage);
 	const availableWidth = el.stage.clientWidth - parseFloat(styles.paddingLeft) - parseFloat(styles.paddingRight);
-	const availableHeight = el.stage.clientHeight - parseFloat(styles.paddingTop) - parseFloat(styles.paddingBottom);
+	const chromeBar = document.getElementById('browser-chrome');
+	const chromeHeight = chromeBar && !chromeBar.hidden ? chromeBar.offsetHeight : 0;
+	const availableHeight = el.stage.clientHeight - parseFloat(styles.paddingTop) - parseFloat(styles.paddingBottom) - chromeHeight;
 	const ratio = width / height;
 	let frameWidth = availableWidth;
 	let frameHeight = frameWidth / ratio;
@@ -7865,6 +7867,22 @@ el.composerInput.addEventListener('keydown', event => {
 });
 
 window.addEventListener('resize', fitStageFrame, { passive: true });
+
+// The stage's own box changes without a window resize — pane-resizer drags,
+// the plan/activity panel expanding when a run starts, tab switches, and the
+// results/browser workspace view swap all reflow the grid rows. The window
+// resize listener alone misses those, so a tall device frame kept its stale
+// height and .stage{overflow:hidden} cropped its bottom edge. Re-fit on every
+// real size change of the stage (and of the browser-chrome bar, which shifts
+// the stage's top edge).
+if (typeof ResizeObserver === 'function' && el.stage) {
+	const refitStageFrame = () => fitStageFrame();
+	const stageObserver = new ResizeObserver(refitStageFrame);
+	stageObserver.observe(el.stage);
+	const chromeBar = document.getElementById('browser-chrome');
+	if (chromeBar) stageObserver.observe(chromeBar);
+	// ResizeObserver callbacks are batched per frame; no further throttling needed.
+}
 
 el.stageToggle.onclick = toggleStageCollapse;
 el.stage.addEventListener('click', event => {

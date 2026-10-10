@@ -292,9 +292,21 @@ export function createApplication(options = {}) {
 	app.use('/api/qa-matrix-runs', express.json({ limit: '8mb' }));
 	app.use(express.json({ limit: '1mb' }));
 	app.get('/login', (_request, response) => {
+		// The HTML shell must never be served from cache — a stale shell
+		// referencing pre-versioned asset URLs resurrects broken layouts.
+		response.set('Cache-Control', 'no-cache');
 		response.sendFile(path.join(publicDirectory, 'index.html'));
 	});
-	app.use(express.static(publicDirectory));
+	// Versioned assets (?v=…) are immutable per version — cache hard. Everything
+	// else (unversioned paths, index.html) revalidates every load.
+	app.use(express.static(publicDirectory, {
+		setHeaders(response, filePath) {
+			if (filePath.endsWith('.html')) response.set('Cache-Control', 'no-cache');
+			else if (/[?&]v=/.test(response.req?.url ?? '') || filePath.endsWith('.css') || filePath.endsWith('.js')) {
+				response.set('Cache-Control', 'public, max-age=0, must-revalidate');
+			}
+		}
+	}));
 	// #14650 (NI02 Phase 2): known-defect fixture pages — mounted BEFORE
 	// mountDemoSite because its router has a catch-all 404 under /demo that
 	// would otherwise swallow /demo/defects/*. Reproduction depends on the

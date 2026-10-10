@@ -8,8 +8,9 @@ const script = readFileSync(new URL('../public/studioMode.js', import.meta.url),
 const styles = readFileSync(new URL('../public/studio-embed.css', import.meta.url), 'utf8');
 
 test('mock Studio shell is opt-in and leaves standalone as the default', () => {
-	assert.match(html, /<script src="studioMode\.js"><\/script>/);
-	assert.match(html, /<link rel="stylesheet" href="studio-embed\.css">/);
+	// Cache-busted asset URLs (v=20261009-1) still load studioMode + embed skin.
+	assert.match(html, /<script src="studioMode\.js\?v=[\w-]+"><\/script>/);
+	assert.match(html, /<link rel="stylesheet" href="studio-embed\.css\?v=[\w-]+">/);
 	assert.match(script, /params\.get\('studio'\) === 'mock'/);
 	assert.match(script, /enabled \? 'studio-mock' : 'standalone'/);
 	assert.match(styles, /\.studio-demo-shell,[\s\S]*?display: contents;/);

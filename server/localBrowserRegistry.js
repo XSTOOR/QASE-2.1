@@ -59,6 +59,7 @@ const BRANDS = [
 		label: 'Opera',
 		candidatePaths: [
 			`${LOCAL_BROWSERS_ROOT}/opera/usr/lib/x86_64-linux-gnu/opera-stable/opera`,
+			`${LOCAL_BROWSERS_ROOT}/opera/usr/lib/x86_64-linux-gnu/opera-gx-stable/opera`,
 			'/opt/opera-root/usr/lib/x86_64-linux-gnu/opera-stable/opera',
 			'/usr/bin/opera',
 			'/usr/bin/opera-stable',
