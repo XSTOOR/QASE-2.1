@@ -1,18 +1,19 @@
-## DEV→NIHARIKA merge #14189 (merged 2026-10-12, commit 807bd76)
+# DEV → NIHARIKA merge (2026-10-12, ticket #14189) — FINAL STATE
 
-### Migration renumber resolution
-DEV renumbered qa_test_selection/security_authorization 021/022 → 037/038; NIHARIKA kept 021/022. Resolution: NIHARIKA numbering won; DEV duplicates deleted; DEV's new founder_project_state renumbered 039→040. Set is now 001–040 contiguous, currentVersion 40.
+- Merge commit **807bd76** (origin/DEV c959803 → NIHARIKA) + fix **545ac1f** on NIHARIKA. NOT YET PUBLISHED (origin/NIHARIKA at 807bd76's parent — wait, origin/NIHARIKA == 807bd76? No: origin/NIHARIKA points at 807bd76? Verify with `git status` — HEAD is 545ac1f ahead of origin/NIHARIKA=807bd76? Actually `git log` showed `807bd76 (origin/NIHARIKA)` as parent of 545ac1f, so ONE commit (545ac1f) is unpushed. Publish when user approves.
+- Resolution rules used: NIHARIKA auth/pipeline wins, DEV UI layered. DEV's 037/038 migrations were byte-duplicates of NIHARIKA's 021/022 → dropped; DEV 039_founder_project_state → 040. Migrations contiguous 1–40, name+checksum strict (server/postgres/migrations.js). No applied PG history existed (QASE_RUN_STORE=local) so no renumber-compat plan was needed.
+- Fix 545ac1f: `$('open-settings').onclick` threw on null after DEV's #15651 sidebar redesign and silently killed every handler below it in app.js. Now guarded. If new UI breaks with NO console handlers working, check for null-element binding regressions first.
 
-**COMPATIBILITY CAVEAT (external PostgreSQL databases):** the migrator (server/postgres/migrations.js) validates applied history as a strict contiguous prefix with exact version+name+checksum match. Any EXTERNAL database that applied DEV's renumbered numbering (021/022 missing, qa_test_selection@037, security_authorization@038) will REJECT with "migration history is not a known contiguous prefix" / "name mismatch" and will not boot its migration path. Only NIHARIKA-numbered histories (021/022 present) are compatible. This workspace is unaffected (QASE_RUN_STORE=local, no DATABASE_URL). Before connecting any external PG database, check `SELECT version,name FROM qase_schema_migrations ORDER BY version` — if 037=qa_test_selection, a one-time compatibility migration of the tracking table is required.
+## Verification results
+- Server tests: per-file sweep of final batch (34 files) all green; batches 1–3 green except one isolation-flake (founderService ENOSPC during disk-full — passed after cleanup). public/ 285/285. migrations.test.js 5/5. defectFixtures 6/6.
+- Browser: login OK (tester@qase.dev / cred.json), profile dialog + Recovery Codes nav + #qa-security-{auth-note,scope,notes} present; sidebar footer OK; preview 200.
 
-### Interaction-model decision (survived the merge)
-NIHARIKA's Phase-1 explicit selection model won over DEV's deselection model: per-device selection checkbox + View button (VIEW-only scope), uncapped selection, Phase-2 batching on submit (MATRIX_BATCH_SIZE=2000 per batch, planBatches + batchKeyFor idempotency, parent runs kind=parent). withinCap is deliberately NOT a launch gate — qaLaunchBlockedReason has no over-cap branch. Tests deviceSelectionUi.test.js and phase13eContract.test.js were rewritten to this contract.
-
-### Environment gotchas (recurring)
-- One-shot `node --test` full suite exhausts container fork limits (EAGAIN). Run in batches of ≤40 files, or per-file.
-- Disk is 9.8G: freeing /home/coder/.cache/ms-playwright breaks WebKit tests. After cache loss: `npx playwright install webkit chromium-headless-shell` AND `npx playwright install-deps webkit` (apt libs are wiped on container restart, browser cache persists).
-- Killed test batches orphan node processes → thread exhaustion → must restart container.
-- Playwright install target is `chromium-headless-shell` (not chrome-headless-shell).
-
-### Test account
-.drytis/cred.json: tester@qase.dev, password rotated during smoke to smoke-reset-Pw1-2026x (reset flow exercised; old recovery codes invalidated).
+## Container hazards (recurring)
+- Full `node --test server/*.test.js` (169 files) exhausts OS threads → fork EAGAIN, wedges even bash; ONLY fix is container restart. Kill orphaned node --test procs early. Run in batches ≤45 files with --test-concurrency ≤6, or per-file. Never leave a timed-out batch running.
+- Killing a timed-out batch run is what wedges the thread budget — wait for natural exit when possible.
+- Disk: /workspace fills fast from browser downloads + .qase artifacts + .git loose blobs. Freed ~750MB via `git gc --prune=now` (unreachable 138/137/116MB blobs from old commits); cleanup .qase/*.tmp-*, artifacts/*, /tmp/qase-*. Currently 68% used.
+- After container restart: webkit deps MUST be reinstalled or MiniBrowser fails on libgstreamer (`sudo apt-get install -y libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 libbacktrace0 libgstreamer-gl1.0-0 libgstreamer-plugins-bad1.0-0` + setup.sh's WEBKIT_EXTRA_DEPS list; then `LD_LIBRARY_PATH=~/.cache/ms-playwright/webkit-2336/minibrowser-wpe/lib` works). Chromium may also need `sudo npx playwright install-deps chromium` (libasound2).
+- Branded browsers: /workspace/.local-browsers/{brave,edge,opera} — UNTRACKED, re-extract via setup.sh sections (opera uses opera-gx-stable 136 from deb.opera.com; the awk extraction in setup.sh works,Opera extract WARN was a transient curl fail once). Tests in localBrowserRegistry.test.js assert their presence.
+- Playwright headless-shell path: /home/coder/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell (NOT headless_shell; NOT /root).
+- Login throttle: in-memory, 10 attempts/account per 15min — wrong-password probes lock out real logins with 429. Restart `node server/index.js` (pid changes; kill the process, procmgr service-bg-service-4182 respawns it).
+- Setup script full run (bash /drytis-config/setup.sh) re-installs npm deps AND browsers — takes minutes; prefer running only the needed section.
