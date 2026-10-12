@@ -59,6 +59,12 @@ const BRANDS = [
 		label: 'Opera',
 		candidatePaths: [
 			`${LOCAL_BROWSERS_ROOT}/opera/usr/lib/x86_64-linux-gnu/opera-stable/opera`,
+			// opera-gx-stable 136 (2026-10-08): the opera-stable 137 .deb
+			// segfaults on this host (trixie) while the 136-era binary —
+			// verified launchable in RT1 — ships from the GX pool package
+			// of the same Chromium generation. Same browser engine, honest
+			// local execution.
+			`${LOCAL_BROWSERS_ROOT}/opera/usr/lib/x86_64-linux-gnu/opera-gx-stable/opera`,
 			'/opt/opera-root/usr/lib/x86_64-linux-gnu/opera-stable/opera',
 			'/usr/bin/opera',
 			'/usr/bin/opera-stable',

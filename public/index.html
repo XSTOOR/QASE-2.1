@@ -42,17 +42,82 @@
       <label for="auth-email">Email</label>
       <input id="auth-email" name="email" type="email" autocomplete="email" required maxlength="254">
       <label for="auth-password">Password</label>
-      <input id="auth-password" name="password" type="password" autocomplete="current-password" required minlength="12" maxlength="200">
+      <input id="auth-password" name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="200">
       <label for="auth-display" id="auth-display-label" hidden>Display name</label>
       <input id="auth-display" name="displayName" type="text" autocomplete="name" maxlength="120" hidden>
       <label for="auth-invite" id="auth-invite-label" hidden>Invite code</label>
       <input id="auth-invite" name="inviteCode" type="text" autocomplete="off" maxlength="40" hidden>
       <label class="auth-show"><input id="auth-show-password" type="checkbox"> Show password</label>
-      <p class="auth-hint" id="auth-password-hint">Use at least 12 characters when creating an account.</p>
+      <p class="auth-hint" id="auth-password-hint">Use at least 8 characters when creating an account.</p>
       <p class="auth-error" id="auth-error" role="alert" hidden></p>
       <button class="btn btn-primary auth-submit" id="auth-submit" type="submit">Sign in</button>
     </form>
     <button class="auth-switch" id="auth-switch" type="button">Create an account</button>
+    <button class="auth-switch" id="auth-forgot-switch" type="button" hidden>Forgot password?</button>
+  </div></div>
+  <div class="auth-panel" id="forgot-panel" hidden><div class="auth-card">
+    <div class="terminal-accessbar" aria-hidden="true"><span><i></i> ACCOUNT ACCESS</span><span>01 / RESET</span></div>
+    <p class="auth-eyebrow"><span aria-hidden="true">❯</span> qase auth --reset</p>
+    <h1>Reset your password</h1>
+    <p class="auth-copy">Enter your account email and we'll send a 6-digit code. It expires in 5 minutes and works once.</p>
+    <form id="forgot-form">
+      <label for="forgot-email">Email</label>
+      <input id="forgot-email" name="email" type="email" autocomplete="email" required maxlength="254">
+      <p class="auth-error" id="forgot-error" role="alert" hidden></p>
+      <p class="auth-hint" id="forgot-notice" hidden></p>
+      <button class="btn btn-primary auth-submit" id="forgot-submit" type="submit">Send code</button>
+    </form>
+    <button class="auth-switch" id="forgot-back" type="button">Back to sign in</button>
+    <button class="auth-switch" id="forgot-recover-link" type="button">No email access? Recover with a recovery code</button>
+  </div></div>
+  <div class="auth-panel" id="recover-panel" hidden><div class="auth-card">
+    <div class="terminal-accessbar" aria-hidden="true"><span><i></i> ACCOUNT ACCESS</span><span>02 / RECOVERY</span></div>
+    <p class="auth-eyebrow"><span aria-hidden="true">❯</span> qase auth --recover</p>
+    <h1>Recover with a recovery code</h1>
+    <p class="auth-copy">Enter your account email and one unused recovery code to set a new password. Each code works once.</p>
+    <form id="recover-form">
+      <label for="recover-email">Email</label>
+      <input id="recover-email" name="email" type="email" autocomplete="email" required maxlength="254">
+      <label for="recover-code">Recovery code</label>
+      <input id="recover-code" name="code" type="text" autocomplete="off" spellcheck="false" required placeholder="XXXX-XXXX-XXXX" maxlength="14" style="font-family:var(--mono-font,monospace);letter-spacing:1px">
+      <p class="auth-hint">Format XXXX-XXXX-XXXX, generated in Profile → Security. No recovery codes? Contact an administrator — a registered email alone cannot reset your password.</p>
+      <p class="auth-error" id="recover-error" role="alert" hidden></p>
+      <p class="auth-hint" id="recover-notice" hidden></p>
+      <button class="btn btn-primary auth-submit" id="recover-submit" type="submit">Verify code</button>
+    </form>
+    <button class="auth-switch" id="recover-back" type="button">Back to sign in</button>
+  </div></div>
+  <div class="auth-panel" id="otp-panel" hidden><div class="auth-card">
+    <div class="terminal-accessbar" aria-hidden="true"><span><i></i> ACCOUNT ACCESS</span><span>02 / CODE</span></div>
+    <p class="auth-eyebrow"><span aria-hidden="true">❯</span> qase auth --verify</p>
+    <h1>Enter your code</h1>
+    <p class="auth-copy">We emailed a 6-digit code. It expires in 5 minutes and can be used once.</p>
+    <form id="otp-form">
+      <label for="otp-input">Verification code</label>
+      <input id="otp-input" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" required pattern="[0-9]{6}" maxlength="6">
+      <p class="auth-error" id="otp-error" role="alert" hidden></p>
+      <p class="auth-hint" id="otp-notice" hidden></p>
+      <button class="btn btn-primary auth-submit" id="otp-submit" type="submit">Verify code</button>
+    </form>
+    <button class="auth-switch" id="otp-resend" type="button">Resend code</button>
+    <button class="auth-switch" id="otp-back" type="button">Back to sign in</button>
+  </div></div>
+  <div class="auth-panel" id="reset-panel" hidden><div class="auth-card">
+    <div class="terminal-accessbar" aria-hidden="true"><span><i></i> ACCOUNT ACCESS</span><span>03 / NEW PASSWORD</span></div>
+    <p class="auth-eyebrow"><span aria-hidden="true">❯</span> qase auth --new-password</p>
+    <h1>Choose a new password</h1>
+    <p class="auth-copy">Code verified. Pick a password of at least 8 characters.</p>
+    <form id="reset-form">
+      <label for="reset-password">New password</label>
+      <input id="reset-password" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="200">
+      <label for="reset-confirm">Confirm password</label>
+      <input id="reset-confirm" name="confirm" type="password" autocomplete="new-password" required minlength="8" maxlength="200">
+      <p class="auth-hint" id="reset-password-hint">Use at least 8 characters.</p>
+      <p class="auth-error" id="reset-error" role="alert" hidden></p>
+      <p class="auth-hint" id="reset-notice" hidden></p>
+      <button class="btn btn-primary auth-submit" id="reset-submit" type="submit">Update password</button>
+    </form>
+    <button class="auth-switch" id="reset-back" type="button">Back to sign in</button>
   </div></div>
   <footer class="terminal-bottom"><span>QASE <span class="terminal-bottom-muted">/ PRIVATE WORKSPACE</span></span><span class="terminal-bottom-center">BUILT TO QUESTION. DESIGNED TO VERIFY.</span><span><i aria-hidden="true"></i> YOUR NEXT RELEASE STARTS HERE</span></footer>
 </section>
@@ -758,10 +823,9 @@
         <details class="qa-advanced">
           <summary>Advanced device options</summary>
           <div class="qa-advanced-body">
-            <label class="field">
-              <span>Apple environment <small>(remote runtime matrix — overrides the device profile when selected)</small></span>
-              <select id="qa-environment-select"><option value="">Emulate locally (no remote environment)</option></select>
-            </label>
+            <!-- Phase 5 duplicate-UI audit (#15500): the dead
+                 #qa-environment-select (never populated, never read — the QA
+                 submit path is 100% matrix configurationEnvIds) was removed. -->
             <small>The run executes on exactly this device, OS and browser. Changing it here updates everywhere. Mobile and tablet profiles emulate the real device (User-Agent, viewport, touch), not a resized desktop window.</small>
           </div>
         </details>
@@ -869,6 +933,13 @@
               <span>Scope notes (optional)</span>
               <textarea id="qa-security-notes" rows="2" placeholder="e.g. isolated staging copy, no production data"></textarea>
             </label>
+            <!-- Pipeline Phase 3: unattended runs consume this authorization —
+                 tell the operator what it means before they submit. -->
+            <p class="qa-security-auth-note" id="qa-security-auth-note">
+              Runs are unattended: with this confirmation captured, the run will not re-ask
+              target-permission or scan-continuation questions for the authorized target.
+              Sign-in credentials and destructive actions are never auto-approved.
+            </p>
           </div>
         </section>
       </fieldset>
@@ -1364,7 +1435,20 @@
   <p id="profile-email" class="auth-copy"></p>
   <form id="profile-form"><label for="profile-name">Display name</label><input id="profile-name" required maxlength="120" autocomplete="name"><label for="profile-timezone">Timezone</label><input id="profile-timezone" required maxlength="100" placeholder="Asia/Kolkata"><button class="btn btn-primary" type="submit">Save profile</button></form>
   <hr><h3>Change password</h3><p class="auth-copy">Changing your password signs out all sessions.</p>
-  <form id="password-form"><label for="current-password">Current password</label><input id="current-password" type="password" required maxlength="200" autocomplete="current-password"><label for="new-password">New password</label><input id="new-password" type="password" required minlength="12" maxlength="200" autocomplete="new-password"><button class="btn btn-primary" type="submit">Update password</button></form>
+  <form id="password-form"><label for="current-password">Current password</label><input id="current-password" type="password" required maxlength="200" autocomplete="current-password"><label for="new-password">New password</label><input id="new-password" type="password" required minlength="8" maxlength="200" autocomplete="new-password"><button class="btn btn-primary" type="submit">Update password</button></form>
+  <hr><h3>Recovery codes</h3><p class="auth-copy">One-time codes that let you regain access without email. Store them somewhere safe — they're shown only once. Generating new codes invalidates all previously generated codes.</p>
+  <p class="auth-copy" id="recovery-status"></p>
+  <form id="recovery-generate-form">
+    <label for="recovery-current-password">Current password</label>
+    <input id="recovery-current-password" type="password" required maxlength="200" autocomplete="current-password">
+    <button class="btn btn-primary" type="submit" id="recovery-generate">Generate codes</button>
+  </form>
+  <div id="recovery-codes-result" hidden>
+    <p class="auth-hint"><strong>Save these now — this is the only time they're shown.</strong> Generating new codes invalidates all previous ones.</p>
+    <ol id="recovery-codes-list" style="font-family:var(--mono-font,monospace);letter-spacing:1px;margin:8px 0;"></ol>
+    <button type="button" class="btn" id="recovery-copy">Copy all</button>
+    <button type="button" class="btn" id="recovery-download">Download .txt</button>
+  </div>
   <hr><h3>Saved memory</h3><p class="auth-copy">Preferences and context used by your agents. Never add credentials.</p><ul id="profile-memory"></ul>
   <form id="memory-form"><label for="memory-key">Name</label><input id="memory-key" required maxlength="80" pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}" placeholder="preferred-browser"><label for="memory-value">Value</label><textarea id="memory-value" required maxlength="4000"></textarea><button class="btn btn-primary" type="submit">Save memory</button></form>
   <p id="profile-message" role="status" aria-live="polite"></p>

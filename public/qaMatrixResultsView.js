@@ -30,6 +30,7 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 		filters: { status: '', browser: '', executionType: '', search: '' },
 		pollTimer: null,
 		pollMs: 2500,
+		pushStream: null,
 		status: 'loading' // loading | ready | error | empty
 	};
 
@@ -141,11 +142,51 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 			stateEl.hidden = true;
 			renderAll();
 			schedulePolling();
+			connectPush();
 		} catch (error) {
 			state.status = 'error';
 			stateEl.textContent = `Could not load the QA run (${error?.message ?? 'network error'}).`;
 			stateEl.hidden = false;
 			retryEl.hidden = false;
+		}
+	}
+
+	/** Pipeline Phase 5 (#15500): push updates — consume the matrix SSE the
+	 *  server already emits (matrix_item / matrix_run_done) so status changes
+	 *  appear immediately instead of on the next poll. Polling stays as the
+	 *  fallback (SSE loss → poll cadence continues). */
+	function connectPush() {
+		disconnectPush();
+		if (!state.runId) return;
+		try {
+			// Pipeline Phase 5 (#15500): dedicated matrix SSE channel (matrix
+			// ids are not sessions — the session events route 404s them).
+			const stream = new EventSource(`/api/matrix-runs/${encodeURIComponent(state.runId)}/events`);
+			stream.onmessage = event => {
+				try {
+					const payload = JSON.parse(event.data ?? '{}');
+					if (payload.type === 'matrix_item' || payload.type === 'matrix_run_done'
+						|| payload.type === 'matrix_run_started') {
+						// Push tick: reload at most once per tick; polling
+						// remains the safety net for missed events.
+						if (state.runId) void load(state.runId, { keepView: true });
+					}
+				} catch {
+					// Malformed event — the poll fallback covers us.
+				}
+			};
+			// On error, EventSource reconnects on its own; if it cannot, the
+			// poll timer (rescheduled by every load) keeps the board live.
+			state.pushStream = stream;
+		} catch {
+			// No EventSource in this context — polling only.
+		}
+	}
+
+	function disconnectPush() {
+		if (state.pushStream) {
+			try { state.pushStream.close(); } catch { /* already closed */ }
+			state.pushStream = null;
 		}
 	}
 
@@ -165,6 +206,7 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 
 	function stop() {
 		clearTimeout(state.pollTimer);
+		disconnectPush();
 	}
 
 	// ---- rendering --------------------------------------------------------
@@ -172,7 +214,21 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 		const run = state.run;
 		title.textContent = run.title ?? 'QA run';
 		const target = run.targetUrl ? ` · ${run.targetUrl}` : '';
-		subtitle.textContent = `${run.itemCount ?? state.rows.length} configurations${target}`;
+		if (run.kind === 'parent') {
+			// Pipeline Phase 5 (#15500): parent run — the board spans ALL
+			// batches. Show the planned total (not just the items materialized
+			// so far) and an honest "creating batches" state while batch
+			// creation is still in flight.
+			const planned = Number(run.totalPlanned ?? 0) || 0;
+			const materialized = run.itemCount ?? state.rows.length;
+			const batches = run.batchCount ?? (Array.isArray(run.batches) ? run.batches.length : 0);
+			const creatingBatches = materialized < planned;
+			subtitle.textContent = creatingBatches
+				? `${planned} configurations planned · creating batches… (${materialized} queued across ${batches} batch${batches === 1 ? '' : 'es'}${target ? '' : ''})${target}`
+				: `${planned} configurations across ${batches} batch${batches === 1 ? '' : 'es'}${target}`;
+		} else {
+			subtitle.textContent = `${run.itemCount ?? state.rows.length} configurations${target}`;
+		}
 		cancelBtn.hidden = !['pending', 'running'].includes(run.status);
 
 		renderTotals();
@@ -183,18 +239,25 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 	function renderTotals() {
 		const totals = computeTotals(state.run.items ?? []);
 		totalsEl.replaceChildren();
+		// Pipeline Phase 5 (#15500): the spec's progress vocabulary, always
+		// visible: Total / Queued / Running / Passed / Failed / Unavailable /
+		// Unsupported / Completed (+ Blocked/Skipped/Cancelled/Error when
+		// non-zero, In-flight while active).
 		const entries = [
-			['Planned', totals.planned, ''],
-			['Completed', totals.completed, 'qmr-t-done'],
+			['Total', totals.planned, ''],
+			['Queued', totals.queued + totals.pending, 'qmr-t-live'],
+			['Running', totals.running, 'qmr-t-live'],
 			['Passed', totals.passed, 'qmr-t-pass'],
 			['Failed', totals.failed, 'qmr-t-fail'],
-			['Blocked', totals.blocked, 'qmr-t-block'],
-			['Skipped', totals.skipped, 'qmr-t-skip'],
-			['Cancelled', totals.cancelled, 'qmr-t-cancel']
+			['Unavailable', totals.unavailable, 'qmr-t-block'],
+			['Unsupported', totals.notSupported, 'qmr-t-block'],
+			['Completed', totals.completed, 'qmr-t-done']
 		];
-		if (totals.running || totals.queued || totals.pending) {
-			entries.push(['In flight', totals.running + totals.queued + totals.pending, 'qmr-t-live']);
-		}
+		if (totals.blocked) entries.push(['Blocked', totals.blocked, 'qmr-t-block']);
+		if (totals.skipped) entries.push(['Skipped', totals.skipped, 'qmr-t-skip']);
+		if (totals.cancelled) entries.push(['Cancelled', totals.cancelled, 'qmr-t-cancel']);
+		if (totals.error) entries.push(['Errors', totals.error, 'qmr-t-fail']);
+		if (totals.notRun) entries.push(['Not run', totals.notRun, 'qmr-t-skip']);
 		for (const [label, value, cls] of entries) {
 			const chip = el('span', `qmr-chip ${cls}`);
 			chip.append(el('span', 'qmr-chip-label', label), el('span', 'qmr-chip-value', String(value)));
@@ -287,6 +350,19 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 		const meta = [];
 		if (row.reason) meta.push(row.reason);
 		if (row.error) meta.push(row.error);
+		// Pipeline Phase 5 (#15500): a blocked row shows the QUESTION that
+		// stopped it — the operator sees why without opening the session.
+		if (row.question) {
+			node.title = row.question;
+			meta.push(`needs: “${row.question}”`);
+		}
+		// Authorized auto-answers are visible, never silent.
+		if (row.autoAnswers > 0 && row.autoAnswerEvidence.length) {
+			const last = row.autoAnswerEvidence[row.autoAnswerEvidence.length - 1];
+			const note = el('span', 'qmr-auto-answer', `auto-answered ×${row.autoAnswers} (${last.basis ?? 'authorized at run setup'})`);
+			note.title = last.question ? `Question: ${last.question}` : 'Authorized question auto-answered';
+			node.append(note);
+		}
 		if (row.durationMs != null) meta.push(`${Math.round(row.durationMs / 100) / 10}s`);
 		if (row.retryCount) meta.push(`retried ×${row.retryCount}`);
 		if (meta.length) node.append(el('span', 'qmr-meta', meta.join(' · ')));

@@ -15,7 +15,7 @@
 import { MatrixValidationError } from './matrixService.js';
 import { TestCaseValidationError } from './testCaseService.js';
 
-export function createMatrixRoutes({ matrix, orchestrator, bugs, onError }) {
+export function createMatrixRoutes({ matrix, orchestrator, bugs, onError, events }) {
 	return (app) => {
 		app.post('/api/matrix-runs', async (request, response) => {
 			try {
@@ -146,6 +146,74 @@ export function createMatrixRoutes({ matrix, orchestrator, bugs, onError }) {
 			} catch (error) {
 				onError?.(error, response);
 			}
+		});
+
+		// Pipeline Phase 5 (#15500): matrix-run SSE. The orchestrator emits
+		// progress keyed by matrix-run id on the raw run bus (app.js wiring);
+		// this exposes it over HTTP so the results board gets push updates
+		// instead of pure polling. Mirrors the session events route's shape
+		// (data: JSON\n\n + : ping heartbeat); matrix ids are NOT sessions so
+		// the session route 404s them — this is the dedicated channel.
+		app.get('/api/matrix-runs/:id/events', async (request, response) => {
+			const run = await matrix.get(request.params.id);
+			if (!run) {
+				response.status(404).json({ error: 'Matrix run not found.' });
+				return;
+			}
+			if (!events?.subscribe) {
+				response.status(501).json({ error: 'Event transport unavailable.' });
+				return;
+			}
+			let closed = false;
+			let heartbeat = null;
+			let unsubscribe;
+			const cleanup = () => {
+				closed = true;
+				if (heartbeat) clearInterval(heartbeat);
+				const dispose = unsubscribe;
+				unsubscribe = undefined;
+				if (typeof dispose === 'function') {
+					try { Promise.resolve(dispose()).catch(() => {}); } catch { /* gone */ }
+				}
+			};
+			const endStream = () => {
+				cleanup();
+				if (!response.destroyed && !response.writableEnded) response.end();
+			};
+			response.once('close', cleanup);
+			response.once('error', cleanup);
+			request.once('aborted', cleanup);
+
+			response.writeHead(200, {
+				'Content-Type': 'text/event-stream',
+				'Cache-Control': 'no-cache, no-transform',
+				Connection: 'keep-alive',
+				'X-Accel-Buffering': 'no'
+			});
+			const write = chunk => {
+				if (closed || response.destroyed || response.writableEnded) {
+					cleanup();
+					return;
+				}
+				try { response.write(chunk); } catch { endStream(); }
+			};
+			write(': connected\n\n');
+			try {
+				unsubscribe = await events.subscribe(request.params.id, event => {
+					if (closed) return;
+					try { write(`data: ${JSON.stringify(event)}\n\n`); } catch { endStream(); }
+				});
+			} catch {
+				endStream();
+				return;
+			}
+			if (closed || response.destroyed || response.writableEnded) {
+				cleanup();
+				return;
+			}
+			heartbeat = setInterval(() => {
+				if (!closed) write(': ping\n\n');
+			}, 15000);
 		});
 	};
 }

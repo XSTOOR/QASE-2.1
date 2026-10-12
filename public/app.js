@@ -6,8 +6,6 @@ import { followUpSuggestions, buildFollowUpMessage } from './followUp.js';
 import { createBugsView } from './bugsView.js';
 import { QA_SCOPE_OPTIONS, buildQaKickoffMessage } from './qaKickoff.js';
 import {
-	createDeselectionStore,
-	computeSelection,
 	sanitizeSelection,
 	filterConfigurations,
 	groupDeviceTree,
@@ -18,13 +16,26 @@ import {
 	PLATFORM_GROUPS,
 	buildSummary,
 	isValidTargetUrl,
-	MAX_RUN_CONFIGURATIONS,
+	MATRIX_BATCH_SIZE,
+	planBatches,
+	batchKeyFor,
 	configurationsForDevice,
 	compatibleBrowserFamilies,
-	defaultSelectionForDevice,
 	fetchQaConfigurations,
 	fetchConfigurationIndex,
-	fetchConfigurationWindow
+	fetchConfigurationWindow,
+	deviceKeyOf,
+	catalogDeviceKeys,
+	availableBrowserFamilies,
+	createSelectionState,
+	computeExplicitSelection,
+	selectAllDevices,
+	deselectAllDevices,
+	selectAllBrowsers,
+	deselectAllBrowsers,
+	toggleDevice,
+	toggleBrowserFamily,
+	createSelectionStore
 } from './qaConfigMatrix.js';
 import { createDeviceMatrixView } from './deviceMatrixView.js';
 import { createTestCaseView } from './testCaseView.js';
@@ -65,7 +76,7 @@ const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]
 
 const el = {
 	runList: $('run-list'),
-	deviceSelect: $('device-select'),
+	// legacy device select removed (DX Phase 3 + Phase 5 audit) — no #device-select exists.
 	deviceLandscape: $('device-landscape'),
 	newRun: $('new-run'),
 	newSqa: $('new-sqa'),
@@ -195,7 +206,40 @@ const el = {
 	authCopy: $('auth-copy'),
 	authSubmit: $('auth-submit'),
 	authSwitch: $('auth-switch'),
-	authError: $('auth-error')
+	authError: $('auth-error'),
+	authForgotSwitch: $('auth-forgot-switch'),
+	forgotPanel: $('forgot-panel'),
+	forgotForm: $('forgot-form'),
+	forgotEmail: $('forgot-email'),
+	forgotError: $('forgot-error'),
+	forgotNotice: $('forgot-notice'),
+	forgotSubmit: $('forgot-submit'),
+	forgotBack: $('forgot-back'),
+	otpPanel: $('otp-panel'),
+	otpForm: $('otp-form'),
+	otpInput: $('otp-input'),
+	otpError: $('otp-error'),
+	otpNotice: $('otp-notice'),
+	otpSubmit: $('otp-submit'),
+	otpResend: $('otp-resend'),
+	otpBack: $('otp-back'),
+	resetPanel: $('reset-panel'),
+	resetForm: $('reset-form'),
+	resetPassword: $('reset-password'),
+	resetConfirm: $('reset-confirm'),
+	resetError: $('reset-error'),
+	resetNotice: $('reset-notice'),
+	resetSubmit: $('reset-submit'),
+	resetBack: $('reset-back'),
+	recoverPanel: $('recover-panel'),
+	recoverForm: $('recover-form'),
+	recoverEmail: $('recover-email'),
+	recoverCode: $('recover-code'),
+	recoverError: $('recover-error'),
+	recoverNotice: $('recover-notice'),
+	recoverSubmit: $('recover-submit'),
+	recoverBack: $('recover-back'),
+	forgotRecoverLink: $('forgot-recover-link')
 };
 
 const state = {
@@ -773,19 +817,9 @@ async function loadDevices() {
 		deviceState.list = [{ id: 'desktop', label: 'Desktop', kind: 'desktop' }];
 		deviceState.defaultId = 'desktop';
 	}
-	if (!el.deviceSelect) return;
-	el.deviceSelect.innerHTML = '';
-	for (const profile of deviceState.list) {
-		const option = document.createElement('option');
-		option.value = profile.id;
-		option.textContent = profile.label;
-		el.deviceSelect.append(option);
-	}
-	const saved = localStorage.getItem(DEVICE_PREF_KEY);
-	el.deviceSelect.value = deviceState.list.some(p => p.id === saved) ? saved : deviceState.defaultId;
-	el.deviceSelect.addEventListener('change', () => {
-		localStorage.setItem(DEVICE_PREF_KEY, el.deviceSelect.value);
-	});
+	// Phase 5 audit: the legacy #device-select element no longer exists in
+	// HTML — only the localStorage preference + deviceState.list remain live
+	// (labels + defaults). The null-guarded select plumbing was removed.
 	if (el.deviceLandscape) {
 		el.deviceLandscape.checked = localStorage.getItem(DEVICE_LANDSCAPE_KEY) === '1';
 		el.deviceLandscape.addEventListener('change', () => {
@@ -795,7 +829,7 @@ async function loadDevices() {
 }
 
 function pendingDeviceId() {
-	return (el.deviceSelect && el.deviceSelect.value) || localStorage.getItem(DEVICE_PREF_KEY) || deviceState.defaultId;
+	return localStorage.getItem(DEVICE_PREF_KEY) || deviceState.defaultId;
 }
 
 /* ── Cross-platform environments ──────────────────────────────── */
@@ -855,26 +889,16 @@ function renderTestOn(containerId) {
 	// picker state. Other containers (SQA/Founder) keep picker semantics.
 	if (containerId === 'qa-test-on') {
 		box.textContent = '';
-		if (qaMatrixState.deviceScope) {
-			const label = qaMatrixScopeLabel();
-			if (label) {
-				delete box.dataset.empty;
-				const name = document.createElement('strong');
-				name.className = 'test-on-device';
-				name.textContent = qaMatrixState.deviceScope.device;
-				const line = document.createElement('span');
-				line.className = 'test-on-line';
-				line.textContent = label;
-				box.append(name, line);
-				return;
-			}
-		}
 		const summaryCount = qaMatrixState.selectedEnvIds.length;
+		// Pipeline Phase 1: the block always reports the GLOBAL selection —
+		// a device scope is a view and never changes what a run submits.
 		if (summaryCount > 0) {
 			delete box.dataset.empty;
 			const name = document.createElement('strong');
 			name.className = 'test-on-device';
-			name.textContent = 'Full device matrix';
+			name.textContent = qaMatrixState.deviceScope
+				? `Full device matrix (viewing ${qaMatrixState.deviceScope.device})`
+				: 'Full device matrix';
 			const line = document.createElement('span');
 			line.className = 'test-on-line';
 			line.textContent = `${summaryCount.toLocaleString()} configurations · all compatible browsers`;
@@ -4867,7 +4891,8 @@ const qaUi = {
 	scopeOptions: $('qa-scope-options'),
 	founderMode: $('qa-founder-mode'),
 	compliance: $('qa-compliance'),
-	environmentSelect: $('qa-environment-select'),
+	// Phase 5 audit: dead #qa-environment-select removed (never populated or
+	// read; QA submit uses matrix configurationEnvIds exclusively).
 	error: $('qa-form-error'),
 	// QA matrix (Phase 2 #15013): device & browser configuration matrix.
 	matrix: {
@@ -4908,20 +4933,30 @@ const qaMatrixState = {
 	index: [], // compact full-catalog rows: selection/facets/summary math
 	windowRows: [], // heavy rows currently rendered in the device tree
 	windowTotal: 0,
+	windowDeviceOffset: 0, // #15439: device-grouped pagination offsets
+	windowDeviceTotal: 0,
 	windowLoading: false,
 	browserFamilies: [],
 	providers: [],
 	selectedEnvIds: [],
-	// #15163: active device scope — {platform, device, manufacturer, osVersion?}
-	// When set, the run configuration is scoped to that device and ALL its
-	// compatible browsers are auto-selected. Session-scoped deselections reset
-	// on device change; the persisted full-matrix store is untouched.
+	// Pipeline Phase 1: EXPLICIT selection state — which devices and which
+	// browser families are selected, plus granular envId-level deselection
+	// overrides. Replaces the derived-and-capped model (#14276/#15323):
+	// selection is NEVER truncated; the 2,000 limit is a per-batch execution
+	// limit applied at submission time (Phase 2), not a selection limit.
+	selection: createSelectionState(),
+	// #15163 (re-scoped Phase 1): device scope is a VIEW, not a selection
+	// mode. Scoping narrows the rendered tree/checklist to one device for
+	// inspection; it never mutates the selection state. Exiting scope
+	// ("← Back to all devices") restores the full view.
 	deviceScope: null,
-	deviceScopeSessionDeselections: new Set(),
 	filters: { search: '', platform: '', manufacturer: '', osVersion: '', orientation: '' }
 };
 
-const qaMatrixStore = createDeselectionStore(window.localStorage);
+/** Explicit selection store: persists under qase.qaConfigSelection.v2 and
+ *  migrates legacy deselections best-effort on first load. The catalog
+ *  provider is lazy so the initial state derives from the fresh index. */
+const qaSelectionStore = createSelectionStore(window.localStorage, () => qaMatrixState.index);
 
 function qaMatrixFiltered() {
 	// Facet filtering runs over the compact index (full catalog) — the tree
@@ -4964,10 +4999,11 @@ async function loadQaMatrixCatalog() {
 		const index = await fetchConfigurationIndex({ signal: controller.signal });
 		if (controller.signal.aborted) return;
 		qaMatrixState.index = index;
-		// Selection: default = every available configuration minus the user's
-		// explicit deselections (persisted across dialog reopens). An active
-		// device scope survives reopen and re-derives from the fresh index
-		// (#15163); a device that vanished from the catalog drops the scope.
+		// Pipeline Phase 1: the explicit selection store initializes against
+		// the fresh index (first load migrates legacy deselections). A device
+		// scope is a VIEW — it survives a reopen as long as the device still
+		// exists, and never affects the selection state itself.
+		qaMatrixState.selection = qaSelectionStore.get();
 		if (qaMatrixState.deviceScope) {
 			const stillThere = configurationsForDevice(index, qaMatrixState.deviceScope).length > 0;
 			if (!stillThere) qaMatrixState.deviceScope = null;
@@ -4983,6 +5019,12 @@ async function loadQaMatrixCatalog() {
 		if (controller.signal.aborted || error?.name === 'AbortError') return;
 		qaMatrixState.index = [];
 		qaMatrixState.windowRows = [];
+		qaMatrixState.windowDeviceOffset = 0;
+		qaMatrixState.windowDeviceTotal = 0;
+		// Pipeline Phase 1: a failed catalog load clears the DERIVED selection
+		// (nothing is provably available) but keeps the explicit selection
+		// state — a retry reloads the catalog and re-derives without the user
+		// losing their device/family choices.
 		qaMatrixState.selectedEnvIds = [];
 		qaMatrixSetState('error', error instanceof Error ? error.message : String(error));
 	} finally {
@@ -4996,6 +5038,8 @@ async function qaMatrixLoadWindow(offset, signal) {
 	if (!matrix.devices) return;
 	if (offset === 0) {
 		qaMatrixState.windowRows = [];
+		qaMatrixState.windowDeviceOffset = 0;
+		qaMatrixState.windowDeviceTotal = 0;
 		matrix.devices.textContent = '';
 		const progress = document.createElement('p');
 		progress.className = 'qa-matrix-empty';
@@ -5013,23 +5057,27 @@ async function qaMatrixLoadWindow(offset, signal) {
 				osVersion: qaMatrixState.filters.osVersion || undefined,
 				orientation: qaMatrixState.filters.orientation || undefined
 			},
-			{ signal, limit: 200, offset }
+			{ signal, limit: 12, offset }
 		);
 		if (signal?.aborted) return;
 		qaMatrixState.windowRows = offset === 0
 			? page.configurations
 			: [...qaMatrixState.windowRows, ...page.configurations];
 		qaMatrixState.windowTotal = page.total;
+		// #15439: windows are DEVICE-GROUPED — track device offsets for
+		// load-more so one window spans every platform family.
+		qaMatrixState.windowDeviceTotal = page.deviceTotal ?? page.total;
+		qaMatrixState.windowDeviceOffset = (offset === 0 ? 0 : qaMatrixState.windowDeviceOffset) + (page.deviceCount ?? 0);
 		qaMatrixRender();
 		if (page.hasMore && matrix.devices) {
 			const more = document.createElement('button');
 			more.type = 'button';
 			more.className = 'qa-matrix-load-more';
 			more.dataset.role = 'load-more';
-			more.textContent = `Load more (${(qaMatrixState.windowRows.length).toLocaleString()} of ${(page.total).toLocaleString()} shown)`;
+			more.textContent = `Load more devices (${qaMatrixState.windowDeviceTotal - qaMatrixState.windowDeviceOffset} more)`;
 			more.addEventListener('click', () => {
 				more.remove();
-				void qaMatrixLoadWindow(qaMatrixState.windowRows.length, qaMatrixState.abort?.signal);
+				void qaMatrixLoadWindow(qaMatrixState.windowDeviceOffset, qaMatrixState.abort?.signal);
 			});
 			matrix.devices.append(more);
 		}
@@ -5091,42 +5139,38 @@ function qaMatrixConfigurationKey(configuration) {
 }
 
 /**
- * #15163: effective selection = device-scope auto-select-all minus in-session
- * deselections when scoped; catalog selection minus persisted deselections
- * otherwise. Single source of truth for selectedEnvIds.
- * #15323: the default (non-scoped) catalog selection is capped at
- * MAX_RUN_CONFIGURATIONS so Start is enabled out of the box — the full
- * 37k-row default used to exceed the run cap and leave Start permanently
- * disabled until the user narrowed it by hand. Deselections are applied
- * BEFORE the cap so explicitly opted-out configurations never occupy slots.
+ * Pipeline Phase 1: effective selection = explicit device keys × explicit
+ * browser families minus granular deselections, over the full catalog index.
+ * UNCAPPED — the 2,000 limit is a per-batch execution limit (Phase 2
+ * batches on submit), never a selection limit. The device scope (a VIEW)
+ * does not participate: scoping narrows what is rendered, never what runs.
  */
 function qaMatrixEffectiveSelection() {
-	if (!qaMatrixState.deviceScope) {
-		return computeSelection(qaMatrixState.index, qaMatrixStore)
-			.slice(0, MAX_RUN_CONFIGURATIONS);
-	}
-	const deviceConfigurations = configurationsForDevice(qaMatrixState.index, qaMatrixState.deviceScope);
-	return defaultSelectionForDevice(deviceConfigurations)
-		.filter((envId) => !qaMatrixState.deviceScopeSessionDeselections.has(envId));
+	return computeExplicitSelection(qaMatrixState.index, qaMatrixState.selection);
+}
+
+/** Apply a selection-state change, re-derive, persist, re-render. */
+function qaMatrixApplySelection(nextState) {
+	qaMatrixState.selection = nextState;
+	qaSelectionStore.save(nextState);
+	qaMatrixState.selectedEnvIds = qaMatrixEffectiveSelection();
+	qaMatrixRender();
+	syncQaSubmitState();
 }
 
 /**
- * #15163: activate a device scope (or clear it with null). Any stale session
- * deselections from the PREVIOUS device are discarded — switching devices
- * always yields a clean auto-select-all of the new device's browsers.
+ * #15163 → Phase 1 re-scope: set/clear the device scope. Scoping is a VIEW
+ * operation — it narrows the rendered tree and checklist to one device for
+ * inspection. It NEVER mutates the selection state and NEVER resets anything;
+ * leaving scope (null) is always reachable via the back affordance.
  */
 function qaMatrixSetDeviceScope(scope) {
-	const previous = qaMatrixState.deviceScope;
-	const nextKey = scope ? `${scope.manufacturer ?? ''}|${scope.platform}|${scope.device}` : null;
-	const previousKey = previous ? `${previous.manufacturer ?? ''}|${previous.platform}|${previous.device}` : null;
-	if (nextKey !== previousKey) {
-		qaMatrixState.deviceScopeSessionDeselections = new Set();
-	}
 	qaMatrixState.deviceScope = scope;
 	qaMatrixState.selectedEnvIds = qaMatrixEffectiveSelection();
 }
 
-/** #15163: readable scope label for the summary — null when unscoped. */
+/** #15163 → Phase 1: readable scope label for the scoped VIEW banner — null
+ *  when unscoped. Describes the device being inspected, not the selection. */
 function qaMatrixScopeLabel() {
 	if (!qaMatrixState.deviceScope) return null;
 	const scope = qaMatrixState.deviceScope;
@@ -5134,29 +5178,60 @@ function qaMatrixScopeLabel() {
 	const first = deviceConfigurations[0];
 	if (!first) return null;
 	const families = compatibleBrowserFamilies(deviceConfigurations);
-	const selectedCount = qaMatrixState.selectedEnvIds.length;
+	const selectedOnDevice = deviceConfigurations.filter(
+		(configuration) => qaMatrixState.selection.deviceKeys.has(deviceKeyOf(configuration))
+			&& qaMatrixState.selection.browserFamilies.has(configuration.browserCode)
+			&& isSelectable(configuration)
+			&& !qaMatrixState.selection.deselectedEnvIds.has(configuration.envId)
+	).length;
 	const osLabel = scope.osVersion ? `${first.os} ${scope.osVersion}` : `${first.os} (all versions)`;
 	const orientation = scope.orientation ?? (first.deviceType === 'desktop' ? 'landscape' : 'portrait');
-	return `${first.manufacturer ? `${first.manufacturer} ` : ''}${scope.device} · ${osLabel} · ${orientation} · ${families.length} browser${families.length === 1 ? '' : 's'} · ${selectedCount.toLocaleString()} config${selectedCount === 1 ? '' : 's'}`;
+	return `${first.manufacturer ? `${first.manufacturer} ` : ''}${scope.device} · ${osLabel} · ${orientation} · ${families.length} compatible browser${families.length === 1 ? '' : 's'} · ${selectedOnDevice.toLocaleString()} of its configurations selected`;
 }
 
 function qaMatrixRender() {
 	const matrix = qaUi.matrix;
 	if (!matrix.browsers || !matrix.devices || !matrix.summary) return;
 	const filtered = qaMatrixFiltered();
-	// #15163: in device scope, family counts and checkbox states reflect the
-	// scoped device only — never the whole catalog.
+	// #15163 → Phase 1: in device scope, family counts reflect the scoped
+	// device only — a VIEW refinement, never a selection change.
 	const scopeRows = qaMatrixState.deviceScope
 		? configurationsForDevice(qaMatrixState.index, qaMatrixState.deviceScope)
 		: null;
 	const selectionScope = scopeRows ?? filtered;
 	const selected = new Set(qaMatrixState.selectedEnvIds);
+	const selection = qaMatrixState.selection;
 
-	// Browser checklist: seven families, always visible — counts come from the
-	// full-catalog index, so they stay correct even though the tree renders
-	// only a server-windowed slice.
-	const families = familyRows(selectionScope, qaMatrixState.browserFamilies);
+	// Browser checklist header: Select All / Deselect All BROWSERS (Phase 1).
+	// Bulk actions operate on the FULL catalog (not the filtered view) — the
+	// summary keeps reporting the true global count.
 	matrix.browsers.textContent = '';
+	const browserBulk = document.createElement('div');
+	browserBulk.className = 'qa-matrix-bulk';
+	const selectAllBrowsersButton = document.createElement('button');
+	selectAllBrowsersButton.type = 'button';
+	selectAllBrowsersButton.className = 'qa-matrix-bulk-btn';
+	selectAllBrowsersButton.dataset.role = 'select-all-browsers';
+	selectAllBrowsersButton.textContent = 'Select All Browsers';
+	selectAllBrowsersButton.addEventListener('click', () => {
+		qaMatrixApplySelection(selectAllBrowsers(qaMatrixState.index, selection));
+	});
+	const deselectAllBrowsersButton = document.createElement('button');
+	deselectAllBrowsersButton.type = 'button';
+	deselectAllBrowsersButton.className = 'qa-matrix-bulk-btn';
+	deselectAllBrowsersButton.dataset.role = 'deselect-all-browsers';
+	deselectAllBrowsersButton.textContent = 'Deselect All';
+	deselectAllBrowsersButton.addEventListener('click', () => {
+		qaMatrixApplySelection(deselectAllBrowsers(qaMatrixState.index, selection));
+	});
+	browserBulk.append(selectAllBrowsersButton, deselectAllBrowsersButton);
+	matrix.browsers.append(browserBulk);
+
+	// Browser checklist: seven families, always visible — the family checkbox
+	// drives the EXPLICIT selection model (Phase 1): checked ⇔ the family is
+	// in selection.browserFamilies. Counts reflect the current VIEW (scoped
+	// device or filtered set).
+	const families = familyRows(qaMatrixState.index, qaMatrixState.browserFamilies);
 	for (const family of families) {
 		const row = document.createElement('label');
 		row.className = `qa-matrix-family${family.available ? '' : ' is-unavailable'}`;
@@ -5167,27 +5242,17 @@ function qaMatrixRender() {
 		input.type = 'checkbox';
 		input.dataset.family = family.code;
 		if (family.available) {
-			input.checked = selectedInFamily > 0;
-			input.indeterminate = selectedInFamily > 0 && selectedInFamily < family.selectableCount;
+			input.checked = selection.browserFamilies.has(family.code);
 			input.addEventListener('change', () => {
-				const rows = selectionScope.filter(configuration => configuration.browserCode === family.code && isSelectable(configuration));
-				// Single bulk store write + single re-render: the per-envId
-				// loop below previously persisted once per row (~8k localStorage
-				// writes per family toggle) and crashed the tab (#15092).
-				if (input.checked) {
-					if (scopeRows) {
-						for (const configuration of rows) qaMatrixState.deviceScopeSessionDeselections.delete(configuration.envId);
-					} else {
-						qaMatrixStore.reselectMany(rows.map((configuration) => configuration.envId));
-					}
-				} else if (scopeRows) {
-					for (const configuration of rows) qaMatrixState.deviceScopeSessionDeselections.add(configuration.envId);
-				} else {
-					qaMatrixStore.deselectMany(rows.map((configuration) => configuration.envId));
-				}
-				qaMatrixState.selectedEnvIds = qaMatrixEffectiveSelection();
-				qaMatrixRender();
-				syncQaSubmitState();
+				// Phase 1: family toggle mutates the explicit selection state —
+				// one state write, one persist, one re-render (#15092 discipline).
+				const next = createSelectionState({
+					deviceKeys: selection.deviceKeys,
+					browserFamilies: selection.browserFamilies,
+					deselectedEnvIds: selection.deselectedEnvIds
+				});
+				toggleBrowserFamily(next, qaMatrixState.index, family.code, input.checked);
+				qaMatrixApplySelection(next);
 			});
 		} else {
 			input.disabled = true;
@@ -5206,11 +5271,62 @@ function qaMatrixRender() {
 		matrix.browsers.append(row);
 	}
 
+	// Device panel header: scoped-view banner (with exit) or bulk device
+	// controls (Phase 1). Scope is a VIEW: the banner sits above the tree and
+	// "← Back to all devices" always returns without touching selection.
+	const deviceHeader = document.createElement('div');
+	deviceHeader.className = 'qa-matrix-device-header';
+	if (qaMatrixState.deviceScope) {
+		const banner = document.createElement('div');
+		banner.className = 'qa-matrix-scope-banner';
+		banner.dataset.role = 'scope-banner';
+		const back = document.createElement('button');
+		back.type = 'button';
+		back.className = 'qa-matrix-bulk-btn';
+		back.dataset.role = 'scope-exit';
+		back.textContent = '← Back to all devices';
+		back.addEventListener('click', () => {
+			qaMatrixSetDeviceScope(null);
+			// Reload the window for the full (filtered) tree — the scoped view
+			// fetched a device-narrowed window.
+			void qaMatrixLoadWindow(0, qaMatrixState.abort?.signal);
+			qaMatrixRender();
+			syncQaSubmitState();
+		});
+		const label = document.createElement('span');
+		label.className = 'qa-matrix-scope-label';
+		label.textContent = qaMatrixScopeLabel() ?? 'Viewing one device';
+		banner.append(back, label);
+		deviceHeader.append(banner);
+	} else {
+		const deviceBulk = document.createElement('div');
+		deviceBulk.className = 'qa-matrix-bulk';
+		const selectAllDevicesButton = document.createElement('button');
+		selectAllDevicesButton.type = 'button';
+		selectAllDevicesButton.className = 'qa-matrix-bulk-btn';
+		selectAllDevicesButton.dataset.role = 'select-all-devices';
+		selectAllDevicesButton.textContent = 'Select All Devices';
+		selectAllDevicesButton.addEventListener('click', () => {
+			qaMatrixApplySelection(selectAllDevices(qaMatrixState.index, selection));
+		});
+		const deselectAllDevicesButton = document.createElement('button');
+		deselectAllDevicesButton.type = 'button';
+		deselectAllDevicesButton.className = 'qa-matrix-bulk-btn';
+		deselectAllDevicesButton.dataset.role = 'deselect-all-devices';
+		deselectAllDevicesButton.textContent = 'Deselect All';
+		deselectAllDevicesButton.addEventListener('click', () => {
+			qaMatrixApplySelection(deselectAllDevices(qaMatrixState.index, selection));
+		});
+		deviceBulk.append(selectAllDevicesButton, deselectAllDevicesButton);
+		deviceHeader.append(deviceBulk);
+	}
+
 	// Device panel: platform → device → OS → browsers (scrollable tree).
 	// Device panel renders the WINDOWED rows only (server applies the same
 	// filters); grouping them never builds a 38k-row DOM tree.
 	const tree = groupDeviceTree(qaMatrixState.windowRows);
 	matrix.devices.textContent = '';
+	matrix.devices.append(deviceHeader);
 	if (tree.length === 0) {
 		const empty = document.createElement('p');
 		empty.className = 'qa-matrix-empty';
@@ -5232,32 +5348,40 @@ function qaMatrixRender() {
 					? `${qaMatrixState.deviceScope.manufacturer ?? ''}|${qaMatrixState.deviceScope.platform}|${qaMatrixState.deviceScope.device}`
 					: null;
 				if (deviceKey === activeScopeKey) deviceRow.classList.add('is-scoped');
-				// #15163: clicking a device row scopes the whole run
-				// configuration to that device and auto-selects ALL its
-				// compatible browsers — no manual ticking required.
-				deviceRow.classList.add('is-clickable');
-				deviceRow.setAttribute('role', 'button');
-				deviceRow.tabIndex = 0;
-				const activateScope = () => {
-					qaMatrixSetDeviceScope({
-						platform: device.platform,
-						device: device.device,
-						manufacturer: device.manufacturer ?? ''
+				// Phase 1: the device row carries its own SELECTION checkbox
+				// (drives selection.deviceKeys). Clicking elsewhere on the row
+				// scopes the VIEW to that device — an inspection action that
+				// never changes the selection.
+				const deviceSelectable = device.osVersions.some(os => os.browsers.some(browser =>
+					browser.versions.some(version => isSelectable(version))));
+				const deviceLine = document.createElement('div');
+				deviceLine.className = 'qa-matrix-device-line';
+				const deviceCheckLabel = document.createElement('label');
+				deviceCheckLabel.className = 'qa-matrix-device-check';
+				const deviceCheck = document.createElement('input');
+				deviceCheck.type = 'checkbox';
+				deviceCheck.dataset.role = 'device-select';
+				deviceCheck.dataset.deviceKey = deviceKey;
+				deviceCheck.setAttribute('aria-label', `Select ${device.manufacturer ? `${device.manufacturer} ` : ''}${device.device}`);
+				if (deviceSelectable) {
+					deviceCheck.checked = selection.deviceKeys.has(deviceKey);
+					deviceCheck.addEventListener('click', event => event.stopPropagation());
+					deviceCheck.addEventListener('change', () => {
+						const next = createSelectionState({
+							deviceKeys: selection.deviceKeys,
+							browserFamilies: selection.browserFamilies,
+							deselectedEnvIds: selection.deselectedEnvIds
+						});
+						toggleDevice(next, deviceKey, deviceCheck.checked);
+						qaMatrixApplySelection(next);
 					});
-					qaMatrixRender();
-					syncQaSubmitState();
-				};
-				deviceRow.addEventListener('click', (event) => {
-					// Version-checkbox clicks keep their own semantics.
-					if (event.target.closest('label')) return;
-					activateScope();
-				});
-				deviceRow.addEventListener('keydown', (event) => {
-					if (event.key === 'Enter' || event.key === ' ') {
-						event.preventDefault();
-						activateScope();
-					}
-				});
+				} else {
+					deviceCheck.disabled = true;
+					deviceCheckLabel.title = 'No available configurations for this device.';
+				}
+				deviceCheckLabel.append(deviceCheck);
+				const deviceName = document.createElement('span');
+				deviceName.textContent = `${device.manufacturer ? `${device.manufacturer} ` : ''}${device.device}`;
 				const badges = document.createElement('span');
 				badges.className = 'qa-matrix-badges';
 				for (const executionType of device.executionTypes) {
@@ -5266,11 +5390,42 @@ function qaMatrixRender() {
 					badge.textContent = executionTypeLabel(executionType);
 					badges.append(badge);
 				}
-				const deviceLine = document.createElement('div');
-				deviceLine.className = 'qa-matrix-device-line';
-				const deviceName = document.createElement('span');
-				deviceName.textContent = `${device.manufacturer ? `${device.manufacturer} ` : ''}${device.device}`;
-				deviceLine.append(deviceName, badges);
+				const viewButton = document.createElement('button');
+				viewButton.type = 'button';
+				viewButton.className = 'qa-matrix-bulk-btn qa-matrix-view-btn';
+				viewButton.dataset.role = 'device-view';
+				viewButton.textContent = 'View';
+				viewButton.title = 'Inspect this device without changing your selection';
+				const activateScope = () => {
+					qaMatrixSetDeviceScope({
+						platform: device.platform,
+						device: device.device,
+						manufacturer: device.manufacturer ?? ''
+					});
+					void qaMatrixLoadWindow(0, qaMatrixState.abort?.signal);
+					qaMatrixRender();
+					syncQaSubmitState();
+				};
+				viewButton.addEventListener('click', event => {
+					event.stopPropagation();
+					activateScope();
+				});
+				deviceLine.append(deviceCheckLabel, deviceName, badges, viewButton);
+				// Row click (outside chips/checkboxes) also scopes the VIEW.
+				deviceRow.classList.add('is-clickable');
+				deviceRow.setAttribute('role', 'button');
+				deviceRow.tabIndex = 0;
+				deviceRow.addEventListener('click', (event) => {
+					// Checkbox/chip/button clicks keep their own semantics.
+					if (event.target.closest('label') || event.target.closest('button')) return;
+					activateScope();
+				});
+				deviceRow.addEventListener('keydown', (event) => {
+					if (event.key === 'Enter' || event.key === ' ') {
+						event.preventDefault();
+						activateScope();
+					}
+				});
 				deviceRow.append(deviceLine);
 				for (const os of device.osVersions) {
 					const osRow = document.createElement('div');
@@ -5292,11 +5447,24 @@ function qaMatrixRender() {
 							if (isSelectable(version)) {
 								versionInput.checked = selected.has(key);
 								versionInput.addEventListener('change', () => {
-									if (versionInput.checked) qaMatrixStore.reselect(key);
-									else qaMatrixStore.deselect(key);
-									qaMatrixState.selectedEnvIds = qaMatrixEffectiveSelection();
-									qaMatrixRender();
-									syncQaSubmitState();
+									// Phase 1: a chip tick is a granular OVERRIDE within
+									// the explicit model — it deselects/reselects one
+									// envId. Ticking a chip whose device or family is not
+									// selected ALSO selects that device and family
+									// (the tick is an explicit user intent).
+									const next = createSelectionState({
+										deviceKeys: selection.deviceKeys,
+										browserFamilies: selection.browserFamilies,
+										deselectedEnvIds: selection.deselectedEnvIds
+									});
+									if (versionInput.checked) {
+										toggleDevice(next, deviceKeyOf(version), true);
+										toggleBrowserFamily(next, qaMatrixState.index, version.browserCode, true);
+										next.deselectedEnvIds.delete(key);
+									} else {
+										next.deselectedEnvIds.add(key);
+									}
+									qaMatrixApplySelection(next);
 								});
 							} else {
 								versionInput.disabled = true;
@@ -5318,27 +5486,25 @@ function qaMatrixRender() {
 		}
 	}
 
-	// Summary: planned total + per-family + provider honesty.
+	// Summary: TRUE planned total (never capped — Phase 1) + provider honesty.
+	// While scoped (a VIEW), still show the GLOBAL selection count first — the
+	// scope never changes what a run submits, and the summary must never imply
+	// otherwise (reviewer round-1: scope-only label hid the true count).
 	const summary = buildSummary(qaMatrixState.index, qaMatrixState.selectedEnvIds);
 	const providerNotes = (qaMatrixState.providers ?? [])
 		.filter(provider => !provider.connected)
 		.map(provider => `${provider.name}: not configured`);
 	const scopeLabel = qaMatrixScopeLabel();
-	const overCap = summary.total > MAX_RUN_CONFIGURATIONS;
-	// #15323: with the default selection now capped, say so honestly instead
-	// of silently presenting 2,000 as if it were the whole catalog.
-	const cappedNote = !scopeLabel
-		&& summary.availableTotal > MAX_RUN_CONFIGURATIONS
-		&& summary.total === MAX_RUN_CONFIGURATIONS
-		? ` · capped at the ${MAX_RUN_CONFIGURATIONS.toLocaleString()}-configuration run limit — ${(summary.availableTotal - MAX_RUN_CONFIGURATIONS).toLocaleString()} more available via filters`
-		: '';
+	// Pipeline Phase 2: selections over the batch size run as sequential
+	// idempotent batches under one parent run — the summary says so.
+	const overBatch = summary.total > MATRIX_BATCH_SIZE;
+	const globalCount = `${summary.total.toLocaleString()} of ${summary.availableTotal.toLocaleString()} available configurations selected`
+		+ (summary.unavailable > 0 ? ` · ${summary.unavailable.toLocaleString()} unavailable` : '')
+		+ (providerNotes.length > 0 ? ` · ${providerNotes.join(', ')}` : '')
+		+ (overBatch ? ` · will run as ${Math.ceil(summary.total / MATRIX_BATCH_SIZE)} batches` : '');
 	matrix.summary.textContent = scopeLabel
-		? `${scopeLabel} · ${summary.total.toLocaleString()}/${summary.availableTotal.toLocaleString()} of this device's configurations selected`
-		: `${summary.total.toLocaleString()} of ${summary.availableTotal.toLocaleString()} available configurations selected`
-			+ (summary.unavailable > 0 ? ` · ${summary.unavailable.toLocaleString()} unavailable` : '')
-			+ (providerNotes.length > 0 ? ` · ${providerNotes.join(', ')}` : '')
-			+ cappedNote
-			+ (overCap ? ` · over the ${MAX_RUN_CONFIGURATIONS.toLocaleString()}-configuration run limit — narrow the selection to start` : '');
+		? `${globalCount} — viewing: ${scopeLabel}`
+		: globalCount;
 	matrix.summary.title = Object.entries(summary.byFamily)
 		.filter(([, count]) => count > 0)
 		.map(([code, count]) => `${code}: ${count}`)
@@ -5416,17 +5582,14 @@ function syncQaCategoryToggles() {
 function syncQaSubmitState() {
 	if (!qaUi.submit) return;
 	const selected = qaUi.selectedTests.size;
-	// QA matrix (#15013): Start also requires a valid URL and ≥1 selected
+	// QA matrix (#15013): Start requires a valid URL and ≥1 selected
 	// configuration while the dialog is open (fetch error → 0 selected → held).
-	// #14942 fix: the server caps a run at MAX_RUN_CONFIGURATIONS (2000) —
-	// a default full-matrix selection (37k+) previously POSTed anyway and
-	// died on the 1mb body limit as an opaque 413. Gate Start the same way
-	// the server does, with an honest reason, instead of letting it fail.
+	// Pipeline Phase 1: the 2,000 limit is a per-batch EXECUTION limit, not a
+	// selection gate — any non-empty selection is startable (Phase 2 batches).
 	const urlValid = !qaUi.dialog?.open || isValidTargetUrl(qaUi.targetUrl?.value);
 	const selectedCount = qaMatrixState.selectedEnvIds.length;
 	const matrixReady = !qaUi.dialog?.open || selectedCount > 0;
-	const withinCap = !qaUi.dialog?.open || selectedCount <= MAX_RUN_CONFIGURATIONS;
-	qaUi.submit.disabled = selected === 0 || !urlValid || !matrixReady || !withinCap || qaUi.submit.dataset.busy === 'true';
+	qaUi.submit.disabled = selected === 0 || !urlValid || !matrixReady || qaUi.submit.dataset.busy === 'true';
 	if (qaUi.testsCount) {
 		qaUi.testsCount.textContent = `${selected} of ${qaUi.selectedTests.catalogSize ?? selected} selected`;
 	}
@@ -5826,7 +5989,7 @@ if (qaUi.dialog) {
 			qaUi.securityAuthorized?.focus();
 			return;
 		}
-		const device = activeTestEnvStore?.get?.()?.device || (qaUi.deviceSelect?.value) || pendingDeviceId();
+		const device = activeTestEnvStore?.get?.()?.device || pendingDeviceId();
 		const deviceLandscape = (qaUi.deviceLandscape?.checked) === true;
 		const scopeValues = selectedQaScopeValues();
 		const scopeMessage = buildQaKickoffMessage(scopeValues);
@@ -5847,14 +6010,13 @@ if (qaUi.dialog) {
 			setQaFormError('The selected configurations are no longer available. Reload the catalog and pick again.');
 			return;
 		}
-		// #14942 fix: mirror the server's run cap client-side so the honest
-		// message surfaces here instead of as a raw 413/422 from the API.
-		if (selectedEnvIds.length > MAX_RUN_CONFIGURATIONS) {
-			setQaFormError(`Too many configurations selected (${selectedEnvIds.length.toLocaleString()}). The maximum per run is ${MAX_RUN_CONFIGURATIONS.toLocaleString()} — narrow the selection (platform, manufacturer, browser, or OS filters) and start again.`);
-			return;
-		}
-		// AC14 context is carried by the launcher's matrix run itself; the
-		// legacy single-environment/test-case path applies to non-matrix runs.
+		// Pipeline Phase 2: selections larger than one batch (2,000) are
+		// submitted as a PARENT run + sequential idempotent BATCH POSTs —
+		// never one giant payload. Selections ≤ 2,000 take the single-run
+		// path unchanged. Batch creation is sequential with visible progress
+		// and a network failure mid-sequence leaves earlier batches intact;
+		// re-submitting reproduces the same batchKeys so the server returns
+		// the existing batches (idempotent — zero duplicate jobs).
 		qaUi.submit.dataset.busy = 'true';
 		qaUi.submit.disabled = true;
 		qaUi.submit.textContent = selectedEnvIds.length > 1 ? `Starting ${selectedEnvIds.length.toLocaleString()} configurations…` : 'Starting run…';
@@ -5863,19 +6025,57 @@ if (qaUi.dialog) {
 			// configuration as an item — queued with controlled concurrency,
 			// progress/cancel/retry on the server. No silent reduction to a
 			// representative subset, no client-side per-engine fan-out.
-			const matrixRun = await api('/qa-matrix-runs', {
-				method: 'POST',
-				body: JSON.stringify({
-					targetUrl,
-					configurationEnvIds: selectedEnvIds,
-					kickoffText,
-					selectedTests,
-					securityAuthorization,
-					scopeSelection: scopeValues
-				})
-			});
+			const batches = planBatches(selectedEnvIds);
+			let matrixRun;
+			if (batches.length <= 1) {
+				matrixRun = await api('/qa-matrix-runs', {
+					method: 'POST',
+					body: JSON.stringify({
+						targetUrl,
+						configurationEnvIds: selectedEnvIds,
+						kickoffText,
+						selectedTests,
+						securityAuthorization,
+						scopeSelection: scopeValues
+					})
+				});
+			} else {
+				// Parent first (plan metadata only, no configurations).
+				const parent = await api('/qa-matrix-runs', {
+					method: 'POST',
+					body: JSON.stringify({
+						kind: 'parent',
+						targetUrl,
+						kickoffText,
+						selectedTests,
+						securityAuthorization,
+						scopeSelection: scopeValues,
+						totalPlanned: selectedEnvIds.length
+					})
+				});
+				// Sequential batches, each with a stable idempotency key.
+				for (let index = 0; index < batches.length; index += 1) {
+					qaUi.submit.textContent = `Creating batch ${index + 1}/${batches.length}…`;
+					const key = await batchKeyFor(parent.id, batches[index]);
+					await api('/qa-matrix-runs', {
+						method: 'POST',
+						body: JSON.stringify({
+							parentId: parent.id,
+							batchKey: key,
+							batchIndex: index,
+							targetUrl,
+							configurationEnvIds: batches[index],
+							kickoffText,
+							selectedTests,
+							securityAuthorization,
+							scopeSelection: scopeValues
+						})
+					});
+				}
+				matrixRun = parent;
+			}
 			closeQaStart();
-			toast(`QA run started — ${selectedEnvIds.length.toLocaleString()} configurations queued.`);
+			toast(`QA run started — ${selectedEnvIds.length.toLocaleString()} configurations queued${batches.length > 1 ? ` across ${batches.length} batches.` : '.'}`);
 			// #14942 Phase 4: the results board IS the live view — per-configuration
 			// statuses, totals, coverage gaps and evidence update while the
 			// orchestrator works; each row drills into its producing session.
@@ -6483,9 +6683,11 @@ function renderAuthMode() {
 	if (el.authInvite) el.authInvite.hidden = !(register && state.pilotMode);
 	if (el.authInviteLabel) el.authInviteLabel.hidden = !(register && state.pilotMode);
 	if (el.authInvite && !state.pilotMode) { el.authInvite.required = false; }
-	if (el.authPassword) { el.authPassword.autocomplete = register ? 'new-password' : 'current-password'; el.authPassword.minLength = register ? 12 : 1; }
+	if (el.authPassword) { el.authPassword.autocomplete = register ? 'new-password' : 'current-password'; el.authPassword.minLength = register ? 8 : 1; }
 	if (el.authSubmit) el.authSubmit.textContent = register ? 'Create account' : 'Sign in';
 	if (el.authSwitch) el.authSwitch.textContent = register ? 'I already have an account' : 'Create an account';
+	// Forgot-password entry point lives on the login card only.
+	if (el.authForgotSwitch) el.authForgotSwitch.hidden = register;
 }
 
 function showAuthGate() {
@@ -6493,7 +6695,8 @@ function showAuthGate() {
 	el.authGate.hidden = false;
 	document.querySelector('.app').inert = true;
 	document.querySelector('.app').setAttribute('aria-hidden', 'true');
-	renderAuthMode();
+	// Restore the plain sign-in card (forgot/reset panels stay hidden).
+	showAuthCard('signin');
 	el.authEmail?.focus();
 }
 
@@ -6539,6 +6742,216 @@ el.authForm?.addEventListener('submit', async event => {
 		el.authSubmit.disabled = false;
 		el.authSwitch.disabled = false;
 		el.authForm.removeAttribute('aria-busy');
+	}
+});
+
+// ── Forgot / reset password (ticket #15673) ─────────────────────────
+// The four cards (sign-in, forgot, OTP, reset) swap inside the same auth gate.
+// Flow: email → 6-digit email OTP → new password (min 8 chars).
+let resetAuthorization; // short-lived single-use authorization from OTP verification
+let resetEmail;        // email the OTP was requested for (kept for resend)
+
+function showAuthCard(which) {
+	if (el.forgotPanel) el.forgotPanel.hidden = which !== 'forgot';
+	if (el.otpPanel) el.otpPanel.hidden = which !== 'otp';
+	if (el.resetPanel) el.resetPanel.hidden = which !== 'reset';
+	if (el.recoverPanel) el.recoverPanel.hidden = which !== 'recover';
+	const signInPanel = document.querySelector('.auth-panel:not(#forgot-panel):not(#otp-panel):not(#reset-panel):not(#recover-panel)');
+	if (signInPanel) signInPanel.hidden = which !== 'signin';
+	if (which === 'signin') { authRegisterMode = false; renderAuthMode(); }
+	if (el.authGate) el.authGate.hidden = false;
+	document.querySelector('.app').inert = true;
+	document.querySelector('.app').setAttribute('aria-hidden', 'true');
+}
+
+el.authForgotSwitch?.addEventListener('click', () => {
+	showAuthCard('recover');
+	if (el.recoverError) el.recoverError.hidden = true;
+	if (el.recoverNotice) el.recoverNotice.hidden = true;
+	if (el.recoverEmail) el.recoverEmail.value = el.authEmail?.value.trim() || '';
+	if (el.recoverCode) el.recoverCode.value = '';
+	(el.recoverEmail?.value ? el.recoverCode : el.recoverEmail)?.focus();
+});
+// Recovery-code card (#15727): email + one unused code → new password.
+// Verifying the code yields the SAME short-lived single-use reset
+// authorization the email-OTP flow issues, so the existing #reset-panel
+// completes the journey unchanged.
+el.recoverBack?.addEventListener('click', () => {
+	showAuthCard('signin');
+	el.authEmail?.focus();
+});
+el.forgotRecoverLink?.addEventListener('click', () => {
+	showAuthCard('recover');
+	if (el.recoverError) el.recoverError.hidden = true;
+	if (el.recoverNotice) el.recoverNotice.hidden = true;
+	el.recoverEmail?.focus();
+});
+el.recoverForm?.addEventListener('submit', async event => {
+	event.preventDefault();
+	if (!el.recoverEmail || !el.recoverCode || !el.recoverSubmit) return;
+	if (el.recoverError) el.recoverError.hidden = true;
+	if (el.recoverNotice) el.recoverNotice.hidden = true;
+	const email = el.recoverEmail.value.trim();
+	const code = el.recoverCode.value.trim();
+	if (!/^[A-Za-z0-9]{12}$|^[A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$/.test(code)) {
+		if (el.recoverError) { el.recoverError.textContent = 'Enter a recovery code in the format XXXX-XXXX-XXXX.'; el.recoverError.hidden = false; }
+		return;
+	}
+	el.recoverSubmit.disabled = true;
+	el.recoverForm.setAttribute('aria-busy', 'true');
+	try {
+		const result = await api('/auth/recover', {
+			method: 'POST',
+			body: JSON.stringify({ email, code })
+		});
+		resetAuthorization = result?.authorization;
+		if (!resetAuthorization) throw new Error('This recovery code is invalid or has expired.');
+		el.recoverCode.value = '';
+		showAuthCard('reset');
+		if (el.resetError) el.resetError.hidden = true;
+		if (el.resetNotice) el.resetNotice.hidden = true;
+		el.resetPassword?.focus();
+	} catch (error) {
+		if (el.recoverError) {
+			el.recoverError.textContent = error instanceof Error ? error.message : String(error);
+			el.recoverError.hidden = false;
+		}
+	} finally {
+		el.recoverSubmit.disabled = false;
+		el.recoverForm.removeAttribute('aria-busy');
+	}
+});
+el.forgotBack?.addEventListener('click', () => {
+	showAuthCard('signin');
+	el.authEmail?.focus();
+});
+el.otpBack?.addEventListener('click', () => {
+	showAuthCard('signin');
+	el.authEmail?.focus();
+});
+el.resetBack?.addEventListener('click', () => {
+	showAuthCard('signin');
+	el.authEmail?.focus();
+});
+
+async function requestCode() {
+	if (!el.forgotEmail || !el.forgotSubmit) return false;
+	if (el.forgotError) el.forgotError.hidden = true;
+	el.forgotSubmit.disabled = true;
+	el.forgotForm.setAttribute('aria-busy', 'true');
+	try {
+		resetEmail = el.forgotEmail.value.trim();
+		const result = await api('/auth/forgot-password', {
+			method: 'POST',
+			body: JSON.stringify({ email: resetEmail })
+		});
+		// Same neutral message whether or not the account exists.
+		if (el.forgotNotice) {
+			el.forgotNotice.textContent = result?.message ?? 'If an account exists for that email, a reset code has been sent.';
+			el.forgotNotice.hidden = false;
+		}
+		showAuthCard('otp');
+		if (el.otpError) el.otpError.hidden = true;
+		if (el.otpNotice) el.otpNotice.hidden = true;
+		el.otpInput?.focus();
+		return true;
+	} catch (error) {
+		if (el.forgotError) {
+			el.forgotError.textContent = error instanceof Error ? error.message : String(error);
+			el.forgotError.hidden = false;
+		}
+		return false;
+	} finally {
+		el.forgotSubmit.disabled = false;
+		el.forgotForm.removeAttribute('aria-busy');
+	}
+}
+
+el.forgotForm?.addEventListener('submit', async event => {
+	event.preventDefault();
+	await requestCode();
+});
+
+el.otpResend?.addEventListener('click', () => {
+	// Resend from the OTP card: reuse the email step's request path.
+	showAuthCard('forgot');
+	if (el.forgotNotice) { el.forgotNotice.hidden = true; }
+	el.forgotEmail?.focus();
+});
+
+el.otpForm?.addEventListener('submit', async event => {
+	event.preventDefault();
+	if (!el.otpInput || !el.otpSubmit) return;
+	if (el.otpError) el.otpError.hidden = true;
+	const otp = el.otpInput.value.trim();
+	if (!/^[0-9]{6}$/.test(otp)) {
+		if (el.otpError) { el.otpError.textContent = 'Enter the 6-digit code from your email.'; el.otpError.hidden = false; }
+		return;
+	}
+	el.otpSubmit.disabled = true;
+	el.otpForm.setAttribute('aria-busy', 'true');
+	try {
+		const result = await api('/auth/verify-reset-otp', {
+			method: 'POST',
+			body: JSON.stringify({ email: resetEmail, otp })
+		});
+		resetAuthorization = result?.authorization;
+		if (!resetAuthorization) throw new Error('Verification failed. Request a new code.');
+		el.otpInput.value = '';
+		showAuthCard('reset');
+		if (el.resetError) el.resetError.hidden = true;
+		if (el.resetNotice) el.resetNotice.hidden = true;
+		el.resetPassword?.focus();
+	} catch (error) {
+		if (el.otpError) {
+			el.otpError.textContent = error instanceof Error ? error.message : String(error);
+			el.otpError.hidden = false;
+		}
+	} finally {
+		el.otpSubmit.disabled = false;
+		el.otpForm.removeAttribute('aria-busy');
+	}
+});
+
+el.resetForm?.addEventListener('submit', async event => {
+	event.preventDefault();
+	if (!el.resetPassword || !el.resetConfirm || !el.resetSubmit) return;
+	if (el.resetError) el.resetError.hidden = true;
+	if (el.resetNotice) el.resetNotice.hidden = true;
+	// Inline validation before any network call.
+	if (el.resetPassword.value !== el.resetConfirm.value) {
+		if (el.resetError) { el.resetError.textContent = 'Passwords do not match.'; el.resetError.hidden = false; }
+		return;
+	}
+	if (!resetAuthorization) {
+		if (el.resetError) { el.resetError.textContent = 'This reset session is invalid or has expired. Start again.'; el.resetError.hidden = false; }
+		return;
+	}
+	el.resetSubmit.disabled = true;
+	el.resetForm.setAttribute('aria-busy', 'true');
+	try {
+		const result = await api('/auth/reset-password', {
+			method: 'POST',
+			body: JSON.stringify({ authorization: resetAuthorization, password: el.resetPassword.value })
+		});
+		if (el.resetNotice) {
+			el.resetNotice.textContent = result?.message ?? 'Password updated. You can now sign in.';
+			el.resetNotice.hidden = false;
+		}
+		el.resetPassword.value = '';
+		el.resetConfirm.value = '';
+		// The authorization is single-use; drop it and return to sign-in.
+		resetAuthorization = undefined;
+		showAuthCard('signin');
+		el.authEmail?.focus();
+	} catch (error) {
+		if (el.resetError) {
+			el.resetError.textContent = error instanceof Error ? error.message : String(error);
+			el.resetError.hidden = false;
+		}
+	} finally {
+		el.resetSubmit.disabled = false;
+		el.resetForm.removeAttribute('aria-busy');
 	}
 });
 
@@ -7546,6 +7959,16 @@ async function bootWorkspace() {
 
 (async function boot() {
 	await window.qaseEntryReady;
+	// Password-reset deep link: /#reset-password?token=... opens the reset
+	// card directly (arriving from an email link while signed out).
+	function routeResetHash() {
+		if (!window.location.hash.startsWith('#reset-password')) return false;
+		showAuthCard('reset');
+		el.resetPassword?.focus();
+		return true;
+	}
+	if (routeResetHash()) return;
+	window.addEventListener('hashchange', routeResetHash);
 	// Test Execution Timer: one shared second-hand for every live timer view.
 	startTimerInterval();
 	// Performance panel controls: minimize/restore/close are visibility-only.
@@ -7652,7 +8075,8 @@ async function accountAction(button, work) {
 $('open-profile').onclick = () => accountAction($('open-profile'), async () => {
   const user = await api('/profile');
   $('profile-name').value = user.displayName; $('profile-timezone').value = user.profile.timezone; $('profile-email').textContent = user.email;
-  profileDialog.showModal(); await refreshMemory();
+  $('recovery-codes-result').hidden = true; // codes are shown once per generation, never re-shown
+  profileDialog.showModal(); await refreshMemory(); await refreshRecoveryStatus();
 });
 $('profile-form').onsubmit = event => { event.preventDefault(); accountAction(event.submitter, async () => {
   state.user = await api('/profile', { method:'PUT', body:JSON.stringify({displayName:$('profile-name').value,profile:{timezone:$('profile-timezone').value}}) });
@@ -7661,6 +8085,40 @@ $('profile-form').onsubmit = event => { event.preventDefault(); accountAction(ev
 $('password-form').onsubmit = event => { event.preventDefault(); accountAction(event.submitter, async () => {
   await api('/auth/password', { method:'POST', body:JSON.stringify({currentPassword:$('current-password').value,password:$('new-password').value}) });
   state.stream?.close(); window.location.reload();
+}); };
+// Recovery codes (#15727): generated only after confirming the current
+// password; shown exactly once with copy/download. The plaintext codes exist
+// only in this one response — never retrievable again from the server.
+async function refreshRecoveryStatus() {
+  try {
+    const status = await api('/auth/recovery-codes');
+    $('recovery-status').textContent = status?.unused > 0
+      ? `${status.unused} unused recovery code${status.unused === 1 ? '' : 's'} remaining (of ${status.total} generated).`
+      : 'No unused recovery codes. Generate a set to be able to regain access without email.';
+  } catch { $('recovery-status').textContent = 'Recovery codes are not available on this instance.'; }
+}
+$('recovery-generate-form').onsubmit = event => { event.preventDefault(); accountAction(event.submitter, async () => {
+  const generated = await api('/auth/recovery-codes', { method:'POST', body:JSON.stringify({currentPassword:$('recovery-current-password').value}) });
+  $('recovery-current-password').value = '';
+  const list = $('recovery-codes-list'); list.replaceChildren();
+  for (const code of generated.codes) {
+    const item = document.createElement('li'); item.textContent = code; list.append(item);
+  }
+  // Keep the codes ONLY in the DOM + the download payload — dropping them
+  // from module state so they can't leak into other handlers or telemetry.
+  $('recovery-codes-result').dataset.generated = generated.generatedAt ?? '';
+  const copy = $('recovery-copy'), download = $('recovery-download');
+  copy.onclick = async () => { try { await navigator.clipboard.writeText(generated.codes.join('\n')); copy.textContent = 'Copied ✓'; setTimeout(() => { copy.textContent = 'Copy all'; }, 1600); } catch { copy.textContent = 'Copy failed'; } };
+  download.onclick = () => {
+    const user = state.user?.email ?? 'account';
+    const text = `Qase recovery codes\nAccount: ${user}\nGenerated: ${new Date(generated.generatedAt ?? Date.now()).toLocaleString()}\n\n${generated.codes.join('\n')}\n\nEach code works once to reset your password. Regenerating invalidates all previous codes. Store this file somewhere safe.\n`;
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    const link = document.createElement('a'); link.href = url; link.download = 'qase-recovery-codes.txt'; link.click();
+    URL.revokeObjectURL(url);
+  };
+  $('recovery-codes-result').hidden = false;
+  await refreshRecoveryStatus();
+  $('profile-message').textContent = 'Recovery codes generated. Save them now — they will not be shown again.';
 }); };
 $('memory-form').onsubmit = event => { event.preventDefault(); accountAction(event.submitter, async () => {
   await api('/memory', { method:'PUT', body:JSON.stringify({key:$('memory-key').value,value:$('memory-value').value}) });

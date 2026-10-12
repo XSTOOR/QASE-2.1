@@ -37,7 +37,8 @@ test('QA frontend defaults to all tests selected and reuses Studio components', 
 
 test('QA submit is disabled with no selection and selection survives configuration', () => {
 	// Disabled at zero selected tests.
-	assert.match(app, /qaUi\.submit\.disabled = selected === 0 \|\| qaUi\.submit\.dataset\.busy === 'true'/);
+	// Pipeline Phase 1: selection gate includes tests + URL + matrix selection.
+	assert.match(app, /qaUi\.submit\.disabled = selected === 0 \|\| !urlValid \|\| !matrixReady \|\| qaUi\.submit\.dataset\.busy === 'true'/);
 	// Guard on submit as well — defense in depth.
 	assert.match(app, /if \(selectedTests\.length === 0\) \{\s*setQaFormError\('Select at least one test\.'\)/);
 	// Bulk controls rewrite every checkbox.
@@ -53,4 +54,39 @@ test('QA submit is disabled with no selection and selection survives configurati
 	// The run request carries the selection (and the security authorization
 	// gate payload when a security check is selected).
 	assert.match(app, /body: JSON\.stringify\(\{[\s\S]*?device,[\s\S]*?deviceLandscape,[\s\S]*?engine,[\s\S]*?selectedTests,[\s\S]*?\.\.\.\(securityAuthorization \? \{ securityAuthorization \} : \{\}\)[\s\S]*?\}\)/);
+});
+
+test('Pipeline Phase 1: device scope is a VIEW — scoping never mutates selection, exit is always reachable', () => {
+	// qaMatrixSetDeviceScope writes ONLY the view state and re-derives the
+	// effective envIds; it must never touch selection.deviceKeys /
+	// browserFamilies / deselectedEnvIds directly.
+	const scopeFn = app.slice(app.indexOf('function qaMatrixSetDeviceScope'));
+	assert.ok(scopeFn.length > 0, 'qaMatrixSetDeviceScope must exist');
+	const scopeBody = scopeFn.slice(0, scopeFn.indexOf('\n}\n'));
+	assert.match(scopeBody, /qaMatrixState\.deviceScope = scope;/);
+	assert.doesNotMatch(scopeBody, /selection\.deviceKeys\s*=/);
+	assert.doesNotMatch(scopeBody, /selection\.browserFamilies\s*=/);
+	assert.doesNotMatch(scopeBody, /deselectedEnvIds\s*=\s*new Set/);
+	assert.doesNotMatch(scopeBody, /deselectedEnvIds\.clear\(\)/);
+	assert.doesNotMatch(scopeBody, /store\.clear\(\)/);
+	// The effective selection after scoping is DERIVED from the untouched
+	// selection state — not captured from the scoped window.
+	assert.match(scopeBody, /qaMatrixState\.selectedEnvIds = qaMatrixEffectiveSelection\(\);/);
+
+	// Exit affordance: "← Back to all devices" calls qaMatrixSetDeviceScope(null).
+	const exitIdx = app.indexOf("back.textContent = '← Back to all devices';");
+	assert.ok(exitIdx > 0, 'scope exit button must exist');
+	const exitBlock = app.slice(exitIdx, exitIdx + 400);
+	assert.match(exitBlock, /qaMatrixSetDeviceScope\(null\);/);
+
+	// Scoping the view is wired through an explicit View button AND row
+	// activation, but the device SELECTION checkbox stops propagation so the
+	// row click can never toggle selection accidentally.
+	assert.match(app, /deviceCheck\.addEventListener\('click', event => event\.stopPropagation\(\)\)/);
+
+	// Selection state is explicit and never capped: the matrix render reads
+	// selection.deviceKeys / browserFamilies directly, and bulk Select All
+	// operates on the full catalog index.
+	assert.match(app, /selectAllDevices\(qaMatrixState\.index, selection\)/);
+	assert.match(app, /selectAllBrowsers\(qaMatrixState\.index, selection\)/);
 });

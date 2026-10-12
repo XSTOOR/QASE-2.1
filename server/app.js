@@ -37,6 +37,7 @@ import { createBugRoutes } from './bugApi.js';
 import { createMatrixRoutes } from './matrixApi.js';
 import { createMatrixOrchestrator } from './matrixOrchestrator.js';
 import { checkEnvironmentHealth } from './environmentHealth.js';
+import { createMailer } from './mailer.js';
 import { resolveBrowserSupport } from './browserSupportResolution.js';
 import { buildFeedbackSectionMarkdown } from './report.js';
 import { normalizeQaScopeSelection } from '../public/qaScopeCatalog.js';
@@ -182,6 +183,7 @@ export function createApplication(options = {}) {
 	const logger = options.logger;
 	if (logger !== undefined && typeof logger?.error !== 'function') throw new TypeError('Application logger is invalid.');
 	const isDraining = typeof options.isDraining === 'function' ? options.isDraining : () => false;
+	const mailer = options.mailer ?? createMailer({ environment, logger });
 	const activeTurns = new Set();
 	const drytisIntegrationApi = options.drytisIntegrationApi;
 	if (drytisIntegrationApi !== undefined && typeof drytisIntegrationApi?.mount !== 'function') {
@@ -307,7 +309,9 @@ export function createApplication(options = {}) {
 	});
 
 	app.use('/api', (request, response, next) => {
-		const publicAuthRoute = request.path === '/auth/register' || request.path === '/auth/login' || request.path === '/pilot-status';
+	const publicAuthRoute = request.path === '/auth/register' || request.path === '/auth/login' || request.path === '/pilot-status'
+		|| request.path === '/auth/forgot-password' || request.path === '/auth/reset-password'
+		|| request.path === '/auth/verify-reset-otp' || request.path === '/auth/recover';
 		if (!authService || !authRequired || publicAuthRoute) {
 			return runWithRequestActor({ ...request.auth, requestId: request.qaseRequestId }, next);
 		}
@@ -351,7 +355,7 @@ export function createApplication(options = {}) {
 	});
 	const fallbackAuthThrottle = createAuthThrottle();
 	app.use('/api/auth', async (request, response, next) => {
-		if (request.method !== 'POST' || !['/login', '/register', '/password'].includes(request.path)) return next();
+		if (request.method !== 'POST' || !['/login', '/register', '/password', '/forgot-password', '/reset-password', '/verify-reset-otp', '/recovery-codes', '/recover'].includes(request.path)) return next();
 		const consume = authService?.consumeAuthAttempt ?? fallbackAuthThrottle;
 		try {
 			const ipAllowed = await consume(authThrottleKey(`ip:${request.ip}`), 40);
@@ -448,6 +452,79 @@ export function createApplication(options = {}) {
 			await authService.changePassword(request.auth.userId, request.body ?? {});
 			clearAuthCookies(response, { secure: safeCookies(request) });
 			response.status(204).end();
+		} catch (error) { authFailure(response, error); }
+	});
+
+	// Password reset via email OTP (public, pre-auth, throttled). The request
+	// endpoint is deliberately oracle-free — identical response whether or not
+	// the account exists. The 6-digit OTP travels ONLY inside the email body
+	// (mock outbox in dev/test, SMTP in production); it is never returned by
+	// any API response and never logged. After a verified OTP the client gets a
+	// short-lived, single-use reset authorization to set the new password.
+	app.post('/api/auth/forgot-password', async (request, response) => {
+		if (!authService?.requestPasswordReset) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		const neutral = { message: 'If an account exists for that email, a reset code has been sent.' };
+		try {
+			const issued = await authService.requestPasswordReset(String(request.body?.email ?? ''));
+			if (issued) {
+				const text = `A password reset was requested for your Qase account (${issued.user.email}).\n\nYour verification code is: ${issued.otp}\n\nIt expires in 5 minutes and can be used only once. If you did not request this, you can ignore this email — your password stays unchanged.`;
+				await mailer.send({
+					to: issued.user.email,
+					subject: 'Your Qase password-reset code',
+					text,
+					html: `<p>A password reset was requested for your Qase account (<strong>${issued.user.email}</strong>).</p><p>Your verification code is:</p><p style="font-size:22px;letter-spacing:4px"><strong>${issued.otp}</strong></p><p>It expires in <strong>5 minutes</strong> and can be used only once.</p><p>If you did not request this, you can ignore this email — your password stays unchanged.</p>`
+				});
+			}
+			response.json(neutral);
+		} catch (error) {
+			// Even a mailer failure must not leak account existence.
+			authFailure(response, error);
+		}
+	});
+
+	app.post('/api/auth/verify-reset-otp', async (request, response) => {
+		if (!authService?.verifyResetOtp) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		try {
+			const verified = await authService.verifyResetOtp({ email: request.body?.email, otp: request.body?.otp });
+			// The authorization token is the ONLY secret issued; it is handed
+			// to the verified client and consumed once at reset-password.
+			response.json({ message: 'Code verified. Choose a new password.', authorization: verified.authorization });
+		} catch (error) { authFailure(response, error); }
+	});
+
+	app.post('/api/auth/reset-password', async (request, response) => {
+		if (!authService?.resetPassword) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		try {
+			await authService.resetPassword({ token: request.body?.authorization, password: request.body?.password });
+			response.json({ message: 'Password updated. You can now sign in.' });
+		} catch (error) { authFailure(response, error); }
+	});
+
+	// Recovery codes (#15725/#15727). Generation is AUTHENTICATED and gated on
+	// the current password; the plaintext codes appear exactly once in this one
+	// response and are never logged or persisted in the clear. Status is a
+	// read-only count for the Profile → Security panel (never the codes).
+	app.post('/api/auth/recovery-codes', async (request, response) => {
+		if (!authService?.generateRecoveryCodes) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		try {
+			const generated = await authService.generateRecoveryCodes(request.auth.userId, { currentPassword: request.body?.currentPassword });
+			response.json(generated);
+		} catch (error) { authFailure(response, error); }
+	});
+	app.get('/api/auth/recovery-codes', async (request, response) => {
+		if (!authService?.recoveryCodeStatus) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		response.json(await authService.recoveryCodeStatus(request.auth.userId));
+	});
+	// Public, pre-auth, throttled. Deliberately oracle-free: identical response
+	// for unknown email / account without codes / wrong or used code, so the
+	// endpoint cannot be used to enumerate accounts. A matched unused code is
+	// consumed atomically and exchanged for the same short-lived, single-use
+	// reset authorization the email-OTP flow issues (reset-password above).
+	app.post('/api/auth/recover', async (request, response) => {
+		if (!authService?.recoverWithCode) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		try {
+			const recovered = await authService.recoverWithCode({ email: request.body?.email, code: request.body?.code });
+			response.json({ message: 'Recovery code accepted. Choose a new password.', authorization: recovered.authorization });
 		} catch (error) { authFailure(response, error); }
 	});
 
@@ -675,7 +752,7 @@ export function createApplication(options = {}) {
 					response.status(400).json({ error: 'offset must be a non-negative integer.' });
 					return;
 				}
-				const { buildQaConfigurations } = await import('./qaConfigurations.js');
+				const { buildQaConfigurations, buildQaConfigurationsByDevice } = await import('./qaConfigurations.js');
 				const { catalogProviderMeta } = await import('./catalogProviderRegistry.js');
 				const [providersMeta] = await Promise.all([
 					catalogProviderMeta().catch(() => ({ providers: [] })),
@@ -691,6 +768,32 @@ export function createApplication(options = {}) {
 				const board = services.deviceRuntime && typeof services.deviceRuntime.deviceBoard === 'function'
 					? services.deviceRuntime.deviceBoard()
 					: [];
+				// #15439 Issue 2: device-grouped windows — one window returns ALL
+				// rows of `limit` DEVICE groups in canonical platform order, so
+				// the tree shows iPhone/iPad/Android/desktops from the first
+				// screen instead of 200 rows of one device.
+				if (query.groupBy === 'device') {
+					const result = await buildQaConfigurationsByDevice(
+						{
+							environmentsService: services.environments,
+							providers,
+							board,
+							limit,
+							offset: offset ?? 0
+						},
+						{
+							platform: query.platform,
+							manufacturer: query.manufacturer,
+							osVersion: query.osVersion,
+							orientation: query.orientation,
+							browserCode: query.browserCode,
+							search: query.search
+						}
+					);
+					response.set('Cache-Control', 'no-store');
+					response.json(result);
+					return;
+				}
 				const result = await buildQaConfigurations(
 					{
 						environmentsService: services.environments,
@@ -853,6 +956,25 @@ export function createApplication(options = {}) {
 					await services.agent.ensureRuntime(session);
 					startTurn(session, { task: text });
 				},
+				// Pipeline Phase 3 (#15493): authorized auto-answer — resume a
+				// paused child with the SAME session and turn machinery the
+				// interactive /answer route uses, so policy-covered questions
+				// (target permission, scan continuation) don't block an
+				// unattended run.
+				resumeSession: async (session, answer) => {
+					if (!session?.pendingQuestion) return false;
+					const text = String(answer ?? '').trim();
+					if (!text) return false;
+					await services.runs.addMessage(session, { role: 'user', text, kind: 'answer' });
+					startTurn(session, { resumeAnswer: text });
+					return true;
+				},
+				// Pipeline Phase 3 (#15493): browser hygiene — close the item's
+				// child-session browser after every execution (suspend
+				// semantics: the conversation survives; the process does not).
+				closeSessionBrowser: async (session) => {
+					await services.agent.closeBrowser(session.id, services.runs);
+				},
 				// #14650 (NI02 Phase 2): per-profile evidence — list the
 				// artifacts the session ACTUALLY produced (screenshots/video
 				// from the existing Phase-22 store). Empty list = none
@@ -935,19 +1057,24 @@ export function createApplication(options = {}) {
 				const envIds = Array.isArray(body.configurationEnvIds)
 					? body.configurationEnvIds.map(String).filter(Boolean)
 					: [];
-				if (envIds.length === 0) {
+				// Pipeline Phase 2: parent-run creation carries the plan
+				// metadata but no configurations; batches carry the configs.
+				const isParentRequest = body.kind === 'parent';
+				if (isParentRequest && envIds.length > 0) {
+					response.status(422).json({ error: 'A parent run carries no configurations — send them in batches.' });
+					return;
+				}
+				if (!isParentRequest && envIds.length === 0) {
 					response.status(400).json({ error: 'At least one configuration is required.' });
 					return;
 				}
-				// Robustness cap (review #14937): a full-default launcher
-				// selection is ~37k rows — one item each is a months-long queue
-				// and a very heavy state file. The UI narrows selection before
-				// Start; a request larger than this is a client bug, refuse it
-				// honestly rather than self-inflicting the load.
+				// Per-request cap = per-BATCH limit (Phase 2). A request larger
+				// than one batch is a client bug — the client must plan batches;
+				// never self-inflict a months-long single queue.
 				const MAX_MATRIX_CONFIGURATIONS = 2000;
 				if (envIds.length > MAX_MATRIX_CONFIGURATIONS) {
 					response.status(422).json({
-						error: `Too many configurations selected (${envIds.length}). The maximum per run is ${MAX_MATRIX_CONFIGURATIONS} — narrow the selection (platform, manufacturer, browser, or OS filters) and start again.`
+						error: `Too many configurations in one request (${envIds.length}). The per-batch limit is 2,000 — split the selection into batches.`
 					});
 					return;
 				}
@@ -975,6 +1102,44 @@ export function createApplication(options = {}) {
 				// Unknown envIds are NOT rejected here — the matrix service
 				// records them as honest BLOCKED items ("no longer in the
 				// catalog") so every selected configuration gets a result.
+				if (isParentRequest) {
+					const parent = await services.matrix.createParentRun({
+						title: String(body.title ?? `QA run — ${targetUrl}`).slice(0, 120),
+						targetUrl,
+						kickoffText: body.kickoffText,
+						selectedTests,
+						securityAuthorization,
+						scopeSelection,
+						totalPlanned: Number(body.totalPlanned ?? 0) || 0
+					}, { ownerUserId: request.auth?.userId ?? null });
+					response.status(201).json(parent);
+					return;
+				}
+				if (body.parentId || body.batchKey) {
+					// Phase 2 batch: idempotent on (parentId, batchKey).
+					const { run: batch, created } = await services.matrix.createBatch({
+						parentId: body.parentId,
+						batchKey: body.batchKey,
+						batchIndex: body.batchIndex,
+						title: body.title,
+						targetUrl,
+						testCaseId: body.testCaseId,
+						configurationEnvIds: envIds,
+						kickoffText: body.kickoffText,
+						selectedTests,
+						securityAuthorization,
+						scopeSelection
+					}, { ownerUserId: request.auth?.userId ?? null });
+					if (created && orchestrator) {
+						const started = orchestrator.start(batch.id);
+						if (!started.ok) {
+							response.status(409).json({ error: started.error });
+							return;
+						}
+					}
+					response.status(created ? 201 : 200).json(await services.matrix.get(batch.id));
+					return;
+				}
 				const record = await services.matrix.create({
 					title: String(body.title ?? `QA run — ${targetUrl}`).slice(0, 120),
 					targetUrl,
@@ -999,7 +1164,10 @@ export function createApplication(options = {}) {
 			matrix: services.matrix,
 			orchestrator,
 			bugs: services.bugs,
-			onError: safeErrorResponse
+			onError: safeErrorResponse,
+			// Pipeline Phase 5 (#15500): matrix SSE transport — the results
+			// board subscribes for push updates on /api/matrix-runs/:id/events.
+			events: services.events
 		})(app);
 	}
 
@@ -1591,11 +1759,13 @@ export function createApplication(options = {}) {
 			const environment = await resolveEnvironmentForRun(services, request.body?.environmentId);
 			const testCase = await resolveTestCaseForRun(services, request.body?.testCaseId, environment?.envId);
 			const cohort = cohortFor(request.auth?.role).cohort;
+			const scopeSelection = normalizeQaScopeSelection(request.body?.scopeSelection);
 			const session = await services.runs.create(
 				engine === 'chromium' ? undefined : `QA — ${engine}`,
 				{
 					device, deviceLandscape, engine, ownerUserId: request.auth?.userId,
 					cohort, selectedTests, securityAuthorization,
+					...(scopeSelection ? { scopeSelection } : {}),
 					environmentId: environment?.envId,
 					environmentSnapshot: environment,
 					testCaseId: testCase?.caseNumber,
@@ -1607,14 +1777,6 @@ export function createApplication(options = {}) {
 		} catch (error) {
 			safeErrorResponse(request, response, error);
 		}
-		const cohort = cohortFor(request.auth?.role).cohort;
-		const scopeSelection = normalizeQaScopeSelection(request.body?.scopeSelection);
-		const session = await services.runs.create(
-			engine === 'chromium' ? undefined : `QA — ${engine}`,
-			{ device, deviceLandscape, engine, ownerUserId: request.auth?.userId, cohort, selectedTests, securityAuthorization, ...(scopeSelection ? { scopeSelection } : {}) }
-		);
-		track('run_created', { mode: session.mode, ...cohortFor(request.auth?.role) });
-		response.status(201).json(session);
 	});
 
 	app.post('/api/sqa/sessions', async (request, response) => {

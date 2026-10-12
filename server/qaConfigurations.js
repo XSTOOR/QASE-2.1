@@ -339,3 +339,85 @@ export async function buildQaConfigurations(
 		totals: full.totals
 	};
 }
+
+/**
+ * Canonical platform order for the device tree — Apple iPhone, Apple iPad,
+ * Apple Mac, Android, Windows. Anything unknown sorts after these.
+ */
+const DEVICE_TREE_PLATFORM_ORDER = ['ios', 'ipados', 'macos', 'android', 'windows'];
+
+/**
+ * Device-grouped window for the launcher device tree (#15439 Issue 2).
+ *
+ * Raw row pagination (limit=200&offset=N) sliced the 38k-row catalog in
+ * envId order, so the first window was 200 rows of ONE Android device —
+ * the checklist showed "two devices" and "Android" was the only platform
+ * group until the user clicked "Load more" dozens of times.
+ *
+ * Instead, group the filtered configurations by (manufacturer, platform,
+ * device), sort the DEVICE groups in the canonical platform order, and
+ * return ALL rows of the `limit` device groups starting at group `offset`.
+ * One window now spans every platform family; "Load more" appends the next
+ * batch of DEVICES, not the next 200 rows of the first device.
+ *
+ * Response shape: { configurations, deviceGroups, total, hasMore } where
+ * `deviceGroups` counts DEVICE groups (for "Load more" math) and `total`
+ * still counts rows (summary honesty).
+ */
+export async function buildQaConfigurationsByDevice(
+	{ environmentsService, providers = [], board = [], limit = 12, offset = 0 } = {},
+	filters = {}
+) {
+	const rows = await environmentsService.list({ active: 'true', limit: 80000 });
+	const full = assembleQaConfigurations({ environments: rows, providers, board, filters, limit: 80000, offset: 0 });
+	const filtered = full.configurations;
+
+	const groups = new Map();
+	for (const configuration of filtered) {
+		const key = `${configuration.manufacturer ?? ''}|${configuration.platform}|${configuration.device}`;
+		let entry = groups.get(key);
+		if (!entry) {
+			entry = { key, platform: configuration.platform, device: configuration.device, manufacturer: configuration.manufacturer ?? '', rows: [] };
+			groups.set(key, entry);
+		}
+		entry.rows.push(configuration);
+	}
+	const ordered = [...groups.values()].sort((a, b) => {
+		const pa = DEVICE_TREE_PLATFORM_ORDER.indexOf(a.platform);
+		const pb = DEVICE_TREE_PLATFORM_ORDER.indexOf(b.platform);
+		if (pa !== pb) return (pa === -1 ? DEVICE_TREE_PLATFORM_ORDER.length : pa) - (pb === -1 ? DEVICE_TREE_PLATFORM_ORDER.length : pb);
+		return a.key.localeCompare(b.key);
+	});
+
+	// #15439 Issue 2: the FIRST window must show every platform category.
+	// Round-robin the platform-ordered device lists (ios → ipados → macos →
+	// android → windows, repeating) so each window mixes platforms instead
+	// of serving 12 iPhones before a single Android appears. "Load more"
+	// walks this interleaved order.
+	const byPlatform = new Map(DEVICE_TREE_PLATFORM_ORDER.map((id) => [id, []]));
+	const unknownPlatform = [];
+	for (const entry of ordered) {
+		(byPlatform.get(entry.platform) ?? unknownPlatform).push(entry);
+	}
+	const interleaved = [];
+	const queues = [...byPlatform.values()].filter((list) => list.length > 0);
+	if (unknownPlatform.length > 0) queues.push(unknownPlatform);
+	while (queues.some((queue) => queue.length > 0)) {
+		for (const queue of queues) {
+			const entry = queue.shift();
+			if (entry) interleaved.push(entry);
+		}
+	}
+
+	const slice = interleaved.slice(offset, offset + Math.max(1, limit));
+	return {
+		configurations: slice.flatMap((entry) => entry.rows),
+		deviceGroups: interleaved.length,
+		deviceOffset: offset,
+		deviceLimit: Math.max(1, limit),
+		hasMore: offset + slice.length < interleaved.length,
+		browserFamilies: full.browserFamilies,
+		providers: full.providers,
+		totals: full.totals
+	};
+}

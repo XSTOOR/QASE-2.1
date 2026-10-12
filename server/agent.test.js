@@ -676,3 +676,77 @@ test('Founder evidence handoff starts one synthesis turn with durable evidence p
 	assert.equal(fixture.session.status, 'done');
 	assert.deepEqual(fixture.session.founder.observations, observations);
 });
+
+/* ── Pipeline Phase 4 (#15496): closeOtherBrowsers LRU eviction ── */
+
+test('Phase 4: evicts oldest-idle same-owner browsers first; running + foreign-owner untouched', async () => {
+	const { closeOtherBrowsers } = await import('./agent.js');
+	// Capacity is max(2, clamp) — force a small, deterministic budget.
+	process.env.QASE_MATRIX_PARALLEL = '1';
+	// closeBrowser suspends the entry's bridge — record victims there
+	// (the ESM namespace is frozen; patching exports is impossible).
+	const victims = [];
+	const makeEntry = (id, owner, running, lastUsedAt) => ({
+		id,
+		record: { running, lastUsedAt, bridge: { hasPage: () => true, suspend: async () => { victims.push(id); } }, idleTimer: null },
+		owner
+	});
+	const keep = { id: 'keep', ownerUserId: 'owner-1' };
+	const entries = [
+		makeEntry('keep', 'owner-1', true, 999),
+		makeEntry('running-sibling', 'owner-1', true, 998),
+		makeEntry('idle-new', 'owner-1', false, 500),
+		makeEntry('idle-old', 'owner-1', false, 100),
+		makeEntry('idle-mid', 'owner-1', false, 300),
+		makeEntry('foreign-idle', 'owner-2', false, 50),
+		makeEntry('foreign-running', 'owner-2', true, 900)
+	];
+	const runStore = {
+		listLive: () => entries,
+		liveFor: (id) => entries.find((entry) => entry.id === id)?.record,
+		get: async (id) => ({ id, ownerUserId: entries.find((entry) => entry.id === id)?.owner })
+	};
+	try {
+		await closeOtherBrowsers(keep, runStore);
+		// Budget: max(2, clamp)=2 on this container (cores 3 → clamp 1).
+		// Same-owner: keep(1) + running-sibling(1) + 3 idle = 5 > 2 → evict 3 oldest.
+		assert.ok(!victims.includes('running-sibling'), 'running sibling never evicted');
+		assert.ok(!victims.includes('foreign-idle') && !victims.includes('foreign-running'), 'foreign-owner sessions never touched');
+		assert.ok(!victims.includes('keep'), 'the keep session is never evicted');
+		assert.ok(victims.length >= 3, `expected all same-owner idle browsers evicted when budget=2 (got ${victims.join(',')})`);
+		// Oldest first.
+		const order = victims.indexOf('idle-old');
+		const mid = victims.indexOf('idle-mid');
+		const newest = victims.indexOf('idle-new');
+		assert.ok(order !== -1 && mid !== -1 && newest !== -1, 'all idle same-owner entries eligible');
+		assert.ok(order < mid && mid < newest, `LRU order violated: ${victims.join(',')}`);
+	} finally {
+		delete process.env.QASE_MATRIX_PARALLEL;
+	}
+});
+
+test('Phase 4: within budget nothing is evicted', async () => {
+	const { closeOtherBrowsers } = await import('./agent.js');
+	process.env.QASE_MATRIX_PARALLEL = '1';
+	const victims = [];
+	const makeEntry = (id, owner, running, lastUsedAt) => ({
+		id,
+		record: { running, lastUsedAt, bridge: { hasPage: () => true, suspend: async () => { victims.push(id); } }, idleTimer: null },
+		owner
+	});
+	const keep = { id: 'keep', ownerUserId: 'owner-1' };
+	const runStore = {
+		listLive: () => [
+			makeEntry('keep', 'owner-1', true, 999),
+			makeEntry('one-idle', 'owner-1', false, 100)
+		],
+		liveFor: (id) => (id === 'one-idle' ? makeEntry('one-idle', 'owner-1', false, 100).record : undefined),
+		get: async (id) => ({ id, ownerUserId: 'owner-1' })
+	};
+	try {
+		await closeOtherBrowsers(keep, runStore);
+		assert.deepEqual(victims, [], 'keep + 1 idle fits the floor-2 budget — no eviction');
+	} finally {
+		delete process.env.QASE_MATRIX_PARALLEL;
+	}
+});

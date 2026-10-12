@@ -107,6 +107,30 @@ test('memory rejects credential-shaped content and expires/revokes sessions', as
 	}
 });
 
+test('password minimum length is 8 characters across register and change password', async () => {
+	const { auth, directory } = await service();
+	try {
+		await assert.rejects(
+			() => auth.register({ email: 'short@example.com', password: 'seven7c' }),
+			error => error instanceof AuthError && error.code === 'weak_password' && error.status === 400 && /8/.test(error.message)
+		);
+		const user = await auth.register({ email: 'eight@example.com', password: 'eight8ch' });
+		assert.ok(user.token);
+		await assert.rejects(
+			() => auth.changePassword(user.user.userId, { currentPassword: 'eight8ch', password: 'seven7c' }),
+			error => error instanceof AuthError && error.code === 'weak_password' && error.status === 400 && /8/.test(error.message)
+		);
+		await auth.changePassword(user.user.userId, { currentPassword: 'eight8ch', password: 'new8char' });
+		assert.ok((await auth.login({ email: 'eight@example.com', password: 'new8char' })).token);
+		// Existing long passwords remain valid.
+		const long = await auth.register({ email: 'long@example.com', password: 'correct horse battery staple' });
+		assert.ok(long.token);
+	} finally {
+		await auth.close();
+		await fs.rm(directory, { recursive: true, force: true });
+	}
+});
+
 test('throttle map evicts oldest windows instead of refusing new keys', () => {
 	const consume = createAuthThrottle({ now: () => 0 });
 	for (let i = 0; i < 10_000; i++) consume(`attacker-${i}`, 40);

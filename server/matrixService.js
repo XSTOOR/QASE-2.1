@@ -367,6 +367,11 @@ export function createMatrixService(backend, { environments, runs, testCases } =
 				seen.add(envId);
 				const env = byEnvId.get(envId);
 				if (!env) {
+					// Unknown configurationEnvId is a mapping/configuration bug
+					// (frontend synthetic ID, stale catalog, provider drift) —
+					// log it loudly for diagnosis; the item still gets an
+					// honest BLOCKED record below, never a silent drop (#14276).
+					console.warn(`[matrix] configuration mapping bug: launcher sent configurationEnvId "${envId}" which does not resolve to a catalog environment`);
 					pinned.push({
 						env: { envId, platform: 'unknown', device: 'Unknown configuration', os: 'unknown', osVersion: 'unknown', browserVersion: null },
 						browserCode: 'unknown',
@@ -450,6 +455,84 @@ export function createMatrixService(backend, { environments, runs, testCases } =
 		return backend.create(null, record);
 	}
 
+	// -----------------------------------------------------------------------
+	// Pipeline Phase 2: parent runs + idempotent batches
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Create a PARENT run — a lightweight logical aggregate for a >2,000
+	 * selection. Holds no items; batches reference it via parentId and the
+	 * parent view is computed on read (get). totalPlanned is the true
+	 * selection size at submission time (audit); coverage is derived from the
+	 * batches that actually exist.
+	 */
+	async function createParentRun(input, { ownerUserId = null } = {}) {
+		const targetUrl = String(input?.targetUrl ?? '').trim();
+		if (!/^https?:\/\//i.test(targetUrl)) throw new MatrixValidationError('targetUrl must be an http(s) URL.');
+		const record = {
+			id: `matrix-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`,
+			kind: 'parent',
+			title: String(input?.title ?? `QA run — ${targetUrl}`).slice(0, 120),
+			targetUrl,
+			kickoffText: input?.kickoffText ?? null,
+			selectedTests: input?.selectedTests ?? null,
+			securityAuthorization: input?.securityAuthorization ?? null,
+			scopeSelection: input?.scopeSelection ?? null,
+			status: 'pending',
+			totalPlanned: Number(input?.totalPlanned ?? 0) || 0,
+			batchIds: [],
+			itemCount: 0,
+			items: [],
+			ownerUserId: input?.ownerUserId ?? ownerUserId ?? null,
+			createdAt: new Date().toISOString(),
+			startedAt: null,
+			finishedAt: null,
+			updatedAt: new Date().toISOString()
+		};
+		return backend.create(null, record);
+	}
+
+	/**
+	 * Create (or return the existing) BATCH under a parent. IDEMPOTENT on
+	 * (parentId, batchKey): the same batch re-posted after a network failure
+	 * returns the original batch — a retry can never duplicate items. Each
+	 * batch is an ordinary runnable run (kind 'batch'); the existing create()
+	 * path is reused for item materialization so every launcher-mode honesty
+	 * rule (unknown envId → BLOCKED, DDG → NOT_SUPPORTED) applies identically.
+	 */
+	async function createBatch(input, { ownerUserId = null } = {}) {
+		const parentId = String(input?.parentId ?? '').trim();
+		const batchKey = String(input?.batchKey ?? '').trim();
+		if (!parentId) throw new MatrixValidationError('parentId is required for a batch.');
+		if (!batchKey) throw new MatrixValidationError('batchKey is required for a batch.');
+		const parent = await backend.get(null, parentId);
+		if (!parent) throw new MatrixValidationError(`Unknown parent run "${parentId}".`);
+		if (parent.kind !== 'parent') throw new MatrixValidationError('parentId must reference a parent run.');
+		const batchIndex = Number(input?.batchIndex ?? parent.batchIds.length) || 0;
+		// Idempotency: an existing batch with the same key is returned as-is.
+		const existing = parent.batchIds.length > 0
+			? (await Promise.all(parent.batchIds.map((id) => backend.get(null, id))))
+				.find((candidate) => candidate && candidate.batchKey === batchKey)
+			: null;
+		if (existing) return { run: existing, created: false };
+		// Reuse create() for the runnable batch (validation + honest items),
+		// then stamp batch metadata and link it to the parent.
+		const batch = await create({ ...input, title: input?.title ?? `${parent.title} — batch ${batchIndex + 1}` },
+			{ ownerUserId: ownerUserId ?? parent.ownerUserId ?? null });
+		const stamped = await backend.update(null, batch.id, {
+			kind: 'batch',
+			parentId,
+			batchKey,
+			batchIndex
+		});
+		await backend.update(null, parentId, {
+			batchIds: [...parent.batchIds, batch.id],
+			status: parent.status === 'pending' ? 'pending' : parent.status,
+			updatedAt: new Date().toISOString()
+		});
+		return { run: stamped, created: true };
+	}
+
 	/**
 	 * Honest-state guard: PASSED/FAILED may only be written when the item has
 	 * a completed execution outcome (a linked session with a verdict). Every
@@ -479,8 +562,38 @@ export function createMatrixService(backend, { environments, runs, testCases } =
 
 	return {
 		create,
+		createParentRun,
+		createBatch,
 		updateItem,
-		get: (id) => backend.get(null, id),
+		get: async (id) => {
+			const run = await backend.get(null, id);
+			// Pipeline Phase 2: a PARENT run reads as the aggregated union of
+			// its batches (computed on read — no stored aggregates to drift).
+			// A batch or a legacy run (kind undefined) reads unchanged.
+			if (run?.kind === 'parent' && Array.isArray(run.batchIds)) {
+				const batches = [];
+				for (const batchId of run.batchIds) {
+					const batch = await backend.get(null, batchId);
+					if (batch) batches.push(batch);
+				}
+				batches.sort((a, b) => (a.batchIndex ?? 0) - (b.batchIndex ?? 0));
+				const items = [];
+				for (const batch of batches) items.push(...(batch.items ?? []));
+				return {
+					...run,
+					items,
+					itemCount: items.length,
+					batchCount: batches.length,
+					status: batches.every((batch) => ['done', 'cancelled', 'error', 'interrupted'].includes(batch.status))
+						? (batches.every((batch) => batch.status === 'done') ? 'done' : 'interrupted')
+						: (batches.some((batch) => batch.status === 'running') ? 'running' : run.status),
+					startedAt: batches.map((batch) => batch.startedAt).filter(Boolean).sort()[0] ?? run.startedAt,
+					finishedAt: batches.map((batch) => batch.finishedAt).filter(Boolean).sort().pop() ?? run.finishedAt,
+					batches: batches.map(({ items: _items, ...summary }) => summary)
+				};
+			}
+			return run;
+		},
 		list: () => backend.list(null),
 		/** Orchestrator-internal: set run status + timing fields. */
 		async _setStatus(id, status, timing = {}) {

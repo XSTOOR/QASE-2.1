@@ -182,7 +182,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 	// never launches a fallback browser for it.
 	const executionLevel = resolveExecutionLevel({ mode: execution.mode });
 	const emulatedUserAgent = execution.mode === 'emulated' && environment
-		? userAgentFor(environment.platform, environment.osVersion, environment.browserCode)
+		? userAgentFor(environment.platform, environment.osVersion, environment.browserCode, environment.browserVersion)
 		: null;
 	const permissionScenario = environment?.permissionScenario ?? null;
 	const orientationScenario = environment?.orientationScenario ?? null;
