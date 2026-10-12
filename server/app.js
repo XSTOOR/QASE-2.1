@@ -30,6 +30,7 @@ import { buildSqaReportMarkdown } from './sqaAssessment.js';
 import { buildFeedbackSectionMarkdown } from './report.js';
 import { normalizeQaScopeSelection } from '../public/qaScopeCatalog.js';
 import { createConfiguredTelegramNotifier } from './telegramNotifier.js';
+import { resolveDisplayTimeZone, formatFeedbackTimestamp } from './displayTime.js';
 import { createSqaState, createSqaTodoPlan, publicSqaCatalog, recordReviewerSqaObservation } from './sqaService.js';
 import { renderReportPdf } from './reportPdf.js';
 import { buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
@@ -160,6 +161,11 @@ export function createApplication(options = {}) {
 	}
 	app.locals.qaseDemoEnabled = demoEnabled;
 	app.locals.qaseFrameAncestors = configuredFrameAncestors(environment);
+	// Authoritative display timezone for user-facing timestamps (feedback
+	// report tab, md/PDF reports, Telegram notifications). One zone for every
+	// surface so all renderings of the same submission match exactly.
+	const displayTimeZone = resolveDisplayTimeZone(environment);
+	app.locals.qaseDisplayTimeZone = displayTimeZone;
 	if (options.trustProxy ?? String(environment.QASE_TRUST_PROXY ?? '').toLowerCase() === 'true') {
 		app.set('trust proxy', 1);
 	}
@@ -436,7 +442,7 @@ export function createApplication(options = {}) {
 					} catch { /* display name is best-effort */ }
 				}
 			}
-			session.userFeedback = record ?? undefined;
+			session.userFeedback = record ? decorateFeedbackRecord(record) : undefined;
 		} catch {
 			session.userFeedback = undefined;
 		}
@@ -600,6 +606,20 @@ export function createApplication(options = {}) {
 		return true;
 	}
 
+	/** Attach the server-rendered, system-timezone formatted submission
+	 *  timestamp so every client (report tab, admin panel) displays the SAME
+	 *  string the Telegram notification and md/PDF reports use — no
+	 *  browser-local re-formatting that could drift from QASE. */
+	function decorateFeedbackRecord(record) {
+		if (!record || typeof record !== 'object') return record;
+		return {
+			...record,
+			submittedAtFormatted: Number.isFinite(record.submittedAt)
+				? formatFeedbackTimestamp(record.submittedAt, displayTimeZone)
+				: '—'
+		};
+	}
+
 	app.post('/api/feedback', async (request, response) => {
 		const feedback = feedbackService();
 		if (!feedback) return;
@@ -661,7 +681,11 @@ export function createApplication(options = {}) {
 					qaseUrl: telegramQaseUrl,
 					submittedByName: request.auth?.displayName ?? request.auth?.email,
 					submittedAt: record.submittedAt,
-					submittedAtTimeZone: request.auth?.profile?.timezone
+					// System display timezone (QASE_DISPLAY_TIMEZONE, default
+					// Asia/Kolkata) — the SAME zone QASE renders timestamps in,
+					// so Telegram matches QASE regardless of the submitter's
+					// profile default (UTC) or their browser zone.
+					submittedAtTimeZone: displayTimeZone
 				}));
 				// Await with a strict timeout (default 10s): PENDING result on
 				// expiry, feedback still saved, dispatch continues detached.
@@ -701,7 +725,7 @@ export function createApplication(options = {}) {
 		const session = await requireSession(request, response);
 		if (!session) return;
 		const record = await feedback.forRun(session.id, request.auth?.userId ?? null);
-		response.json(record ?? null);
+		response.json(record ? decorateFeedbackRecord(record) : null);
 	});
 
 	app.get('/api/feedback/stats', async (request, response) => {
@@ -771,7 +795,7 @@ export function createApplication(options = {}) {
 			q: typeof q.q === 'string' && q.q.trim() !== '' ? q.q.trim() : undefined,
 			limit: /^\d+$/.test(String(q.limit ?? '')) ? Number(q.limit) : undefined
 		});
-		response.json(rows);
+		response.json(rows.map(row => decorateFeedbackRecord(row)));
 	});
 
 	app.get('/api/feedback/mine', async (request, response) => {
@@ -787,7 +811,8 @@ export function createApplication(options = {}) {
 			submittedBy: request.auth?.userId ?? null,
 			limit: 500
 		});
-		response.json(runs.length === 0 ? all : all.filter(record => runs.includes(record.runId)));
+		const decorated = all.map(row => decorateFeedbackRecord(row));
+		response.json(runs.length === 0 ? decorated : decorated.filter(record => runs.includes(record.runId)));
 	});
 
 	app.get('/api/feedback/:id', async (request, response) => {
@@ -802,7 +827,7 @@ export function createApplication(options = {}) {
 		// Trace back to the execution: include the run summary, never secrets.
 		const session = await services.runs.get(record.runId);
 		response.json({
-			...record,
+			...decorateFeedbackRecord(record),
 			run: session ? {
 				id: session.id,
 				title: session.title,
@@ -846,7 +871,7 @@ export function createApplication(options = {}) {
 				comments: request.body?.comments,
 				improvement: request.body?.improvement
 			});
-			response.json(record);
+			response.json(decorateFeedbackRecord(record));
 		} catch (error) {
 			if (error?.code === 'not_found') {
 				response.status(404).json({ error: 'No such feedback.' });

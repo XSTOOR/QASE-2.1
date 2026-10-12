@@ -3001,9 +3001,13 @@ function renderReportFeedbackSection(record) {
 	const meta = document.createElement('p');
 	meta.className = 'report-feedback-meta';
 	const submittedBy = state.user?.displayName ?? state.user?.email ?? 'You';
-	const submittedOn = Number.isFinite(record.submittedAt)
-		? new Date(record.submittedAt).toLocaleString()
-		: '';
+	// Server-rendered, system-timezone string (submittedAtFormatted) — the
+	// EXACT string the Telegram notification and md/PDF reports show. Only
+	// fall back to the browser locale string for legacy records served by an
+	// older API shape, so QASE and Telegram can never disagree.
+	const submittedOn = typeof record.submittedAtFormatted === 'string' && record.submittedAtFormatted !== ''
+		? record.submittedAtFormatted
+		: (Number.isFinite(record.submittedAt) ? new Date(record.submittedAt).toLocaleString() : '');
 	meta.textContent = `Submitted By: ${submittedBy}${submittedOn ? ` · Submitted On: ${submittedOn}` : ''}`;
 
 	section.append(heading, stars, description, ...(improvement.childNodes.length ? [improvement] : []), meta);
