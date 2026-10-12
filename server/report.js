@@ -1,5 +1,7 @@
 import { getDeviceProfile } from './deviceProfiles.js';
 import { QA_SCOPE_OPTIONS } from '../public/qaScopeCatalog.js';
+import { formatFeedbackTimestamp } from './displayTime.js';
+
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'info'];
 
 const VERDICT_LABELS = {
@@ -291,9 +293,9 @@ export function buildFeedbackSectionMarkdown(session) {
 		lines.push('- **What should we improve:**', '', '> ', ...String(feedback.improvement).split('\n').map(line => `> ${line}`), '');
 	}
 	const submittedBy = feedback.userName || 'User';
-	const submittedOn = feedback.submittedAt
-		? new Date(feedback.submittedAt).toLocaleString()
-		: '—';
+	const submittedOn = feedback.submittedAtFormatted
+		? feedback.submittedAtFormatted
+		: formatFeedbackTimestamp(feedback.submittedAt, undefined);
 	lines.push(`- **Submitted by:** ${submittedBy}`);
 	lines.push(`- **Submitted on:** ${submittedOn}`);
 	lines.push('');

@@ -156,9 +156,9 @@ test('buildFeedbackMessage emits the exact agreed format', () => {
 		'',
 		'📊 QA Run: Homepage regression sweep (#cf5b7e5f)',
 		'🌐 Target URL: https://qase.dev/',
-		'👤 Submitted By: QA User',
-		'🕒 Submitted On: 07-Oct-2026 10:00 PM'
-	].join('\n'));
+	'👤 Submitted By: QA User',
+	'🕒 Submitted On: 08-Oct-2026 03:30 AM IST'
+].join('\n'));
 });
 
 test('buildFeedbackMessage omits target URL and falls back to mode label when context lacks them', () => {
@@ -234,14 +234,16 @@ test('notificationIdFor produces the TELEGRAM-FB-<id> pattern', () => {
 
 test('formatSubmittedOn honors the submitting user timezone (IST boundary)', () => {
 	const ts = Date.UTC(2026, 9, 8, 20, 45); // 08-Oct-2026 20:45 UTC
-	// UTC rendering (default)
-	assert.equal(formatSubmittedOn(ts), '08-Oct-2026 08:45 PM');
+	// UTC rendering
+	assert.equal(formatSubmittedOn(ts, 'UTC'), '08-Oct-2026 08:45 PM UTC');
 	// Asia/Kolkata (+05:30) — next calendar day, matching QASE UI display
-	assert.equal(formatSubmittedOn(ts, 'Asia/Kolkata'), '09-Oct-2026 02:15 AM');
+	assert.equal(formatSubmittedOn(ts, 'Asia/Kolkata'), '09-Oct-2026 02:15 AM IST');
 	// QASE's example pair: 02:15 PM IST === 08:45 AM UTC
-	assert.equal(formatSubmittedOn(Date.UTC(2026, 9, 9, 8, 45), 'Asia/Kolkata'), '09-Oct-2026 02:15 PM');
-	// Invalid zone falls back to UTC instead of throwing
-	assert.equal(formatSubmittedOn(ts, 'Not/AZone'), '08-Oct-2026 08:45 PM');
+	assert.equal(formatSubmittedOn(Date.UTC(2026, 9, 9, 8, 45), 'Asia/Kolkata'), '09-Oct-2026 02:15 PM IST');
+	// System default zone is Asia/Kolkata (QASE display time)
+	assert.equal(formatSubmittedOn(ts), '09-Oct-2026 02:15 AM IST');
+	// Invalid zone falls back to Asia/Kolkata instead of throwing
+	assert.equal(formatSubmittedOn(ts, 'Not/AZone'), '09-Oct-2026 02:15 AM IST');
 });
 
 test('buildFeedbackMessage uses context.submittedAt + timezone, never a fresh clock read', () => {

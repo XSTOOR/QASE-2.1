@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import { buildFindingFixPrompt } from './fixPromptBuilder.js';
 import { getDeviceProfile } from './deviceProfiles.js';
 import { QA_SCOPE_OPTIONS } from '../public/qaScopeCatalog.js';
+import { formatFeedbackTimestamp } from './displayTime.js';
 
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'info'];
 const SEVERITY_COLOR = {
@@ -248,7 +249,9 @@ function feedbackSectionHtml(session) {
 	if (!feedback || !Number.isFinite(feedback.rating)) return '';
 	const stars = '\u2605'.repeat(feedback.rating) + '\u2606'.repeat(5 - feedback.rating);
 	const submittedBy = escapeHtml(feedback.userName || 'User');
-	const submittedOn = feedback.submittedAt ? new Date(feedback.submittedAt).toLocaleString() : '\u2014';
+	const submittedOn = feedback.submittedAtFormatted
+		? feedback.submittedAtFormatted
+		: formatFeedbackTimestamp(feedback.submittedAt, undefined);
 	const description = feedback.comments
 		? '<p>' + paragraphs(String(feedback.comments)) + '</p>'
 		: '';

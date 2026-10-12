@@ -22,6 +22,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
+import { formatFeedbackTimestamp } from './displayTime.js';
 
 export class TelegramNotificationError extends Error {
 	constructor(message, { code, retryable = false, upstreamStatus, retryAfterMs, errorCode, detail } = {}) {
@@ -120,34 +121,12 @@ export function parseTelegramConfig(environment) {
 	});
 }
 
-/** Timestamp in the report style (e.g. 07-Oct-2026 10:30 PM). Built with an
- * explicit Intl formatter so the output is identical on every locale build
- * and honors the submitting user's QASE timezone (their profile setting —
- * the same zone QASE's UI renders feedback timestamps in). Falls back to
- * UTC when no zone is supplied. */
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** Timestamp in the report style (e.g. 07-Oct-2026 10:30 PM IST) — delegates
+ * to displayTime.formatFeedbackTimestamp so the Telegram rendering and the
+ * QASE report/UI rendering can never diverge. Falls back to the system
+ * default zone (Asia/Kolkata) when no zone is supplied. */
 export function formatSubmittedOn(timestampMs, timeZone) {
-	const zone = typeof timeZone === 'string' && timeZone.trim() !== '' ? timeZone.trim() : 'UTC';
-	let parts;
-	try {
-		parts = new Intl.DateTimeFormat('en-GB', {
-			timeZone: zone, hour12: false,
-			year: 'numeric', month: 'numeric', day: 'numeric',
-			hour: '2-digit', minute: '2-digit'
-		}).formatToParts(new Date(timestampMs));
-	} catch {
-		parts = new Intl.DateTimeFormat('en-GB', {
-			timeZone: 'UTC', hour12: false,
-			year: 'numeric', month: 'numeric', day: 'numeric',
-			hour: '2-digit', minute: '2-digit'
-		}).formatToParts(new Date(timestampMs));
-	}
-	const get = type => Number(parts.find(part => part.type === type)?.value ?? 0);
-	const hours24 = get('hour') % 24;
-	const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
-	const pad = value => String(value).padStart(2, '0');
-	return `${pad(get('day'))}-${MONTHS[get('month') - 1]}-${get('year')} `
-		+ `${pad(hours12)}:${pad(get('minute'))} ${hours24 < 12 ? 'AM' : 'PM'}`;
+	return formatFeedbackTimestamp(timestampMs, timeZone);
 }
 
 const MODE_LABELS = { qa: 'New QA Run', sqa: 'SQA', founder: 'Founder Review' };
