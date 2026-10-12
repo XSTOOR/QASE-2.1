@@ -1,4 +1,4 @@
--- Qase PostgreSQL migration 038: security testing authorization per run.
+-- Qase PostgreSQL migration 022: security testing authorization per run.
 -- Set when the run's test selection includes a security-category check and the
 -- requester explicitly confirmed the target is an authorized, isolated test
 -- environment (validated at the API boundary; NULL for standard runs).

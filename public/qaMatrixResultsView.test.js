@@ -123,17 +123,24 @@ function makeHarness(run, calls = []) {
 	return { view, container, calls, selected, toasts };
 }
 
-test('renders totals honestly: planned/completed/passed/failed + coverage gap for QUEUED', async (t) => {
+test('renders totals honestly: total/queued/running/passed/failed + coverage gap for QUEUED', async (t) => {
 	const { view, container } = makeHarness(fixtureRun());
 	t.after(() => view.stop());
 	await view.load('matrix-test-1');
 	const subtitle = container.queryAll((n) => String(n.className).includes('qmr-subtitle'))[0]?.text();
 	assert.match(subtitle, /Runs one browser at a time/);
 	const totalsText = container.queryAll((n) => String(n.className).includes('qmr-totals'))[0]?.text();
-	assert.ok(totalsText.includes('Planned'), 'planned shown');
+	// Pipeline Phase 5 (#15500): spec vocabulary — Total/Queued/Running/
+	// Passed/Failed/Unavailable/Unsupported/Completed always visible.
+	assert.ok(totalsText.includes('Total'), 'total shown');
 	assert.ok(totalsText.includes('4'));
+	assert.ok(totalsText.includes('Queued'));
+	assert.ok(totalsText.includes('Running'));
 	assert.ok(totalsText.includes('Passed') && totalsText.includes('1'));
 	assert.ok(totalsText.includes('Failed') && totalsText.includes('1'));
+	assert.ok(totalsText.includes('Unavailable'));
+	assert.ok(totalsText.includes('Unsupported'));
+	assert.ok(totalsText.includes('Completed'));
 	// The QUEUED item surfaces as a coverage gap with its status label.
 	const gaps = container.queryAll((n) => String(n.className).includes('qmr-gaps'))[0];
 	assert.ok(gaps && !gaps.hidden);
@@ -202,4 +209,105 @@ test('view.stop halts polling; a finished run does not schedule more', async () 
 	await h.view.load('matrix-test-1');
 	h.view.stop();
 	assert.equal(typeof h.view.stop, 'function');
+});
+
+/* ── Pipeline Phase 5 (#15500): parent runs, questions, auto-answer badges ── */
+
+function parentRunFixture({ totalPlanned = 2, materialized = 2 }) {
+	const items = fixtureRun().items.slice(0, materialized).map((item, index) => ({ ...item, ordinal: index }));
+	return {
+		id: 'matrix-test-1',
+		kind: 'parent',
+		title: 'Big QA run — https://example.com',
+		targetUrl: 'https://example.com',
+		status: 'pending',
+		totalPlanned,
+		itemCount: items.length,
+		batchCount: 1,
+		batches: [{ id: 'batch-1', batchIndex: 0, itemCount: items.length }],
+		items
+	};
+}
+
+test('Phase 5: parent run renders batch-aware subtitle and planned total', async (t) => {
+	const run = parentRunFixture({ totalPlanned: 5250, materialized: 2 });
+	const { view, container } = makeHarness(run);
+	t.after(() => view.stop());
+	await view.load('matrix-test-1');
+	const subtitle = container.queryAll((n) => String(n.className).includes('qmr-subtitle'))[0];
+	assert.ok(subtitle, 'subtitle present');
+	// Mid-batch-creation state: planned total + "creating batches" — never a
+	// wrong count that pretends 2 IS the run.
+	assert.ok(subtitle.text().includes('5250'), 'planned total shown');
+	assert.ok(subtitle.text().includes('creating batches'), 'honest mid-creation state');
+	assert.ok(subtitle.text().includes('batch'), 'batch count shown');
+});
+
+test('Phase 5: parent run fully materialized shows final batch phrasing', async (t) => {
+	const run = parentRunFixture({ totalPlanned: 2, materialized: 2 });
+	const { view, container } = makeHarness(run);
+	t.after(() => view.stop());
+	await view.load('matrix-test-1');
+	const subtitle = container.queryAll((n) => String(n.className).includes('qmr-subtitle'))[0];
+	assert.ok(subtitle.text().includes('2 configurations across 1 batch'), subtitle.text());
+	assert.ok(!subtitle.text().includes('creating batches'));
+});
+
+test('Phase 5: blocked row surfaces the unanswered question and its basis', async (t) => {
+	const run = fixtureRun();
+	run.items[0] = {
+		...run.items[0],
+		status: 'BLOCKED',
+		error: 'Session needs sign-in credentials — matrix items run unattended.',
+		question: 'Please provide the sign-in credentials for this account.',
+		autoAnswers: 0,
+		autoAnswerEvidence: []
+	};
+	run.items[1] = {
+		...run.items[1],
+		status: 'PASSED',
+		autoAnswers: 1,
+		autoAnswerEvidence: [{ at: '2026-10-08T00:00:00Z', question: 'Do I have permission to run the security scan?', answer: 'Yes — proceed.', basis: 'Operator confirmed https://example.com at run setup.' }]
+	};
+	const { view, container } = makeHarness(run);
+	t.after(() => view.stop());
+	await view.load('matrix-test-1');
+	const rows = container.queryAll((n) => String(n.className).includes('qmr-row'));
+	const rowText = rows.map((row) => row.text());
+	const blocked = rowText.find((text) => text.includes('needs sign-in credentials'));
+	assert.ok(blocked, 'credential-block reason present');
+	assert.ok(blocked.includes('Please provide the sign-in credentials'), 'question text travels to the row');
+	const auto = rowText.find((text) => text.includes('auto-answered'));
+	assert.ok(auto, 'authorized auto-answer badge visible');
+	assert.ok(auto.includes('Operator confirmed'), 'basis shown on the badge');
+});
+
+test('Phase 5: SSE push events trigger a reload (matrix_item / matrix_run_done)', async (t) => {
+	const run = JSON.parse(JSON.stringify(fixtureRun()));
+	run.status = 'running';
+	const messageHandlers = [];
+	class FakeEventSource {
+		constructor(url) { this.url = url; this.closed = false; }
+		set onmessage(fn) { messageHandlers.push(fn); }
+		close() { this.closed = true; }
+	}
+	globalThis.EventSource = FakeEventSource;
+	const calls = [];
+	const { view } = makeHarness(run, calls);
+	t.after(() => { view.stop(); delete globalThis.EventSource; });
+	await view.load('matrix-test-1');
+	const loadsBefore = calls.filter((call) => call.path.includes('/matrix-runs/')).length;
+	assert.ok(messageHandlers.length === 1, 'push stream subscribed');
+	// A matrix_item event must push a reload.
+	await messageHandlers[0]({ data: JSON.stringify({ type: 'matrix_item', itemId: 'i4', status: 'RUNNING' }) });
+	const loadsAfter = calls.filter((call) => call.path.includes('/matrix-runs/')).length;
+	assert.ok(loadsAfter > loadsBefore, 'push event triggered a reload');
+	// Unrelated events do not.
+	const before2 = calls.filter((call) => call.path.includes('/matrix-runs/')).length;
+	await messageHandlers[0]({ data: JSON.stringify({ type: 'frame', frame: {} }) });
+	const after2 = calls.filter((call) => call.path.includes('/matrix-runs/')).length;
+	assert.equal(after2, before2, 'non-matrix event does not reload');
+	// stop() closes the stream.
+	view.stop();
+	assert.ok(true, 'stop closes push stream without error');
 });

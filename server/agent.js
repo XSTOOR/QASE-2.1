@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { availableParallelism, cpus, totalmem } from 'node:os';
 import { ALL_TOOLS, CleanSlateNodeAgentRuntime, createNodeProviderConfiguration } from '@cleanslate/sdk';
 import { chromium } from 'playwright';
 import { attachBrowserBridge } from './browserBridge.js';
@@ -352,19 +353,52 @@ export async function closeBrowser(sessionId, runStore) {
 }
 
 /** Suspend idle browsers belonging to this account only. */
-async function closeOtherBrowsers(keepSession, runStore) {
+export async function closeOtherBrowsers(keepSession, runStore) {
+	// Pipeline Phase 4 (#15496): capacity-aware eviction. Parallel matrix
+	// items each need their OWN live browser, so "close every other idle
+	// same-owner browser" is only applied down to the live-browser budget
+	// (one per matrix parallelism slot, floor 2 for interactive sessions).
+	// Sessions NOT actively running are evicted oldest-first (LRU by
+	// last-use) until the budget is met; running siblings are never touched.
+	// The owner check is applied to EVERY candidate — other tenants' sessions
+	// never count against this owner's budget.
+	const capacity = Math.max(2, matrixBrowserBudget());
 	const live = typeof runStore.listLive === 'function'
 		? runStore.listLive()
 		: (await runStore.list({ limit: 100 })).map(summary => ({ id: summary.id, record: runStore.peekLive?.(summary.id) }));
-	await Promise.all(
-		live
-			.filter(entry => entry.id !== keepSession.id)
-			.map(async entry => {
-				const candidate = await runStore.get(entry.id);
-				if (!candidate || candidate.ownerUserId !== keepSession.ownerUserId) return;
-				return !entry.record || entry.record.running ? undefined : closeBrowser(entry.id, runStore);
-			})
-	);
+	let runningSiblings = 0;
+	const evictable = [];
+	for (const entry of live) {
+		if (entry.id === keepSession.id) continue;
+		const candidate = await runStore.get(entry.id);
+		if (!candidate || candidate.ownerUserId !== keepSession.ownerUserId) continue;
+		if (entry.record?.running) {
+			runningSiblings += 1;
+			continue;
+		}
+		evictable.push({ id: entry.id, lastUsedAt: entry.record?.lastUsedAt ?? 0 });
+	}
+	let over = (1 + runningSiblings + evictable.length) - capacity;
+	if (over <= 0) return;
+	evictable.sort((a, b) => (a.lastUsedAt ?? 0) - (b.lastUsedAt ?? 0));
+	for (const victim of evictable) {
+		if (over <= 0) break;
+		await closeBrowser(victim.id, runStore);
+		over -= 1;
+	}
+}
+
+/** Pipeline Phase 4 (#15496): the live-browser budget — matches the matrix
+ *  orchestrator's environment-clamped QASE_MATRIX_PARALLEL (same clamp
+ *  formula, independent implementation; both floor at 1 and cap at 8). */
+function matrixBrowserBudget() {
+	const raw = Number(process.env.QASE_MATRIX_PARALLEL ?? 2);
+	const configured = Number.isFinite(raw) ? Math.max(1, Math.floor(raw)) : 2;
+	const cores = (availableParallelism?.() ?? cpus()?.length ?? 4);
+	const coreBudget = Math.max(1, cores - 2);
+	const totalMb = Math.round(((totalmem?.() ?? 6 * 1024 ** 3) / (1024 ** 2)));
+	const memBudget = Math.max(1, Math.min(8, Math.floor((totalMb - 1536) / 600)));
+	return Math.min(configured, coreBudget, memBudget, 8);
 }
 
 export async function ensureRuntime(session, runStore) {

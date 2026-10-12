@@ -8365,6 +8365,14 @@ background: rgba(47, 91, 234, 0.075);  box-shadow: none;
   outline: 0;
 }
 
+/* Pipeline Phase 3: what the captured authorization means for unattended runs. */
+.qa-security-auth-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 8.5px;
+  line-height: 1.5;
+}
+
 .sqa-modal .field textarea {
   width: 100%;
   min-height: 78px;
@@ -13136,6 +13144,8 @@ dialog:not([open]) { display: none !important; }
 .qmr .qmr-st-error { color: #ff7d7d; }
 .qmr .qmr-facts { color: var(--text-dim, #9aa3b2); font-size: 0.75rem; }
 .qmr .qmr-meta { color: var(--text-dim, #9aa3b2); font-size: 0.75rem; flex-basis: 100%; }
+/* Pipeline Phase 5: authorized auto-answer badge — visible, never silent. */
+.qmr .qmr-auto-answer { color: var(--text-dim, #9aa3b2); font-size: 0.72rem; border: 1px solid var(--border, #2a3342); border-radius: 8px; padding: 1px 6px; }
 .qmr .qmr-evidence { display: inline-flex; gap: 8px; }
 .qmr .qmr-open, .qmr .qmr-retry { padding: 2px 8px; font-size: 0.72rem; }
 
@@ -13143,3 +13153,57 @@ dialog:not([open]) { display: none !important; }
 .qmr .qmr-state { color: var(--text-dim, #9aa3b2); padding: 8px 0; }
 .qmr .qmr-retry-load { margin-top: 6px; }
 .qmr .qmr-more { display: block; margin: 12px auto 0; }
+
+/* ── Pipeline Phase 1: explicit selection bulk controls + scope banner ── */
+.qa-matrix-bulk {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.qa-matrix-bulk-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.qa-matrix-bulk-btn:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
+.qa-matrix-device-header { margin-bottom: 6px; }
+
+.qa-matrix-scope-banner {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.qa-matrix-scope-label {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.qa-matrix-device-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.qa-matrix-device-check { display: inline-flex; align-items: center; }
+
+.qa-matrix-view-btn { margin-left: auto; }

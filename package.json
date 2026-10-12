@@ -30,6 +30,7 @@
     "install-browser": "playwright install chromium firefox webkit",
     "package": "node scripts/package.mjs",
     "test:auth": "node scripts/test-auth-browser.mjs",
+    "test:reset": "node scripts/test-reset-browser.mjs",
     "test:ui": "node scripts/test-ui-responsive.mjs",
     "test:acceptance": "node scripts/test-acceptance.mjs"
   },
@@ -41,6 +42,7 @@
     "compression": "^1.8.2",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "nodemailer": "^10.0.16",
     "pg": "^8.22.0",
     "playwright": "1.62.0",
     "redis": "6.2.0"

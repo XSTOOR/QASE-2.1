@@ -4,6 +4,20 @@ import {
 	FAMILY_ORDER,
 	createDeselectionStore,
 	computeSelection,
+	computeCappedSelection,
+	deviceKeyOf,
+	catalogDeviceKeys,
+	availableBrowserFamilies,
+	createSelectionState,
+	computeExplicitSelection,
+	selectAllDevices,
+	deselectAllDevices,
+	selectAllBrowsers,
+	deselectAllBrowsers,
+	toggleDevice,
+	toggleBrowserFamily,
+	createSelectionStore,
+	MATRIX_BATCH_SIZE,
 	sanitizeSelection,
 	buildSummary,
 	filterConfigurations,
@@ -21,7 +35,9 @@ import {
 	compatibleBrowserFamilies,
 	defaultSelectionForDevice,
 	recommendedDeviceScope,
-	deviceScopeSelection
+	deviceScopeSelection,
+	planBatches,
+	batchKeyFor
 } from './qaConfigMatrix.js';
 
 /** Minimal in-memory localStorage. */
@@ -212,6 +228,147 @@ test('canStartRun gating: URL validity + at least one configuration', () => {
 	assert.equal(canStartRun({ targetUrl: 'not-a-url', selectedEnvIds: ['A'] }), false);
 });
 
+// ---------------------------------------------------------------------------
+// Pipeline Phase 1: EXPLICIT selection model — no selection cap. The 2,000
+// limit is a per-batch EXECUTION limit (MATRIX_BATCH_SIZE), never a selection
+// limit. Regression for the "Select All silently truncated to 2,000" defect.
+// ---------------------------------------------------------------------------
+
+test('Phase 1: canStartRun no longer caps the selection (batching owns that)', () => {
+	// 5,250 selected configurations remain startable — Phase 2 batches them.
+	assert.equal(canStartRun({ targetUrl: 'https://example.com', selectedEnvIds: new Array(5250).fill('A') }), true);
+	assert.equal(MATRIX_BATCH_SIZE, 2000, 'batch size constant replaces the old cap');
+});
+
+test('Phase 1: selectAllDevices + selectAllBrowsers selects the ENTIRE catalog (37,244, not 2,000)', () => {
+	const rows = cappedCatalog(2300, 1000); // 3,300 selectable rows, Android-first
+	let state = createSelectionState();
+	state = selectAllDevices(rows, state);
+	state = selectAllBrowsers(rows, state);
+	const selection = computeExplicitSelection(rows, state);
+	assert.equal(selection.length, 3300, 'selection is NEVER truncated by a cap');
+	assert.ok(selection.includes('ENV-IOS-0'), 'catalog-order tail (iOS) stays selected — no silent discard');
+});
+
+test('Phase 1: deselectAllDevices empties devices but keeps families; deselectAllBrowsers the inverse', () => {
+	const rows = cappedCatalog(5, 5);
+	let state = selectAllBrowsers(rows, selectAllDevices(rows, createSelectionState()));
+	state = deselectAllDevices(rows, state);
+	assert.equal(computeExplicitSelection(rows, state).length, 0);
+	assert.equal(state.browserFamilies.size, 2, 'families untouched by device bulk action');
+	state = selectAllDevices(rows, state);
+	state = deselectAllBrowsers(rows, state);
+	assert.equal(computeExplicitSelection(rows, state).length, 0);
+	assert.equal(state.deviceKeys.size, 2, 'devices untouched by browser bulk action');
+});
+
+test('Phase 1: device toggle adds/removes one device; multi-device selection persists', () => {
+	const rows = cappedCatalog(3, 3); // Galaxy S24 + iPhone 15
+	const state = createSelectionState();
+	toggleDevice(state, deviceKeyOf(rows[0]), true);
+	toggleBrowserFamily(state, rows, rows[0].browserCode, true);
+	toggleDevice(state, deviceKeyOf(rows[3]), true); // iPhone 15 also selected
+	toggleBrowserFamily(state, rows, rows[3].browserCode, true);
+	const selection = computeExplicitSelection(rows, state);
+	assert.equal(selection.filter((envId) => envId.startsWith('ENV-AND-')).length, 3);
+	assert.equal(selection.filter((envId) => envId.startsWith('ENV-IOS-')).length, 3);
+	toggleDevice(state, deviceKeyOf(rows[0]), false);
+	assert.equal(computeExplicitSelection(rows, state).filter((envId) => envId.startsWith('ENV-AND-')).length, 0, 'removing one device never touches the others');
+});
+
+test('Phase 1: granular envId overrides win over device/family selection', () => {
+	const rows = cappedCatalog(4, 4);
+	const state = selectAllBrowsers(rows, selectAllDevices(rows, createSelectionState()));
+	state.deselectedEnvIds.add('ENV-AND-1');
+	state.deselectedEnvIds.add('ENV-IOS-2');
+	const selection = computeExplicitSelection(rows, state);
+	assert.equal(selection.length, 6);
+	assert.ok(!selection.includes('ENV-AND-1'));
+	assert.ok(!selection.includes('ENV-IOS-2'));
+});
+
+test('Phase 1: unavailable rows are never selectable even under Select All', () => {
+	const rows = [
+		...cappedCatalog(2, 2),
+		configuration({ envId: 'ENV-DDG-1', browserCode: 'duckduckgo', browser: 'DuckDuckGo', availability: 'NOT_SUPPORTED', availabilityReason: 'DuckDuckGo has no desktop automation channel.' })
+	];
+	const state = selectAllBrowsers(rows, selectAllDevices(rows, createSelectionState()));
+	const selection = computeExplicitSelection(rows, state);
+	assert.ok(!selection.includes('ENV-DDG-1'));
+	assert.ok(!availableBrowserFamilies(rows).includes('duckduckgo'), 'DDG family is not offered for selection');
+});
+
+test('Phase 1: selection survives a catalog reload (store restores explicit state)', () => {
+	const storage = memoryStorage();
+	const provider = () => cappedCatalog(3, 3);
+	const storeA = createSelectionStore(storage, provider);
+	let state = storeA.get();
+	toggleDevice(state, deviceKeyOf(provider()[3]), true);
+	toggleBrowserFamily(state, provider(), 'chrome', true);
+	storeA.save(state);
+	// New session, fresh store over the SAME storage: explicit state restores.
+	const storeB = createSelectionStore(storage, () => cappedCatalog(3, 3));
+	const restored = storeB.get();
+	assert.deepEqual(computeExplicitSelection(cappedCatalog(3, 3), restored).sort(),
+		computeExplicitSelection(cappedCatalog(3, 3), state).sort());
+});
+
+test('Phase 1: legacy deselections migrate best-effort into the new model', () => {
+	const storage = memoryStorage();
+	const rows = cappedCatalog(5, 5);
+	// A prior session's persisted opt-outs under the LEGACY key.
+	storage.setItem('qase.qaConfigDeselections', JSON.stringify({ envIds: ['ENV-AND-1', 'ENV-IOS-3'] }));
+	const store = createSelectionStore(storage, () => rows);
+	const state = store.get();
+	const selection = computeExplicitSelection(rows, state);
+	assert.ok(!selection.includes('ENV-AND-1'), 'legacy opt-out honored');
+	assert.ok(!selection.includes('ENV-IOS-3'), 'legacy opt-out honored');
+	// Everything else defaults to selected (full catalog).
+	assert.equal(selection.length, 8);
+});
+
+test('Phase 1: family toggle clears granular deselections within that family', () => {
+	const rows = cappedCatalog(3, 3);
+	const state = selectAllBrowsers(rows, selectAllDevices(rows, createSelectionState()));
+	state.deselectedEnvIds.add('ENV-AND-1');
+	toggleBrowserFamily(state, rows, 'brave', false);
+	toggleBrowserFamily(state, rows, 'brave', true);
+	const selection = computeExplicitSelection(rows, state);
+	assert.ok(selection.includes('ENV-AND-1'), 're-selecting the family resets chip-level opt-outs in it');
+});
+
+test('Phase 1: unknown persisted keys (stale catalog ids) simply match nothing', () => {
+	const storage = memoryStorage();
+	storage.setItem('qase.qaConfigSelection.v2', JSON.stringify({
+		deviceKeys: ['Ghost|ghost|GhostPhone'],
+		browserFamilies: ['chrome'],
+		deselectedEnvIds: []
+	}));
+	const store = createSelectionStore(storage, () => cappedCatalog(2, 2));
+	const state = store.get();
+	assert.equal(computeExplicitSelection(cappedCatalog(2, 2), state).length, 0);
+});
+
+test('Phase 1 regression: Select All clears a LARGE stale override set (tester round 1 — count stuck at 6)', () => {
+	// A legacy migration (or prior chip opt-outs) left 37k+ granular
+	// deselections in place; clicking Select All must give the FULL catalog,
+	// not the trickle that survives the exclusions.
+	const rows = cappedCatalog(2300, 1000);
+	// Recreate the observed broken state: devices + families selected, but
+	// nearly every envId excluded at chip level (legacy migration artifact).
+	let state = selectAllDevices(rows, selectAllBrowsers(rows, createSelectionState()));
+	const staleOverrides = new Set(rows.slice(0, rows.length - 6).map((row) => row.envId));
+	state = createSelectionState({
+		deviceKeys: state.deviceKeys,
+		browserFamilies: state.browserFamilies,
+		deselectedEnvIds: staleOverrides
+	});
+	assert.equal(computeExplicitSelection(rows, state).length, 6, 'sanity: the stale exclusions starve the count');
+	state = selectAllDevices(rows, state);
+	state = selectAllBrowsers(rows, state);
+	assert.equal(computeExplicitSelection(rows, state).length, 3300, 'Select All now yields the complete catalog');
+});
+
 test('fetchQaConfigurations: ok → payload; error status → thrown with message; malformed → thrown', async () => {
 	const ok = await fetchQaConfigurations({ fetcher: async () => ({ ok: true, status: 200, json: async () => ({ configurations: [], browserFamilies: [], totals: { configurations: 0 } }) }) });
 	assert.deepEqual(ok.configurations, []);
@@ -272,9 +429,16 @@ test('fetchConfigurationWindow passes filters + pagination and reports hasMore',
 });
 
 test('fetchConfigurationWindow hasMore is true when window is partial', async () => {
-	const fetcher = async () => ({ ok: true, json: async () => ({ configurations: Array.from({ length: 50 }, (_, i) => configuration({ envId: `E${i}` })), totals: { configurations: 500 } }) });
-	const result = await fetchConfigurationWindow({}, { fetcher, limit: 50, offset: 0 });
+	// #15439: windows are device-grouped — hasMore comes from the server's
+	// device-group pagination, not raw row arithmetic.
+	const fetcher = async (url) => {
+		assert.match(url, /groupBy=device/);
+		return { ok: true, json: async () => ({ configurations: Array.from({ length: 50 }, (_, i) => configuration({ envId: `E${i}` })), totals: { configurations: 500 }, deviceGroups: 176, deviceOffset: 0, deviceLimit: 12, hasMore: true }) };
+	};
+	const result = await fetchConfigurationWindow({}, { fetcher, limit: 12, offset: 0 });
 	assert.equal(result.hasMore, true);
+	assert.equal(result.deviceTotal, 176);
+	assert.equal(result.deviceCount, 12);
 });
 
 test('fetchConfigurationWindow rejects malformed payloads', async () => {
@@ -376,4 +540,133 @@ test('#15163 deviceScopeSelection derives scope + selection + families in one ca
 	assert.ok(result.browserFamilies.includes('brave'));
 	assert.equal(result.configurationCount, 1);
 	assert.equal(deviceScopeSelection(CATALOG, null), null);
+});
+
+// ---------------------------------------------------------------------------
+// #14276: computeCappedSelection — explicit ticks survive the 2,000-cap
+// (#15323 interplay). Regression: catalog order is Android-first, so the
+// capped default selection was entirely Android; ticking an iPhone chip was a
+// reselect() no-op that the slice then discarded ("devices are not getting
+// selected").
+// ---------------------------------------------------------------------------
+
+/** Catalog with `androidCount` Android rows first (catalog order), then iOS rows. */
+function cappedCatalog(androidCount, iosCount) {
+	const rows = [];
+	for (let i = 0; i < androidCount; i += 1) {
+		rows.push(configuration({
+			envId: `ENV-AND-${i}`,
+			device: 'Galaxy S24', manufacturer: 'Samsung', platform: 'android', os: 'Android', osVersion: '15',
+			browserCode: 'brave', browser: 'Brave', browserVersion: '138'
+		}));
+	}
+	for (let i = 0; i < iosCount; i += 1) {
+		rows.push(configuration({
+			envId: `ENV-IOS-${i}`,
+			device: 'iPhone 15', manufacturer: 'Apple', platform: 'ios', os: 'iOS', osVersion: '18.0',
+			browserCode: 'chrome', browser: 'Chrome', browserVersion: '140'
+		}));
+	}
+	return rows;
+}
+
+test('#14276 computeCappedSelection caps the default at MAX_RUN_CONFIGURATIONS in catalog order', () => {
+	const storage = memoryStorage();
+	const store = createDeselectionStore(storage);
+	const rows = cappedCatalog(2100, 100);
+	const selection = computeCappedSelection(rows, store);
+	assert.equal(selection.length, 2000);
+	assert.ok(selection.every((envId) => envId.startsWith('ENV-AND-')), 'cap eats the catalog-order tail first');
+});
+
+test('#14276 explicit tick of an out-of-cap device survives the cap', () => {
+	const storage = memoryStorage();
+	const store = createDeselectionStore(storage);
+	const rows = cappedCatalog(2100, 100);
+	// User ticks one iPhone chip while the run sits at the cap.
+	const explicit = new Set(['ENV-IOS-3']);
+	const selection = computeCappedSelection(rows, store, explicit);
+	assert.equal(selection.length, 2000, 'cap total unchanged — the tick displaces a tail row');
+	assert.ok(selection.includes('ENV-IOS-3'), 'the explicitly ticked iPhone chip stays selected');
+	assert.equal(selection.filter((envId) => envId.startsWith('ENV-AND-')).length, 1999, 'one Android tail row gives up its slot');
+});
+
+test('#14276 explicit deselection keeps losing its slot before the cap applies', () => {
+	const storage = memoryStorage();
+	const store = createDeselectionStore(storage);
+	const rows = cappedCatalog(2100, 100);
+	// User unticks one Android chip (persisted) AND ticks one iPhone chip.
+	store.deselect('ENV-AND-0');
+	const explicit = new Set(['ENV-IOS-5']);
+	const selection = computeCappedSelection(rows, store, explicit);
+	assert.equal(selection.length, 2000);
+	assert.ok(!selection.includes('ENV-AND-0'), 'explicit deselection is never re-added');
+	assert.ok(selection.includes('ENV-IOS-5'), 'explicit tick survives');
+});
+
+test('#14276 unticking an explicitly ticked chip releases its pinned slot', () => {
+	const storage = memoryStorage();
+	const store = createDeselectionStore(storage);
+	const rows = cappedCatalog(2100, 100);
+	const explicit = new Set(['ENV-IOS-3']);
+	let selection = computeCappedSelection(rows, store, explicit);
+	assert.ok(selection.includes('ENV-IOS-3'));
+	// Then the user unticks it again: chip untick records a persisted deselect.
+	store.deselect('ENV-IOS-3');
+	explicit.delete('ENV-IOS-3');
+	selection = computeCappedSelection(rows, store, explicit);
+	assert.ok(!selection.includes('ENV-IOS-3'));
+	assert.equal(selection.filter((envId) => envId.startsWith('ENV-AND-')).length, 2000);
+});
+
+test('#14276 computeCappedSelection equals capped computeSelection with no explicit ticks', () => {
+	const storage = memoryStorage();
+	const store = createDeselectionStore(storage);
+	const rows = cappedCatalog(2100, 100);
+	assert.deepEqual(computeCappedSelection(rows, store), computeSelection(rows, store).slice(0, 2000));
+});
+
+// ---------------------------------------------------------------------------
+// Pipeline Phase 2: batch planning — >2,000 selections become ordered
+// batches of ≤2,000; the 2,000 limit is an EXECUTION/batch limit, never a
+// selection limit.
+// ---------------------------------------------------------------------------
+
+test('Phase 2: planBatches edge cases (0, 1, exactly 2000, 2001, 5250)', () => {
+	assert.deepEqual(planBatches([]), [], 'empty selection → no batches');
+	assert.deepEqual(planBatches(['A']), [['A']]);
+	const exactly = Array.from({ length: 2000 }, (_, i) => `E${i}`);
+	assert.deepEqual(planBatches(exactly), [exactly], 'exactly 2,000 → one full batch');
+	const over = Array.from({ length: 2001 }, (_, i) => `E${i}`);
+	const overBatches = planBatches(over);
+	assert.equal(overBatches.length, 2);
+	assert.equal(overBatches[0].length, 2000);
+	assert.equal(overBatches[1].length, 1);
+	// Spec acceptance: 5,250 → 2000/2000/1250.
+	const big = Array.from({ length: 5250 }, (_, i) => `E${i}`);
+	const bigBatches = planBatches(big);
+	assert.deepEqual(bigBatches.map((batch) => batch.length), [2000, 2000, 1250]);
+	// Disjoint by construction, order preserved, union = original.
+	for (const batch of bigBatches) assert.ok(batch.length <= MATRIX_BATCH_SIZE);
+	assert.deepEqual(bigBatches.flat(), big);
+	// 37,244 "Run All" → 19 batches (18 full + 1 of 644).
+	const huge = Array.from({ length: 37244 }, (_, i) => `E${i}`);
+	const hugeBatches = planBatches(huge);
+	assert.equal(hugeBatches.length, 19);
+	assert.deepEqual(hugeBatches.map((batch) => batch.length).slice(0, 18), Array(18).fill(2000));
+	assert.equal(hugeBatches[18].length, 1244); // 37,244 − 18×2,000
+});
+
+test('Phase 2: planBatches rejects invalid batch sizes; batchKeyFor is stable and parent/env scoped', async () => {
+	assert.throws(() => planBatches(['A'], 0), TypeError);
+	assert.throws(() => planBatches(['A'], 1.5), TypeError);
+	const ids = ['ENV-A', 'ENV-B'];
+	const keyA = await batchKeyFor('parent-1', ids);
+	const keyA2 = await batchKeyFor('parent-1', [...ids]);
+	const keyB = await batchKeyFor('parent-2', ids);
+	const keyC = await batchKeyFor('parent-1', ['ENV-B', 'ENV-A']);
+	assert.equal(keyA, keyA2, 'same parent + same ids → same key (retry-safe)');
+	assert.notEqual(keyA, keyB, 'different parent → different key');
+	assert.notEqual(keyA, keyC, 'different id set → different key');
+	assert.match(keyA, /^[0-9a-f]{32}$/, 'hex digest key');
 });

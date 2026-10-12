@@ -329,3 +329,133 @@ test('configurationEnvIds: empty array rejects (422 contract)', async () => {
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
 });
+
+/* ── Pipeline Phase 2: parent runs + idempotent batches ──────────── */
+
+test('Phase 2: parent run is a lightweight aggregate (no items), batch pins configs under it', async () => {
+	const { backend, dir } = tempBackend();
+	try {
+		const matrix = createMatrixService(backend, testServices());
+		const envs = fixtureEnvironments().slice(0, 3);
+		const parent = await matrix.createParentRun({
+			title: 'Big QA run',
+			targetUrl: 'https://example.com',
+			kickoffText: 'https://example.com\nCoverage: core flows',
+			totalPlanned: 3
+		});
+		assert.equal(parent.kind, 'parent');
+		assert.equal(parent.itemCount, 0);
+		assert.deepEqual(parent.items, []);
+		assert.equal(parent.totalPlanned, 3);
+		assert.deepEqual(parent.batchIds, []);
+
+		const { run: batch, created } = await matrix.createBatch({
+			parentId: parent.id,
+			batchKey: 'k1',
+			batchIndex: 0,
+			targetUrl: 'https://example.com',
+			kickoffText: 'https://example.com\nCoverage: core flows',
+			configurationEnvIds: envs.map((env) => env.envId)
+		});
+		assert.equal(created, true);
+		assert.equal(batch.kind, 'batch');
+		assert.equal(batch.parentId, parent.id);
+		assert.equal(batch.itemCount, envs.length);
+		for (const env of envs) {
+			assert.ok(batch.items.some((item) => item.environmentId === env.envId), `${env.envId} pinned`);
+		}
+		// Parent view aggregates the batch on read.
+		const view = await matrix.get(parent.id);
+		assert.equal(view.itemCount, envs.length);
+		assert.equal(view.batchCount, 1);
+		assert.equal(view.batches[0].id, batch.id);
+		assert.ok(!('items' in view.batches[0]), 'batch summaries in the parent view carry no items');
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test('Phase 2: re-posting the same batchKey is idempotent — zero duplicate items/jobs', async () => {
+	const { backend, dir } = tempBackend();
+	try {
+		const matrix = createMatrixService(backend, testServices());
+		const envIds = fixtureEnvironments().slice(0, 2).map((env) => env.envId);
+		const parent = await matrix.createParentRun({ targetUrl: 'https://example.com', totalPlanned: envIds.length });
+		const first = await matrix.createBatch({
+			parentId: parent.id, batchKey: 'same-key', batchIndex: 0,
+			targetUrl: 'https://example.com', configurationEnvIds: envIds
+		});
+		assert.equal(first.created, true);
+		// A network-failure retry posts the SAME key (and even a different
+		// batchIndex — the key is the contract, not the index).
+		const retry = await matrix.createBatch({
+			parentId: parent.id, batchKey: 'same-key', batchIndex: 0,
+			targetUrl: 'https://example.com', configurationEnvIds: envIds
+		});
+		assert.equal(retry.created, false);
+		assert.equal(retry.run.id, first.run.id, 'existing batch returned as-is');
+		const view = await matrix.get(parent.id);
+		assert.equal(view.batchCount, 1, 'no duplicate batch was linked');
+		assert.equal(view.itemCount, envIds.length, 'no duplicate items');
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test('Phase 2: batch key collision across DIFFERENT keys under one parent is rejected-or-distinct; unknown parent rejected', async () => {
+	const { backend, dir } = tempBackend();
+	try {
+		const matrix = createMatrixService(backend, testServices());
+		const envIds = fixtureEnvironments().slice(0, 1).map((env) => env.envId);
+		await assert.rejects(
+			() => matrix.createBatch({ parentId: 'matrix-nope', batchKey: 'k', targetUrl: 'https://example.com', configurationEnvIds: envIds }),
+			MatrixValidationError
+		);
+		const parent = await matrix.createParentRun({ targetUrl: 'https://example.com', totalPlanned: 2 });
+		const a = await matrix.createBatch({ parentId: parent.id, batchKey: 'k-a', batchIndex: 0, targetUrl: 'https://example.com', configurationEnvIds: envIds });
+		const b = await matrix.createBatch({ parentId: parent.id, batchKey: 'k-b', batchIndex: 1, targetUrl: 'https://example.com', configurationEnvIds: envIds });
+		assert.notEqual(a.run.id, b.run.id, 'different keys → distinct batches (disjoint by client construction)');
+		const view = await matrix.get(parent.id);
+		assert.equal(view.batchCount, 2);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test('Phase 2: batches listed with different batchIndexes keep their order in the aggregated parent view', async () => {
+	const { backend, dir } = tempBackend();
+	try {
+		const matrix = createMatrixService(backend, testServices());
+		const envs = fixtureEnvironments();
+		const parent = await matrix.createParentRun({ targetUrl: 'https://example.com', totalPlanned: envs.length });
+		// Create batches in REVERSE index order to prove the read sorts them.
+		await matrix.createBatch({ parentId: parent.id, batchKey: 'k-2', batchIndex: 2, targetUrl: 'https://example.com', configurationEnvIds: [envs[4].envId] });
+		await matrix.createBatch({ parentId: parent.id, batchKey: 'k-0', batchIndex: 0, targetUrl: 'https://example.com', configurationEnvIds: [envs[0].envId, envs[1].envId] });
+		await matrix.createBatch({ parentId: parent.id, batchKey: 'k-1', batchIndex: 1, targetUrl: 'https://example.com', configurationEnvIds: [envs[2].envId, envs[3].envId] });
+		const view = await matrix.get(parent.id);
+		assert.equal(view.batchCount, 3);
+		assert.deepEqual(view.batches.map((batch) => batch.batchIndex), [0, 1, 2], 'batches sorted by index');
+		assert.deepEqual(
+			view.items.map((item) => item.environmentId),
+			[envs[0].envId, envs[1].envId, envs[2].envId, envs[3].envId, envs[4].envId],
+			'items aggregated in batch order'
+		);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test('Phase 2: parent with zero batches reads as an honest empty aggregate (no items, no error)', async () => {
+	const { backend, dir } = tempBackend();
+	try {
+		const matrix = createMatrixService(backend, testServices());
+		const parent = await matrix.createParentRun({ targetUrl: 'https://example.com', totalPlanned: 0 });
+		const view = await matrix.get(parent.id);
+		assert.equal(view.kind, 'parent');
+		assert.equal(view.itemCount, 0);
+		assert.deepEqual(view.items, []);
+		assert.equal(view.batchCount, 0);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});

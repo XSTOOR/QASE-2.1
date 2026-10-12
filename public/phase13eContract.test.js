@@ -12,10 +12,13 @@ const qaReport = app.slice(app.indexOf("const actions = document.createElement('
 
 test('QA launch enablement includes URL, authorization, checks, configuration and pending state', () => {
 	for (const contract of [
-		'!urlValid', '!authorizationReady', 'selected === 0', '!matrixReady', '!withinCap', "dataset.busy === 'true'"
+		'!urlValid', '!authorizationReady', 'selected === 0', '!matrixReady', "dataset.busy === 'true'"
 	]) {
 		assert.match(launcher, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), contract);
 	}
+	// Merge resolution: the 2,000 cap is NOT a launch gate — Phase 2 batches
+	// oversized selections on submit, so withinCap must not appear.
+	assert.doesNotMatch(launcher, /!withinCap/);
 	assert.match(launcher, /Confirm that you are authorized to test this site/);
 	assert.match(launcher, /Browsers and devices could not be loaded/);
 });

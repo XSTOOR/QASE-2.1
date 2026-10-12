@@ -51,6 +51,13 @@ try {
 	await page.screenshot({ path: path.join(repo, 'artifacts/auth/mobile.png'), fullPage: true });
 	await page.setViewportSize({ width: 1440, height: 1000 });
 	await page.locator('#auth-switch').click();
+	// Signup-side 8-char boundary (ticket #15672): a 7-character password must
+	// fail native validation in register mode; an 8-character one must pass.
+	await page.locator('#auth-password').fill('seven7c');
+	assert.equal(await page.locator('#auth-password').evaluate(node => node.minLength), 8, 'register mode enforces minLength 8');
+	assert.equal(await page.locator('#auth-password').evaluate(node => node.checkValidity()), false, '7-char password rejected in register mode');
+	await page.locator('#auth-password').fill('eight8ch');
+	assert.equal(await page.locator('#auth-password').evaluate(node => node.checkValidity()), true, '8-char password accepted in register mode');
 	await page.locator('#auth-email').fill('alice@example.com');
 	await page.locator('#auth-password').fill('a strong original password');
 	await page.locator('#auth-display').fill('Alice');
@@ -89,6 +96,9 @@ try {
 	assert.equal((await (await bob.request.get(base + '/api/config')).json()).hasApiKey, false);
 	assert.equal((await bob.request.put(base + '/api/profile', { data: { displayName:'forged' } })).status(), 403);
 	await page.locator('#current-password').fill('a strong original password');
+	// Change-password form enforces the same 8-char minimum.
+	await page.locator('#new-password').fill('seven7c');
+	assert.equal(await page.locator('#new-password').evaluate(node => node.checkValidity()), false, '7-char new password rejected');
 	await page.locator('#new-password').fill('a strong replacement password');
 	await page.locator('#password-form button').click();
 	await page.locator('#auth-gate').waitFor({ state:'visible' });

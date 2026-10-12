@@ -1,4 +1,4 @@
--- Qase PostgreSQL migration 039: project-level Founder Mode state.
+-- Qase PostgreSQL migration 040: project-level Founder Mode state.
 --
 -- Founder Mode persists its latest per-project state (detected context,
 -- goals/constraints, the last successful recommendation set with stable ids

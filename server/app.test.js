@@ -454,6 +454,41 @@ test('standard QA run creation accepts a catalog-validated test selection', asyn
 	assert.match((await body(duplicate)).error, /Duplicate standard test/);
 });
 
+test('standard QA run creation persists a whitelisted coverage scope selection', async t => {
+	const fixture = await startFixture();
+	t.after(() => fixture.close());
+
+	// Regression for the POST /api/sessions duplicate-block merge artifact: a
+	// valid scopeSelection must be persisted by the single live handler.
+	const created = await body(await fixture.request('/api/sessions', {
+		method: 'POST',
+		json: { scopeSelection: ['navigation', 'forms'] }
+	}));
+	assert.deepEqual(created.scopeSelection, ['navigation', 'forms']);
+	// Round-trips through the store.
+	const fetched = await body(await fixture.request(`/api/sessions/${created.id}`));
+	assert.deepEqual(fetched.scopeSelection, ['navigation', 'forms']);
+
+	// Duplicates collapse and unknown values drop (normalizer contract).
+	const collapsed = await body(await fixture.request('/api/sessions', {
+		method: 'POST',
+		json: { scopeSelection: ['forms', 'forms', 'bogus-scope', 'navigation'] }
+	}));
+	assert.deepEqual(collapsed.scopeSelection, ['forms', 'navigation']);
+
+	// No scope keeps the legacy full-coverage behavior (undefined, not []).
+	const legacy = await body(await fixture.request('/api/sessions', { method: 'POST' }));
+	assert.equal(legacy.scopeSelection, undefined);
+
+	// Entirely invalid shape (string object) behaves like no selection — the
+	// plain-QA route tolerates it instead of throwing a TypeError in the store.
+	const tolerated = await body(await fixture.request('/api/sessions', {
+		method: 'POST',
+		json: { scopeSelection: { bogus: 'shape' } }
+	}));
+	assert.equal(tolerated.scopeSelection, undefined);
+});
+
 test('security test selections require explicit authorization at the route', async t => {
 	const fixture = await startFixture();
 	t.after(() => fixture.close());

@@ -165,35 +165,89 @@ export function normalizeOrientationScenario(input, { deviceType } = {}) {
  * they are real mobile UAs (matching the OS major), not desktop Chromium's.
  * A REAL_DEVICE / VIRTUAL_DEVICE run never uses this helper: the provider's
  * genuine UA is read from the live page and recorded as a runtime fact.
+ *
+ * #15439 Issue 3: brand-correct tokens — Firefox sends FxiOS/FxMS-style UAs,
+ * Edge EdgiOS/Edg, Opera OPiOS/OPR, DuckDuckGo its own token. Previously
+ * every non-Safari browser got a Chrome/CriOS UA, so the identity verifier
+ * correctly flagged "browser mismatch" and honest non-Chrome configurations
+ * were stamped BLOCKED.
  */
-export function userAgentFor(platformId, osVersion, browserCode) {
+export function userAgentFor(platformId, osVersion, browserCode, browserVersion) {
 	const os = String(osVersion ?? '').trim();
 	const platform = String(platformId ?? '').toLowerCase();
 	const browser = String(browserCode ?? '').toLowerCase();
 	const major = os.split(/[.]/)[0] || '';
+	// #15439: brand/version tokens carry the BROWSER version (FxiOS/141,
+	// EdgiOS/141…), not the OS major — the identity verifier compares the
+	// UA's browser version against environment.browserVersion.
+	const browserMajor = String(browserVersion ?? '').split(/[.]/)[0] || '';
+
+	const iOS_TOKENS = {
+		safari: (token, osPart, ver) => `Mozilla/5.0 (${token}; CPU ${token === 'iPhone' ? 'iPhone OS' : 'OS'} ${osPart} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${ver}.0 Mobile/15E148 Safari/604.1`,
+		// Every non-Safari iOS browser is a WebKit wrapper; each brand sends
+		// its own token ahead of the shared WebKit tail.
+		chrome: (token, osPart, ver) => `Mozilla/5.0 (${token}; CPU ${token === 'iPhone' ? 'iPhone OS' : 'OS'} ${osPart} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/${ver}.0.0.0 Mobile/15E148 Safari/604.1`,
+		edge: (token, osPart, ver) => `Mozilla/5.0 (${token}; CPU ${token === 'iPhone' ? 'iPhone OS' : 'OS'} ${osPart} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${ver}.0 EdgiOS/${ver}.0.0.0 Mobile/15E148 Safari/604.1`,
+		firefox: (token, osPart, ver) => `Mozilla/5.0 (${token}; CPU ${token === 'iPhone' ? 'iPhone OS' : 'OS'} ${osPart} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/${ver}.0 Mobile/15E148 Safari/604.1`,
+		opera: (token, osPart, ver) => `Mozilla/5.0 (${token}; CPU ${token === 'iPhone' ? 'iPhone OS' : 'OS'} ${osPart} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) OPiOS/${ver}.0.0.0 Mobile/15E148 Safari/604.1`,
+		// Real Brave iOS sends no brand token (plain WebKit wrapper UA); the
+		// brandedBinary runtime fact is the identity authority for Brave.
+		brave: (token, osPart, ver) => `Mozilla/5.0 (${token}; CPU ${token === 'iPhone' ? 'iPhone OS' : 'OS'} ${osPart} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${ver}.0 Mobile/15E148 Safari/604.1 Brave/1.0`,
+		duckduckgo: (token, osPart, ver) => `Mozilla/5.0 (${token}; CPU ${token === 'iPhone' ? 'iPhone OS' : 'OS'} ${osPart} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${ver}.0 Mobile/15E148 Safari/604.1 DuckDuckGo/7`
+	};
+
 	if (platform === 'ios' || platform === 'ipados') {
 		const token = platform === 'ios' ? 'iPhone' : 'iPad';
-		if (browser === 'safari') {
-			return `Mozilla/5.0 (${token}; CPU ${token === 'iPhone' ? 'iPhone OS' : 'OS'} ${os.replace('.', '_')} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${major || '18'}.0 Mobile/15E148 Safari/604.1`;
-		}
-		// Chrome/Edge/Firefox/… on iOS are all WebKit wrappers: same WebKit core.
-		return `Mozilla/5.0 (${token}; CPU ${token === 'iPhone' ? 'iPhone OS' : 'OS'} ${os.replace('.', '_')} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/${major || '140'}.0.0.0 Mobile/15E148 Safari/604.1`;
+		const osPart = os.replace('.', '_');
+		// Safari/Version token = OS-major WebKit version; brand tokens
+		// (CriOS/FxiOS/EdgiOS/OPiOS) = the browser's own version.
+		const ver = browserMajor || '140';
+		const safariVer = major || '18';
+		const builder = iOS_TOKENS[browser] ?? iOS_TOKENS.safari;
+		if (browser === 'safari') return builder(token, osPart, safariVer);
+		return builder(token, osPart, ver);
 	}
 	if (platform === 'macos') {
+		// Brand tokens carry the BROWSER major; Safari's Version token stays
+		// tied to the OS WebKit version.
+		const bMajor = browserMajor || '140';
 		if (browser === 'safari') {
-			return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${major || '18'}.0 Safari/605.1.15`;
+			return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${browserMajor || major || '18'}.0 Safari/605.1.15`;
 		}
-		return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major || '141'}.0.0.0 Safari/537.36`;
+		if (browser === 'firefox') {
+			return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:${bMajor}.0) Gecko/20100101 Firefox/${bMajor}.0`;
+		}
+		const token = browser === 'edge' ? `Edg/${bMajor}.0.0.0`
+			: browser === 'opera' ? `OPR/${bMajor}.0.0.0`
+			: browser === 'brave' ? `Brave/${bMajor}` // Brave desktop strips its token from UAs; kept for identity honesty
+			: '';
+		return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${bMajor}.0.0.0 Safari/537.36${token ? ' ' + token : ''}`;
 	}
 	if (platform === 'android') {
-		return `Mozilla/5.0 (Linux; Android ${os || '15'}; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major || '140'}.0.0.0 Mobile Safari/537.36`;
+		const bMajor = browserMajor || '140';
+		if (browser === 'firefox') {
+			return `Mozilla/5.0 (Android ${os || '15'}; Mobile; rv:${bMajor}.0) Gecko/${bMajor}.0 Firefox/${bMajor}.0`;
+		}
+		if (browser === 'duckduckgo') {
+			return `Mozilla/5.0 (Linux; Android ${os || '15'}; K) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/${bMajor}.0.0.0 Mobile Safari/537.36 DuckDuckGo/7`;
+		}
+		const edge = browser === 'edge' ? ` Edg/${bMajor}.0.0.0` : '';
+		const opera = browser === 'opera' ? ` OPR/${bMajor}.0.0.0` : '';
+		// Brave Android ships a Chrome-equivalent UA (brand token stripped) —
+		// the runtime's brandedBinary fact remains the identity source.
+		return `Mozilla/5.0 (Linux; Android ${os || '15'}; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${bMajor}.0.0.0 Mobile Safari/537.36${edge}${opera}`;
 	}
 	if (platform === 'windows') {
-		const windowsToken = os === '10' ? '10.0' : '10.0'; // NT major is 10.0 for both Win10 and Win11
-		const edge = browser === 'edge'
-			? `Edg/${major || '141'}.0.0.0`
+		const windowsToken = '10.0'; // NT major is 10.0 for both Win10 and Win11
+		const bMajor = browserMajor || '140';
+		if (browser === 'firefox') {
+			return `Mozilla/5.0 (Windows NT ${windowsToken}; Win64; x64; rv:${bMajor}.0) Gecko/20100101 Firefox/${bMajor}.0`;
+		}
+		const token = browser === 'edge' ? `Edg/${bMajor}.0.0.0`
+			: browser === 'opera' ? `OPR/${bMajor}.0.0.0`
+			: browser === 'brave' ? `Brave/${bMajor}`
 			: '';
-		return `Mozilla/5.0 (Windows NT ${windowsToken}; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major || '141'}.0.0.0 Safari/537.36${edge ? ' ' + edge : ''}`;
+		return `Mozilla/5.0 (Windows NT ${windowsToken}; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${bMajor}.0.0.0 Safari/537.36${token ? ' ' + token : ''}`;
 	}
 	return null;
 }

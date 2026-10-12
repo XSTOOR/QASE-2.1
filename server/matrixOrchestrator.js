@@ -12,6 +12,16 @@
 import { BROWSER_SUPPORT_STATUS, resolveBrowserSupport } from './browserSupportResolution.js';
 import { checkEnvironmentHealth } from './environmentHealth.js';
 import { fixtureExpectation } from './defectFixtures.js';
+import os from 'node:os';
+// Pipeline Phase 3 (#15493): unattended-run question policy — honor
+// ALREADY-RESOLVED authorization, never fabricate credentials, never
+// auto-approve destructive actions.
+import {
+	deriveQuestionPolicy,
+	autoAnswerFor,
+	blockedReasonFor,
+	MAX_AUTO_ANSWERS_PER_ITEM
+} from './matrixQuestionPolicy.js';
 
 // Concurrency is runtime-configured (see configuredParallelism at the bottom);
 // local mode keeps one browser at a time (closeOtherBrowsers contract).
@@ -25,7 +35,15 @@ import { fixtureExpectation } from './defectFixtures.js';
 export function createMatrixOrchestrator(services, hooks) {
 	const running = new Map(); // matrixRunId -> in-flight execution promise
 	const cancelledRuns = new Set(); // #15043 (B1): cancel flags per run
-	const MAX_MATRIX_CONCURRENT = 2; // a second run may prepare while one executes
+	// Pipeline Phase 4 (#15496): GLOBAL admission gate. The worker pool inside
+	// one run is per-run; several runs (or one run's batches) starting together
+	// must share ONE budget of concurrently-executing items across ALL runs —
+	// each executing item holds a browser process (~300–500 MB RSS). This is
+	// the single mechanism (the old dead MAX_MATRIX_CONCURRENT constant is
+	// gone); the budget is environment-clamped in configuredParallelism().
+	let slotsUsed = 0; // synchronous check-and-reserve counter across all runs
+	const waitQueue = []; // slot handoff queue (oldest waiter first)
+	const MAX_IN_FLIGHT = configuredParallelism();
 	// Stale-run sweep: any run left `running` by a dead process (container
 	// restart, crash) is transitioned to error before this orchestrator runs.
 	// Same logic as the boot-time resumeRecovery() — both entry points use it.
@@ -89,6 +107,17 @@ export function createMatrixOrchestrator(services, hooks) {
 					finishedAt: new Date().toISOString(),
 					durationMs: null
 				});
+				// Pipeline Phase 4 (#15496): browser sweep on recovery. A
+				// restart orphaned this item's child session; its browser
+				// runtime died with the process, but if the store reports a
+				// live session record, dispose it so no half-state lingers.
+				if (item.sessionId) {
+					try {
+						await services.agent?.stop?.(item.sessionId);
+					} catch {
+						// best-effort sweep — never block recovery
+					}
+				}
 			}
 		}
 	}
@@ -203,7 +232,13 @@ export function createMatrixOrchestrator(services, hooks) {
 		hooks.emit?.(matrixRunId, { type: 'matrix_run_done', matrixRunId, counts });
 	}
 
-	/** Worker pool over QUEUED items; cancellation stops claiming new work. */
+	/** Worker pool over QUEUED items; cancellation stops claiming new work.
+	 *  Pipeline Phase 4 (#15496): workers claim through the GLOBAL admission
+	 *  gate — total RUNNING items across ALL runs never exceeds the
+	 *  environment-clamped budget. Slot accounting is SYNCHRONOUS
+	 *  (check-and-reserve in one tick) so two workers can never race past
+	 *  the budget between an await and a Set.add. Each claim waits for a
+	 *  slot when the budget is exhausted by sibling runs. */
 	async function drainQueued(matrixRunId, run) {
 		const claim = async () => {
 			const current = await services.matrix.get(matrixRunId);
@@ -215,12 +250,44 @@ export function createMatrixOrchestrator(services, hooks) {
 			return next;
 		};
 		const claimed = new Set();
+		const acquireSlot = () => {
+			if (slotsUsed < MAX_IN_FLIGHT) {
+				slotsUsed += 1;
+				return Promise.resolve();
+			}
+			return new Promise((resolve) => {
+				// Waiter takes the slot when handed off — the releaser does
+				// NOT decrement (the slot transfers, ownership and all), so
+				// slotsUsed always equals live holders. Leak-free by
+				// construction: every acquire is matched by exactly one
+				// release-or-handoff.
+				waitQueue.push(resolve);
+			});
+		};
+		const releaseSlot = () => {
+			const next = waitQueue.shift();
+			if (next) {
+				next(); // slot transfers to the waiter — counter unchanged
+			} else {
+				slotsUsed -= 1;
+			}
+		};
 		const worker = async () => {
 			for (;;) {
 				if (cancelledRuns.has(matrixRunId)) return;
 				const item = await claim();
 				if (!item) return;
-				await executeItem(run, item);
+				await acquireSlot();
+				if (cancelledRuns.has(matrixRunId)) {
+					// Cancelled while waiting for a slot — do not start it.
+					releaseSlot();
+					return;
+				}
+				try {
+					await executeItem(run, item);
+				} finally {
+					releaseSlot();
+				}
 			}
 		};
 		await Promise.all(
@@ -237,6 +304,10 @@ export function createMatrixOrchestrator(services, hooks) {
 			});
 			hooks.emit?.(run.id, { type: 'matrix_item', itemId: item.id, ordinal: item.ordinal, status: patch.status ?? item.status });
 		};
+
+		// The session created for this item — hoisted so the finally block can
+		// close its browser no matter how the item ended (null until launch).
+		let itemSession = null;
 
 		try {
 			// Capability gate re-resolved at execution time — credentials may
@@ -271,14 +342,37 @@ export function createMatrixOrchestrator(services, hooks) {
 			// records the honest outcome rather than emulating silently.
 			await mark({ status: 'RUNNING', startedAt });
 
-			const session = await hooks.startSession(run, item);
+			itemSession = await hooks.startSession(run, item);
+			const session = itemSession;
 			await mark({ sessionId: session.id });
-
 			await hooks.sendTask(session, run);
 
 			// Poll until the session reaches a terminal state (the agent turn is
 			// fire-and-forget inside startTurn). Timeout → ERROR, other items run.
-			const outcome = await waitForSession(session.id, options => options);
+			// Pipeline Phase 3 (#15493): awaiting_input may be resumed in place
+			// when the run's authorization already covers the question — the
+			// loop reuses the SAME session (no relaunch) and every auto-answer
+			// is recorded on the item as evidence.
+			let autoAnswers = item.autoAnswers ?? 0;
+			let autoAnswerEvidence = [...(item.autoAnswerEvidence ?? [])];
+			let outcome = await waitForSession(session.id, options => options);
+			while (outcome.status === 'awaiting_input') {
+				const question = outcome.pendingQuestion ?? null;
+				const policy = deriveQuestionPolicy(run.securityAuthorization, run);
+				const auto = autoAnswerFor(policy, question);
+				if (!auto || autoAnswers >= MAX_AUTO_ANSWERS_PER_ITEM || !hooks.resumeSession) break;
+				autoAnswers += 1;
+				autoAnswerEvidence.push({
+					at: new Date().toISOString(),
+					question: String(question?.question ?? ''),
+					answer: auto.answer,
+					basis: auto.basis
+				});
+				await mark({ autoAnswers, autoAnswerEvidence });
+				const resumed = await hooks.resumeSession(session, auto.answer);
+				if (resumed === false) break;
+				outcome = await waitForSession(session.id, options => options);
+			}
 			const finishedAt = new Date().toISOString();
 			const durationMs = Date.now() - Date.parse(startedAt);
 
@@ -287,11 +381,15 @@ export function createMatrixOrchestrator(services, hooks) {
 				return;
 			}
 			if (outcome.status === 'awaiting_input') {
-				// The workflow paused for a human answer — it did not finish, so
-				// the honest state is BLOCKED (needs input), never PASSED.
+				// The workflow paused for a human answer that no policy
+				// covers — it did not finish, so the honest state is BLOCKED
+				// (needs input), never PASSED. The question text travels on
+				// the item so the results board shows WHY.
+				const question = outcome.pendingQuestion ?? null;
 				await mark({
 					status: 'BLOCKED',
-					error: 'Session paused awaiting user input — matrix items run unattended.',
+					error: blockedReasonFor(question ?? { question: '' }),
+					question: question ? String(question.question ?? '').slice(0, 2000) : null,
 					finishedAt, durationMs
 				});
 				return;
@@ -393,6 +491,17 @@ export function createMatrixOrchestrator(services, hooks) {
 				: (error instanceof Error ? error.message : String(error));
 			const status = error?.code === 'RUNTIME_UNAVAILABLE' ? 'BLOCKED' : 'ERROR';
 			await mark({ status, error: message, finishedAt, durationMs: Date.now() - Date.parse(startedAt) });
+		} finally {
+			// Pipeline Phase 3 (#15493): browser hygiene — every item closes its
+			// child session's browser on the way out, terminal OR error. The
+			// app wiring maps this to agent.closeBrowser (suspend semantics:
+			// conversation survives, Chromium process does not linger). Guarded
+			// so cleanup can never mask the item's real outcome.
+			try {
+				await hooks.closeSessionBrowser?.(itemSession);
+			} catch (cleanupError) {
+				console.warn('[matrix] browser cleanup failed:', cleanupError?.message ?? cleanupError);
+			}
 		}
 	}
 
@@ -406,6 +515,16 @@ export function createMatrixOrchestrator(services, hooks) {
 				return session;
 			}
 			if (Date.now() > deadline) {
+				// Pipeline Phase 4 (#15496): kill-on-timeout. A hung item must
+				// not leak its browser process: abort the turn and dispose the
+				// runtime (the local agent's stop does both), THEN surface the
+				// timeout — the browser-process hygiene finally-block below
+				// still runs as the second line of defense.
+				try {
+					await services.agent?.stop?.(sessionId);
+				} catch (stopError) {
+					console.warn(`[matrix] timeout kill failed for session ${sessionId}:`, stopError?.message ?? stopError);
+				}
 				throw Object.assign(new Error(`Matrix item timed out after ${Math.round(MAX_ITEM_MS / 1000)}s.`), { code: 'MATRIX_ITEM_TIMEOUT' });
 			}
 			await sleep(POLL_INTERVAL_MS);
@@ -418,15 +537,41 @@ export function createMatrixOrchestrator(services, hooks) {
 const MAX_ITEM_RETRIES = 2;
 
 const POLL_INTERVAL_MS = 2000;
-const MAX_ITEM_MS = 8 * 60 * 1000;
+// #14276: a thorough QA agent pass on a real target routinely takes 10–20
+// minutes; the old fixed 8-minute ceiling meant nearly every item died as
+// an honest-but-useless timeout. Configurable via QASE_MATRIX_ITEM_TIMEOUT_S,
+// default 20 minutes, clamped 60s–3600s.
+const MAX_ITEM_MS = (() => {
+	const raw = Number(process.env.QASE_MATRIX_ITEM_TIMEOUT_S ?? 20 * 60);
+	if (!Number.isFinite(raw)) return 20 * 60 * 1000;
+	return Math.min(3600, Math.max(60, Math.floor(raw))) * 1000;
+})();
 
-// #14649: concurrency is configurable (env), clamped to a sane range. Local
-// mode runs one browser at a time (closeOtherBrowsers), so the default stays
-// sequential; distributed mode may raise it.
+// #14649 + Pipeline Phase 4 (#15496): concurrency is configurable via
+// QASE_MATRIX_PARALLEL and clamped by the environment ceiling — each parallel
+// item holds one live browser process (~300–500 MB RSS realistic), so the
+// budget is min(configured, cpuCores−2, memoryBudget). Defaults to 2 (safe on
+// small containers); absurd values are clamped and the effective value is
+// logged ONCE per process (not per run).
+let parallelismLogged = false;
 function configuredParallelism() {
-	const raw = Number(process.env.QASE_MATRIX_PARALLEL ?? 1);
-	if (!Number.isFinite(raw)) return 1;
-	return Math.min(4, Math.max(1, Math.floor(raw)));
+	const raw = Number(process.env.QASE_MATRIX_PARALLEL ?? 2);
+	let configured = Number.isFinite(raw) ? Math.max(1, Math.floor(raw)) : 2;
+	const cores = (os.availableParallelism?.() ?? os.cpus()?.length ?? 4);
+	const coreBudget = Math.max(1, cores - 2);
+	// Memory budget: reserve ~1.5 GB for the app itself, then one browser
+	// per ~600 MB of remaining RAM, floor 1, cap 8.
+	const totalMb = Math.round(((os.totalmem?.() ?? 6 * 1024 ** 3) / (1024 ** 2)));
+	const memBudget = Math.max(1, Math.min(8, Math.floor((totalMb - 1536) / 600)));
+	const effective = Math.min(configured, coreBudget, memBudget, 8);
+	if (effective !== configured) {
+		if (!parallelismLogged) {
+			console.warn(`[matrix] QASE_MATRIX_PARALLEL=${configured} clamped to ${effective} by environment (cores=${cores}, mem=${totalMb}MB) — each parallel item holds a browser process.`);
+			parallelismLogged = true;
+		}
+		configured = effective;
+	}
+	return configured;
 }
 
 function sleep(ms) {

@@ -16,6 +16,9 @@
 export const FAMILY_ORDER = ['edge', 'chrome', 'brave', 'firefox', 'safari', 'opera', 'duckduckgo'];
 
 const DESELECTION_STORAGE_KEY = 'qase.qaConfigDeselections';
+/** #Phase-1: explicit selection state lives under its own storage key so it
+ *  can never collide with the legacy deselection memory being migrated from. */
+const SELECTION_STORAGE_KEY = 'qase.qaConfigSelection.v2';
 
 /** Execution-type badge labels shown next to devices/configurations. */
 export const EXECUTION_TYPE_LABELS = {
@@ -95,8 +98,198 @@ export function createDeselectionStore(storage) {
 }
 
 // ---------------------------------------------------------------------------
-// Selection model
+// Explicit selection model (pipeline Phase 1)
 // ---------------------------------------------------------------------------
+
+/** Stable identity of one device across the catalog: the same key format the
+ *  grouped device tree renders (`manufacturer|platform|device`). */
+export function deviceKeyOf(configuration) {
+	return `${configuration.manufacturer ?? ''}|${configuration.platform}|${configuration.device}`;
+}
+
+/** Canonical set of every selectable family present in the catalog. */
+export function availableBrowserFamilies(configurations) {
+	return FAMILY_ORDER.filter((code) =>
+		configurations.some((configuration) => configuration.browserCode === code && isSelectable(configuration)));
+}
+
+/**
+ * Explicit selection state: which devices and which browser families are
+ * selected, plus granular envId-level deselection overrides (the version-chip
+ * UX). State is a plain object of Sets so it can live on qaMatrixState and be
+ * persisted/restored as arrays.
+ *
+ * Effective selection = catalog rows where the device is selected AND the
+ * family is selected AND the row is selectable AND not granularly deselected.
+ * There is NO cap here — the 2,000 limit is a server-side per-batch execution
+ * limit (see MATRIX_BATCH_SIZE), never a selection limit.
+ */
+export function createSelectionState({ deviceKeys = new Set(), browserFamilies = new Set(), deselectedEnvIds = new Set() } = {}) {
+	return {
+		deviceKeys: new Set(deviceKeys),
+		browserFamilies: new Set(browserFamilies),
+		deselectedEnvIds: new Set(deselectedEnvIds)
+	};
+}
+
+/** Effective selection: envIds in catalog order (stable summary), uncapped. */
+export function computeExplicitSelection(configurations, selectionState) {
+	const { deviceKeys, browserFamilies, deselectedEnvIds } = selectionState;
+	const selected = [];
+	for (const configuration of configurations) {
+		if (!isSelectable(configuration)) continue;
+		if (deselectedEnvIds.has(configuration.envId)) continue;
+		if (!deviceKeys.has(deviceKeyOf(configuration))) continue;
+		if (!browserFamilies.has(configuration.browserCode)) continue;
+		selected.push(configuration.envId);
+	}
+	return selected;
+}
+
+/** O(index) count without materializing the array. */
+export function effectiveSelectionCount(configurations, selectionState) {
+	const { deviceKeys, browserFamilies, deselectedEnvIds } = selectionState;
+	let count = 0;
+	for (const configuration of configurations) {
+		if (!isSelectable(configuration)) continue;
+		if (deselectedEnvIds.has(configuration.envId)) continue;
+		if (!deviceKeys.has(deviceKeyOf(configuration))) continue;
+		if (!browserFamilies.has(configuration.browserCode)) continue;
+		count += 1;
+	}
+	return count;
+}
+
+/** All device keys present in the catalog (selectable rows only — a device
+ *  whose every row is unavailable can never be selected). */
+export function catalogDeviceKeys(configurations) {
+	const keys = new Set();
+	for (const configuration of configurations) {
+		if (!isSelectable(configuration)) continue;
+		keys.add(deviceKeyOf(configuration));
+	}
+	return keys;
+}
+
+/** Select every catalog device (of the selectable rows). Chip-level opt-outs
+ *  are cleared — "Select All" is an explicit bulk intent and must never leave
+ *  the effective count at a trickle of stale granular deselections (the
+ *  regression the browser tester caught: legacy migration + Select All kept
+ *  37,238 stale exclusions and the count stayed at 6). Returns a NEW state. */
+export function selectAllDevices(configurations, state) {
+	return createSelectionState({
+		deviceKeys: catalogDeviceKeys(configurations),
+		browserFamilies: state.browserFamilies,
+		deselectedEnvIds: new Set()
+	});
+}
+
+export function deselectAllDevices(_configurations, state) {
+	return createSelectionState({
+		deviceKeys: new Set(),
+		browserFamilies: state.browserFamilies,
+		deselectedEnvIds: state.deselectedEnvIds
+	});
+}
+
+/** Select every selectable browser family. As with selectAllDevices, bulk
+ *  intent clears stale chip-level opt-outs. Returns a NEW state. */
+export function selectAllBrowsers(configurations, state) {
+	return createSelectionState({
+		deviceKeys: state.deviceKeys,
+		browserFamilies: new Set(availableBrowserFamilies(configurations)),
+		deselectedEnvIds: new Set()
+	});
+}
+
+export function deselectAllBrowsers(_configurations, state) {
+	return createSelectionState({
+		deviceKeys: state.deviceKeys,
+		browserFamilies: new Set(),
+		deselectedEnvIds: state.deselectedEnvIds
+	});
+}
+
+/** One device toggle: add/remove a device key in place (state mutation). */
+export function toggleDevice(state, deviceKey, selected) {
+	if (selected) state.deviceKeys.add(deviceKey);
+	else state.deviceKeys.delete(deviceKey);
+}
+
+/** One family toggle: add/remove a family in place. Selecting a family also
+ *  clears granular deselections WITHIN that family so the family checkbox
+ *  remains the primary control (chip ticks then narrow back down). */
+export function toggleBrowserFamily(state, configurations, familyCode, selected) {
+	if (selected) {
+		state.browserFamilies.add(familyCode);
+		for (const configuration of configurations) {
+			if (configuration.browserCode === familyCode) state.deselectedEnvIds.delete(configuration.envId);
+		}
+	} else {
+		state.browserFamilies.delete(familyCode);
+	}
+}
+
+/**
+ * Persist/restore selection state (localStorage injectable). The legacy
+ * qase.qaConfigDeselections store is honored: if the new key has never been
+ * written, the initial state is "everything selected minus the legacy
+ * deselections" — a returning user's opt-outs carry over best-effort.
+ */
+export function createSelectionStore(storage, configurationsProvider) {
+	const write = (state) => {
+		try {
+			storage.setItem(SELECTION_STORAGE_KEY, JSON.stringify({
+				deviceKeys: [...state.deviceKeys],
+				browserFamilies: [...state.browserFamilies],
+				deselectedEnvIds: [...state.deselectedEnvIds]
+			}));
+		} catch { /* private mode — in-memory only */ }
+	};
+	let initialized = false;
+	let state = createSelectionState();
+	return {
+		get() {
+			if (initialized) return state;
+			initialized = true;
+			let loaded = null;
+			try {
+				const raw = storage.getItem(SELECTION_STORAGE_KEY);
+				loaded = raw ? JSON.parse(raw) : null;
+			} catch {
+				loaded = null;
+			}
+			const configurations = configurationsProvider?.() ?? [];
+			if (loaded && typeof loaded === 'object') {
+				// Trusted on restore, validated against the catalog on use by
+				// computeExplicitSelection (unknown keys simply match nothing).
+				state = createSelectionState({
+					deviceKeys: new Set(loaded.deviceKeys ?? []),
+					browserFamilies: new Set(loaded.browserFamilies ?? []),
+					deselectedEnvIds: new Set(loaded.deselectedEnvIds ?? [])
+				});
+			} else {
+				// First run under the new model: default = full catalog minus
+				// legacy deselections (best-effort migration, never crashes).
+				let legacyDeselected = new Set();
+				try {
+					const raw = storage.getItem(DESELECTION_STORAGE_KEY);
+					const parsed = raw ? JSON.parse(raw) : null;
+					if (parsed && Array.isArray(parsed.envIds)) legacyDeselected = new Set(parsed.envIds);
+				} catch { /* unreadable legacy data is ignored */ }
+				state = selectAllDevices(configurations, selectAllBrowsers(configurations, createSelectionState()));
+				state.deselectedEnvIds = legacyDeselected;
+			}
+			return state;
+		},
+		save(nextState) {
+			state = nextState;
+			write(state);
+		}
+	};
+}
+
+
 
 /**
  * Compute the effective selection over a configuration list:
@@ -108,6 +301,46 @@ export function computeSelection(configurations, deselectionStore) {
 	return configurations
 		.filter((configuration) => isSelectable(configuration) && !deselected.has(configuration.envId))
 		.map((configuration) => configuration.envId);
+}
+
+/**
+ * #14276: explicit-selection overlay for capped runs.
+ *
+ * The unscoped default selection is capped at MAX_RUN_CONFIGURATIONS (#15323)
+ * by slicing the catalog in catalog order. Because the catalog index is
+ * Android-first, the capped default is entirely Android — so ticking (e.g.) an
+ * iPhone version chip called reselect(), a NO-OP for an envId that was never
+ * deselected, and the slice then discarded the tick anyway: the click was
+ * silently swallowed ("devices are not getting selected").
+ *
+ * computeCappedSelection keeps the deselection store semantics (explicit
+ * opt-outs always lose their slot first) but honors explicit TICKS made while
+ * the run is at the cap: an explicitly ticked envId is taken BEFORE the slice,
+ * so it displaces catalog-order tail rows instead of being eaten by them.
+ * Explicit ticks are session-scoped (never persisted) — they are answers to
+ * "the user clicked this while capped", not durable preferences.
+ */
+export function computeCappedSelection(configurations, deselectionStore, explicitSelection = new Set()) {
+	const deselected = deselectionStore.get();
+	const ordered = [];
+	for (const configuration of configurations) {
+		if (!isSelectable(configuration)) continue;
+		if (deselected.has(configuration.envId)) continue;
+		// Explicitly ticked rows are pinned ahead of the catalog-order tail so
+		// the cap can never silently evict them (#14276).
+		if (!explicitSelection.has(configuration.envId)) continue;
+		ordered.push(configuration.envId);
+	}
+	// Remainder in stable catalog order — explicit ticks never shuffle the
+	// un-ticked part of the default selection.
+	for (const configuration of configurations) {
+		if (!isSelectable(configuration)) continue;
+		if (deselected.has(configuration.envId)) continue;
+		if (explicitSelection.has(configuration.envId)) continue;
+		if (ordered.length >= MAX_RUN_CONFIGURATIONS) break;
+		ordered.push(configuration.envId);
+	}
+	return ordered;
 }
 
 /** Validate that a saved selection still only contains selectable envIds. */
@@ -430,15 +663,45 @@ export function isValidTargetUrl(value) {
 	}
 }
 
-/** Maximum configurations per matrix run — matches the server's
- *  MAX_MATRIX_CONFIGURATIONS cap (route: POST /api/qa-matrix-runs). */
+/**
+ * Pipeline Phase 2: plan the batches for a selection of any size. Returns
+ * ordered, DISJOINT slices of at most `batchSize` envIds. A selection ≤
+ * batchSize returns a single batch (single-run path — no parent needed).
+ */
+export function planBatches(envIds, batchSize = MATRIX_BATCH_SIZE) {
+	const ids = [...(envIds ?? [])];
+	if (!Number.isInteger(batchSize) || batchSize < 1) throw new TypeError('batchSize must be a positive integer.');
+	const batches = [];
+	for (let index = 0; index < ids.length; index += batchSize) {
+		batches.push(ids.slice(index, index + batchSize));
+	}
+	return batches;
+}
+
+/**
+ * Stable batch key identifying one batch of one parent across retries — the
+ * idempotency token POSTed with each batch (same key ⇒ server returns the
+ * existing batch instead of duplicating items).
+ */
+export async function batchKeyFor(parentId, envIds) {
+	const data = new TextEncoder().encode(`${parentId}\n${[...(envIds ?? [])].join(',')}`);
+	const digest = await crypto.subtle.digest('SHA-256', data);
+	return [...new Uint8Array(digest)].slice(0, 16).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** Execution-batch size — matches the server's MAX_MATRIX_CONFIGURATIONS cap
+ *  (route: POST /api/qa-matrix-runs, one request = one batch). This is an
+ *  EXECUTION limit, never a selection limit (pipeline Phase 1/2): the
+ *  selection model above is uncapped; >2,000 selections are batched on
+ *  submission. Retained as MAX_RUN_CONFIGURATIONS for callers that check the
+ *  per-request limit client-side. */
 export const MAX_RUN_CONFIGURATIONS = 2000;
+export const MATRIX_BATCH_SIZE = 2000;
 
 export function canStartRun({ targetUrl, selectedEnvIds }) {
 	return isValidTargetUrl(targetUrl)
 		&& Array.isArray(selectedEnvIds)
-		&& selectedEnvIds.length > 0
-		&& selectedEnvIds.length <= MAX_RUN_CONFIGURATIONS;
+		&& selectedEnvIds.length > 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -501,12 +764,20 @@ export async function fetchConfigurationIndex({ fetcher = globalThis.fetch, sign
  * Fetch one window of configurations from the server-side catalog (which
  * already applies filters + pagination). Returns {configurations, total,
  * hasMore} so the UI can render incrementally with a "Load more" affordance.
+ *
+ * #15439 Issue 2: windows are DEVICE-GROUPED (groupBy=device) — the server
+ * returns ALL rows of `limit` device groups in canonical platform order
+ * (iPhone → iPad → Mac → Android → Windows). Raw row pagination previously
+ * made the first window 200 rows of a single Android device, so the
+ * checklist rendered "two devices" and one platform until dozens of
+ * "Load more" clicks. `deviceCount`/`deviceTotal` drive load-more math.
  */
 export async function fetchConfigurationWindow(filters = {}, { fetcher = globalThis.fetch, signal = null, limit = 200, offset = 0 } = {}) {
 	const params = new URLSearchParams();
 	for (const key of ['platform', 'manufacturer', 'osVersion', 'orientation', 'browserCode', 'search']) {
 		if (filters[key]) params.set(key, filters[key]);
 	}
+	params.set('groupBy', 'device');
 	params.set('limit', String(limit));
 	params.set('offset', String(offset));
 	const response = await fetcher(`/api/qa-configurations?${params}`, { signal, headers: { accept: 'application/json' } });
@@ -520,9 +791,15 @@ export async function fetchConfigurationWindow(filters = {}, { fetcher = globalT
 	if (!Array.isArray(payload?.configurations)) {
 		throw new Error('Catalog response was malformed.');
 	}
+	const deviceTotal = payload.deviceGroups ?? payload.totals?.configurations ?? payload.configurations.length;
+	const deviceCount = payload.deviceOffset !== undefined
+		? Math.min(payload.deviceLimit ?? limit, Math.max(0, deviceTotal - (payload.deviceOffset ?? 0)))
+		: payload.configurations.length;
 	return {
 		configurations: payload.configurations,
 		total: payload.totals?.configurations ?? payload.configurations.length,
-		hasMore: (offset + payload.configurations.length) < (payload.totals?.configurations ?? payload.configurations.length)
+		deviceCount,
+		deviceTotal,
+		hasMore: Boolean(payload.hasMore)
 	};
 }

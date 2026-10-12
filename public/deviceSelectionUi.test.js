@@ -8,12 +8,13 @@ const [app, styles] = await Promise.all([
 ]);
 
 test('device cards use one explicit selection action', () => {
-	assert.match(app, /qa-matrix-device-select/);
-	assert.match(app, /selectDevice\.setAttribute\('aria-pressed', String\(isActiveScope\)\)/);
-	assert.match(app, /Select device/);
-	assert.doesNotMatch(app, /deviceRow\.setAttribute\('role', 'button'\)/);
-	assert.doesNotMatch(app, /deviceRow\.addEventListener\('click'/);
-	assert.doesNotMatch(app, /deviceRow\.addEventListener\('keydown'/);
+	// Merge resolution: NIHARIKA's Phase-1 explicit selection model — the row
+	// carries a SELECTION checkbox (device-select) plus a VIEW button for
+	// scope inspection; DEV's "Select device" scope button was superseded.
+	assert.match(app, /dataset\.role = 'device-select'/);
+	assert.match(app, /dataset\.role = 'device-view'/);
+	assert.match(app, /viewButton\.textContent = 'View'/);
+	assert.match(app, /Inspect this device without changing your selection/);
 });
 
 test('selection summary clearly separates devices, browsers, and runs', () => {

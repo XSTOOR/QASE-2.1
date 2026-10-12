@@ -98,6 +98,12 @@ export function toResultRow(item) {
 		verdict: item.verdict ?? null,
 		reason: item.reason ?? null,
 		error: item.error ?? null,
+		// Pipeline Phase 3/5 (#15493/#15500): the unanswered question that
+		// blocked an unattended item travels with the row so the board shows
+		// WHY, not just "Blocked".
+		question: item.question ?? null,
+		autoAnswers: item.autoAnswers ?? 0,
+		autoAnswerEvidence: Array.isArray(item.autoAnswerEvidence) ? [...item.autoAnswerEvidence] : [],
 		durationMs: item.durationMs ?? null,
 		sessionId: item.sessionId ?? null,
 		artifacts: Array.isArray(item.artifactRefs) ? [...item.artifactRefs] : [],

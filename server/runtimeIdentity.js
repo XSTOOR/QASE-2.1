@@ -19,7 +19,7 @@ const BROWSER_SIGNATURES = [
 	// "CriOS"/"FxiOS"/"EdgiOS" must precede "Safari" (WebKit wrappers all end
 	// with a Safari/ token on iOS).
 	{ code: 'edge', brands: ['Edg/', 'EdgiOS', 'Edge/'] },
-	{ code: 'opera', brands: ['OPR/', 'Opera'] },
+	{ code: 'opera', brands: ['OPR/', 'OPiOS', 'Opera'] },
 	{ code: 'duckduckgo', brands: ['DuckDuckGo'] },
 	{ code: 'brave', brands: ['Brave'] },
 	{ code: 'firefox', brands: ['Firefox/', 'FxiOS'] },
@@ -53,7 +53,7 @@ export function parseUserAgent(ua) {
 	}
 	// Engine: the rendering core that actually drew the page.
 	let engine = null;
-	if (/CriOS|FxiOS|EdgiOS/.test(ua) || (/Safari/.test(ua) && /iPhone|iPad|iPadOS/.test(ua))) engine = 'WebKit';
+	if (/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua) || (/Safari/.test(ua) && /iPhone|iPad|iPadOS/.test(ua))) engine = 'WebKit';
 	else if (/Firefox\//.test(ua)) engine = 'Gecko';
 	else if (/Chrome\/|Chromium|Edg\//.test(ua)) engine = 'Blink';
 	else if (/Safari\//.test(ua)) engine = 'WebKit';
