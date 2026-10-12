@@ -37,7 +37,14 @@ import {
 	recommendedDeviceScope,
 	deviceScopeSelection,
 	planBatches,
-	batchKeyFor
+	batchKeyFor,
+	selectionDimensions,
+	setSelectionMode,
+	defaultDeviceKeyForFamily,
+	assignDevice,
+	unassignDevice,
+	computePerBrowserSelection,
+	perBrowserOverview
 } from './qaConfigMatrix.js';
 
 /** Minimal in-memory localStorage. */
@@ -77,6 +84,15 @@ const CATALOG = [
 	configuration({ envId: 'ENV-WIN-SL5-11-EDG-140', device: 'Surface Laptop 5', manufacturer: 'Microsoft', platform: 'windows', os: 'Windows', osVersion: '11', deviceType: 'desktop', orientation: 'landscape', browser: 'Edge', browserCode: 'edge', browserVersion: '140', executionType: 'browser_emulation' }),
 	configuration({ envId: 'ENV-AND-PIX9-16-DDG-2', device: 'Pixel 9', manufacturer: 'Google', platform: 'android', browser: 'DuckDuckGo', browserCode: 'duckduckgo', browserVersion: '2', availability: 'NOT_SUPPORTED', availabilityReason: 'DuckDuckGo is mobile-only with no automation channel.' }),
 	configuration({ envId: 'PROV-BS-IP15-REAL', device: 'iPhone 15', platform: 'ios', availability: 'NOT_CONFIGURED', availabilityReason: 'Provider "browserstack" not configured.' })
+];
+
+// #16042 fixtures: a Safari-only Mac (Safari has no rows on iPhone/Android in
+// this catalog) and a second iPhone device so assignment paths are distinct.
+const PAIRWISE_CATALOG = [
+	...CATALOG,
+	configuration({ envId: 'ENV-MAC-M3-17-SAF-26', device: 'MacBook Pro M3', manufacturer: 'Apple', platform: 'macos', os: 'macOS', osVersion: '17', deviceType: 'desktop', orientation: 'landscape', browser: 'Safari', browserCode: 'safari', browserVersion: '26', executionType: 'browser_emulation' }),
+	configuration({ envId: 'ENV-IOS-IP15-18.0-SAF-26', browser: 'Safari', browserCode: 'safari', browserVersion: '26' }),
+	configuration({ envId: 'ENV-IOS-IP11-17.0-CHR-140', device: 'iPhone 11', osVersion: '17.0', browser: 'Chrome', browserCode: 'chrome', browserVersion: '140' })
 ];
 
 test('FAMILY_ORDER matches the seven required families', () => {
@@ -669,4 +685,243 @@ test('Phase 2: planBatches rejects invalid batch sizes; batchKeyFor is stable an
 	assert.notEqual(keyA, keyB, 'different parent → different key');
 	assert.notEqual(keyA, keyC, 'different id set → different key');
 	assert.match(keyA, /^[0-9a-f]{32}$/, 'hex digest key');
+});
+
+// ---------------------------------------------------------------------------
+// #16042 Phase 1: per-browser device selection (one device per browser)
+// ---------------------------------------------------------------------------
+
+test('#16042: default state mode is cross; mode persists in state', () => {
+	const state = createSelectionState();
+	assert.equal(state.mode, 'cross');
+	assert.equal(state.activeFamily, null);
+	const per = createSelectionState({ mode: 'perBrowser', browserFamilies: new Set(['chrome']) });
+	assert.equal(per.mode, 'perBrowser');
+});
+
+test('#16042: setSelectionMode to perBrowser auto-assigns default devices', () => {
+	const state = createSelectionState({
+		browserFamilies: new Set(['chrome', 'brave']),
+		deviceKeys: catalogDeviceKeys(PAIRWISE_CATALOG)
+	});
+	const next = setSelectionMode(state, PAIRWISE_CATALOG, 'perBrowser');
+	assert.equal(next.mode, 'perBrowser');
+	// chrome's first selectable config is iPhone 15 (catalog order)
+	assert.equal(next.deviceAssignments.chrome, 'Apple|ios|iPhone 15');
+	// brave's first selectable config is Galaxy S24
+	assert.equal(next.deviceAssignments.brave, 'Samsung|android|Galaxy S24');
+	// cross-product fields untouched
+	assert.deepEqual([...next.browserFamilies].sort(), ['brave', 'chrome']);
+});
+
+test('#16042: switching back to cross keeps assignments inert and restores them on return', () => {
+	let state = createSelectionState({
+		browserFamilies: new Set(['chrome', 'safari']),
+		deviceKeys: catalogDeviceKeys(PAIRWISE_CATALOG)
+	});
+	state = setSelectionMode(state, PAIRWISE_CATALOG, 'perBrowser');
+	state = assignDevice(state, PAIRWISE_CATALOG, 'safari', 'Apple|macos|MacBook Pro M3');
+	assert.equal(state.deviceAssignments.safari, 'Apple|macos|MacBook Pro M3');
+	const cross = setSelectionMode(state, PAIRWISE_CATALOG, 'cross');
+	assert.equal(cross.mode, 'cross');
+	assert.equal(cross.deviceAssignments.safari, 'Apple|macos|MacBook Pro M3', 'assignment kept in state');
+	// cross-mode selection ignores assignments entirely
+	const crossSelected = computeExplicitSelection(PAIRWISE_CATALOG, cross);
+	assert.ok(crossSelected.includes('ENV-IOS-IP15-18.0-CHR-140'));
+	assert.ok(crossSelected.includes('ENV-MAC-M3-17-SAF-26'), 'cross selects safari×Mac (not just the per-browser assignment)');
+	const back = setSelectionMode(cross, PAIRWISE_CATALOG, 'perBrowser');
+	assert.equal(back.deviceAssignments.safari, 'Apple|macos|MacBook Pro M3', 'restored');
+});
+
+test('#16042: assignDevice validates the pair and implicitly selects the family', () => {
+	let state = createSelectionState({ mode: 'perBrowser' });
+	state = assignDevice(state, PAIRWISE_CATALOG, 'chrome', 'Apple|ios|iPhone 11');
+	assert.ok(state.browserFamilies.has('chrome'), 'family implicitly selected');
+	assert.equal(state.deviceAssignments.chrome, 'Apple|ios|iPhone 11');
+	// invalid: device has no selectable configs for the family
+	assert.throws(() => assignDevice(state, PAIRWISE_CATALOG, 'safari', 'Microsoft|windows|Surface Laptop 5'), /No available configurations/i);
+	// invalid: unknown device key
+	assert.throws(() => assignDevice(state, PAIRWISE_CATALOG, 'chrome', 'Nobody|nowhere|Ghost Phone'), /No available configurations/i);
+});
+
+test('#16042: unassignDevice removes the assignment, family stays selected', () => {
+	let state = createSelectionState({ mode: 'perBrowser', browserFamilies: new Set(['chrome']) });
+	state = assignDevice(state, PAIRWISE_CATALOG, 'chrome', 'Apple|ios|iPhone 11');
+	state = unassignDevice(state, 'chrome');
+	assert.equal(state.deviceAssignments.chrome, undefined);
+	assert.ok(state.browserFamilies.has('chrome'));
+});
+
+test('#16042: toggleBrowserFamily in perBrowser mode auto-assigns the default device on select', () => {
+	let state = createSelectionState({ mode: 'perBrowser' });
+	state = setSelectionMode(state, PAIRWISE_CATALOG, 'perBrowser'); // no families yet
+	toggleBrowserFamily(state, PAIRWISE_CATALOG, 'safari', true);
+	assert.ok(state.browserFamilies.has('safari'));
+	assert.equal(state.deviceAssignments.safari, 'Apple|macos|MacBook Pro M3', 'safari default = its only device');
+	// deselect keeps the assignment (inert)
+	toggleBrowserFamily(state, PAIRWISE_CATALOG, 'safari', false);
+	assert.equal(state.deviceAssignments.safari, 'Apple|macos|MacBook Pro M3');
+	assert.ok(!state.browserFamilies.has('safari'));
+});
+
+test('#16042: computePerBrowserSelection returns only assigned-family device rows', () => {
+	const state = createSelectionState({
+		mode: 'perBrowser',
+		browserFamilies: new Set(['chrome', 'safari']),
+		deviceAssignments: {
+			chrome: 'Apple|ios|iPhone 15',
+			safari: 'Apple|macos|MacBook Pro M3'
+		}
+	});
+	const selected = computePerBrowserSelection(PAIRWISE_CATALOG, state);
+	// chrome → iPhone 15 (two version rows), safari → MacBook Pro M3 (one row)
+	assert.deepEqual(selected, ['ENV-IOS-IP15-18.0-CHR-140', 'ENV-IOS-IP15-18.0-CHR-141', 'ENV-MAC-M3-17-SAF-26']);
+});
+
+test('#16042: granular deselections still apply in perBrowser mode', () => {
+	const state = createSelectionState({
+		mode: 'perBrowser',
+		browserFamilies: new Set(['chrome']),
+		deviceAssignments: { chrome: 'Apple|ios|iPhone 15' },
+		deselectedEnvIds: new Set(['ENV-IOS-IP15-18.0-CHR-140'])
+	});
+	const selected = computePerBrowserSelection(PAIRWISE_CATALOG, state);
+	assert.deepEqual(selected, ['ENV-IOS-IP15-18.0-CHR-141']);
+});
+
+test('#16042: computeExplicitSelection dispatches on mode', () => {
+	const perState = createSelectionState({
+		mode: 'perBrowser',
+		browserFamilies: new Set(['chrome']),
+		deviceKeys: catalogDeviceKeys(PAIRWISE_CATALOG),
+		deviceAssignments: { chrome: 'Apple|ios|iPhone 11' }
+	});
+	assert.deepEqual(computeExplicitSelection(PAIRWISE_CATALOG, perState), ['ENV-IOS-IP11-17.0-CHR-140']);
+});
+
+test('#16042: defaultDeviceKeyForFamily returns null when family has no selectable rows', () => {
+	assert.equal(defaultDeviceKeyForFamily(PAIRWISE_CATALOG, 'duckduckgo'), null);
+	assert.equal(defaultDeviceKeyForFamily(PAIRWISE_CATALOG, 'firefox'), null);
+	assert.equal(defaultDeviceKeyForFamily(PAIRWISE_CATALOG, 'chrome'), 'Apple|ios|iPhone 15');
+});
+
+test('#16042: selection store round-trips mode and assignments; legacy payloads restore as cross', () => {
+	const storage = memoryStorage();
+	let provider = { catalog: PAIRWISE_CATALOG };
+	const store = createSelectionStore(storage, () => provider.catalog);
+	let state = store.get(); // first run → everything selected, cross mode
+	assert.equal(state.mode, 'cross');
+	state = setSelectionMode(state, provider.catalog, 'perBrowser');
+	assignDeviceMutating(state, provider.catalog, 'chrome', 'Apple|ios|iPhone 11');
+	store.save(state);
+
+	// fresh store over same storage — restores mode + assignments
+	const store2 = createSelectionStore(storage, () => provider.catalog);
+	const restored = store2.get();
+	assert.equal(restored.mode, 'perBrowser');
+	assert.equal(restored.deviceAssignments.chrome, 'Apple|ios|iPhone 11');
+
+	// legacy payload without mode → cross
+	storage.setItem('qase.qaConfigSelection.v2', JSON.stringify({
+		deviceKeys: ['Apple|ios|iPhone 15'],
+		browserFamilies: ['chrome'],
+		deselectedEnvIds: []
+	}));
+	const store3 = createSelectionStore(storage, () => provider.catalog);
+	const legacy = store3.get();
+	assert.equal(legacy.mode, 'cross');
+	assert.deepEqual(legacy.deviceAssignments, {});
+
+	// stale assignment (device left the catalog) dropped on restore
+	storage.setItem('qase.qaConfigSelection.v2', JSON.stringify({
+		mode: 'perBrowser',
+		deviceKeys: [],
+		browserFamilies: ['chrome'],
+		deselectedEnvIds: [],
+		deviceAssignments: { chrome: 'Ghost|none|Phantom', safari: 'Apple|macos|MacBook Pro M3' }
+	}));
+	const store4 = createSelectionStore(storage, () => provider.catalog);
+	const validated = store4.get();
+	assert.equal(validated.deviceAssignments.chrome, undefined, 'stale dropped');
+	assert.equal(validated.deviceAssignments.safari, 'Apple|macos|MacBook Pro M3', 'valid kept');
+});
+
+test('#16042: perBrowserOverview lists one row per selected family with device label and run count', () => {
+	const state = createSelectionState({
+		mode: 'perBrowser',
+		browserFamilies: new Set(['chrome', 'safari', 'brave']),
+		deviceAssignments: {
+			chrome: 'Apple|ios|iPhone 15',
+			safari: 'Apple|macos|MacBook Pro M3'
+			// brave selected but unassigned
+		}
+	});
+	const overview = perBrowserOverview(PAIRWISE_CATALOG, state);
+	assert.equal(overview.length, 3);
+	const chrome = overview.find((row) => row.family === 'chrome');
+	assert.equal(chrome.deviceLabel, 'Apple iPhone 15');
+	assert.equal(chrome.runs, 2);
+	const safari = overview.find((row) => row.family === 'safari');
+	assert.equal(safari.deviceLabel, 'Apple MacBook Pro M3');
+	assert.equal(safari.runs, 1);
+	const brave = overview.find((row) => row.family === 'brave');
+	assert.equal(brave.deviceKey, null);
+	assert.equal(brave.runs, 0);
+});
+
+test('#16042: dimensions math — 2 browsers × 1 device each → 3 runs', () => {
+	const state = createSelectionState({
+		mode: 'perBrowser',
+		browserFamilies: new Set(['chrome', 'safari']),
+		deviceAssignments: {
+			chrome: 'Apple|ios|iPhone 15',
+			safari: 'Apple|macos|MacBook Pro M3'
+		}
+	});
+	const selected = computePerBrowserSelection(PAIRWISE_CATALOG, state);
+	const dimensions = selectionDimensions(PAIRWISE_CATALOG, selected);
+	assert.equal(dimensions.families, 2);
+	assert.equal(dimensions.devices, 2);
+	assert.equal(dimensions.runs, 3);
+});
+
+// helper: mutate-style assign used in the store round-trip test
+function assignDeviceMutating(state, catalog, family, deviceKey) {
+	const next = assignDevice(state, catalog, family, deviceKey);
+	state.browserFamilies = next.browserFamilies;
+	state.deviceKeys = next.deviceKeys;
+	state.deselectedEnvIds = next.deselectedEnvIds;
+	state.mode = next.mode;
+	state.activeFamily = next.activeFamily;
+	state.deviceAssignments = next.deviceAssignments;
+}
+
+test('#16042: cross-mode behavior byte-identical (regression)', () => {
+	const state = createSelectionState({
+		deviceKeys: new Set(['Apple|ios|iPhone 15', 'Samsung|android|Galaxy S24']),
+		browserFamilies: new Set(['chrome', 'brave'])
+	});
+	const selected = computeExplicitSelection(PAIRWISE_CATALOG, state);
+	assert.deepEqual(selected, ['ENV-IOS-IP15-18.0-CHR-140', 'ENV-IOS-IP15-18.0-CHR-141', 'ENV-AND-SGS24-15-BRV-138']);
+});
+
+test('#16042: selectAllBrowsers in perBrowser mode auto-assigns defaults for every family', () => {
+	let state = createSelectionState({ mode: 'perBrowser', browserFamilies: new Set(['chrome']), deviceAssignments: { chrome: 'Apple|ios|iPhone 11' } });
+	state = selectAllBrowsers(PAIRWISE_CATALOG, state);
+	assert.ok(state.browserFamilies.has('edge'));
+	assert.ok(state.browserFamilies.has('brave'));
+	assert.ok(state.browserFamilies.has('safari'));
+	assert.equal(state.deviceAssignments.edge, 'Microsoft|windows|Surface Laptop 5');
+	assert.equal(state.deviceAssignments.brave, 'Samsung|android|Galaxy S24');
+	assert.equal(state.deviceAssignments.chrome, 'Apple|ios|iPhone 11', 'existing assignment preserved, not reset to default');
+	assert.equal(state.deviceAssignments.safari, 'Apple|macos|MacBook Pro M3');
+});
+
+test('#16042: deselectedEnvIds honored by setSelectionMode auto-assign (no phantom selections)', () => {
+	const state = createSelectionState({
+		browserFamilies: new Set(['chrome']),
+		deviceKeys: catalogDeviceKeys(PAIRWISE_CATALOG)
+	});
+	const next = setSelectionMode(state, PAIRWISE_CATALOG, 'perBrowser');
+	assert.equal(next.deviceAssignments.chrome, 'Apple|ios|iPhone 15');
 });

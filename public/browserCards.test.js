@@ -26,7 +26,10 @@ test('#15968: card click toggles the family exactly once through the explicit mo
 	const cardIndex = app.indexOf("card.dataset.role = 'browser-card'");
 	assert.ok(cardIndex !== -1, 'browser card must exist');
 	const cardBlock = app.slice(cardIndex, app.indexOf("matrix.browsers.append(cardList);"));
-	assert.match(cardBlock, /toggleBrowserFamily\(next, qaMatrixState\.index, family\.code, !selection\.browserFamilies\.has\(family\.code\)\)/);
+	// #16043: toggle intent is computed once as willSelect (also drives the
+	// per-browser active-family update); the model call itself is unchanged.
+	assert.match(cardBlock, /const willSelect = !selection\.browserFamilies\.has\(family\.code\);/);
+	assert.match(cardBlock, /toggleBrowserFamily\(next, qaMatrixState\.index, family\.code, willSelect\)/);
 	assert.match(cardBlock, /qaMatrixApplySelection\(next\)/);
 	// Cards expose pressed state for assistive tech.
 	assert.match(cardBlock, /aria-pressed/);

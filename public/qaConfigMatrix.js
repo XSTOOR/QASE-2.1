@@ -119,21 +119,170 @@ export function availableBrowserFamilies(configurations) {
  * UX). State is a plain object of Sets so it can live on qaMatrixState and be
  * persisted/restored as arrays.
  *
+ * Modes (#16042):
+ * - 'cross' (default): effective selection is the cross-product — device
+ *   selected AND family selected AND row selectable AND not granularly
+ *   deselected.
+ * - 'perBrowser': each selected family runs on EXACTLY ONE assigned device
+ *   (deviceAssignments: familyCode → deviceKey). Runs = each family's
+ *   selectable configurations on its assigned device. Assignments are kept
+ *   when switching back to cross (inert) so a mode round-trip loses nothing.
+ *
  * Effective selection = catalog rows where the device is selected AND the
  * family is selected AND the row is selectable AND not granularly deselected.
  * There is NO cap here — the 2,000 limit is a server-side per-batch execution
  * limit (see MATRIX_BATCH_SIZE), never a selection limit.
  */
-export function createSelectionState({ deviceKeys = new Set(), browserFamilies = new Set(), deselectedEnvIds = new Set() } = {}) {
+export function createSelectionState({
+	deviceKeys = new Set(),
+	browserFamilies = new Set(),
+	deselectedEnvIds = new Set(),
+	mode = 'cross',
+	activeFamily = null,
+	deviceAssignments = {}
+} = {}) {
 	return {
 		deviceKeys: new Set(deviceKeys),
 		browserFamilies: new Set(browserFamilies),
-		deselectedEnvIds: new Set(deselectedEnvIds)
+		deselectedEnvIds: new Set(deselectedEnvIds),
+		mode: mode === 'perBrowser' ? 'perBrowser' : 'cross',
+		activeFamily: typeof activeFamily === 'string' ? activeFamily : null,
+		deviceAssignments: { ...(deviceAssignments ?? {}) }
 	};
 }
 
-/** Effective selection: envIds in catalog order (stable summary), uncapped. */
+/** Device key of the first selectable configuration of a family in catalog
+ *  order — the stable default assignment (#16042). Null when the family has
+ *  no selectable rows. */
+export function defaultDeviceKeyForFamily(configurations, familyCode) {
+	for (const configuration of configurations) {
+		if (configuration.browserCode !== familyCode) continue;
+		if (!isSelectable(configuration)) continue;
+		return deviceKeyOf(configuration);
+	}
+	return null;
+}
+
+/** Does the device have at least one selectable configuration for the family? */
+function deviceSupportsFamily(configurations, familyCode, deviceKey) {
+	return configurations.some((configuration) =>
+		configuration.browserCode === familyCode
+		&& isSelectable(configuration)
+		&& deviceKeyOf(configuration) === deviceKey);
+}
+
+/** Switch selection mode. cross → perBrowser auto-assigns the default device
+ *  to every selected available family lacking a valid assignment (the matrix
+ *  always yields runs without manual fixing — #16042 UX rule). perBrowser →
+ *  cross keeps assignments in state (inert). Returns a NEW state. */
+export function setSelectionMode(state, configurations, mode) {
+	const nextMode = mode === 'perBrowser' ? 'perBrowser' : 'cross';
+	const next = createSelectionState({
+		deviceKeys: state.deviceKeys,
+		browserFamilies: state.browserFamilies,
+		deselectedEnvIds: state.deselectedEnvIds,
+		mode: nextMode,
+		activeFamily: state.activeFamily,
+		deviceAssignments: state.deviceAssignments
+	});
+	if (nextMode === 'perBrowser') {
+		for (const familyCode of next.browserFamilies) {
+			const assigned = next.deviceAssignments[familyCode];
+			if (assigned && deviceSupportsFamily(configurations, familyCode, assigned)) continue;
+			const fallback = defaultDeviceKeyForFamily(configurations, familyCode);
+			if (fallback) next.deviceAssignments[familyCode] = fallback;
+			else delete next.deviceAssignments[familyCode];
+		}
+	}
+	return next;
+}
+
+/** Assign one device to one family (perBrowser mode). Validates the pair and
+ *  implicitly selects the family. Returns a NEW state. */
+export function assignDevice(state, configurations, familyCode, deviceKey) {
+	if (!deviceSupportsFamily(configurations, familyCode, deviceKey)) {
+		throw new Error(`No available configurations for ${familyCode} on that device.`);
+	}
+	const next = createSelectionState({
+		deviceKeys: state.deviceKeys,
+		browserFamilies: state.browserFamilies,
+		deselectedEnvIds: state.deselectedEnvIds,
+		mode: 'perBrowser',
+		activeFamily: state.activeFamily,
+		deviceAssignments: state.deviceAssignments
+	});
+	next.browserFamilies.add(familyCode);
+	next.deviceAssignments[familyCode] = deviceKey;
+	return next;
+}
+
+/** Remove a family's device assignment. The family stays selected (it simply
+ *  contributes 0 runs until a device is picked). Returns a NEW state. */
+export function unassignDevice(state, familyCode) {
+	const next = createSelectionState({
+		deviceKeys: state.deviceKeys,
+		browserFamilies: state.browserFamilies,
+		deselectedEnvIds: state.deselectedEnvIds,
+		mode: state.mode,
+		activeFamily: state.activeFamily,
+		deviceAssignments: state.deviceAssignments
+	});
+	delete next.deviceAssignments[familyCode];
+	return next;
+}
+
+/** Effective selection in perBrowser mode: each selected family's selectable
+ *  configurations on its ASSIGNED device (granular deselections still apply). */
+export function computePerBrowserSelection(configurations, selectionState) {
+	const { browserFamilies, deselectedEnvIds, deviceAssignments } = selectionState;
+	const selected = [];
+	for (const configuration of configurations) {
+		if (!isSelectable(configuration)) continue;
+		if (deselectedEnvIds.has(configuration.envId)) continue;
+		const familyCode = configuration.browserCode;
+		if (!browserFamilies.has(familyCode)) continue;
+		if (deviceKeyOf(configuration) !== deviceAssignments[familyCode]) continue;
+		selected.push(configuration.envId);
+	}
+	return selected;
+}
+
+/** One row per selected family for the UI: assigned device (label, key) and
+ *  run count; families without a valid assignment surface honestly
+ *  (#16042 summary 'K browsers need a device'). */
+export function perBrowserOverview(configurations, selectionState) {
+	const { browserFamilies, deviceAssignments } = selectionState;
+	const labelFor = (deviceKey) => {
+		for (const configuration of configurations) {
+			if (deviceKeyOf(configuration) !== deviceKey) continue;
+			return `${configuration.manufacturer ? `${configuration.manufacturer} ` : ''}${configuration.device}`;
+		}
+		return null;
+	};
+	const runsByFamily = new Map();
+	for (const configuration of configurations) {
+		if (!isSelectable(configuration)) continue;
+		if (!browserFamilies.has(configuration.browserCode)) continue;
+		if (deviceKeyOf(configuration) !== deviceAssignments[configuration.browserCode]) continue;
+		runsByFamily.set(configuration.browserCode, (runsByFamily.get(configuration.browserCode) ?? 0) + 1);
+	}
+	return FAMILY_ORDER
+		.filter((code) => browserFamilies.has(code))
+		.map((code) => {
+			const deviceKey = deviceAssignments[code] ?? null;
+			return {
+				family: code,
+				deviceKey,
+				deviceLabel: deviceKey === null ? null : labelFor(deviceKey),
+				runs: runsByFamily.get(code) ?? 0
+			};
+		});
+}
+
+/** Effective selection: envIds in catalog order (stable summary), uncapped.
+ *  Dispatches on selection mode (#16042). */
 export function computeExplicitSelection(configurations, selectionState) {
+	if (selectionState?.mode === 'perBrowser') return computePerBrowserSelection(configurations, selectionState);
 	const { deviceKeys, browserFamilies, deselectedEnvIds } = selectionState;
 	const selected = [];
 	for (const configuration of configurations) {
@@ -193,13 +342,28 @@ export function deselectAllDevices(_configurations, state) {
 }
 
 /** Select every selectable browser family. As with selectAllDevices, bulk
- *  intent clears stale chip-level opt-outs. Returns a NEW state. */
+ *  intent clears stale chip-level opt-outs. Returns a NEW state.
+ *  #16042: in perBrowser mode, every newly selected family auto-assigns its
+ *  default device (existing valid assignments are preserved). */
 export function selectAllBrowsers(configurations, state) {
-	return createSelectionState({
+	const next = createSelectionState({
 		deviceKeys: state.deviceKeys,
 		browserFamilies: new Set(availableBrowserFamilies(configurations)),
-		deselectedEnvIds: new Set()
+		deselectedEnvIds: new Set(),
+		mode: state.mode,
+		activeFamily: state.activeFamily,
+		deviceAssignments: state.deviceAssignments
 	});
+	if (next.mode === 'perBrowser') {
+		for (const familyCode of next.browserFamilies) {
+			const assigned = next.deviceAssignments[familyCode];
+			if (assigned && deviceSupportsFamily(configurations, familyCode, assigned)) continue;
+			const fallback = defaultDeviceKeyForFamily(configurations, familyCode);
+			if (fallback) next.deviceAssignments[familyCode] = fallback;
+			else delete next.deviceAssignments[familyCode];
+		}
+	}
+	return next;
 }
 
 export function deselectAllBrowsers(_configurations, state) {
@@ -218,12 +382,23 @@ export function toggleDevice(state, deviceKey, selected) {
 
 /** One family toggle: add/remove a family in place. Selecting a family also
  *  clears granular deselections WITHIN that family so the family checkbox
- *  remains the primary control (chip ticks then narrow back down). */
+ *  remains the primary control (chip ticks then narrow back down).
+ *  #16042: in perBrowser mode, selecting auto-assigns the default device when
+ *  the family has no valid assignment; deselecting KEEPS the assignment
+ *  (inert — reselecting restores it unchanged). */
 export function toggleBrowserFamily(state, configurations, familyCode, selected) {
 	if (selected) {
 		state.browserFamilies.add(familyCode);
 		for (const configuration of configurations) {
 			if (configuration.browserCode === familyCode) state.deselectedEnvIds.delete(configuration.envId);
+		}
+		if (state.mode === 'perBrowser') {
+			const assigned = state.deviceAssignments[familyCode];
+			if (!assigned || !deviceSupportsFamily(configurations, familyCode, assigned)) {
+				const fallback = defaultDeviceKeyForFamily(configurations, familyCode);
+				if (fallback) state.deviceAssignments[familyCode] = fallback;
+				else delete state.deviceAssignments[familyCode];
+			}
 		}
 	} else {
 		state.browserFamilies.delete(familyCode);
@@ -242,7 +417,12 @@ export function createSelectionStore(storage, configurationsProvider) {
 			storage.setItem(SELECTION_STORAGE_KEY, JSON.stringify({
 				deviceKeys: [...state.deviceKeys],
 				browserFamilies: [...state.browserFamilies],
-				deselectedEnvIds: [...state.deselectedEnvIds]
+				deselectedEnvIds: [...state.deselectedEnvIds],
+				// #16042: mode + per-browser device assignments persist under the
+				// same key; legacy payloads restore as 'cross'.
+				mode: state.mode === 'perBrowser' ? 'perBrowser' : 'cross',
+				activeFamily: typeof state.activeFamily === 'string' ? state.activeFamily : null,
+				deviceAssignments: state.deviceAssignments ?? {}
 			}));
 		} catch { /* private mode — in-memory only */ }
 	};
@@ -263,10 +443,25 @@ export function createSelectionStore(storage, configurationsProvider) {
 			if (loaded && typeof loaded === 'object') {
 				// Trusted on restore, validated against the catalog on use by
 				// computeExplicitSelection (unknown keys simply match nothing).
+				// #16042: per-browser assignments are validated eagerly — a
+				// stale (family, device) pair that no longer has selectable
+				// rows is dropped so the UI never shows a dead assignment.
+				const restoredAssignments = {};
+				const restoredMode = loaded.mode === 'perBrowser' ? 'perBrowser' : 'cross';
+				if (restoredMode === 'perBrowser' && loaded.deviceAssignments && typeof loaded.deviceAssignments === 'object') {
+					for (const [familyCode, deviceKey] of Object.entries(loaded.deviceAssignments)) {
+						if (typeof deviceKey !== 'string') continue;
+						if (!deviceSupportsFamily(configurations, familyCode, deviceKey)) continue;
+						restoredAssignments[familyCode] = deviceKey;
+					}
+				}
 				state = createSelectionState({
 					deviceKeys: new Set(loaded.deviceKeys ?? []),
 					browserFamilies: new Set(loaded.browserFamilies ?? []),
-					deselectedEnvIds: new Set(loaded.deselectedEnvIds ?? [])
+					deselectedEnvIds: new Set(loaded.deselectedEnvIds ?? []),
+					mode: restoredMode,
+					activeFamily: typeof loaded.activeFamily === 'string' ? loaded.activeFamily : null,
+					deviceAssignments: restoredAssignments
 				});
 			} else {
 				// First run under the new model: default = full catalog minus
@@ -279,6 +474,7 @@ export function createSelectionStore(storage, configurationsProvider) {
 				} catch { /* unreadable legacy data is ignored */ }
 				state = selectAllDevices(configurations, selectAllBrowsers(configurations, createSelectionState()));
 				state.deselectedEnvIds = legacyDeselected;
+				state.mode = 'cross';
 			}
 			return state;
 		},

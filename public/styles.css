@@ -12897,6 +12897,89 @@ dialog:not([open]) { display: none !important; }
   gap: 6px;
 }
 
+/* #16043 — mode segmented control (cross product vs one device per browser). */
+.qa-matrix-mode {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+
+.qa-matrix-mode-btn {
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted, #9aa0aa);
+  font: inherit;
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.qa-matrix-mode-btn:hover { color: var(--text, #e6e6e6); }
+
+.qa-matrix-mode-btn.is-active {
+  border-color: var(--accent, #8b5cf6);
+  color: var(--text, #e6e6e6);
+  background: color-mix(in srgb, var(--accent, #8b5cf6) 12%, transparent);
+  font-weight: 600;
+}
+
+.qa-matrix-mode-btn:focus-visible {
+  outline: 2px solid var(--accent, #8b5cf6);
+  outline-offset: 2px;
+}
+
+/* #16043 — per-browser assignment chip on a browser card. */
+.qa-matrix-assignment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent, #8b5cf6) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent, #8b5cf6) 10%, transparent);
+  color: var(--text, #e6e6e6);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.qa-matrix-assignment-chip.is-missing {
+  border-color: var(--warn-border, #d97706);
+  background: color-mix(in srgb, #d97706 12%, transparent);
+  color: var(--warn-text, #f5b544);
+}
+
+/* #16043 — the ACTIVE browser card: the device list picks for THIS one. */
+.qa-matrix-browser-card.is-active {
+  border-color: var(--accent, #8b5cf6);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #8b5cf6) 35%, transparent);
+}
+
+/* #16043 — picker hint above the device list in per-browser mode. */
+.qa-matrix-picker-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted, #9aa0aa);
+}
+
+/* #16043 — brand icons of browsers assigned to a device row. */
+.qa-matrix-assigned-family-icon {
+  flex: none;
+  vertical-align: middle;
+}
+
+/* #16043 — assigned device row (the active browser's device). */
+.qa-matrix-device-row.is-assigned {
+  border-color: color-mix(in srgb, var(--accent, #8b5cf6) 55%, transparent);
+}
+
 .qa-matrix-browser-card {
   display: grid;
   grid-template-columns: 1fr;
