@@ -1,9 +1,0 @@
-# DX Phase 3 review (ticket #13907) — start dialogs on the ONE selection
-
-Spec: `.drytis/specs/device-ux-phase-3.md`. Reviewed app.js renderTestOn/selectedEnvironmentForRun, index.html TEST ON blocks, submit paths, startRunForTestCase.
-
-**RESULT: FAIL** — SQA + Founder "Change device" buttons (`data-test-on-change`) are captured into `sqaUi.testOnChange` (app.js:3388) and `founderUi.testOnChange` (app.js:3604) but **never wired** to `devicePicker.open()`; only the QA dialog wires its button (app.js:3326). Clicking Change in SQA/Founder does nothing. One-line fix each (wire in openSqaStart/openFounderStart or via renderAllTestOnBlocks loop).
-
-Everything else PASS: legacy selects gone from DOM (verified served HTML); submit paths read `activeTestEnvStore.get()?.device || pendingDeviceId()` + `selectedEnvironmentForRun()` at submit time (AC14 met); picker onSelect → renderAllTestOnBlocks (app.js:4630) keeps all three dialogs live; startRunForTestCase switches the store to first assigned env (app.js:4197–4218); suite 811/0 fail; renderTestOn is DOM-safe (createElement/textContent).
-
-WARNs: (1) openSqaStart/openFounderStart don't render their own test-on block at open — rely on global renderAllTestOnBlocks sync from onSelect; boot hydrate renders once (4662). Fragile if any future store write path forgets to call it. (2) Dead legacy code: `sqaUi.environmentSelect`/`founderUi.environmentSelect` never defined → guarded populateEnvironmentSelect lines (3495, 3658) are no-ops; populateDeviceSelect(null,...) no-ops; populateEnvironmentSelect/populateDeviceSelect now effectively unused. (3) startRunForTestCase prefill depends on `devicePicker.state.environments` being hydrated (boot async) — early click before hydrate silently skips the prefill. (4) Drawer "Set default" (deviceDrawer.js:495) still writes legacy `qase.environmentId` directly, bypassing the store (carried from Phase 2). (5) All Phase 1–3 changes still uncommitted on PUSHKAR.

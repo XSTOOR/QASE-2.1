@@ -1,8 +1,0 @@
-Code review of ef0805d (DEV) for #14023 Phase 1.
-
-**Overall PASS, all acceptance items including item 5 (resolved on re-verify).**
-
-- Item 5 discrepancy (now FIXED): earlier review found setup.sh lacked `npm run build:react`; infra updated the backend setup-script record via update_production_config and restarted the container. Re-verified 2026-10-01: /project-config/setup.sh and /drytis-config/setup.sh are md5-identical (18593fbc…) and contain `npm ci` (line 7) → `npm run build:react` (line 10) → hard verification block failing loudly if /workspace/public/app-react/index.html is missing (lines 13-16, exit 1). /workspace/public/app-react/index.html exists; /app-react/ → 200 (preview and localhost).
-- Everything else verified green: scaffold, tokens (match drytis-studio-design-tokens.md palette incl #2f5bea, sp-panel + theme layers, alpha badges), ThemeProvider (persisted 'qase-theme', live prefers-color-scheme, no-flash script precedes module script), app shell (collapsible sidebar/viewer, mode rail, status bar, 8px grid via --sp-* tokens), server/app.js diff is exactly the 4-line /app-react/ route, .gitignore now has public/app-react/, reactShell.test.js 6/6, full suite 754 pass / 0 fail (774 tests, 20 skipped), no secrets/URLs in src/ or vite.config.ts.
-- Curls: / 200 legacy title "Qase — autonomous QA agent"; /app-react/ 200 React shell; /login 200.
-- Cosmetic: commit message says "React 18" but package.json pins React ^19.3. vite.config.ts has a dev-only proxy to localhost:3000 (harmless, dev server unused in prod).

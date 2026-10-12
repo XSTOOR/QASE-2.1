@@ -1,9 +1,0 @@
-# Merge MANOJ → DEV, ticket #14244
-
-- origin/MANOJ = 6208c87 (2 commits over merge-base 7e95b62: 0f5f6cd Supported Coverage panel, 6208c87 Optional Choices block). origin/DEV had moved 921883e → 90f3d45 (58 commits: NIHARIKA/PUSHKAR merges, React UI rebuild + revert, device catalog/env/test-cases, Studio redesign).
-- Local DEV ff'd to 90f3d45, then `git merge --no-ff 6208c87` → **c670429** pushed to origin/DEV.
-- One conflict, public/app.js `qaUi` selector map only. Resolution = union: kept DEV's tests/security/selectAll/deselectAll/scopeAll/environmentSelect AND added MANOJ's scopeSelectAll/scopeDeselectAll/founderMode/compliance. No references lost (qaUi.scopeAll refs were already gone — MANOJ removed the only consumer; the remaining `syncSelectAll` at ~3111 is the unrelated follow-ups block).
-- index.html/styles.css auto-merged. NOTE: DEV's qa-start dialog on 90f3d45 ALREADY has duplicated fieldsets (two engines + "What to test" + Tests blocks with dup ids) — pre-existing from the #14189/#14211 merges, NOT introduced by this merge. MANOJ's Coverage/Optional fieldsets inserted before the dup. Worth a team cleanup ticket someday.
-- Tests: `node --test server/*.test.js` → **833 tests, 815 pass, 0 fail, 18 skipped** on BOTH the merged tree and clean 90f3d45 worktree. Suite grew ~649 → 833 since the #13996 merge. The known "split-horizon" targetReachability failure did NOT reproduce this run (passes now). One flake seen once: app.test.js "SSE stays live without login sessions..." (timing, 1 !== 0) — passes on rerun.
-- Git quirk: plain `git fetch origin` sometimes fails "remote end hung up" (shallow clone, see git-fetch-quirk-shallow-clone.md); `git fetch origin MANOJ DEV` works. Also set core.pager cat — the default pager hung a `git log` past the 2m timeout.
-- MANOJ checked back out, clean, 0/0 vs origin.

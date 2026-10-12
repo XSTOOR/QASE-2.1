@@ -594,9 +594,65 @@ export function compareVersionsDesc(left, right) {
 	return 0;
 }
 
+/**
+ * #15970: plain-language dimensions of the effective selection — how many
+ * distinct browsers, how many distinct devices, how many runs. Derived from
+ * the same explicit-selection math the run submits.
+ */
+export function selectionDimensions(configurations = [], selectedEnvIds = []) {
+	const selected = new Set(selectedEnvIds);
+	const families = new Set();
+	const devices = new Set();
+	for (const configuration of configurations) {
+		if (!selected.has(configuration.envId)) continue;
+		families.add(configuration.browserCode);
+		devices.add(`${configuration.manufacturer ?? ''}|${configuration.platform}|${configuration.device}`);
+	}
+	return { families: families.size, devices: devices.size, runs: selected.size };
+}
+
 // ---------------------------------------------------------------------------
 // Facet values (for the filter dropdowns)
 // ---------------------------------------------------------------------------
+
+/**
+ * #15969: dedupe windowed device-grouped rows to ONE entry per device key —
+ * the device selector renders flat rows, not a nested OS/browser tree. Rolls
+ * up availability honestly: a device with zero selectable configurations
+ * keeps its first unavailable reason.
+ */
+export function deviceListFromWindow(rows = []) {
+	const byKey = new Map();
+	for (const configuration of rows) {
+		const key = `${configuration.manufacturer ?? ''}|${configuration.platform}|${configuration.device}`;
+		let entry = byKey.get(key);
+		if (!entry) {
+			entry = {
+				key,
+				platform: configuration.platform,
+				manufacturer: configuration.manufacturer ?? '',
+				device: configuration.device,
+				deviceType: configuration.deviceType ?? null,
+				executionTypes: new Set(),
+				osVersions: new Set(),
+				osLabel: configuration.os ?? null,
+				selectableCount: 0,
+				unavailableReason: null
+			};
+			byKey.set(key, entry);
+		}
+		if (configuration.executionType) entry.executionTypes.add(configuration.executionType);
+		if (configuration.osVersion) entry.osVersions.add(`${configuration.osVersion}`);
+		if (isSelectable(configuration)) entry.selectableCount += 1;
+		else if (!entry.unavailableReason && configuration.availabilityReason) entry.unavailableReason = configuration.availabilityReason;
+	}
+	return [...byKey.values()].map((entry) => ({
+		...entry,
+		executionTypes: [...entry.executionTypes],
+		osVersions: [...entry.osVersions].sort(compareVersionsDesc)
+	}));
+}
+
 
 export function facetValues(configurations) {
 	const count = (key) => {

@@ -48,3 +48,6 @@ userDocs/image_21567749.png
 /*.png
 /*.deb
 userDocs/image_73eed07c.png
+
+# #15971: internal agent tooling/specs/reports — never publish (leaks absolute preview URLs)
+.drytis/

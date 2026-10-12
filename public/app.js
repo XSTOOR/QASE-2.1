@@ -8,8 +8,8 @@ import { QA_SCOPE_OPTIONS, buildQaKickoffMessage } from './qaKickoff.js';
 import {
 	sanitizeSelection,
 	filterConfigurations,
-	groupDeviceTree,
-	facetValues,
+	deviceListFromWindow,
+	selectionDimensions,
 	familyRows,
 	isSelectable,
 	executionTypeLabel,
@@ -19,16 +19,10 @@ import {
 	MATRIX_BATCH_SIZE,
 	planBatches,
 	batchKeyFor,
-	configurationsForDevice,
-	compatibleBrowserFamilies,
-	defaultSelectionForDevice,
-	recommendedDeviceScope,
 	fetchQaConfigurations,
 	fetchConfigurationIndex,
 	fetchConfigurationWindow,
 	deviceKeyOf,
-	catalogDeviceKeys,
-	availableBrowserFamilies,
 	createSelectionState,
 	computeExplicitSelection,
 	selectAllDevices,
@@ -52,6 +46,7 @@ import { createDevicePicker, createDeviceChipList, executionTypeText } from './d
 import { createFavoritesStore, createRecentsStore, resolvePickerFocus, buildBrowserColumns, selectionDisplayString } from './deviceBrowserMatrix.js';
 import { createMatrixSidebar } from './matrixSidebar.js';
 import { createMatrixColumns } from './matrixColumns.js';
+import { brandIcon } from './brandIcons.js';
 import { channelFor as channelForClient } from './browserChannels.js';
 import { fallbackOptionsFor, availabilityMeta, describeQueue } from './deviceRuntimeUi.js';
 import { resolveActiveRuntimeEnvironment, viewForSelection } from './activeRuntimeEnvironment.js';
@@ -1008,9 +1003,7 @@ function renderTestOn(containerId) {
 			delete box.dataset.empty;
 			const name = document.createElement('strong');
 			name.className = 'test-on-device';
-			name.textContent = qaMatrixState.deviceScope
-				? `Full device matrix (viewing ${qaMatrixState.deviceScope.device})`
-				: 'Full device matrix';
+			name.textContent = 'Full device matrix';
 			const line = document.createElement('span');
 			line.className = 'test-on-line';
 			line.textContent = `${summaryCount.toLocaleString()} selected configurations · browsers run one at a time`;
@@ -4999,19 +4992,12 @@ const qaMatrixState = {
 	// browser families are selected, plus granular envId-level deselection
 	// overrides. Replaces the derived-and-capped model (#14276/#15323):
 	// selection is NEVER truncated; the 2,000 limit is a per-batch execution
-	// limit applied at submission time (Phase 2), not a selection limit.
 	selection: createSelectionState(),
-	// #15163 (re-scoped Phase 1): device scope is a VIEW, not a selection
-	// mode. Scoping narrows the rendered tree/checklist to one device for
-	// inspection; it never mutates the selection state. Exiting scope
-	// ("← Back to all devices") restores the full view.
-	deviceScope: null,
-	filters: { search: '', platform: '', manufacturer: '', osVersion: '', orientation: '' }
+	filters: { search: '', platform: '', manufacturer: '', osVersion: '', orientation: '' },
+	// #15969: remembered platform tab so re-renders keep the user's tab.
+	activeTab: 'all'
 };
 
-/** Explicit selection store: persists under qase.qaConfigSelection.v2 and
- *  migrates legacy deselections best-effort on first load. The catalog
- *  provider is lazy so the initial state derives from the fresh index. */
 const qaSelectionStore = createSelectionStore(window.localStorage, () => qaMatrixState.index);
 
 function qaMatrixFiltered() {
@@ -5056,16 +5042,9 @@ async function loadQaMatrixCatalog() {
 		if (controller.signal.aborted) return;
 		qaMatrixState.index = index;
 		// Pipeline Phase 1: the explicit selection store initializes against
-		// the fresh index (first load migrates legacy deselections). A device
-		// scope is a VIEW — it survives a reopen as long as the device still
-		// exists, and never affects the selection state itself.
+		// the fresh index (first load migrates legacy deselections).
 		qaMatrixState.selection = qaSelectionStore.get();
-		if (qaMatrixState.deviceScope) {
-			const stillThere = configurationsForDevice(index, qaMatrixState.deviceScope).length > 0;
-			if (!stillThere) qaMatrixState.deviceScope = null;
-		}
 		qaMatrixState.selectedEnvIds = qaMatrixEffectiveSelection();
-		qaMatrixFillFilters();
 		await qaMatrixLoadWindow(0, controller.signal);
 		qaMatrixSetState(qaMatrixState.index.length === 0 ? 'empty' : 'ready', '');
 		if (qaMatrixState.index.length === 0) {
@@ -5166,34 +5145,6 @@ async function qaMatrixLoadWindow(offset, signal) {
 	}
 }
 
-function qaMatrixFillFilters() {
-	const matrix = qaUi.matrix;
-	if (!matrix.filterPlatform || !matrix.filterManufacturer || !matrix.filterOs || !matrix.filterOrientation) return;
-	const facets = facetValues(qaMatrixState.index);
-	const fill = (select, entries, labelAll, current) => {
-		select.textContent = '';
-		const all = document.createElement('option');
-		all.value = '';
-		all.textContent = labelAll;
-		select.append(all);
-		for (const entry of entries) {
-			const option = document.createElement('option');
-			option.value = String(entry.value);
-			option.textContent = `${entry.value} (${entry.count})`;
-			select.append(option);
-		}
-		select.value = current || '';
-	};
-	fill(matrix.filterPlatform, facets.platform, 'All platforms', qaMatrixState.filters.platform);
-	fill(matrix.filterManufacturer, facets.manufacturer, 'All manufacturers', qaMatrixState.filters.manufacturer);
-	fill(matrix.filterOs, facets.osVersion, 'All OS versions', qaMatrixState.filters.osVersion);
-	fill(matrix.filterOrientation, facets.orientation, 'Any orientation', qaMatrixState.filters.orientation);
-}
-
-function qaMatrixConfigurationKey(configuration) {
-	return `${configuration.envId}`;
-}
-
 /**
  * Pipeline Phase 1: effective selection = explicit device keys × explicit
  * browser families minus granular deselections, over the full catalog index.
@@ -5214,57 +5165,24 @@ function qaMatrixApplySelection(nextState) {
 	syncQaSubmitState();
 }
 
-/**
- * #15163 → Phase 1 re-scope: set/clear the device scope. Scoping is a VIEW
- * operation — it narrows the rendered tree and checklist to one device for
- * inspection. It NEVER mutates the selection state and NEVER resets anything;
- * leaving scope (null) is always reachable via the back affordance.
- */
-function qaMatrixSetDeviceScope(scope) {
-	qaMatrixState.deviceScope = scope;
-	qaMatrixState.selectedEnvIds = qaMatrixEffectiveSelection();
-}
-
-/** #15163 → Phase 1: readable scope label for the scoped VIEW banner — null
- *  when unscoped. Describes the device being inspected, not the selection.
- *  DEV merge: wording is "1 device · N browsers · N runs" (browser count =
- *  distinct selected families, run count = selected browser/version pairs). */
-function qaMatrixScopeLabel() {
-	if (!qaMatrixState.deviceScope) return null;
-	const scope = qaMatrixState.deviceScope;
-	const deviceConfigurations = configurationsForDevice(qaMatrixState.index, scope);
-	const first = deviceConfigurations[0];
-	if (!first) return null;
-	const selectedOnDevice = deviceConfigurations.filter(
-		(configuration) => qaMatrixState.selection.deviceKeys.has(deviceKeyOf(configuration))
-			&& qaMatrixState.selection.browserFamilies.has(configuration.browserCode)
-			&& isSelectable(configuration)
-			&& !qaMatrixState.selection.deselectedEnvIds.has(configuration.envId)
-	);
-	const selectedFamilies = new Set(selectedOnDevice.map(configuration => configuration.browserCode));
-	const selectedCount = selectedOnDevice.length;
-	const osLabel = scope.osVersion ? `${first.os} ${scope.osVersion}` : `${first.os} (all versions)`;
-	const orientation = scope.orientation ?? (first.deviceType === 'desktop' ? 'landscape' : 'portrait');
-	const browserCount = selectedFamilies.size;
-	return `1 device · ${browserCount.toLocaleString()} browser${browserCount === 1 ? '' : 's'} · ${selectedCount.toLocaleString()} run${selectedCount === 1 ? '' : 's'} · ${first.manufacturer ? `${first.manufacturer} ` : ''}${scope.device} · ${osLabel} · ${orientation}`;
-}
+// #15969: the device-scope VIEW functions (qaMatrixSetDeviceScope /
+// qaMatrixScopeLabel) were removed with the scoped-view UI — selection is
+// direct on device rows now.
 
 function qaMatrixRender() {
 	const matrix = qaUi.matrix;
 	if (!matrix.browsers || !matrix.devices || !matrix.summary) return;
 	const filtered = qaMatrixFiltered();
-	// #15163 → Phase 1: in device scope, family counts reflect the scoped
-	// device only — a VIEW refinement, never a selection change.
-	const scopeRows = qaMatrixState.deviceScope
-		? configurationsForDevice(qaMatrixState.index, qaMatrixState.deviceScope)
-		: null;
-	const selectionScope = scopeRows ?? filtered;
+	// #15969: the device-scope VIEW is retired — selection counts always
+	// reflect the filtered set. Scope state is inert legacy.
+	const selectionScope = filtered;
 	const selected = new Set(qaMatrixState.selectedEnvIds);
 	const selection = qaMatrixState.selection;
 
-	// Browser checklist header: Select All / Deselect All BROWSERS (Phase 1).
-	// Bulk actions operate on the FULL catalog (not the filtered view) — the
-	// summary keeps reporting the true global count.
+	// Browser panel: one-click toggle cards (#15968). One card per family —
+	// brand icon, name, available version, availability badge. Click card =
+	// toggle that family in the EXPLICIT selection model. Unavailable
+	// families stay visible, disabled, with their honest reason.
 	matrix.browsers.textContent = '';
 	const browserBulk = document.createElement('div');
 	browserBulk.className = 'qa-matrix-bulk';
@@ -5272,7 +5190,7 @@ function qaMatrixRender() {
 	selectAllBrowsersButton.type = 'button';
 	selectAllBrowsersButton.className = 'qa-matrix-bulk-btn';
 	selectAllBrowsersButton.dataset.role = 'select-all-browsers';
-	selectAllBrowsersButton.textContent = 'Select All Browsers';
+	selectAllBrowsersButton.textContent = 'Select all available';
 	selectAllBrowsersButton.addEventListener('click', () => {
 		qaMatrixApplySelection(selectAllBrowsers(qaMatrixState.index, selection));
 	});
@@ -5280,299 +5198,288 @@ function qaMatrixRender() {
 	deselectAllBrowsersButton.type = 'button';
 	deselectAllBrowsersButton.className = 'qa-matrix-bulk-btn';
 	deselectAllBrowsersButton.dataset.role = 'deselect-all-browsers';
-	deselectAllBrowsersButton.textContent = 'Deselect All';
+	deselectAllBrowsersButton.textContent = 'Clear';
 	deselectAllBrowsersButton.addEventListener('click', () => {
 		qaMatrixApplySelection(deselectAllBrowsers(qaMatrixState.index, selection));
 	});
 	browserBulk.append(selectAllBrowsersButton, deselectAllBrowsersButton);
 	matrix.browsers.append(browserBulk);
 
-	// Browser checklist: seven families, always visible — the family checkbox
-	// drives the EXPLICIT selection model (Phase 1): checked ⇔ the family is
-	// in selection.browserFamilies. Counts reflect the current VIEW (scoped
-	// device or filtered set).
+	// Engine-equivalence visibility: a family whose selectable rows execute
+	// on a substitute engine (e.g. Safari→WebKit) gets an honest note chip on
+	// its card — set when any selectable row for the family has a non-branded
+	// engine. The compact index rows don't carry browserSupport; probe the
+	// family's engine status from the assembled catalog payload's families
+	// note plus the full-row availability reasons already shown for
+	// unavailable families.
+	const engineEquivalentFamilies = new Set(
+		(qaMatrixState.browserFamilies ?? [])
+			.filter(family => family.note && /engine|webkit/i.test(String(family.note)))
+			.map(family => family.code)
+	);
 	const families = familyRows(qaMatrixState.index, qaMatrixState.browserFamilies);
+	if (families.length === 0) {
+		const empty = document.createElement('p');
+		empty.className = 'qa-matrix-empty';
+		empty.textContent = 'No browsers available — connect an execution provider.';
+		matrix.browsers.append(empty);
+	}
+	const cardList = document.createElement('div');
+	cardList.className = 'qa-matrix-browser-cards';
+	cardList.setAttribute('role', 'group');
+	cardList.setAttribute('aria-label', 'Browsers');
 	for (const family of families) {
-		const row = document.createElement('label');
-		row.className = `qa-matrix-family${family.available ? '' : ' is-unavailable'}`;
-		const selectedInFamily = selectionScope.filter(
-			configuration => configuration.browserCode === family.code && selected.has(configuration.envId)
-		).length;
-		const input = document.createElement('input');
-		input.type = 'checkbox';
-		input.dataset.family = family.code;
+		const card = document.createElement('button');
+		card.type = 'button';
+		card.className = `qa-matrix-browser-card${family.available ? '' : ' is-unavailable'}`;
+		card.dataset.family = family.code;
+		card.dataset.role = 'browser-card';
+		const isSelected = family.available && selection.browserFamilies.has(family.code);
+		card.classList.toggle('is-selected', isSelected);
+		card.setAttribute('aria-pressed', String(isSelected));
+		const cardHead = document.createElement('span');
+		cardHead.className = 'qa-matrix-browser-card-head';
+		cardHead.append(brandIcon(family.code, 22));
+		const labelSpan = document.createElement('span');
+		labelSpan.className = 'qa-matrix-browser-card-label';
+		labelSpan.textContent = family.label;
+		cardHead.append(labelSpan);
+		if (family.available && isSelected) {
+			const check = document.createElement('span');
+			check.className = 'qa-matrix-browser-card-check';
+			check.setAttribute('aria-hidden', 'true');
+			check.textContent = '✓';
+			cardHead.append(check);
+		}
+		card.append(cardHead);
+		const cardMeta = document.createElement('span');
+		cardMeta.className = 'qa-matrix-browser-card-meta';
 		if (family.available) {
-			input.checked = selection.browserFamilies.has(family.code);
-			input.addEventListener('change', () => {
-				// Phase 1: family toggle mutates the explicit selection state —
+			const versionText = document.createElement('span');
+			versionText.className = 'qa-matrix-browser-card-version';
+			versionText.textContent = family.versions.length > 0
+				? family.versions.slice(0, 2).join(', ') + (family.versions.length > 2 ? ` · +${family.versions.length - 2}` : '')
+				: family.label;
+			cardMeta.append(versionText);
+			const badge = document.createElement('span');
+			badge.className = 'qa-matrix-browser-card-badge';
+			badge.textContent = 'Available';
+			cardMeta.append(badge);
+			if (engineEquivalentFamilies.has(family.code)) {
+				const note = document.createElement('span');
+				note.className = 'qa-matrix-browser-card-note';
+				note.textContent = 'Runs on engine equivalent';
+				cardMeta.append(note);
+			}
+			const devicesCount = new Set(
+				selectionScope.filter(configuration =>
+					configuration.browserCode === family.code
+					&& selected.has(configuration.envId)
+				).map(configuration => deviceKeyOf(configuration))
+			).size;
+			if (devicesCount > 0) {
+				const devicesLabel = document.createElement('span');
+				devicesLabel.className = 'qa-matrix-browser-card-devices';
+				devicesLabel.textContent = `${devicesCount} device${devicesCount === 1 ? '' : 's'}`;
+				cardMeta.append(devicesLabel);
+			}
+			card.title = isSelected ? `Deselect ${family.label}` : `Select ${family.label}`;
+			card.addEventListener('click', () => {
+				// #15968: card toggle mutates the explicit selection state —
 				// one state write, one persist, one re-render (#15092 discipline).
 				const next = createSelectionState({
 					deviceKeys: selection.deviceKeys,
 					browserFamilies: selection.browserFamilies,
 					deselectedEnvIds: selection.deselectedEnvIds
 				});
-				toggleBrowserFamily(next, qaMatrixState.index, family.code, input.checked);
+				toggleBrowserFamily(next, qaMatrixState.index, family.code, !selection.browserFamilies.has(family.code));
 				qaMatrixApplySelection(next);
 			});
 		} else {
-			input.disabled = true;
-			input.setAttribute('aria-disabled', 'true');
-			row.title = family.reason ?? 'Not available';
+			card.disabled = true;
+			card.setAttribute('aria-disabled', 'true');
+			card.title = family.reason ?? 'Not available';
+			const reasonText = document.createElement('span');
+			reasonText.className = 'qa-matrix-browser-card-badge is-unavailable-badge';
+			reasonText.textContent = family.reason ?? 'Unavailable';
+			cardMeta.append(reasonText);
 		}
-		const labelSpan = document.createElement('span');
-		labelSpan.className = 'qa-matrix-family-label';
-		labelSpan.textContent = family.label;
-		const counts = document.createElement('small');
-		counts.className = 'qa-matrix-family-count';
-		counts.textContent = family.available
-			? `${selectedInFamily}/${family.selectableCount} selected`
-			: (family.reason ?? 'Unavailable');
-		row.append(input, labelSpan, counts);
-		matrix.browsers.append(row);
+		card.append(cardMeta);
+		cardList.append(card);
 	}
+	matrix.browsers.append(cardList);
 
-	// Device panel header: scoped-view banner (with exit) or bulk device
-	// controls (Phase 1). Scope is a VIEW: the banner sits above the tree and
-	// "← Back to all devices" always returns without touching selection.
+	// #15969 Device selector: platform tabs + one-click rows. The nested
+	// platform → device → OS → version-chip tree, the separate device
+	// checkbox, and the View/scope button are GONE — one click on a device
+	// row toggles that device in the explicit selection model.
 	const deviceHeader = document.createElement('div');
 	deviceHeader.className = 'qa-matrix-device-header';
-	if (qaMatrixState.deviceScope) {
-		const banner = document.createElement('div');
-		banner.className = 'qa-matrix-scope-banner';
-		banner.dataset.role = 'scope-banner';
-		const back = document.createElement('button');
-		back.type = 'button';
-		back.className = 'qa-matrix-bulk-btn';
-		back.dataset.role = 'scope-exit';
-		back.textContent = '← Back to all devices';
-		back.addEventListener('click', () => {
-			qaMatrixSetDeviceScope(null);
-			// Reload the window for the full (filtered) tree — the scoped view
-			// fetched a device-narrowed window.
-			void qaMatrixLoadWindow(0, qaMatrixState.abort?.signal);
-			qaMatrixRender();
-			syncQaSubmitState();
-		});
-		const label = document.createElement('span');
-		label.className = 'qa-matrix-scope-label';
-		label.textContent = qaMatrixScopeLabel() ?? 'Viewing one device';
-		banner.append(back, label);
-		deviceHeader.append(banner);
-	} else {
-		const deviceBulk = document.createElement('div');
-		deviceBulk.className = 'qa-matrix-bulk';
-		const selectAllDevicesButton = document.createElement('button');
-		selectAllDevicesButton.type = 'button';
-		selectAllDevicesButton.className = 'qa-matrix-bulk-btn';
-		selectAllDevicesButton.dataset.role = 'select-all-devices';
-		selectAllDevicesButton.textContent = 'Select All Devices';
-		selectAllDevicesButton.addEventListener('click', () => {
-			qaMatrixApplySelection(selectAllDevices(qaMatrixState.index, selection));
-		});
-		const deselectAllDevicesButton = document.createElement('button');
-		deselectAllDevicesButton.type = 'button';
-		deselectAllDevicesButton.className = 'qa-matrix-bulk-btn';
-		deselectAllDevicesButton.dataset.role = 'deselect-all-devices';
-		deselectAllDevicesButton.textContent = 'Deselect All';
-		deselectAllDevicesButton.addEventListener('click', () => {
-			qaMatrixApplySelection(deselectAllDevices(qaMatrixState.index, selection));
-		});
-		deviceBulk.append(selectAllDevicesButton, deselectAllDevicesButton);
-		deviceHeader.append(deviceBulk);
-	}
 
-	// Device panel: platform → device → OS → browsers (scrollable tree).
-	// Device panel renders the WINDOWED rows only (server applies the same
-	// filters); grouping them never builds a 38k-row DOM tree.
-	const tree = groupDeviceTree(qaMatrixState.windowRows);
+	// Platform tabs (tablist) — the tab is a FILTER over the windowed rows;
+	// 'All' shows the interleaved server order. Counts are selectable
+	// configurations per platform from the compact index (search-aware).
+	const tabCounts = new Map();
+	let allCount = 0;
+	for (const configuration of filtered) {
+		if (!isSelectable(configuration)) continue;
+		allCount += 1;
+		tabCounts.set(configuration.platform, (tabCounts.get(configuration.platform) ?? 0) + 1);
+	}
+	const tabGroup = document.createElement('div');
+	tabGroup.className = 'qa-matrix-platform-tabs';
+	tabGroup.setAttribute('role', 'tablist');
+	tabGroup.setAttribute('aria-label', 'Device platforms');
+	const platforms = PLATFORM_GROUPS.map(group => group.id).filter(id => tabCounts.has(id));
+	const makeTab = (id, label, count) => {
+		const tab = document.createElement('button');
+		tab.type = 'button';
+		tab.className = `qa-matrix-platform-tab${qaMatrixState.filters.platform === id ? ' is-active' : ''}`;
+		tab.dataset.platform = id;
+		tab.setAttribute('role', 'tab');
+		tab.setAttribute('aria-selected', String(qaMatrixState.filters.platform === id));
+		tab.textContent = `${label}${Number.isInteger(count) ? ` (${count.toLocaleString()})` : ''}`;
+		tab.addEventListener('click', () => {
+			if (qaMatrixState.filters.platform === id) return;
+			qaMatrixState.filters.platform = id === 'all' ? '' : id;
+			qaMatrixState.activeTab = id;
+			qaMatrixRender();
+			void qaMatrixLoadWindow(0, qaMatrixState.abort?.signal);
+		});
+		return tab;
+	};
+	tabGroup.append(makeTab('all', 'All', allCount));
+	for (const group of PLATFORM_GROUPS) {
+		if (tabCounts.has(group.id)) tabGroup.append(makeTab(group.id, group.label, tabCounts.get(group.id)));
+	}
+	deviceHeader.append(tabGroup);
+
+	// Bulk device actions (kept from Phase 1 — they operate on the FULL catalog).
+	const deviceBulk = document.createElement('div');
+	deviceBulk.className = 'qa-matrix-bulk';
+	const selectAllDevicesButton = document.createElement('button');
+	selectAllDevicesButton.type = 'button';
+	selectAllDevicesButton.className = 'qa-matrix-bulk-btn';
+	selectAllDevicesButton.dataset.role = 'select-all-devices';
+	selectAllDevicesButton.textContent = 'Select all devices';
+	selectAllDevicesButton.addEventListener('click', () => {
+		qaMatrixApplySelection(selectAllDevices(qaMatrixState.index, selection));
+	});
+	const deselectAllDevicesButton = document.createElement('button');
+	deselectAllDevicesButton.type = 'button';
+	deselectAllDevicesButton.className = 'qa-matrix-bulk-btn';
+	deselectAllDevicesButton.dataset.role = 'deselect-all-devices';
+	deselectAllDevicesButton.textContent = 'Clear devices';
+	deselectAllDevicesButton.addEventListener('click', () => {
+		qaMatrixApplySelection(deselectAllDevices(qaMatrixState.index, selection));
+	});
+	deviceBulk.append(selectAllDevicesButton, deselectAllDevicesButton);
+	deviceHeader.append(deviceBulk);
 	matrix.devices.textContent = '';
 	matrix.devices.append(deviceHeader);
-	if (tree.length === 0) {
+
+	// One flat row per device (windowed rows deduped by device key).
+	const deviceList = deviceListFromWindow(qaMatrixState.windowRows);
+	if (deviceList.length === 0) {
 		const empty = document.createElement('p');
 		empty.className = 'qa-matrix-empty';
-		empty.textContent = 'No configurations match the current filters.';
+		empty.textContent = 'No devices match your search or platform tab.';
 		matrix.devices.append(empty);
 	} else {
-		for (const platformGroup of tree) {
-			const platformLabel = PLATFORM_GROUPS.find(group => group.id === platformGroup.platform)?.label ?? platformGroup.platform;
-			const group = document.createElement('section');
-			group.className = 'qa-matrix-platform';
-			const heading = document.createElement('h5');
-			heading.textContent = platformLabel;
-			group.append(heading);
-			for (const device of platformGroup.devices) {
-				const deviceRow = document.createElement('div');
-				deviceRow.className = 'qa-matrix-device';
-				const deviceKey = `${device.manufacturer ?? ''}|${device.platform}|${device.device}`;
-				const activeScopeKey = qaMatrixState.deviceScope
-					? `${qaMatrixState.deviceScope.manufacturer ?? ''}|${qaMatrixState.deviceScope.platform}|${qaMatrixState.deviceScope.device}`
-					: null;
-				if (deviceKey === activeScopeKey) deviceRow.classList.add('is-scoped');
-				// Phase 1: the device row carries its own SELECTION checkbox
-				// (drives selection.deviceKeys). Clicking elsewhere on the row
-				// scopes the VIEW to that device — an inspection action that
-				// never changes the selection.
-				const deviceSelectable = device.osVersions.some(os => os.browsers.some(browser =>
-					browser.versions.some(version => isSelectable(version))));
-				const deviceLine = document.createElement('div');
-				deviceLine.className = 'qa-matrix-device-line';
-				const deviceIdentity = document.createElement('span');
-				deviceIdentity.className = 'qa-matrix-device-identity';
-				const deviceCheckLabel = document.createElement('label');
-				deviceCheckLabel.className = 'qa-matrix-device-check';
-				const deviceCheck = document.createElement('input');
-				deviceCheck.type = 'checkbox';
-				deviceCheck.dataset.role = 'device-select';
-				deviceCheck.dataset.deviceKey = deviceKey;
-				deviceCheck.setAttribute('aria-label', `Select ${device.manufacturer ? `${device.manufacturer} ` : ''}${device.device}`);
-				if (deviceSelectable) {
-					deviceCheck.checked = selection.deviceKeys.has(deviceKey);
-					deviceCheck.addEventListener('click', event => event.stopPropagation());
-					deviceCheck.addEventListener('change', () => {
-						const next = createSelectionState({
-							deviceKeys: selection.deviceKeys,
-							browserFamilies: selection.browserFamilies,
-							deselectedEnvIds: selection.deselectedEnvIds
-						});
-						toggleDevice(next, deviceKey, deviceCheck.checked);
-						qaMatrixApplySelection(next);
-					});
-				} else {
-					deviceCheck.disabled = true;
-					deviceCheckLabel.title = 'No available configurations for this device.';
-				}
-				deviceCheckLabel.append(deviceCheck);
-				const deviceName = document.createElement('span');
-				deviceName.className = 'qa-matrix-device-name';
-				deviceName.textContent = `${device.manufacturer ? `${device.manufacturer} ` : ''}${device.device}`;
-				deviceIdentity.append(deviceName, badges);
-				const badges = document.createElement('span');
-				badges.className = 'qa-matrix-badges';
-				badges.setAttribute('aria-label', 'Device capabilities');
-				for (const executionType of device.executionTypes) {
-					const badge = document.createElement('span');
-					badge.className = `qa-matrix-badge badge-${executionType}`;
-					badge.textContent = executionTypeLabel(executionType);
-					badges.append(badge);
-				}
-				const viewButton = document.createElement('button');
-				viewButton.type = 'button';
-				viewButton.className = 'qa-matrix-bulk-btn qa-matrix-view-btn';
-				viewButton.dataset.role = 'device-view';
-				viewButton.textContent = 'View';
-				viewButton.title = 'Inspect this device without changing your selection';
-				const activateScope = () => {
-					qaMatrixSetDeviceScope({
-						platform: device.platform,
-						device: device.device,
-						manufacturer: device.manufacturer ?? ''
-					});
-					void qaMatrixLoadWindow(0, qaMatrixState.abort?.signal);
-					qaMatrixRender();
-					syncQaSubmitState();
-				};
-				viewButton.addEventListener('click', event => {
-					event.stopPropagation();
-					activateScope();
-				});
-				deviceLine.append(deviceCheckLabel, deviceIdentity, viewButton);
-				// Row click (outside chips/checkboxes) also scopes the VIEW.
-				deviceRow.classList.add('is-clickable');
-				deviceRow.setAttribute('role', 'button');
-				deviceRow.tabIndex = 0;
-				deviceRow.addEventListener('click', (event) => {
-					// Checkbox/chip/button clicks keep their own semantics.
-					if (event.target.closest('label') || event.target.closest('button')) return;
-					activateScope();
-				});
-				deviceRow.addEventListener('keydown', (event) => {
-					if (event.key === 'Enter' || event.key === ' ') {
-						event.preventDefault();
-						activateScope();
-					}
-				});
-				deviceRow.append(deviceLine);
-				for (const os of device.osVersions) {
-					const osRow = document.createElement('div');
-					osRow.className = 'qa-matrix-os';
-					const osLabel = document.createElement('span');
-					osLabel.className = 'qa-matrix-os-label';
-					osLabel.textContent = `${device.os === 'Windows' ? 'Windows' : (device.platform === 'macos' ? 'macOS' : (device.os ?? device.platform))} ${os.osVersion}`;
-					osRow.append(osLabel);
-					const versionList = document.createElement('div');
-					versionList.className = 'qa-matrix-versions';
-					for (const browser of os.browsers) {
-						for (const version of browser.versions) {
-							const key = qaMatrixConfigurationKey(version);
-							const versionChip = document.createElement('label');
-							versionChip.className = 'qa-matrix-version';
-							const versionInput = document.createElement('input');
-							versionInput.type = 'checkbox';
-							versionInput.value = key;
-							if (isSelectable(version)) {
-								versionInput.checked = selected.has(key);
-									versionInput.addEventListener('change', () => {
-										// Phase 1: a chip tick is a granular OVERRIDE within
-										// the explicit model — it deselects/reselects one
-										// envId. Ticking a chip whose device or family is not
-										// selected ALSO selects that device and family
-										// (the tick is an explicit user intent).
-										const next = createSelectionState({
-											deviceKeys: selection.deviceKeys,
-											browserFamilies: selection.browserFamilies,
-											deselectedEnvIds: selection.deselectedEnvIds
-										});
-										if (versionInput.checked) {
-											toggleDevice(next, deviceKeyOf(version), true);
-											toggleBrowserFamily(next, qaMatrixState.index, version.browserCode, true);
-											next.deselectedEnvIds.delete(key);
-										} else {
-											next.deselectedEnvIds.add(key);
-										}
-										qaMatrixApplySelection(next);
-									});
-							} else {
-								versionInput.disabled = true;
-								versionChip.classList.add('is-unavailable');
-								versionChip.title = version.availabilityReason ?? 'Unavailable';
-							}
-							const versionText = document.createElement('span');
-							versionText.textContent = `${browser.browser} ${version.browserVersion}`;
-							versionChip.append(versionInput, versionText);
-							versionList.append(versionChip);
-						}
-					}
-					osRow.append(versionList);
-					deviceRow.append(osRow);
-				}
-				group.append(deviceRow);
+		const rowList = document.createElement('div');
+		rowList.className = 'qa-matrix-device-rows';
+		rowList.setAttribute('role', 'listbox');
+		rowList.setAttribute('aria-label', 'Devices');
+		for (const device of deviceList) {
+			const available = device.selectableCount > 0;
+			const isSelected = selection.deviceKeys.has(device.key);
+			const row = document.createElement('button');
+			row.type = 'button';
+			row.className = `qa-matrix-device-row${available ? '' : ' is-unavailable'}${isSelected ? ' is-selected' : ''}`;
+			row.dataset.role = 'device-row';
+			row.dataset.deviceKey = device.key;
+			row.setAttribute('role', 'option');
+			row.setAttribute('aria-selected', String(isSelected));
+			if (!available) {
+				row.disabled = true;
+				row.setAttribute('aria-disabled', 'true');
+				row.title = device.unavailableReason ?? 'No available configurations for this device.';
 			}
-			matrix.devices.append(group);
+			const identity = document.createElement('span');
+			identity.className = 'qa-matrix-device-row-identity';
+			const name = document.createElement('span');
+			name.className = 'qa-matrix-device-row-name';
+			name.textContent = `${device.manufacturer ? `${device.manufacturer} ` : ''}${device.device}`;
+			identity.append(name);
+			const osSummary = document.createElement('span');
+			osSummary.className = 'qa-matrix-device-row-os';
+			osSummary.textContent = device.osVersions.length > 0
+				? `${device.osLabel ? `${device.osLabel} ` : ''}${device.osVersions.slice(0, 3).join(' · ')}${device.osVersions.length > 3 ? ' · …' : ''}`
+				: (device.osLabel ?? '');
+			identity.append(osSummary);
+			row.append(identity);
+			const badges = document.createElement('span');
+			badges.className = 'qa-matrix-badges';
+			badges.setAttribute('aria-label', 'Device capabilities');
+			for (const executionType of device.executionTypes) {
+				const badge = document.createElement('span');
+				badge.className = `qa-matrix-badge badge-${executionType}`;
+				badge.textContent = executionTypeLabel(executionType);
+				badges.append(badge);
+			}
+			row.append(badges);
+			if (isSelected) {
+				const check = document.createElement('span');
+				check.className = 'qa-matrix-device-row-check';
+				check.setAttribute('aria-hidden', 'true');
+				check.textContent = '✓';
+				row.append(check);
+			}
+			row.addEventListener('click', () => {
+				// #15969: ONE click toggles the device in the explicit
+				// selection model — no separate checkbox, no scope view.
+				const next = createSelectionState({
+					deviceKeys: selection.deviceKeys,
+					browserFamilies: selection.browserFamilies,
+					deselectedEnvIds: selection.deselectedEnvIds
+				});
+				toggleDevice(next, device.key, !selection.deviceKeys.has(device.key));
+				qaMatrixApplySelection(next);
+			});
+			rowList.append(row);
 		}
+		matrix.devices.append(rowList);
 	}
+
 
 	// Summary: TRUE planned total (never capped — Phase 1) + provider honesty.
 	// While scoped (a VIEW), still show the GLOBAL selection count first — the
 	// scope never changes what a run submits, and the summary must never imply
 	// otherwise (reviewer round-1: scope-only label hid the true count).
 	const summary = buildSummary(qaMatrixState.index, qaMatrixState.selectedEnvIds);
+	const dimensions = selectionDimensions(qaMatrixState.index, qaMatrixState.selectedEnvIds);
 	const providerNotes = (qaMatrixState.providers ?? [])
 		.filter(provider => !provider.connected)
 		.map(provider => `${provider.name}: not configured`);
-	const scopeLabel = qaMatrixScopeLabel();
 	// Pipeline Phase 2: selections over the batch size run as sequential
 	// idempotent batches under one parent run — the summary says so.
 	const overBatch = summary.total > MATRIX_BATCH_SIZE;
-	const globalCount = `${summary.total.toLocaleString()} of ${summary.availableTotal.toLocaleString()} available configurations selected`
-		+ (summary.unavailable > 0 ? ` · ${summary.unavailable.toLocaleString()} unavailable` : '')
-		+ (providerNotes.length > 0 ? ` · ${providerNotes.join(', ')}` : '')
-		+ (overBatch ? ` · will run as ${Math.ceil(summary.total / MATRIX_BATCH_SIZE)} batches` : '');
-	// DEV merge: honesty note that configurations run sequentially, one
-	// browser at a time — appended to both scoped and unscoped summaries.
-	const oneAtATime = ' · Runs one browser at a time';
-	matrix.summary.textContent = scopeLabel
-		? `${globalCount}${oneAtATime} — viewing: ${scopeLabel}`
-		: globalCount + oneAtATime;
+	// #15970: the primary line is PLAIN LANGUAGE — browsers × devices → runs.
+	// The raw configuration count, unavailable count, provider and batch
+	// honesty notes follow as secondary segments.
+	const primary = dimensions.runs === 0
+		? (summary.availableTotal === 0
+			? 'No browsers or devices available — connect an execution provider.'
+			: 'No browsers or devices selected — pick at least one of each.')
+		: `${dimensions.families.toLocaleString()} browser${dimensions.families === 1 ? '' : 's'} × ${dimensions.devices.toLocaleString()} device${dimensions.devices === 1 ? '' : 's'} → ${dimensions.runs.toLocaleString()} run${dimensions.runs === 1 ? '' : 's'}`;
+	const secondary = [
+		`${summary.total.toLocaleString()} of ${summary.availableTotal.toLocaleString()} available configurations`,
+		summary.unavailable > 0 ? `${summary.unavailable.toLocaleString()} unavailable` : null,
+		providerNotes.length > 0 ? providerNotes.join(', ') : null,
+		overBatch ? `will run as ${Math.ceil(summary.total / MATRIX_BATCH_SIZE)} batches` : null,
+		'runs one browser at a time'
+	].filter(Boolean);
+	matrix.summary.textContent = `${primary} · ${secondary.join(' · ')}`;
 	matrix.summary.title = Object.entries(summary.byFamily)
 		.filter(([, count]) => count > 0)
 		.map(([code, count]) => `${code}: ${count}`)
@@ -5595,17 +5502,8 @@ function qaMatrixWiring() {
 			void qaMatrixLoadWindow(0, qaMatrixState.abort?.signal);
 		}, 150);
 	});
-	const bindFilter = (select, key) => {
-		select?.addEventListener('change', () => {
-			qaMatrixState.filters[key] = select.value;
-			qaMatrixRender();
-			void qaMatrixLoadWindow(0, qaMatrixState.abort?.signal);
-		});
-	};
-	bindFilter(matrix.filterPlatform, 'platform');
-	bindFilter(matrix.filterManufacturer, 'manufacturer');
-	bindFilter(matrix.filterOs, 'osVersion');
-	bindFilter(matrix.filterOrientation, 'orientation');
+	// #15969: the facet dropdowns are removed from the markup — platform
+	// filtering lives in the platform tab bar; the other facets via search.
 }
 
 function setQaFormError(message = '') {
@@ -5687,7 +5585,7 @@ function qaLaunchBlockedReason() {
 	if (qaMatrixState.fetchState === 'loading') return 'Loading browsers and devices…';
 	if (qaMatrixState.fetchState === 'error') return 'Browsers and devices could not be loaded. Open Customize and retry.';
 	const configurations = qaMatrixState.selectedEnvIds.length;
-	if (configurations === 0) return 'Select at least one available browser and device.';
+	if (configurations === 0) return 'Select at least one browser and one device.';
 	// Pipeline Phase 1/2: oversized selections are NOT blocked — they run as
 	// sequential idempotent batches under one parent run (MATRIX_BATCH_SIZE
 	// is a per-batch execution limit). No over-cap reason here.
@@ -5698,6 +5596,7 @@ function qaLaunchBlockedReason() {
 function syncQaSelectionSummary() {
 	const summary = $('qa-selection-summary');
 	if (!summary) return;
+	const blockedReason = qaLaunchBlockedReason();
 	if (!state.qaTestCatalog) {
 		summary.textContent = 'Loading available checks…';
 		return;
@@ -5708,7 +5607,7 @@ function syncQaSelectionSummary() {
 	// Pipeline Phase 2: oversized selections batch on submit — the compact
 	// summary explains the batching instead of demanding a narrower selection.
 	const detail = loading ? 'Loading browsers and devices…'
-		: configurations === 0 ? 'Choose an available browser and device to start.'
+		: configurations === 0 ? 'Select at least one browser and one device.'
 		: configurations > MATRIX_BATCH_SIZE
 			? `${configurations.toLocaleString()} configurations selected · will run as ${Math.ceil(configurations / MATRIX_BATCH_SIZE)} batches, one browser at a time`
 			: `${configurations.toLocaleString()} browser configuration${configurations === 1 ? '' : 's'} selected · runs one at a time`;

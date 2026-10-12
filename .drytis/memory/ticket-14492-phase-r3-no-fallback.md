@@ -1,8 +1,0 @@
-# Ticket #14492 — Phase R3 · Real runtime wiring & no-silent-fallback — DONE
-
-- server/browserstackProvider.js: new engineForBrowser(browserCode) — chrome/edge/opera/brave/duckduckgo→chromium, firefox→firefox(Gecko), safari→webkit; resolveExecution now: (1) REAL_DEVICE/VIRTUAL_DEVICE request with provider 'environment' but NO credentials → mode:'blocked' + label/reason "REAL DEVICE UNAVAILABLE…" (never silent emulated); (2) emulated resolution carries executionEngine and label says "local <engine> (emulated)".
-- server/browserBridge.js ensureContext: mode 'blocked' throws code RUNTIME_UNAVAILABLE before any launch; emulated runs pick engine from execution.executionEngine (overrides session.engine); bridge.execution exposes executionEngine.
-- server/deviceRuntime/manager.js selectForRun: REAL/VIRTUAL request vs SIMULATED-only board maximum → status 'not_available' + unavailableReason + only run_simulated choice. NOTE: legacy test expected old silent downgrade — updated to honest-block contract.
-- public/activeRuntimeEnvironment.js: view carries unavailableReason from board; public/app.js renderUnavailableState shows it ("Reason: No real-device runtime connected — register a device-farm provider…").
-- Existing fallback dialog (openExecFallback/applyFallback) already gives explicit Queue/Real/Virtual/Simulated choices — untouched per no-UI-change constraint.
-- Tests: +3 in browserstackProvider.test.js (engine map, blocked mode, firefox→firefox engine), +2 in deviceRuntime.test.js, bridge env test updated (chrome env → 'local chromium' label + executionEngine assert). Suite 1155/0/20. validate-matrix PASS, preview 200.

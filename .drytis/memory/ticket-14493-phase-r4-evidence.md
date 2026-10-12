@@ -1,7 +1,0 @@
-# Ticket #14493 — Phase R4 · Real evidence bundles — DONE
-
-- New server/evidenceBundle.js: collectEvidenceBundle({session, bridge, diagnostics}) → {bundle} with runtime-observed identity (R2 verifyRuntimeIdentity), execution {level, levelHonest, provider, engine}, runtimeSessionId, environment snapshot, screenshot reference, console + network entries (bounded 500, text clipped 2000 chars, count+truncated), securityBlocks. Unobservable → null, NEVER fabricated; identity unobservable → identityVerified:false + mismatch 'not observable'.
-- server/localServices.js: new runStore.saveEvidenceBundle(session, {bridge}, {diagnostics}) → artifactStore.save type 'evidence-bundle', JSON file evidence-bundle-<id8>.json, sidecar keeps execution metadata (artifacts live in .qase/artifacts/<runId>/).
-- server/agent.js run end: after saveEvidenceArtifact, collects diagnostics via bridge service.getDiagnostics('ide',{}) (SDK returns console/network arrays; wrapped in catch → null) and persists the bundle. Failure only warns — never breaks the run.
-- Tests: evidenceBundle.test.js (5), one in localServices.test.js. Suite 1161/0/20. validate-matrix PASS; preview 200.
-- Gotchas: (1) collectEvidenceBundle returns {bundle} not the bundle — an eval destructure mismatch cost several debug rounds; (2) diagnostics getter is on service (bridge.service.getDiagnostics), not bridge; (3) writing the new test block into localServices.test.js referenced a non-existent helper — keep new tests self-contained.

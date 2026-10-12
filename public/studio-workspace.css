@@ -711,10 +711,9 @@ body.studio-workspace .qa-matrix-search { grid-column: 1 / -1; }
 body.studio-workspace .qa-matrix-filters :is(select, input) { background: var(--surface-1); color: var(--text); border-color: var(--border-strong); font-family: var(--font-ui); }
 body.studio-workspace .qa-matrix-body { grid-template-columns: minmax(160px, .8fr) minmax(0, 1.2fr); }
 body.studio-workspace .qa-matrix-body > * { min-width: 0; }
-body.studio-workspace :is(.qa-matrix-device-line, .qa-matrix-version, .qa-matrix-summary, .test-on-summary) { overflow-wrap: anywhere; }
-body.studio-workspace .qa-matrix-family { min-height: 40px; }
-body.studio-workspace .qa-matrix-version { min-height: 32px; }
-body.studio-workspace .qa-matrix-family-count { color: var(--text-muted); }
+body.studio-workspace :is(.qa-matrix-device-row-name, .qa-matrix-device-row-os, .qa-matrix-summary, .test-on-summary) { overflow-wrap: anywhere; }
+body.studio-workspace .qa-matrix-browser-card { min-height: 40px; }
+body.studio-workspace .qa-matrix-device-row { min-height: 32px; }
 body.studio-workspace .modal-head,
 body.studio-workspace .modal-foot { background: var(--surface-1); }
 body.studio-workspace .modal-head h2 { color: var(--text); font: 600 20px var(--font-ui); }

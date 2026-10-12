@@ -1,5 +1,0 @@
-# `npm run verify` full-run flakes (QASE-2.1)
-
-Running the full suite (`npm run verify`, node --test default concurrency) intermittently fails ONE timing-sensitive test per run, a different one each time (seen: 'outbound client bounds payloads', 'public IP resolution falls back to plain URL ping', 'keepalive swallows fetch failures'). Each test passes in isolation, and `node --test --test-concurrency=4 server/*.test.js public/*.test.js` gives 0 failures. Treat single-test failures in full runs as flake: re-run the named test in isolation before debugging code.
-
-Also pre-existing (NOT a regression, verified 2026-09-23 by swapping in HEAD's browserBridge.js): all 4 `server/browserMedia.integration.test.js` tests fail under `QASE_RUN_BROWSER_TESTS=1` because the fixture policy (NODE_ENV:'test') blocks the loopback demo server — BROWSER_PRIVATE_NETWORK_BLOCKED. Fix pattern (used by securitySuite.integration.test.js): give the fixture policy `environment: { NODE_ENV: 'development', QASE_ALLOW_PRIVATE_NETWORK: 'true' }`. Deserves its own small ticket.

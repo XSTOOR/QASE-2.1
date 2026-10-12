@@ -7,23 +7,25 @@ const [app, styles] = await Promise.all([
 	readFile(new URL('./styles.css', import.meta.url), 'utf8')
 ]);
 
-test('device cards use one explicit selection action', () => {
-	// Merge resolution: NIHARIKA's Phase-1 explicit selection model — the row
-	// carries a SELECTION checkbox (device-select) plus a VIEW button for
-	// scope inspection; DEV's "Select device" scope button was superseded.
-	assert.match(app, /dataset\.role = 'device-select'/);
-	assert.match(app, /dataset\.role = 'device-view'/);
-	assert.match(app, /viewButton\.textContent = 'View'/);
-	assert.match(app, /Inspect this device without changing your selection/);
+/* #15969: the merged Phase-1 contract (selection checkbox + View scope
+ * button) was superseded by the platform-tabs + one-click-row device
+ * selector. Updated to pin the NEW single-action contract. */
+test('device rows use one explicit selection action', () => {
+	assert.match(app, /dataset\.role = 'device-row'/);
+	assert.match(app, /toggleDevice\(next, device\.key, !selection\.deviceKeys\.has\(device\.key\)\)/);
+	assert.doesNotMatch(app, /dataset\.role = 'device-view'/);
+	assert.doesNotMatch(app, /Inspect this device without changing your selection/);
 });
 
 test('selection summary clearly separates devices, browsers, and runs', () => {
-	assert.match(app, /1 device · \$\{browserCount\.toLocaleString\(\)\} browser/);
-	assert.match(app, /\$\{selectedCount\.toLocaleString\(\)\} run/);
-	assert.match(app, /Runs one browser at a time/);
+	// #15970: primary line is browsers × devices → runs; the one-at-a-time
+	// honesty note remains a secondary segment.
+	assert.match(app, /browser\$\{dimensions\.families === 1 \? '' : 's'\} × /);
+	assert.match(app, /runs one browser at a time/);
 });
 
 test('device controls remain reachable at narrow widths', () => {
-	assert.match(styles, /@media \(max-width: 560px\)[\s\S]+\.qa-matrix-device-select \{ width: 100%;/);
-	assert.doesNotMatch(styles, /\.qa-matrix-device\.is-clickable/);
+	// #15969: device rows wrap and platform tabs scroll horizontally.
+	assert.match(styles, /@media \(max-width: 560px\)[\s\S]*\.qa-matrix-device-row \{ flex-wrap: wrap; \}/);
+	assert.match(styles, /\.qa-matrix-platform-tabs \{ overflow-x: auto; flex-wrap: nowrap; \}/);
 });
