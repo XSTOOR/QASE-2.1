@@ -34,6 +34,7 @@ import {
 	configurationsForDevice,
 	compatibleBrowserFamilies,
 	defaultSelectionForDevice,
+	recommendedDeviceScope,
 	deviceScopeSelection,
 	planBatches,
 	batchKeyFor
@@ -79,7 +80,7 @@ const CATALOG = [
 ];
 
 test('FAMILY_ORDER matches the seven required families', () => {
-	assert.deepEqual(FAMILY_ORDER, ['chrome', 'edge', 'firefox', 'opera', 'brave', 'duckduckgo', 'safari']);
+	assert.deepEqual(FAMILY_ORDER, ['edge', 'chrome', 'brave', 'firefox', 'safari', 'opera', 'duckduckgo']);
 });
 
 test('isSelectable: only AVAILABLE rows selectable', () => {
@@ -516,6 +517,20 @@ test('#15163 defaultSelectionForDevice returns exactly the available envIds', ()
 	assert.deepEqual([...defaultSelectionForDevice(galaxy)], ['ENV-AND-SGS24-15-BRV-138']);
 	const pixel = configurationsForDevice(CATALOG, { platform: 'android', device: 'Pixel 9', manufacturer: 'Google' });
 	assert.deepEqual([...defaultSelectionForDevice(pixel)], []);
+});
+
+test('customer launcher recommends a focused desktop device and respects a saved selection', () => {
+	assert.deepEqual(recommendedDeviceScope(CATALOG), {
+		platform: 'windows',
+		device: 'Surface Laptop 5',
+		manufacturer: 'Microsoft'
+	});
+	assert.deepEqual(recommendedDeviceScope(CATALOG, { envId: 'ENV-AND-SGS24-15-BRV-138' }), {
+		platform: 'android',
+		device: 'Galaxy S24',
+		manufacturer: 'Samsung'
+	});
+	assert.equal(recommendedDeviceScope(CATALOG.map((row) => ({ ...row, availability: 'UNAVAILABLE' }))), null);
 });
 
 test('#15163 deviceScopeSelection derives scope + selection + families in one call', () => {

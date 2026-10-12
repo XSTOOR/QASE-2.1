@@ -92,12 +92,14 @@ test('listSessions summaries carry plan progress alongside usage totals', async 
 		{ text: 'Check the footer', status: 'pending' },
 		{ text: 'Verify navigation', status: 'in_progress' }
 	];
+	planned.report = { verdict: 'blocked', summary: 'Credentials were unavailable.' };
 	store.emit(planned, 'todos', { todos: planned.todos });
 	const empty = store.createSession('Idle run');
 
 	const summary = Object.fromEntries(store.listSessions().map(entry => [entry.title, entry]));
 	assert.equal(summary['Partially planned run'].todoTotal, 4);
 	assert.equal(summary['Partially planned run'].todoCompleted, 2);
+	assert.equal(summary['Partially planned run'].reportVerdict, 'blocked');
 	assert.equal(summary['Idle run'].todoTotal, 0);
 	assert.equal(summary['Idle run'].todoCompleted, 0);
 	store.flushSessions();

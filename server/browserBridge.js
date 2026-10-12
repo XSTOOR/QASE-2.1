@@ -54,6 +54,65 @@ const CURSOR_DWELL_MS = Number(process.env.QASE_CURSOR_DWELL_MS ?? 420);
 /** How long to let a click's navigation land before reporting where we are. */
 const NAV_SETTLE_MS = Number(process.env.QASE_NAV_SETTLE_MS ?? 1600);
 
+// Playwright starts the video recorder lazily when the first page is created.
+// A context can therefore be created successfully even when its bundled
+// FFmpeg executable is missing. Remember that host capability once detected so
+// later sessions do not repeat the same failed recorder startup.
+let localChromiumVideoUnsupportedReason = null;
+
+export function isVideoRecordingDependencyError(error) {
+	const message = String(error?.message ?? error ?? '');
+	return /ffmpeg/i.test(message)
+		|| /recordvideo|record video|video recording/i.test(message)
+		|| /video[^\n]*(?:executable|codec)[^\n]*(?:missing|not found|doesn'?t exist|enoent)/i.test(message);
+}
+
+/**
+ * Create a context and prove it can create a page before the agent starts.
+ * If Playwright's optional video dependency is unavailable, discard that
+ * context and recreate it without recording. The returned probe page is real
+ * and ready for runtime-fact collection.
+ */
+export async function createContextWithVideoFallback(browser, requestedOptions, { skipVideoReason = null } = {}) {
+	const contextOptions = { ...requestedOptions };
+	let fallbackReason = skipVideoReason ? String(skipVideoReason) : null;
+	if (fallbackReason) delete contextOptions.recordVideo;
+
+	const fallbackWithoutVideo = async (error, failedContext = null) => {
+		fallbackReason = String(error?.message ?? error).split('\n')[0];
+		await failedContext?.close?.().catch(() => {});
+		delete contextOptions.recordVideo;
+		const context = await browser.newContext(contextOptions);
+		const probePage = await context.newPage();
+		return { context, probePage, videoActive: false, fallbackReason, contextOptions };
+	};
+
+	let context;
+	try {
+		context = await browser.newContext(contextOptions);
+	} catch (error) {
+		if (!contextOptions.recordVideo || !isVideoRecordingDependencyError(error)) throw error;
+		return fallbackWithoutVideo(error);
+	}
+
+	try {
+		const probePage = await context.newPage();
+		return {
+			context,
+			probePage,
+			videoActive: Boolean(contextOptions.recordVideo),
+			fallbackReason,
+			contextOptions
+		};
+	} catch (error) {
+		if (!contextOptions.recordVideo || !isVideoRecordingDependencyError(error)) {
+			await context.close?.().catch(() => {});
+			throw error;
+		}
+		return fallbackWithoutVideo(error, context);
+	}
+}
+
 /**
  * Submits a benign probe value through the page's own GET search-like form.
  * Returns the resulting URL, or undefined when no usable form exists. The
@@ -754,21 +813,28 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 					// RT5 (#14757): context-level video recording. Playwright only
 					// accepts recordVideo at context creation — the file lands in a
 					// temp dir and is collected at context close (suspend/dispose).
-					// Engines without recordVideo support throw at newContext; the
-					// try/catch below falls back to a video-less context — never a
-					// fabricated video.
-					if (!contextOptions.recordVideo && service.browser.browserType().name() === 'chromium') {
+					// Playwright may not discover a missing FFmpeg binary until the
+					// first page is created. The startup probe below catches that late
+					// failure and recreates the context without video before any agent
+					// tool runs.
+					const localChromium = service.browser.browserType().name() === 'chromium';
+					if (!contextOptions.recordVideo
+						&& localChromium
+						&& !localChromiumVideoUnsupportedReason) {
 						contextOptions.recordVideo = { dir: videoDir(), size: contextOptions.viewport ?? undefined };
 					}
-					try {
-						service.context = await service.browser.newContext(contextOptions);
-					} catch (videoError) {
-						// recordVideo unsupported → honest video-less context.
-						bridge.execution = { ...bridge.execution, videoRecording: 'UNSUPPORTED', videoUnsupportedReason: String(videoError?.message ?? videoError).split('\n')[0] };
-						delete contextOptions.recordVideo;
-						service.context = await service.browser.newContext(contextOptions);
-					}
-					if (contextOptions.recordVideo) {
+					const prepared = await createContextWithVideoFallback(service.browser, contextOptions, {
+						skipVideoReason: localChromium ? localChromiumVideoUnsupportedReason : null
+					});
+					service.context = prepared.context;
+					if (prepared.fallbackReason) {
+						if (localChromium) localChromiumVideoUnsupportedReason ??= prepared.fallbackReason;
+						bridge.execution = {
+							...bridge.execution,
+							videoRecording: 'UNSUPPORTED',
+							videoUnsupportedReason: prepared.fallbackReason
+						};
+					} else if (prepared.videoActive) {
 						bridge.execution = { ...(bridge.execution ?? {}), videoRecording: 'ACTIVE' };
 					}
 					// Permission scenario: allow → grant; deny/ask left to CDP or
@@ -789,7 +855,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 					// the UA the page sees and the viewport in use — so the run
 					// record can store observed truth, not wishful hints.
 					try {
-						const probe = await service.context.newPage();
+						const probe = prepared.probePage;
 						bridge.runtimeFacts = await probe.evaluate(() => ({
 							userAgent: navigator.userAgent,
 							viewport: { width: window.innerWidth, height: window.innerHeight },
@@ -799,6 +865,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 						}));
 						await probe.close().catch(() => {});
 					} catch {
+						await prepared.probePage?.close?.().catch(() => {});
 						bridge.runtimeFacts = null;
 					}
 					// RT1 (#14680): record which REAL binary executed. When a

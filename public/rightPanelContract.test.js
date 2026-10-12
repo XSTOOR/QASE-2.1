@@ -42,17 +42,27 @@ test('#13778 contract: queued session auto-launches the run on promotion', async
 	assert.match(fbBody, /trackQueuePanel\(result\.session/, 'queue fallback must track the session for auto-launch');
 });
 
-test('settings dialog hosts Device Management; sidebar foot has no admin entries', async () => {
+test('#15643 contract: Advanced section is fully removed from the sidebar', async () => {
+	// The whole Advanced disclosure (nav buttons, Feedback Inbox, theme,
+	// account, sign-out, connection status) was removed from the left rail
+	// by customer request. The rail keeps only brand, Start testing,
+	// Recent tests and the run action row.
 	const html = await readFile('public/index.html', 'utf8');
+	const asideStart = html.indexOf('<aside class="panel runs"');
+	const asideEnd = html.indexOf('</aside>', asideStart);
+	const aside = html.slice(asideStart, asideEnd);
+	assert.ok(asideStart >= 0, 'sidebar aside must exist');
+	for (const removed of ['sidebar-tools', 'sidebar-nav', 'panel-foot', 'theme-select', 'conn-dot', 'conn-label', 'feedback-panel', 'feedback-restore']) {
+		assert.ok(!aside.includes(removed), `sidebar must not contain ${removed}`);
+	}
+	assert.ok(!/\bid="(open-profile|sign-out)"/.test(aside), 'sidebar must not use the legacy open-profile/sign-out ids');
+	// Device Management stays reachable from the Settings dialog.
 	const settingsBlock = html.slice(html.indexOf('id="settings"'), html.indexOf('</dialog>', html.indexOf('id="settings"')));
 	assert.match(settingsBlock, /id="open-device-matrix"/, 'open-device-matrix must live inside #settings');
-	const footStart = html.indexOf('<footer class="panel-foot">');
-	const foot = html.slice(footStart, html.indexOf('</footer>', footStart));
-	assert.ok(!foot.includes('open-device-matrix'), 'sidebar foot must not list Device Matrix');
-	assert.ok(!foot.includes('open-environments'), 'sidebar foot must not list Environments');
-	for (const everyday of ['open-profile', 'open-settings', 'open-test-cases', 'open-bulk-run']) {
-		assert.ok(foot.includes(everyday), `foot should keep ${everyday}`);
-	}
+	// The streamlined rail keeps its essentials.
+	assert.match(aside, /id="sidebar-collapse-toggle"/);
+	assert.match(aside, /id="sidebar-new-run"/);
+	assert.match(aside, /id="run-list"/);
 });
 
 test('device details entry targets the Settings-hosted Device Management surface', async () => {
@@ -91,6 +101,18 @@ test('quick actions strip is removed (#14102); results live in run history via s
 	assert.ok(!app.includes('quickActions.'), 'dead quick-actions controller must be gone');
 });
 
+test('Phase 13A sidebar collapse control is shared, accessible and persistent', async () => {
+	const html = await readFile('public/index.html', 'utf8');
+	assert.match(html, /id="sidebar-collapse-toggle"[^>]*aria-controls="workspace-runs"[^>]*aria-expanded="true"/);
+	assert.match(html, /aria-label="Collapse recent tests sidebar"/);
+	const mode = await readFile('public/studioMode.js', 'utf8');
+	assert.match(mode, /sidebarPreferenceKey = 'qase\.sidebar'/);
+	assert.match(mode, /localStorage\.setItem\(sidebarPreferenceKey/);
+	const workspace = await readFile('public/studio-workspace.css', 'utf8');
+	assert.match(workspace, /data-qase-sidebar="collapsed"/);
+	assert.match(workspace, /grid-template-columns:\s*64px/);
+});
+
 test('runtime status vocabulary covers the agreed states via one map', async () => {
 	const are = await readFile('public/activeRuntimeEnvironment.js', 'utf8');
 	const fn = are.slice(are.indexOf('export function runtimeStatusFor'), are.indexOf('export function executionTypeFor'));
@@ -100,7 +122,7 @@ test('runtime status vocabulary covers the agreed states via one map', async () 
 	// The right-panel renderer reads only this vocabulary.
 	const app = await readFile('public/app.js', 'utf8');
 	const header = app.slice(app.indexOf('function renderLiveDeviceViewHeader'), app.indexOf('/* Environment card'));
-	for (const word of ['RESERVING', 'CONNECTING', 'CONNECTED', 'RUNNING', 'COMPLETED', 'FAILED', 'DEVICE UNAVAILABLE']) {
+	for (const word of ['Preparing…', 'Connecting…', 'Connected', 'Running', 'Complete', 'Failed', 'Unavailable']) {
 		assert.ok(header.includes(word), `live header must render '${word}'`);
 	}
 });

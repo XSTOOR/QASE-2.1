@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Static contract tests for #13234 quick fixes: engine tag rendered next to
  * run titles (run list + chat header) and the own-origin browser allowlist.
  */
 
-const here = path.dirname(new URL(import.meta.url).pathname);
+const here = path.dirname(fileURLToPath(import.meta.url));
 const appJs = fs.readFileSync(path.join(here, '../public/app.js'), 'utf8');
 const styles = fs.readFileSync(path.join(here, '../public/styles.css'), 'utf8');
 const policyJs = fs.readFileSync(path.join(here, './browserPolicy.js'), 'utf8');
@@ -23,10 +24,12 @@ test('run list title carries an engine chip for non-chromium runs', () => {
 });
 
 test('chat header shows the engine tag for non-chromium runs', () => {
+	const renderHeaderStart = appJs.indexOf('function renderHeader()');
 	const headerTitle = appJs.slice(
-		appJs.indexOf("el.chatTitle.textContent = session.targetUrl ? hostOf(session.targetUrl) : session.title"),
-		appJs.indexOf("el.chatTitle.textContent = session.targetUrl ? hostOf(session.targetUrl) : session.title") + 600
+		renderHeaderStart,
+		appJs.indexOf('function runProgress()', renderHeaderStart)
 	);
+	assert.ok(renderHeaderStart >= 0, 'renderHeader exists');
 	assert.match(headerTitle, /session\.engine && session\.engine !== 'chromium'/, 'non-chromium gate');
 	assert.match(headerTitle, /run-engine-pill/, 'chip class reused');
 });

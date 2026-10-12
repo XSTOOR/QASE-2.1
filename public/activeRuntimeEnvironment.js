@@ -1,3 +1,5 @@
+import { runPresentationStatus } from './runPresentation.js';
+
 /**
  * activeRuntimeEnvironment — the single source of truth for the live view.
  *
@@ -210,7 +212,7 @@ export function resolveActiveRuntimeEnvironment({ session, environments = null, 
 		? (runtimeBoard.find?.((row) => row.envId === env.envId) ?? null)
 		: null;
 	const runtimeStatus = runtimeStatusFor({
-		sessionStatus: session.status,
+		sessionStatus: runPresentationStatus(session),
 		deviceSessionStatus: session.deviceSessionStatus ?? null,
 		availability: boardEntry?.status ?? null
 	});

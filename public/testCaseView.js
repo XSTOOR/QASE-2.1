@@ -87,6 +87,7 @@ export function createTestCaseView({ api, toast, fail, elements, onStartRun, onQ
 		if (editorSummary) editorSummary.textContent = `${visible.length} shown · ${state.cases.length} total`;
 		if (!visible.length) {
 			const row = document.createElement('tr');
+			row.className = 'empty-row';
 			const cell = document.createElement('td');
 			cell.colSpan = 6;
 			cell.textContent = term ? 'No test cases match your search.' : 'No test cases yet — create the first one below.';

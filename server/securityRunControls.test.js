@@ -38,8 +38,8 @@ test('stopping mid-security-check halts cleanly and marks nothing passed', async
 	};
 	await runTurn(fixture.session, { task: 'Run security checks' }, fixture.store);
 	assert.equal(calls, 1);
-	// Same contract as any stopped run: idle, "Stopped by user.", no continuation.
-	assert.equal(fixture.session.status, 'idle');
+	// Same contract as any stopped run: explicit interruption, user-stop detail, no continuation.
+	assert.equal(fixture.session.status, 'interrupted');
 	assert.equal(fixture.statuses.at(-1).detail, 'Stopped by user.');
 	assert.equal(fixture.record.running, false);
 	assert.equal(fixture.record.controller, undefined);

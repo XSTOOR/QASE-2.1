@@ -39,7 +39,7 @@ function enrichedEnv(overrides = {}) {
 }
 
 test('FAMILY_ORDER lists all seven families in launcher order', () => {
-	assert.deepEqual(FAMILY_ORDER, ['chrome', 'edge', 'firefox', 'opera', 'brave', 'duckduckgo', 'safari']);
+	assert.deepEqual(FAMILY_ORDER, ['edge', 'chrome', 'brave', 'firefox', 'safari', 'opera', 'duckduckgo']);
 });
 
 test('browserFamilies always returns all seven, DuckDuckGo visible with reason', () => {

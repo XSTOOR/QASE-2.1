@@ -127,6 +127,8 @@ test('renders totals honestly: total/queued/running/passed/failed + coverage gap
 	const { view, container } = makeHarness(fixtureRun());
 	t.after(() => view.stop());
 	await view.load('matrix-test-1');
+	const subtitle = container.queryAll((n) => String(n.className).includes('qmr-subtitle'))[0]?.text();
+	assert.match(subtitle, /Runs one browser at a time/);
 	const totalsText = container.queryAll((n) => String(n.className).includes('qmr-totals'))[0]?.text();
 	// Pipeline Phase 5 (#15500): spec vocabulary — Total/Queued/Running/
 	// Passed/Failed/Unavailable/Unsupported/Completed always visible.

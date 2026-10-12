@@ -20,7 +20,7 @@ import { resolveBrowserSupportSync } from './browserSupportResolution.js';
  */
 
 /** Display order for the seven families in the launcher checklist. */
-export const FAMILY_ORDER = ['chrome', 'edge', 'firefox', 'opera', 'brave', 'duckduckgo', 'safari'];
+export const FAMILY_ORDER = ['edge', 'chrome', 'brave', 'firefox', 'safari', 'opera', 'duckduckgo'];
 
 /** Execution-type vocabulary shown in the launcher. */
 export const EXECUTION_TYPES = {

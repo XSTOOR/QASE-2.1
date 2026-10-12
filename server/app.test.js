@@ -432,9 +432,11 @@ test('standard QA run creation accepts a catalog-validated test selection', asyn
 	// A valid subset from the catalog is accepted and persisted on the session.
 	const created = await body(await fixture.request('/api/sessions', {
 		method: 'POST',
-		json: { selectedTests: ['navigation', 'forms'] }
+		json: { selectedTests: ['navigation', 'forms'], scopeSelection: ['forms', 'navigation', 'forms', 'unknown'] }
 	}));
 	assert.deepEqual(created.selectedTests, ['navigation', 'forms']);
+	assert.deepEqual(created.scopeSelection, ['forms', 'navigation']);
+	assert.equal((await body(await fixture.request('/api/sessions'))).length, 1, 'One request creates exactly one session');
 
 	// No selection keeps the historical full-coverage behavior.
 	const full = await body(await fixture.request('/api/sessions', { method: 'POST' }));

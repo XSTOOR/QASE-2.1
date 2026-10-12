@@ -252,9 +252,13 @@ function feedbackSectionHtml(session) {
 	const description = feedback.comments
 		? '<p>' + paragraphs(String(feedback.comments)) + '</p>'
 		: '';
+	const improvement = feedback.improvement
+		? '<p>' + paragraphs(String(feedback.improvement)) + '</p>'
+		: '';
 	return '<section><h2>User feedback</h2>'
 		+ '<table class="meta"><tr><th>Rating</th><td>' + escapeHtml(stars) + ' ' + escapeHtml(feedback.rating) + '/5</td></tr>'
 		+ (description ? '<tr><th>Description</th><td>' + description + '</td></tr>' : '')
+		+ (improvement ? '<tr><th>What should we improve</th><td>' + improvement + '</td></tr>' : '')
 		+ '<tr><th>Submitted by</th><td>' + submittedBy + '</td></tr>'
 		+ '<tr><th>Submitted on</th><td>' + escapeHtml(submittedOn) + '</td></tr></table></section>';
 }

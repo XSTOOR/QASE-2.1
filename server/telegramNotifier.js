@@ -120,19 +120,46 @@ export function parseTelegramConfig(environment) {
 	});
 }
 
-/** Timestamp in the report style (e.g. 07-Oct-2026 10:30 PM). Built from UTC
- * parts manually so the output is identical on every ICU/locale build. */
+/** Timestamp in the report style (e.g. 07-Oct-2026 10:30 PM). Built with an
+ * explicit Intl formatter so the output is identical on every locale build
+ * and honors the submitting user's QASE timezone (their profile setting —
+ * the same zone QASE's UI renders feedback timestamps in). Falls back to
+ * UTC when no zone is supplied. */
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-export function formatSubmittedOn(timestampMs) {
-	const date = new Date(timestampMs);
-	const hours24 = date.getUTCHours();
+export function formatSubmittedOn(timestampMs, timeZone) {
+	const zone = typeof timeZone === 'string' && timeZone.trim() !== '' ? timeZone.trim() : 'UTC';
+	let parts;
+	try {
+		parts = new Intl.DateTimeFormat('en-GB', {
+			timeZone: zone, hour12: false,
+			year: 'numeric', month: 'numeric', day: 'numeric',
+			hour: '2-digit', minute: '2-digit'
+		}).formatToParts(new Date(timestampMs));
+	} catch {
+		parts = new Intl.DateTimeFormat('en-GB', {
+			timeZone: 'UTC', hour12: false,
+			year: 'numeric', month: 'numeric', day: 'numeric',
+			hour: '2-digit', minute: '2-digit'
+		}).formatToParts(new Date(timestampMs));
+	}
+	const get = type => Number(parts.find(part => part.type === type)?.value ?? 0);
+	const hours24 = get('hour') % 24;
 	const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
 	const pad = value => String(value).padStart(2, '0');
-	return `${pad(date.getUTCDate())}-${MONTHS[date.getUTCMonth()]}-${date.getUTCFullYear()} `
-		+ `${hours12}:${pad(date.getUTCMinutes())} ${hours24 < 12 ? 'AM' : 'PM'}`;
+	return `${pad(get('day'))}-${MONTHS[get('month') - 1]}-${get('year')} `
+		+ `${pad(hours12)}:${pad(get('minute'))} ${hours24 < 12 ? 'AM' : 'PM'}`;
 }
 
 const MODE_LABELS = { qa: 'New QA Run', sqa: 'SQA', founder: 'Founder Review' };
+
+/**
+ * Clock read ONLY when the caller genuinely has no authoritative timestamp
+ * (a context built outside the feedback flow). The live feedback route always
+ * supplies record.submittedAt, so this path is never taken for real feedback.
+ */
+function recordFallbackNow(context) {
+	return typeof context.fallbackNow === 'number' ? context.fallbackNow : Date.now();
+}
 
 /**
  * Build the notification body — exact format agreed with the customer:
@@ -144,7 +171,10 @@ export function buildFeedbackMessage(feedback, context = {}) {
 	const rating = Math.max(1, Math.min(5, Number(feedback.rating) || 0));
 	const comments = typeof feedback.comments === 'string' && feedback.comments.trim() !== ''
 		? feedback.comments.trim()
-		: '(no description provided)';
+		: undefined;
+	const improvement = typeof feedback.improvement === 'string' && feedback.improvement.trim() !== ''
+		? feedback.improvement.trim()
+		: undefined;
 	const modeLabel = MODE_LABELS[context.mode] ?? 'QASE Test';
 	const shortId = typeof feedback.runId === 'string' && feedback.runId.length >= 8
 		? feedback.runId.slice(0, 8) : '—';
@@ -155,7 +185,10 @@ export function buildFeedbackMessage(feedback, context = {}) {
 		? context.targetUrl.trim() : undefined;
 	const submittedBy = typeof context.submittedByName === 'string' && context.submittedByName.trim() !== ''
 		? context.submittedByName.trim() : 'QASE user';
-	const submittedOn = Number.isFinite(context.submittedAt) ? formatSubmittedOn(context.submittedAt) : formatSubmittedOn(Date.now());
+	const submittedOn = formatSubmittedOn(
+		Number.isFinite(context.submittedAt) ? context.submittedAt : recordFallbackNow(context),
+		context.submittedAtTimeZone
+	);
 	const message = [
 		'📢 QASE User Feedback Received',
 		'',
@@ -164,7 +197,10 @@ export function buildFeedbackMessage(feedback, context = {}) {
 		`⭐ Rating: ${rating}/5`,
 		'',
 		'📝 User Feedback:',
-		comments,
+		comments ?? 'Not provided.',
+		'',
+		'🔧 What should we improve?',
+		improvement ?? 'Not provided.',
 		'',
 		`📊 QA Run: ${runLabel}`,
 		...(targetUrl ? [`🌐 Target URL: ${targetUrl}`] : []),
@@ -481,13 +517,18 @@ export function createTelegramNotifier(options = {}) {
 			recipients: config.chatIds.map(chatId => ({ chatId, state: 'pending', attempts: 0 })),
 			// Retain exactly what a retry needs to rebuild the message.
 			replay: {
-				feedback: { id: feedback.id, runId: feedback.runId, rating: feedback.rating, comments: feedback.comments },
+				feedback: { id: feedback.id, runId: feedback.runId, rating: feedback.rating, comments: feedback.comments, improvement: feedback.improvement },
 				context: {
 					mode: context.mode,
 					title: context.title,
 					targetUrl: context.targetUrl,
 					submittedByName: context.submittedByName,
-					submittedAt: Number.isFinite(context.submittedAt) ? context.submittedAt : Date.now()
+					submittedAtTimeZone: context.submittedAtTimeZone,
+					// Retry must reuse the SAME authoritative instant — never
+					// mint a fresh one (that would shift Submitted On).
+					submittedAt: Number.isFinite(context.submittedAt)
+						? context.submittedAt
+						: undefined
 				}
 			}
 		};

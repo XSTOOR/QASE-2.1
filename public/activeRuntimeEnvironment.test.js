@@ -89,6 +89,17 @@ test('runtime status vocabulary maps session/device-session/availability', () =>
 	assert.equal(runtimeStatusFor({}), 'queued');
 });
 
+test('a terminal blocked report stays blocked in the live-view status', () => {
+	const view = resolveActiveRuntimeEnvironment({
+		session: {
+			status: 'done',
+			report: { verdict: 'blocked' },
+			environmentSnapshot: { envId: 'blocked-env', device: 'Desktop', browser: 'Chrome' }
+		}
+	});
+	assert.equal(view.runtimeStatus, 'blocked');
+});
+
 test('browser keys cover the required browsers incl. substring fallback', () => {
 	assert.equal(browserKeyFor('Safari'), 'safari');
 	assert.equal(browserKeyFor('Mobile Safari'), 'safari');

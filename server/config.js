@@ -284,6 +284,15 @@ function parseProbeUrl(baseUrl, { production }) {
 	return base;
 }
 
+// The completion probe appends the chat-completions path to the same base the
+// model-list probe uses, so an operator-supplied base URL like
+// https://llm.example.com or https://llm.example.com/v1 both resolve correctly.
+function parseCompletionProbeUrl(baseUrl, { production }) {
+	const base = parseProbeUrl(baseUrl, { production });
+	base.pathname = `${base.pathname.replace(/\/+models\/?$/, '')}/chat/completions`;
+	return base;
+}
+
 /**
  * Env-key exfiltration guard. The effective key in a merged config may be the
  * instance's env key (env acts as the default layer when the user stored none).
@@ -477,16 +486,109 @@ export async function testConnection(candidate, options = {}) {
 		const models = (Array.isArray(listed) ? listed : [])
 			.map(entry => entry?.id ?? entry?.name)
 			.filter(value => typeof value === 'string' && value.length > 0 && value.length <= 512);
-		return {
+		return await finalizeProbeResult({
 			ok: true,
 			models: models.slice(0, 200),
 			matched: models.length === 0 ? undefined : models.includes(config.model),
 			message: models.length > 0
 				? `Reachable — ${models.length} model(s) listed.`
 				: 'Reachable, but the endpoint listed no models.'
-		};
+		}, {
+			config, environment, production, allowPrivateNetwork, dnsLookup,
+			fetchImpl, timeoutMs, maxBytes,
+			createTimeoutSignal: options.createTimeoutSignal,
+			readBoundedJson
+		});
 	} catch (error) {
 		const target = url?.toString() ?? String(config.baseUrl ?? '').trim();
 		return { ok: false, error: `Could not reach ${target}: ${connectionFailureMessage(error)}` };
 	}
+}
+
+/**
+ * Verifies the gateway will actually serve a completion for the model, not
+ * merely list it. Some gateways list a model in /models but reject it at
+ * /chat/completions (e.g. drytis/jev-1.13); a listing-only probe reports a
+ * false "matched" for such a model. Best-effort by design: if the gateway is
+ * reachable but the completion endpoint is unsupported (404/405/501), the
+ * listing verdict stands; an explicit HTTP error response (400/401/403/5xx
+ * with a body) downgrades `matched` with an actionable message.
+ */
+async function verifyModelCompletion(config, probe) {
+	const completionUrl = parseCompletionProbeUrl(config.baseUrl, { production: probe.production });
+	await assertSafeDestination(completionUrl, { dnsLookup: probe.dnsLookup, allowPrivateNetwork: probe.allowPrivateNetwork });
+	const response = await probe.fetchImpl(completionUrl.toString(), {
+		method: 'POST',
+		headers: {
+			Authorization: `Bearer ${config.apiKey}`,
+			'Content-Type': 'application/json',
+			Accept: 'text/event-stream, application/json'
+		},
+		body: JSON.stringify({
+			model: config.model,
+			messages: [{ role: 'user', content: 'Reply with the single word: ready' }],
+			stream: true,
+			max_tokens: 1024
+		}),
+		redirect: 'error',
+		signal: (probe.createTimeoutSignal ?? AbortSignal.timeout)(probe.timeoutMs)
+	});
+	if (response.ok || [404, 405, 501].includes(response.status)) {
+		// 200: the model accepted a completion. 404/405/501: the endpoint is
+		// unsupported on this gateway — fall back to the listing verdict.
+		return { listed: true, verified: response.ok === true };
+	}
+	if (response.status === 401 || response.status === 403) {
+		return {
+			listed: true,
+			completion: {
+				ok: false,
+				error: `The gateway listed the model, but the key was rejected for a test completion (HTTP ${response.status}).`
+			}
+		};
+	}
+	// 400-level and 5xx errors with a readable body (e.g. "Invalid model name
+	// passed in model=drytis/jev-1.13") mean the model is listed but not
+	// actually usable. Read a bounded body for the actionable message.
+	const body = await probe.readBoundedJson(response, probe.maxBytes).catch(() => null);
+	const raw = body && typeof body === 'object' ? (body.error?.message ?? body.message) : undefined;
+	const message = typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : undefined;
+	return {
+		listed: true,
+		completion: {
+			ok: false,
+			error: message
+				? `The gateway lists the model, but a test completion was rejected: ${message}`
+				: `The gateway lists the model, but a test completion was rejected (HTTP ${response.status}).`
+		}
+	};
+}
+
+/**
+ * Applies the completion verification to a successful model-list probe result.
+ * Only runs when the listing says `matched: true` (verifying an unusable model
+ * someone picked by name adds no signal), and never turns `ok: false` into
+ * `ok: true`. Network/timeout failures of the completion probe itself are
+ * tolerated — the listing result stands, since gateways legitimately vary in
+ * endpoint support.
+ */
+async function finalizeProbeResult(result, probe) {
+	if (!result.ok || result.matched !== true || !probe.config.model) {
+		return result;
+	}
+	let verified;
+	try {
+		verified = await verifyModelCompletion(probe.config, probe);
+	} catch {
+		return result; // probe transport failed: keep the listing verdict
+	}
+	if (verified?.completion && verified.completion.ok === false) {
+		return {
+			...result,
+			matched: false,
+			completionVerified: false,
+			message: verified.completion.error
+		};
+	}
+	return verified?.verified === true ? { ...result, completionVerified: true } : result;
 }

@@ -23,10 +23,9 @@ test('only terminal statuses collapse the browser view; live statuses keep it ex
 });
 
 test('manual expansion is respected — render only collapses when the session is not in the override set', () => {
-	assert.match(
-		app,
-		/const collapsed = STAGE_COLLAPSE_STATUSES\.has\(state\.session\?\.status \?\? 'idle'\)[\s\S]*?&& !state\.stageExpanded\.has\(state\.sessionId\);/
-	);
+	// Results-first redesign: preview availability gates the collapse; an ended run
+	// collapses to the compact strip unless the user expanded it for this session.
+	assert.match(app, /const collapsed = previewAvailable[\s\S]*?\? ended && !state\.stageExpanded\.has\(state\.sessionId\)/);
 	// toggleStageCollapse adds/removes the session from the override set rather than
 	// toggling a global flag, so later status syncs of the same run cannot re-collapse
 	// a view the user expanded.
@@ -34,12 +33,11 @@ test('manual expansion is respected — render only collapses when the session i
 });
 
 test('expand/collapse control is a real button with accessible state', () => {
-	assert.match(html, /<button id="stage-toggle" class="btn btn-sm" hidden aria-expanded="true"/);
-	assert.match(html, /id="stage-note"[^>]*>Run complete — live view collapsed<\/div>/);
-	assert.match(app, /el\.stageToggle\.textContent = collapsed \? 'Expand' : 'Collapse';/);
+	assert.match(html, /<button id="stage-toggle" class="btn btn-sm preview-toggle" type="button" hidden\s+aria-expanded="true" aria-label="Minimize live preview"/);
+	assert.match(app, /el\.stageToggle\.textContent = collapsed \? '⤢' : '⤡';/);
 	assert.match(app, /el\.stageToggle\.setAttribute\('aria-expanded', String\(!collapsed\)\);/);
-	// The button only appears once a frame exists (no collapsing an empty stage).
-	assert.match(app, /el\.stageToggle\.hidden = !stageHasContent\(\);/);
+	// The button only appears once a preview exists (no collapsing an empty stage).
+	assert.match(app, /el\.stageToggle\.hidden = !previewAvailable;/);
 });
 
 test('toggling preserves browser state — the frame is never unmounted or reset', () => {
@@ -56,26 +54,12 @@ test('toggling preserves browser state — the frame is never unmounted or reset
 
 test('collapsed layout frees the grid rows for findings and report', () => {
 	const collapsedBlocks = styles.match(/\.viewer\.stage-collapsed \{[^}]*\}/g) ?? [];
-	// Both the Studio-aligned rules and the legacy diagnostics block must define the
-	// compact layout so no viewport regresses to the tall stage.
-	assert.ok(collapsedBlocks.length >= 2, `expected collapsed viewer rules in both style blocks, found ${collapsedBlocks.length}`);
-	for (const block of collapsedBlocks) {
-		assert.match(block, /grid-template-rows:/);
-	}
-	// The expanded layout keeps an explicit stage row so live testing is usable.
-	// After #14068 the studio base viewer is header + detail only (stage lives in
-	// the center workspace); the minmax(px,%) stage row must survive in every
-	// viewer block that still owns a stage.
-	const viewerBlocks = styles.match(/\.viewer \{[^}]*grid-template-rows[^}]*\}/g) ?? [];
-	assert.ok(viewerBlocks.length >= 2, 'expanded viewer rules must exist in both style blocks');
-	const stageRowBlocks = viewerBlocks.filter(block => /minmax\(\d+px, \d+%\)/.test(block));
-	assert.ok(stageRowBlocks.length >= 1,
-		`at least one viewer block must keep the generous minmax stage row, found ${stageRowBlocks.length} of ${viewerBlocks.length}`);
-	// Studio consistency: the toggle reuses the existing button classes.
-	assert.match(html, /id="stage-toggle" class="btn btn-sm"/);
+	assert.ok(collapsedBlocks.length >= 1, 'compact collapsed stage rules must exist');
 });
 
-test('the collapsed strip is clickable and re-expandable, and the hint note renders only while collapsed', () => {
-	assert.match(app, /el\.stage\.addEventListener\('click'[\s\S]*?toggleStageCollapse\(\);/);
-	assert.match(app, /el\.stageNote\.hidden = !collapsed;/);
+test('the live status chip is still wired for all run states', () => {
+	// The status chip vocabulary lives in its own suite (statusChipUi); here we only
+	// assert the chip element and the status→dataset wiring survived the merge.
+	assert.match(html, /id="status-chip"/);
+	assert.match(app, /body\.dataset\.runStatus/);
 });

@@ -166,7 +166,7 @@ test('usage is preserved when a run is stopped mid-stream', async () => {
 
 	await runTurn(session, { task: 'Stop me' }, store);
 
-	assert.equal(session.status, 'idle', 'run reported as stopped');
+	assert.equal(session.status, 'interrupted', 'run reported as stopped');
 	assert.equal(session.tokenUsage.inputTokens, 4000, 'usage accumulated before the stop is kept');
 	assert.equal(session.tokenUsage.outputTokens, 800);
 });
@@ -427,7 +427,7 @@ test('graceful model cancellation stops without launching an automatic continuat
 	};
 	await runTurn(fixture.session, { task: 'Run QA' }, fixture.store);
 	assert.equal(calls, 1);
-	assert.equal(fixture.session.status, 'idle');
+	assert.equal(fixture.session.status, 'interrupted');
 	assert.equal(fixture.statuses.at(-1).detail, 'Stopped by user.');
 	assert.equal(fixture.record.running, false);
 	assert.equal(fixture.record.controller, undefined);
@@ -514,7 +514,7 @@ test('Stop remains effective during timeout backoff and releases the running loc
 	await runTurn(fixture.session, { task: 'Run QA' }, fixture.store);
 	assert.deepEqual(stateAtStop, { running: true, hasController: true });
 	assert.equal(calls, 1);
-	assert.equal(fixture.session.status, 'idle');
+	assert.equal(fixture.session.status, 'interrupted');
 	assert.equal(fixture.record.running, false);
 	assert.equal(fixture.record.controller, undefined);
 });
@@ -588,7 +588,7 @@ test('cancellation during unfinished-tool cleanup prevents a planned continuatio
 	};
 	await runTurn(fixture.session, { task: 'Run QA' }, fixture.store);
 	assert.equal(calls, 1);
-	assert.equal(fixture.session.status, 'idle');
+	assert.equal(fixture.session.status, 'interrupted');
 	assert.equal(fixture.record.controller, undefined);
 });
 

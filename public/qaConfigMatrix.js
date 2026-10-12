@@ -4,8 +4,8 @@
  * Pure model layer for the Start QA dialog's device & browser matrix:
  * - fetch state machine (loading / empty / error with retry)
  * - facet filtering (platform, manufacturer, model, OS version, orientation, search)
- * - default selection = every AVAILABLE compatible configuration, with explicit
- *   user deselections persisted across dialog reopens (localStorage)
+ * - selection helpers for a focused default device and explicit user
+ *   deselections persisted across dialog reopens (localStorage)
  * - summary assembly (planned total + per-family counts)
  * - Start gating predicate (valid URL + at least one selected configuration)
  *
@@ -13,7 +13,7 @@
  * { configurations: [...], browserFamilies: [...], providers: [...], totals }.
  */
 
-export const FAMILY_ORDER = ['chrome', 'edge', 'firefox', 'opera', 'brave', 'duckduckgo', 'safari'];
+export const FAMILY_ORDER = ['edge', 'chrome', 'brave', 'firefox', 'safari', 'opera', 'duckduckgo'];
 
 const DESELECTION_STORAGE_KEY = 'qase.qaConfigDeselections';
 /** #Phase-1: explicit selection state lives under its own storage key so it
@@ -388,6 +388,44 @@ export function defaultSelectionForDevice(deviceConfigurations) {
 	return deviceConfigurations
 		.filter((configuration) => isSelectable(configuration))
 		.map((configuration) => configuration.envId);
+}
+
+/**
+ * Pick a practical device for the customer launcher. A saved device wins when
+ * it is still available. Otherwise prefer a locally executable desktop device
+ * and the browser order agreed for the product (Edge, Chrome, Brave, ...).
+ * The returned scope is intentionally one device; selecting the entire catalog
+ * can exceed the server's 2,000-configuration run limit before the user acts.
+ */
+export function recommendedDeviceScope(configurations, savedSelection = null) {
+	const available = configurations.filter(isSelectable);
+	if (available.length === 0) return null;
+
+	const saved = savedSelection && (
+		available.find((configuration) => configuration.envId === savedSelection.envId)
+		?? available.find((configuration) =>
+			configuration.platform === savedSelection.platform
+			&& configuration.device === savedSelection.device
+			&& (configuration.manufacturer ?? '') === (savedSelection.manufacturer ?? ''))
+	);
+	const platformRank = new Map(['windows', 'macos', 'android', 'ios', 'ipados'].map((platform, index) => [platform, index]));
+	const executionRank = new Map(['browser_emulation', 'simulator', 'emulator', 'virtual_machine', 'physical_device'].map((type, index) => [type, index]));
+	const ranked = saved ?? [...available].sort((left, right) => {
+		const leftDesktop = left.deviceType === 'desktop' ? 0 : 1;
+		const rightDesktop = right.deviceType === 'desktop' ? 0 : 1;
+		return leftDesktop - rightDesktop
+			|| (platformRank.get(left.platform) ?? 99) - (platformRank.get(right.platform) ?? 99)
+			|| (FAMILY_ORDER.indexOf(left.browserCode) === -1 ? 99 : FAMILY_ORDER.indexOf(left.browserCode))
+				- (FAMILY_ORDER.indexOf(right.browserCode) === -1 ? 99 : FAMILY_ORDER.indexOf(right.browserCode))
+			|| (executionRank.get(left.executionType) ?? 99) - (executionRank.get(right.executionType) ?? 99)
+			|| String(left.device).localeCompare(String(right.device));
+	})[0];
+
+	return {
+		platform: ranked.platform,
+		device: ranked.device,
+		manufacturer: ranked.manufacturer ?? ''
+	};
 }
 
 /**

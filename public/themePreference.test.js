@@ -57,13 +57,13 @@ test('normalizeThemePreference normalizes case and whitespace', () => {
 	assert.equal(normalizeThemePreference('\tsystem\n'), 'system');
 });
 
-test('normalizeThemePreference falls back to dark for missing/invalid values', () => {
-	assert.equal(normalizeThemePreference(null), 'dark');
-	assert.equal(normalizeThemePreference(undefined), 'dark');
-	assert.equal(normalizeThemePreference(''), 'dark');
-	assert.equal(normalizeThemePreference('banana'), 'dark');
+test('normalizeThemePreference follows the system for missing/invalid values', () => {
+	assert.equal(normalizeThemePreference(null), 'system');
+	assert.equal(normalizeThemePreference(undefined), 'system');
+	assert.equal(normalizeThemePreference(''), 'system');
+	assert.equal(normalizeThemePreference('banana'), 'system');
 	assert.equal(normalizeThemePreference(''), DEFAULT_THEME);
-	assert.equal(DEFAULT_THEME, 'dark');
+	assert.equal(DEFAULT_THEME, 'system');
 });
 
 test('THEME_PREFERENCES exposes exactly the three user options', () => {
@@ -93,11 +93,12 @@ test('resolveAppliedTheme defaults dark when matchMedia is unavailable', () => {
 // createThemeStore — persistence + live system tracking
 // ---------------------------------------------------------------------------
 
-test('store defaults to dark with no stored preference', () => {
+test('store follows the system with no stored preference', () => {
 	const storage = memoryStorage();
 	const store = createThemeStore({ storage, matchMedia: fakeMatchMedia(false) });
-	assert.equal(store.preference(), 'dark');
-	assert.equal(store.applied(), 'dark');
+	assert.equal(store.preference(), 'system');
+	assert.equal(store.applied(), 'light');
+	store.dispose();
 });
 
 test('store restores each persisted preference and resolves system against the OS', () => {
@@ -117,11 +118,11 @@ test('store restores each persisted preference and resolves system against the O
 	}
 });
 
-test('invalid stored value falls back to dark', () => {
+test('invalid stored value follows the system', () => {
 	const storage = memoryStorage({ 'qase.theme': 'neon' });
 	const store = createThemeStore({ storage, matchMedia: fakeMatchMedia(false) });
-	assert.equal(store.preference(), 'dark');
-	assert.equal(store.applied(), 'dark');
+	assert.equal(store.preference(), 'system');
+	assert.equal(store.applied(), 'light');
 	store.dispose();
 });
 
@@ -135,7 +136,7 @@ test('set() persists the preference and updates applied immediately', () => {
 	assert.equal(storage.dump()['qase.theme'], 'dark');
 	assert.equal(store.applied(), 'dark');
 	store.set('garbage'); // normalized, never thrown
-	assert.equal(storage.dump()['qase.theme'], 'dark');
+	assert.equal(storage.dump()['qase.theme'], 'system');
 	store.dispose();
 });
 
@@ -172,7 +173,7 @@ test('switching to a fixed theme unsubscribes from OS changes', () => {
 
 test('switching to system subscribes to OS changes', () => {
 	const matchMedia = fakeMatchMedia(false);
-	const store = createThemeStore({ storage: memoryStorage(), matchMedia });
+	const store = createThemeStore({ storage: memoryStorage({ 'qase.theme': 'dark' }), matchMedia });
 	assert.equal(matchMedia.listenerCount(), 0);
 	store.set('system');
 	assert.equal(matchMedia.listenerCount(), 1);
@@ -186,7 +187,7 @@ test('storage write failures degrade to session-only theming (no throw)', () => 
 		removeItem: () => {}
 	};
 	const store = createThemeStore({ storage: broken, matchMedia: fakeMatchMedia(false) });
-	assert.equal(store.preference(), 'dark'); // read failure → default, no throw
+	assert.equal(store.preference(), 'system'); // read failure → default, no throw
 	store.set('light');
 	assert.equal(store.applied(), 'light'); // applies for the session despite persistence failure
 	store.dispose();
@@ -194,7 +195,7 @@ test('storage write failures degrade to session-only theming (no throw)', () => 
 
 test('missing storage (null) does not throw', () => {
 	const store = createThemeStore({ storage: null, matchMedia: fakeMatchMedia(true) });
-	assert.equal(store.preference(), 'dark');
+	assert.equal(store.preference(), 'system');
 	assert.equal(store.applied(), 'dark');
 	store.set('light');
 	assert.equal(store.applied(), 'light');

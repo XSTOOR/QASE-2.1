@@ -1,0 +1,129 @@
+✔ application construction has no startup side effects and validates its service contract (6.9689ms)
+✔ login entry route serves the existing application without masking unknown routes (49.893954ms)
+✔ health and readiness are public, minimal, and reflect the injected readiness check (14.098057ms)
+ReferenceError: engine is not defined
+    at file:///workspace/server/app.js:1657:4
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+ReferenceError: engine is not defined
+    at file:///workspace/server/app.js:1657:4
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+✔ standard QA run creation accepts a catalog-validated test selection (22.962766ms)
+ReferenceError: engine is not defined
+    at file:///workspace/server/app.js:1657:4
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+ReferenceError: engine is not defined
+    at file:///workspace/server/app.js:1657:4
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+✔ security test selections require explicit authorization at the route (45.122322ms)
+ReferenceError: engine is not defined
+    at file:///workspace/server/app.js:1657:4
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+✔ embedded instance APIs need no Qase login and reject cross-origin browser mutations (51.596982ms)
+✔ production cannot enable the practice site or its relaxed script policy (5.426802ms)
+✔ Drytis embedding is disabled by default and can only allow one exact HTTPS origin (3.545071ms)
+✔ development retains the isolated practice site (4.085052ms)
+ReferenceError: engine is not defined
+    at file:///workspace/server/app.js:1657:4
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+✔ run CRUD preserves summaries, derived detail fields, cleanup, and 404 behavior (16.066236ms)
+ReferenceError: engine is not defined
+    at file:///workspace/server/app.js:1657:4
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+ReferenceError: engine is not defined
+    at file:///workspace/server/app.js:1657:4
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+✔ run creation with an environmentId snapshots the frozen environment onto the run (10.966245ms)
+ReferenceError: engine is not defined
+    at file:///workspace/server/app.js:1657:4
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+✔ SQA catalog and authorized scope creation stay pending until evidence is evaluated (51.4143ms)
+✔ a pending SQA scope accepts its first target URL and starts the agent (41.111926ms)
+✔ Founder Mode creates an authorized pending review and starts only from a target URL message (471.297009ms)
+✔ run deletion remains hidden while durable cleanup records a sanitized failure (7.435434ms)
+✔ messages preserve validation, URL normalization, runtime startup, and detached errors (62.747694ms)
+✔ runtime initialization failures retain the user message and return the established error (37.150626ms)
+✔ answers and credentials require pending input and never expose raw credential values (16.292066ms)
+✔ Founder credential refusal persists a public-only boundary and cannot re-open the login gate (14.277377ms)
+✔ stop, report, configuration, malformed JSON, and API 404 contracts remain stable (57.081885ms)
+✔ SSE stays live without login sessions and removes its subscription on disconnect (1037.406952ms)
+✔ SSE waits for asynchronous subscription readiness before sending its handshake (4.26944ms)
+✔ SSE disposes a subscription that resolves after the client already disconnected (3.424423ms)
+✔ SSE subscription rejection ends safely without a ready handshake (2.71884ms)
+✔ SSE releases its subscription if initial frame retrieval fails (2.861112ms)
+[Qase server c3b0acac-8df8-4bf5-8ad4-84740e881246] sanitized route error: ENOENT
+✔ route failures never expose filesystem paths to API clients (3.50993ms)
+[Qase server 929c2e3e-8bae-415b-8f36-5dd26ed42675] sanitized route error: 23505
+✔ route failures never expose unexpected database or internal details (2.88447ms)
+[Qase server 6e162280-eb6c-4b3d-8815-80d2c76b5480] sanitized route error: failed reading /workspace/private/config.json
+[Qase server 42eba194-aacb-4c34-91e1-3a0f4453b5f8] sanitized route error: failed reading /workspace/private/auth.json
+✔ only explicitly public input errors retain their message (6.136026ms)
+✔ finding status PATCH validates ownership, input, and broadcasts the transition (13.010775ms)
+✔ the finding PATCH route enforces the shared auth and CSRF middleware contract (7.002023ms)
+✔ GET /api/findings returns the owned backlog with composed filters (23.23393ms)
+✔ GET /api/coverage aggregates cases × environments × runs with honest metrics (4.620272ms)
+✔ GET /api/coverage is absent when no coverage service is configured (2.94099ms)
+✔ finding status PATCH validates ownership, input, and broadcasts the transition (11.993506ms)
+✔ the finding PATCH route enforces the shared auth and CSRF middleware contract (9.908534ms)
+✔ GET /api/findings returns the owned backlog with composed filters (22.45588ms)
+✔ coverageStateOf resolves every distinct state without collapsing (1.0354ms)
+✔ distinct labels exist for every required user-facing state (0.19729ms)
+✔ computeMatrixCoverage reports per-state counts and never marks unrun as passed (0.78778ms)
+✔ two environments produce isolated, differently-stamped artifact sets (12.2485ms)
+✔ categoryOf splits android phones vs tablets and ios vs ipados (0.96031ms)
+✔ counts come from actual items; passed+failed = executed (0.97778ms)
+✔ device categories covered only when executed; catalog presence is not coverage (0.32178ms)
+✔ duckduckgo line carries its recorded reason and no pass (0.26792ms)
+✔ empty matrix reports zeros, never invented numbers (0.18434ms)
+✔ per-run gaps preserve every reason and profile identity (0.49225ms)
+✔ pending items appear as pending gap rows with no duration — never vanish, never pass (0.32295ms)
+✔ unknown browser codes surface instead of being dropped (0.14807ms)
+✔ gapLabel maps statuses to human-readable text (0.17886ms)
+✔ mid-bulk failure of one environment leaves every other item intact (301.430966ms)
+✔ RT2: failed health check → UNAVAILABLE with exact reason, session never launched (152.173816ms)
+✔ RT2: healthy gate → item proceeds to execution normally (150.111363ms)
+✔ PENDING item executes; verdict pass → PASSED with findings + duration (51.008374ms)
+✔ verdict fail → FAILED; verdict blocked → BLOCKED; session error → ERROR (81.310244ms)
+✔ awaiting_input → BLOCKED — never PASSED (50.407661ms)
+✔ RUNTIME_UNAVAILABLE at launch → BLOCKED, not ERROR (51.409202ms)
+✔ NOT_SUPPORTED item (duckduckgo) never launches a session (60.654775ms)
+✔ NOT_RUN / non-PENDING items keep their honest state and never launch (51.283491ms)
+✔ double start is refused; run reaches done with counts (200.250434ms)
+✔ resume recovery: dangling running run + RUNNING items become ERROR interrupted (0.52113ms)
+✔ statusCounts tallies the full honest vocabulary (0.73885ms)
+✔ referenced environments exist in the generated catalog (smoke) (151.077283ms)
+✔ cancel(): QUEUED items → CANCELLED, worker stops claiming, run cancelled (483.490122ms)
+✔ retryItem(): re-queues a FAILED item, enforces MAX 2, refuses terminal-success (241.47555ms)
+✔ MATRIX_ITEM_STATUSES includes QUEUED and CANCELLED without dropping the honest set (0.76325ms)
+✔ updateItem accepts QUEUED and CANCELLED transitions (426.221128ms)
+✔ updateItem still rejects PASSED without a session (honest-pass guard intact) (200.268764ms)
+✔ run status vocabulary accepts cancelled (214.647959ms)
+✔ retry bookkeeping: retryItem marks re-queued items and enforces the bound (165.37037ms)
+✔ default profile rules resolve all six categories against the live catalog (150.716772ms)
+✔ default resolution skips missing rules — never invents an environment (0.712341ms)
+✔ expandMatrixItems: supported browser → PENDING; duckduckgo → NOT_SUPPORTED with reason (296.757802ms)
+✔ expandMatrixItems: Safari on Windows → NOT_SUPPORTED (inventory-level gap) (47.90938ms)
+✔ expandMatrixItems: rejects empty profiles / browsers and unknown environments (66.268267ms)
+✔ create with defaults: one item per category × browsers, PENDING only where executable (66.464946ms)
+✔ #14651 default browser fallback: FULL agreed set including duckduckgo, DDG NOT_SUPPORTED with reason (68.9236ms)
+✔ create validates testCaseId and targetUrl (68.755069ms)
+✔ updateItem honest-state guard: PASSED/FAILED require a sessionId (90.991288ms)
+✔ updateItem rejects invalid statuses and unknown runs/items (113.479247ms)
+✔ local backend persists across backend instances (page reload survival) (130.593075ms)
+✔ _setStatus accepts only the run status vocabulary (89.646926ms)
+✔ create with configurationEnvIds pins EXACT configurations (no silent newest-version swap) (108.423856ms)
+✔ configurationEnvIds: vanished envId → honest BLOCKED item, never dropped (56.628624ms)
+✔ configurationEnvIds: DuckDuckGo row → NOT_SUPPORTED with provider reason, never executes (97.53585ms)
+✔ configurationEnvIds: empty array rejects (422 contract) (85.077256ms)
+✔ loads the checked migration set in numeric order (19.782186ms)
+✔ applies pending migrations in order and records them with parameters (10.608693ms)
+✔ does no transactional work when every migration is already applied (36.411195ms)
+✔ rejects a changed checksum before beginning a migration (19.832679ms)
+✔ rolls back a failed migration, unlocks, and releases the client (8.639175ms)
+ℹ tests 90
+ℹ suites 0
+ℹ pass 90
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5824.916459

@@ -119,7 +119,7 @@ test('model probe blocks direct and DNS-resolved non-public destinations in prod
 });
 
 test('model probe refuses redirects, sends the credential only after validation, and bounds timeout', async () => {
-	let request;
+	const requests = [];
 	const result = await testConnection(CANDIDATE, options({
 		timeoutMs: 60_000,
 		createTimeoutSignal(timeoutMs) {
@@ -127,18 +127,162 @@ test('model probe refuses redirects, sends the credential only after validation,
 			return new AbortController().signal;
 		},
 		fetchImpl: async (url, init) => {
-			request = { url, init };
-			return new Response(JSON.stringify({ data: [{ id: 'quality-model' }, { id: 'backup-model' }] }), {
-				status: 200, headers: { 'content-type': 'application/json; charset=utf-8' }
+			requests.push({ url: String(url), init });
+			if (String(url).endsWith('/models')) {
+				return new Response(JSON.stringify({ data: [{ id: 'quality-model' }, { id: 'backup-model' }] }), {
+					status: 200, headers: { 'content-type': 'application/json; charset=utf-8' }
+				});
+			}
+			return new Response('data: {"choices":[{"delta":{"content":"ready"}}]}', {
+				status: 200, headers: { 'content-type': 'text/event-stream' }
 			});
 		}
 	}));
 	assert.equal(result.ok, true);
 	assert.equal(result.matched, true);
 	assert.deepEqual(result.models, ['quality-model', 'backup-model']);
-	assert.equal(request.url, 'https://models.openai.com/v1/models');
-	assert.equal(request.init.redirect, 'error');
-	assert.equal(request.init.headers.Authorization, 'Bearer test-key');
+	const listing = requests.find(entry => entry.url === 'https://models.openai.com/v1/models');
+	assert.ok(listing, 'listing request was made');
+	assert.equal(listing.init.redirect, 'error');
+	assert.equal(listing.init.headers.Authorization, 'Bearer test-key');
+});
+
+// Completion verification: a gateway that LISTS the model must also ACCEPT a
+// completion for it before `matched` is reported true. The drytis gateway
+// listed drytis/jev-1.13 in /v1/models but rejected it at /chat/completions,
+// and the listing-only probe reported a false positive.
+
+function listingFetch(models = ['quality-model']) {
+	const listing = new Response(JSON.stringify({ data: models.map(id => ({ id })) }), {
+		status: 200, headers: { 'content-type': 'application/json; charset=utf-8' }
+	});
+	return async (url, init = {}) => {
+		if (String(url).endsWith('/models')) {
+			return listing.clone();
+		}
+		return { url, init, __unmatched: true };
+	};
+}
+
+test('model probe verifies a listed model accepts a completion before reporting matched', async () => {
+	const requests = [];
+	const result = await testConnection(CANDIDATE, options({
+		fetchImpl: async (url, init) => {
+			requests.push({ url: String(url), method: init.method });
+			if (String(url).endsWith('/models')) {
+				return new Response(JSON.stringify({ data: [{ id: 'quality-model' }] }), {
+					status: 200, headers: { 'content-type': 'application/json' }
+				});
+			}
+			assert.equal(String(url), 'https://models.openai.com/v1/chat/completions');
+			assert.equal(init.method, 'POST');
+			const body = JSON.parse(init.body);
+			assert.equal(body.model, 'quality-model');
+			assert.equal(body.stream, true);
+			return new Response('data: {"choices":[{"delta":{"content":"ready"}}]}', {
+				status: 200, headers: { 'content-type': 'text/event-stream' }
+			});
+		}
+	}));
+	assert.equal(result.ok, true);
+	assert.equal(result.matched, true);
+	assert.equal(result.completionVerified, true);
+	assert.equal(requests.length, 2);
+	assert.equal(requests[0].method, undefined); // GET listing
+	assert.equal(requests[1].method, 'POST'); // POST completion probe
+});
+
+test('model probe downgrades matched when a listed model rejects the completion (drytis/jev-1.13 case)', async () => {
+	const result = await testConnection(
+		{ ...CANDIDATE, model: 'drytis/jev-1.13' },
+		options({
+			fetchImpl: async url => {
+				if (String(url).endsWith('/models')) {
+					return new Response(JSON.stringify({ data: [{ id: 'drytis/jev-1.13' }] }), {
+						status: 200, headers: { 'content-type': 'application/json' }
+					});
+				}
+				return new Response(JSON.stringify({
+					error: { message: '/chat/completions: Invalid model name passed in model=drytis/jev-1.13.' }
+				}), { status: 400, headers: { 'content-type': 'application/json' } });
+			}
+		})
+	);
+	assert.equal(result.ok, true);
+	assert.equal(result.matched, false);
+	assert.equal(result.completionVerified, false);
+	assert.match(result.message, /lists the model, but a test completion was rejected/);
+	assert.match(result.message, /Invalid model name passed in model=drytis\/jev-1\.13/);
+	// Still reachable — the gateway itself is fine.
+	assert.deepEqual(result.models, ['drytis/jev-1.13']);
+});
+
+test('model probe keeps the listing verdict when the completion endpoint is unsupported', async () => {
+	const result = await testConnection(CANDIDATE, options({
+		fetchImpl: async url => {
+			if (String(url).endsWith('/models')) {
+				return new Response(JSON.stringify({ data: [{ id: 'quality-model' }] }), {
+					status: 200, headers: { 'content-type': 'application/json' }
+				});
+			}
+			return new Response('Not Found', { status: 404 });
+		}
+	}));
+	assert.equal(result.ok, true);
+	assert.equal(result.matched, true);
+	assert.equal(result.completionVerified, undefined);
+});
+
+test('model probe downgrades matched when the key is rejected for completions', async () => {
+	const result = await testConnection(CANDIDATE, options({
+		fetchImpl: async url => {
+			if (String(url).endsWith('/models')) {
+				return new Response(JSON.stringify({ data: [{ id: 'quality-model' }] }), {
+					status: 200, headers: { 'content-type': 'application/json' }
+				});
+			}
+			return new Response(JSON.stringify({ error: { message: 'Forbidden for this model' } }), {
+				status: 403, headers: { 'content-type': 'application/json' }
+			});
+		}
+	}));
+	assert.equal(result.ok, true);
+	assert.equal(result.matched, false);
+	assert.match(result.message, /key was rejected for a test completion \(HTTP 403\)/);
+});
+
+test('model probe tolerates completion-probe transport failures and keeps the listing verdict', async () => {
+	const result = await testConnection(CANDIDATE, options({
+		fetchImpl: async url => {
+			if (String(url).endsWith('/models')) {
+				return new Response(JSON.stringify({ data: [{ id: 'quality-model' }] }), {
+					status: 200, headers: { 'content-type': 'application/json' }
+				});
+			}
+			throw new TypeError('fetch failed', { cause: Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }) });
+		}
+	}));
+	assert.equal(result.ok, true);
+	assert.equal(result.matched, true);
+	assert.equal(result.completionVerified, undefined);
+});
+
+test('model probe skips completion verification when the model is not listed', async () => {
+	let calls = 0;
+	const result = await testConnection(CANDIDATE, options({
+		fetchImpl: async url => {
+			calls++;
+			if (String(url).endsWith('/models')) {
+				return new Response(JSON.stringify({ data: [{ id: 'other-model' }] }), {
+					status: 200, headers: { 'content-type': 'application/json' }
+				});
+			}
+			throw new Error('completion probe must not run');
+		}
+	}));
+	assert.equal(result.ok, true);
+	assert.equal(result.matched, false);
+	assert.equal(calls, 1);
 });
 
 test('model probe accepts JSON only and enforces declared and streamed body limits', async () => {

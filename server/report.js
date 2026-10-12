@@ -287,6 +287,9 @@ export function buildFeedbackSectionMarkdown(session) {
 	if (feedback.comments) {
 		lines.push('', '>', ...String(feedback.comments).split('\n').map(line => `> ${line}`), '');
 	}
+	if (feedback.improvement) {
+		lines.push('- **What should we improve:**', '', '> ', ...String(feedback.improvement).split('\n').map(line => `> ${line}`), '');
+	}
 	const submittedBy = feedback.userName || 'User';
 	const submittedOn = feedback.submittedAt
 		? new Date(feedback.submittedAt).toLocaleString()

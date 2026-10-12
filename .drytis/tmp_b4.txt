@@ -1,0 +1,45 @@
+✔ feedback form names the human-reviewed destination before submission (2.137041ms)
+✔ submitted and edited feedback confirms delivery to the same inbox (0.1657ms)
+✔ feature dock exposes one accessible launcher per mode outside the working panels (1.23479ms)
+✔ Founder launcher matches the authenticated API input contract and limits (1.15309ms)
+✔ Founder frontend creates an idle scope, then starts through the existing message endpoint (1.00835ms)
+✔ Founder result rendering is safe, mode-scoped, and covers the full decision brief (0.40208ms)
+✔ the generic Report tab renders the finalized Founder brief and live finalization updates it (0.52105ms)
+✔ feature dock reserves a fourth desktop column and becomes a bottom dock responsively (1.29666ms)
+✔ the QA launcher exposes a test-selection fieldset with bulk controls (1.80322ms)
+✔ QA frontend defaults to all tests selected and reuses Studio components (1.26982ms)
+✔ QA submit is disabled with no selection and selection survives configuration (0.98675ms)
+✔ store persists a whitelisted scopeSelection on run creation (506.395469ms)
+✔ store rejects a non-array scopeSelection (5.32582ms)
+✔ markdown report renders the selected coverage block (49.788108ms)
+✔ markdown report omits the block for legacy runs without scopeSelection (14.037968ms)
+✔ Quality launcher exposes an accessible recommended review with optional advanced scope (1.67801ms)
+✔ SQA frontend uses the authenticated API contract and safe DOM construction (2.01206ms)
+✔ finalized SQA assessments expose professional report export actions (0.38276ms)
+✔ the generic Report tab renders finalized SQA assessments instead of checking the QA report field (0.45967ms)
+✔ post-run stage collapse block exists in the frontend source (1.23766ms)
+✔ only terminal statuses collapse the browser view; live statuses keep it expanded (0.389644ms)
+✔ manual expansion is respected — render only collapses when the session is not in the override set (0.30528ms)
+✔ expand/collapse control is a real button with accessible state (0.25579ms)
+✔ toggling preserves browser state — the frame is never unmounted or reset (0.22054ms)
+✔ collapsed layout frees the grid rows for findings and report (0.23093ms)
+✔ the live status chip is still wired for all run states (0.19585ms)
+✔ exactly one status chip exists — the panel header chip (#14019) (0.99138ms)
+✔ the run-status (progress-top) row renders no status chip (0.237031ms)
+✔ the live status chip is still wired for all run states (4.355594ms)
+✔ user Stop persists an authoritative resumable interrupted state (0.90685ms)
+✔ frontend labels only the confirmed user interruption as stopped (0.19718ms)
+✔ mock Studio shell is opt-in and leaves standalone as the default (0.87156ms)
+✔ Studio shell communicates host, context, and center tool ownership (0.2293ms)
+✔ Studio context values are bounded and written without HTML injection (0.16795ms)
+✔ context collapse is a labelled keyboard button and mobile keeps the Qase workspace (0.18123ms)
+✔ embedded project target is reused by every launcher without changing standalone defaults (0.47222ms)
+✔ running summary restores an authoritative activity after reconnect (0.99868ms)
+ℹ tests 37
+ℹ suites 0
+ℹ pass 37
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1124.968401

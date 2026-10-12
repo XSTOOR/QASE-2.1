@@ -1021,7 +1021,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		// suspended it. Only the runtime knows which.
 		const pending = runtime.getPendingQuestion();
 		if (controller.signal.aborted) {
-			await runStore.setStatus(session, 'idle', 'Stopped by user.');
+			await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
 			deleteRunSnapshot(session.id);
 		} else if (successfulFinalizer) {
 			// An idempotent SQA/Founder finalizer can return its durable existing
@@ -1071,7 +1071,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 			await completeRun();
 			deleteRunSnapshot(session.id);
 		} else if (controller.signal.aborted) {
-			await runStore.setStatus(session, 'idle', 'Stopped by user.');
+			await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
 			deleteRunSnapshot(session.id);
 		} else if (retryAttempt < MODEL_TIMEOUT_RETRIES && isRetryableModeInterruption(error, session.mode)) {
 			retryAfterTimeout = true;
@@ -1190,7 +1190,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	const stoppedBeforeContinuation = async () => {
 		record.running = false;
 		record.controller = undefined;
-		if (session.status !== 'idle') await runStore.setStatus(session, 'idle', 'Stopped by user.');
+		if (session.status !== 'interrupted') await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
 		clearSecrets(session.id);
 		session.secretNames = [];
 	};

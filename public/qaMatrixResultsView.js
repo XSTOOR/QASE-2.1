@@ -227,7 +227,7 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 				? `${planned} configurations planned · creating batches… (${materialized} queued across ${batches} batch${batches === 1 ? '' : 'es'}${target ? '' : ''})${target}`
 				: `${planned} configurations across ${batches} batch${batches === 1 ? '' : 'es'}${target}`;
 		} else {
-			subtitle.textContent = `${run.itemCount ?? state.rows.length} configurations${target}`;
+			subtitle.textContent = `${run.itemCount ?? state.rows.length} configurations · Runs one browser at a time${target}`;
 		}
 		cancelBtn.hidden = !['pending', 'running'].includes(run.status);
 

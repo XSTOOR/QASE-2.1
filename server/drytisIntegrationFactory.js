@@ -43,6 +43,9 @@ export function createConfiguredDrytisIntegration(options = {}) {
 	const verifier = (options.createVerifier ?? createDrytisRequestVerifier)({ config, nonceStore });
 	const deliveryTarget = String(environment.QASE_DRYTIS_RESULTS_PATH ?? '').trim() || undefined;
 	const ticketsTarget = String(environment.QASE_DRYTIS_TICKETS_PATH ?? '').trim() || undefined;
+	// Founder Mode → Studio handoff target (Phase 4). Explicit opt-in only:
+	// founder payloads are never silently delivered to the QA tickets target.
+	const founderHandoffTarget = String(environment.QASE_DRYTIS_FOUNDER_HANDOFF_PATH ?? '').trim() || undefined;
 	const deliveryClient = deliveryTarget
 		? (options.createDeliveryClient ?? createDrytisDeliveryClient)({ config })
 		: undefined;
@@ -56,5 +59,9 @@ export function createConfiguredDrytisIntegration(options = {}) {
 		deliveryTarget,
 		ticketsTarget: deliveryClient ? (ticketsTarget ?? `${deliveryTarget.replace(/\/$/, '')}/tickets`) : undefined
 	});
-	return Object.freeze({ api, config, nonceStore, deliveryClient, deliveryTarget, ticketsTarget });
+	return Object.freeze({
+		api, config, nonceStore, deliveryClient, deliveryTarget,
+		ticketsTarget: deliveryClient ? (ticketsTarget ?? `${deliveryTarget.replace(/\/$/, '')}/tickets`) : undefined,
+		founderHandoffTarget: deliveryClient ? founderHandoffTarget : undefined
+	});
 }

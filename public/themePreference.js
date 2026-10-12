@@ -14,9 +14,9 @@
 
 const THEME_KEY = 'qase.theme';
 export const THEME_PREFERENCES = Object.freeze(['dark', 'light', 'system']);
-export const DEFAULT_THEME = 'dark';
+export const DEFAULT_THEME = 'system';
 
-/** Normalizes any stored value; anything else falls back to dark. */
+/** Missing or invalid preferences follow the system, matching theme.js. */
 export function normalizeThemePreference(value) {
 	if (typeof value !== 'string') return DEFAULT_THEME;
 	const candidate = value.trim().toLowerCase();

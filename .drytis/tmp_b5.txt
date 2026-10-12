@@ -1,0 +1,95 @@
+{"event":"token_usage_commit","runId":"2f57b86e-503d-436c-b859-239950aa6b8a","model":"claude-opus-5","callId":"call-1791399893553-1-a9xvxz","inputTokens":1000,"outputTokens":200,"totalTokens":1200,"runInputTokens":1000,"runOutputTokens":200,"estimated":true,"ts":"2026-10-07T19:04:53.554Z"}
+{"event":"token_usage_commit","runId":"2f57b86e-503d-436c-b859-239950aa6b8a","model":"claude-opus-5","callId":"call-1791399893563-2-fb8b96","inputTokens":500,"outputTokens":50,"totalTokens":550,"runInputTokens":1500,"runOutputTokens":250,"estimated":false,"ts":"2026-10-07T19:04:53.564Z"}
+{"event":"token_usage_commit","runId":"af5ab598-6a97-4924-ad31-b809b8242085","model":"claude-opus-5","callId":"call-a","inputTokens":10000,"outputTokens":2000,"totalTokens":12000,"runInputTokens":10000,"runOutputTokens":2000,"estimated":false,"ts":"2026-10-07T19:04:53.567Z"}
+{"event":"token_usage_commit","runId":"af5ab598-6a97-4924-ad31-b809b8242085","model":"claude-opus-5","callId":"call-b","inputTokens":5000,"outputTokens":1000,"totalTokens":6000,"runInputTokens":15000,"runOutputTokens":3000,"estimated":false,"ts":"2026-10-07T19:04:53.569Z"}
+{"event":"token_usage_commit","runId":"ddc222a1-e3a7-4c98-bf26-ff17746044d4","model":"claude-opus-5","callId":"call-abc","inputTokens":5000,"outputTokens":1000,"totalTokens":6000,"runInputTokens":5000,"runOutputTokens":1000,"estimated":false,"ts":"2026-10-07T19:04:53.573Z"}
+{"event":"token_usage_commit","runId":"ddc222a1-e3a7-4c98-bf26-ff17746044d4","model":"claude-opus-5","callId":"call-1791399893572-1-66cx1e","inputTokens":2000,"outputTokens":500,"totalTokens":2500,"runInputTokens":7000,"runOutputTokens":1500,"estimated":false,"ts":"2026-10-07T19:04:53.573Z"}
+{"event":"token_usage_commit","runId":"4f72a888-2fce-4b97-8c66-1b8ebb45022c","model":"claude-opus-5","callId":"call-stop","inputTokens":4000,"outputTokens":800,"totalTokens":4800,"runInputTokens":4000,"runOutputTokens":800,"estimated":false,"ts":"2026-10-07T19:04:53.577Z"}
+{"event":"token_usage_commit","runId":"845fa444-681a-43e7-b5ea-e48550cb93d1","model":"claude-opus-5","callId":"call-fail","inputTokens":2500,"outputTokens":400,"totalTokens":2900,"runInputTokens":2500,"runOutputTokens":400,"estimated":false,"ts":"2026-10-07T19:04:53.580Z"}
+{"event":"token_usage_commit","runId":"a185bb59-0648-4ef0-96f6-a12f3b21c028","model":"claude-opus-5","callId":"call-b","inputTokens":5000,"outputTokens":1000,"totalTokens":6000,"runInputTokens":5000,"runOutputTokens":1000,"estimated":false,"ts":"2026-10-07T19:04:53.582Z"}
+{"event":"token_usage_commit","runId":"a185bb59-0648-4ef0-96f6-a12f3b21c028","model":"claude-opus-5","callId":"call-c","inputTokens":700,"outputTokens":300,"totalTokens":1000,"runInputTokens":5700,"runOutputTokens":1300,"estimated":false,"ts":"2026-10-07T19:04:53.584Z"}
+{"event":"token_usage_commit","runId":"4886384e-130d-4047-a348-2a00318e948f","model":"claude-opus-5","callId":"call-1791399893587-1-zz7ozt","inputTokens":1000,"outputTokens":200,"totalTokens":1200,"runInputTokens":1000,"runOutputTokens":200,"estimated":true,"ts":"2026-10-07T19:04:53.587Z"}
+{"event":"token_usage_commit","runId":"4886384e-130d-4047-a348-2a00318e948f","model":"claude-opus-5","callId":"call-1791399893590-2-bhipcv","inputTokens":1000,"outputTokens":200,"totalTokens":1200,"runInputTokens":2000,"runOutputTokens":400,"estimated":true,"ts":"2026-10-07T19:04:53.590Z"}
+{"event":"token_usage_commit","runId":"4886384e-130d-4047-a348-2a00318e948f","model":"claude-opus-5","callId":"call-real","inputTokens":700,"outputTokens":300,"totalTokens":1000,"runInputTokens":1700,"runOutputTokens":500,"estimated":false,"ts":"2026-10-07T19:04:53.590Z"}
+✔ a turn harvests provider token usage into the run and persists it once (22.268788ms)
+✔ real usage commits live during the stream, before turn end (4.451102ms)
+✔ duplicate usage reports are idempotent — a repeated call id is never counted twice (4.856293ms)
+✔ usage is preserved when a run is stopped mid-stream (2.51076ms)
+✔ usage is preserved when a model call fails mid-stream (2.755672ms)
+✔ usage ledger survives auto-continuation turns — replayed reports are not re-counted (4.286411ms)
+✔ an estimate commits live and is rolled back when a real report supersedes it (5.993194ms)
+✔ each mode exposes only its own finalizer and browser capabilities (1.5044ms)
+✔ the real SDK registry and advertised descriptions enforce each mode boundary (40.072186ms)
+✔ new browser capabilities validate model arguments before invoking the bridge (2.494693ms)
+✔ SQA browser budget blocks more browser work without blocking finalization tools (0.98228ms)
+✔ media evidence summaries fit Founder evidence limits and retain the latest app track state (1.645621ms)
+✔ qa publication stops the model before a later provider failure can corrupt run status (3.122782ms)
+✔ sqa publication stops the model before a later provider failure can corrupt run status (2.47507ms)
+✔ founder publication stops the model before a later provider failure can corrupt run status (2.102381ms)
+✔ QA completion posts the actual findings after progress text and before done, once per report (7.286253ms)
+✔ a terminal run deletes its restart-safe credential material (8.072604ms)
+✔ graceful model cancellation stops without launching an automatic continuation (0.89366ms)
+✔ a recreated runtime restores the saved pending-question snapshot (0.36454ms)
+✔ an answer without a restorable SDK question continues as a recovery task (1.540671ms)
+✔ plural credentials in an SQA question select the secure credential form (2.1397ms)
+✔ ordinary SQA scope decisions remain normal option questions (0.74028ms)
+✔ Stop remains effective during timeout backoff and releases the running lock (41.025079ms)
+✔ sqa retries a transient provider disconnect and completes through its finalizer (1204.088531ms)
+✔ founder retries a transient provider disconnect and completes through its finalizer (1211.169445ms)
+✔ QA provider disconnect behavior is unchanged (1.55233ms)
+✔ SQA does not retry authentication failures disguised as connection errors (1.38265ms)
+✔ cancellation during unfinished-tool cleanup prevents a planned continuation (1.599002ms)
+✔ sqa idempotent finalizer succeeds without requiring artifact mutation (1.69903ms)
+✔ founder idempotent finalizer succeeds without requiring artifact mutation (1.542111ms)
+✔ qa stale report cannot mark an unfinalized follow-up successful (1.32677ms)
+✔ sqa stale report cannot mark an unfinalized follow-up successful (1.420532ms)
+✔ founder stale report cannot mark an unfinalized follow-up successful (1.21144ms)
+✔ Founder synthesis readiness retains every prerequisite and clears only the model transcript once (9.019954ms)
+✔ concurrent Founder run rejection cannot clear the active model session or narrow its tools (0.86916ms)
+✔ Founder evidence handoff starts one synthesis turn with durable evidence preserved (2.872061ms)
+✔ local backend seed is idempotent and preserves deprecations (7074.727988ms)
+✔ local backend persists across restarts via .qase/environments.json (5523.562881ms)
+✔ local backend filters match the documented dimensions (627.272501ms)
+✔ local backend create enforces validation and uniqueness (1195.873638ms)
+✔ environment service facade returns camelCase records and facets (1896.64377ms)
+✔ normalizeEnvironmentInput rejects Safari on iOS 17 with wrong version (0.23428ms)
+✔ environment create carries screenResolution and orientation with device-type defaults (0.29504ms)
+✔ local backend create/update persists resolution, orientation and description (1089.252854ms)
+✔ disable excludes an environment from picker queries; enable restores it (1441.453861ms)
+✔ availability leaves only the Safari gap on Android/Windows (444.799545ms)
+✔ sanitizeFilters drops empty values (1.00569ms)
+✔ refreshCatalog upserts only PROV- rows and reports provider metadata (3.798941ms)
+✔ refreshCatalog is rate-limited to one call per minute (3.794161ms)
+✔ refreshCatalog preserves operator active state on re-upsert (idempotent) (5.93755ms)
+✔ local backend upsertProviderRow rejects non-PROV envIds (1.22541ms)
+✔ seed merges registry provider overlays and is idempotent across reseeds (1186.651069ms)
+✔ R1: withExecutionMetadata never defaults a catalog row to AVAILABLE (0.25595ms)
+✔ enriched ipadOS rows carry manufacturer Apple (857.069077ms)
+✔ enriched android rows carry catalog manufacturer, not device-name prefix (669.855182ms)
+✔ INTERACTION_ACTIONS vocabulary is complete and stable (1.29042ms)
+✔ touch context: tap uses real touchscreen injection and the page records it (6416.031085ms)
+✔ touch context: long press opens the hold menu via real held input (2229.539169ms)
+✔ touch context: swipe injects real pointer travel and the carousel scrolls (2338.018923ms)
+✔ touch context: orientation change is observable in the live viewport and runtime facts (1185.336074ms)
+✔ drag_to reorders the list through real locator drag injection (touch context) (1309.518995ms)
+✔ mouse context: type and press_key reach the page via real keyboard injection (1287.893166ms)
+✔ mouse context: wheel scroll moves the real scroll area (1363.512888ms)
+✔ mouse context capabilities are honest: no touch actions advertised (569.653538ms)
+✔ mouse context: touch gestures degrade to LABELED pointer input, never fake touch (692.511099ms)
+✔ non-touch rotate returns SKIPPED with a reason, not an error or fake application (589.887892ms)
+✔ upload assigns real files through the file input (549.3322ms)
+✔ refresh and back are real navigations (893.064335ms)
+✔ offscreen/missing target refuses with position info, never a silent pass (2981.224921ms)
+✔ capabilities report reflects the touch context truthfully (537.012024ms)
+✔ stopping mid-security-check halts cleanly and marks nothing passed (2.917154ms)
+✔ the payload guard stops the flood without blocking the finalizer (0.39228ms)
+✔ workspace cleanup accepts only one canonical run directory (2.757237ms)
+✔ workspace cleanup removes only the selected run and is idempotent (31.165484ms)
+ℹ tests 74
+ℹ suites 0
+ℹ pass 74
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 29050.900155

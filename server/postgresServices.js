@@ -80,6 +80,7 @@ function summary(session) {
 		durationSeconds: liveDurationSeconds(session),
 		findingCount: session.findings.length,
 		messageCount: session.messages.length,
+		...(session.report?.verdict ? { reportVerdict: session.report.verdict } : {}),
 		tokenUsage: session.tokenUsage
 	};
 }
@@ -403,6 +404,17 @@ export function createPostgresApplicationServices({
 				return [];
 			}
 			return repository.targetDurationHistory(targetUrl, options);
+		},
+		/** Project-level Founder Mode state (Phase 3), tenant-scoped. */
+		async getFounderProjectState() {
+			if (typeof repository.getFounderProjectState !== 'function') return undefined;
+			return repository.getFounderProjectState();
+		},
+		async saveFounderProjectState(state) {
+			if (typeof repository.saveFounderProjectState !== 'function') {
+				throw new TypeError('Founder project state persistence is not supported by this repository.');
+			}
+			return repository.saveFounderProjectState(state);
 		},
 		commit,
 		async addMessage(session, message) {

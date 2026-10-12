@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Static contract tests for the Phase-9 Drytis board push (QASE side):
@@ -9,7 +10,7 @@ import * as path from 'node:path';
  * its CSS, the hex nonce fix, and the dormant default.
  */
 
-const here = path.dirname(new URL(import.meta.url).pathname);
+const here = path.dirname(fileURLToPath(import.meta.url));
 const appJs = fs.readFileSync(path.join(here, '../public/app.js'), 'utf8');
 const styles = fs.readFileSync(path.join(here, '../public/styles.css'), 'utf8');
 const transportJs = fs.readFileSync(path.join(here, './drytisTransport.js'), 'utf8');

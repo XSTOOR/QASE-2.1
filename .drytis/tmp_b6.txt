@@ -1,0 +1,121 @@
+✔ coverageStateOf resolves every distinct state without collapsing (1.721171ms)
+✔ distinct labels exist for every required user-facing state (0.19679ms)
+✔ computeMatrixCoverage reports per-state counts and never marks unrun as passed (0.75752ms)
+✔ two environments produce isolated, differently-stamped artifact sets (14.878687ms)
+✔ categoryOf splits android phones vs tablets and ios vs ipados (0.80051ms)
+✔ counts come from actual items; passed+failed = executed (0.96559ms)
+✔ device categories covered only when executed; catalog presence is not coverage (0.30709ms)
+✔ duckduckgo line carries its recorded reason and no pass (0.21733ms)
+✔ empty matrix reports zeros, never invented numbers (0.18823ms)
+✔ per-run gaps preserve every reason and profile identity (0.27394ms)
+✔ pending items appear as pending gap rows with no duration — never vanish, never pass (0.29738ms)
+✔ unknown browser codes surface instead of being dropped (0.15185ms)
+✔ gapLabel maps statuses to human-readable text (0.17347ms)
+✔ mid-bulk failure of one environment leaves every other item intact (302.321794ms)
+✔ RT2: failed health check → UNAVAILABLE with exact reason, session never launched (152.180024ms)
+✔ RT2: healthy gate → item proceeds to execution normally (150.972223ms)
+✔ PENDING item executes; verdict pass → PASSED with findings + duration (54.260461ms)
+✔ verdict fail → FAILED; verdict blocked → BLOCKED; session error → ERROR (81.252615ms)
+✔ awaiting_input → BLOCKED — never PASSED (50.448051ms)
+✔ RUNTIME_UNAVAILABLE at launch → BLOCKED, not ERROR (50.833788ms)
+✔ NOT_SUPPORTED item (duckduckgo) never launches a session (61.290448ms)
+✔ NOT_RUN / non-PENDING items keep their honest state and never launch (53.536753ms)
+✔ double start is refused; run reaches done with counts (200.907442ms)
+✔ resume recovery: dangling running run + RUNNING items become ERROR interrupted (0.49788ms)
+✔ statusCounts tallies the full honest vocabulary (0.7611ms)
+✔ referenced environments exist in the generated catalog (smoke) (168.602362ms)
+✔ cancel(): QUEUED items → CANCELLED, worker stops claiming, run cancelled (481.325791ms)
+✔ retryItem(): re-queues a FAILED item, enforces MAX 2, refuses terminal-success (242.185081ms)
+✔ MATRIX_ITEM_STATUSES includes QUEUED and CANCELLED without dropping the honest set (0.70625ms)
+✔ updateItem accepts QUEUED and CANCELLED transitions (491.01229ms)
+✔ updateItem still rejects PASSED without a session (honest-pass guard intact) (211.758277ms)
+✔ run status vocabulary accepts cancelled (237.58147ms)
+✔ retry bookkeeping: retryItem marks re-queued items and enforces the bound (175.057203ms)
+✔ default profile rules resolve all six categories against the live catalog (167.510113ms)
+✔ default resolution skips missing rules — never invents an environment (0.63427ms)
+✔ expandMatrixItems: supported browser → PENDING; duckduckgo → NOT_SUPPORTED with reason (303.692322ms)
+✔ expandMatrixItems: Safari on Windows → NOT_SUPPORTED (inventory-level gap) (43.30137ms)
+✔ expandMatrixItems: rejects empty profiles / browsers and unknown environments (63.967118ms)
+✔ create with defaults: one item per category × browsers, PENDING only where executable (68.077386ms)
+✔ #14651 default browser fallback: FULL agreed set including duckduckgo, DDG NOT_SUPPORTED with reason (81.899831ms)
+✔ create validates testCaseId and targetUrl (142.257613ms)
+✔ updateItem honest-state guard: PASSED/FAILED require a sessionId (93.134068ms)
+✔ updateItem rejects invalid statuses and unknown runs/items (121.367991ms)
+✔ local backend persists across backend instances (page reload survival) (203.416264ms)
+✔ _setStatus accepts only the run status vocabulary (118.176829ms)
+✔ create with configurationEnvIds pins EXACT configurations (no silent newest-version swap) (126.924664ms)
+✔ configurationEnvIds: vanished envId → honest BLOCKED item, never dropped (55.661603ms)
+✔ configurationEnvIds: DuckDuckGo row → NOT_SUPPORTED with provider reason, never executes (170.773839ms)
+✔ configurationEnvIds: empty array rejects (422 contract) (135.496358ms)
+✖ loads the checked migration set in numeric order (44.711475ms)
+✖ applies pending migrations in order and records them with parameters (19.911228ms)
+✖ does no transactional work when every migration is already applied (23.71193ms)
+✖ rejects a changed checksum before beginning a migration (26.519431ms)
+✖ rolls back a failed migration, unlocks, and releases the client (22.056789ms)
+ℹ tests 54
+ℹ suites 0
+ℹ pass 49
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4244.012588
+
+✖ failing tests:
+
+test at server/postgres/migrations.test.js:55:1
+✖ loads the checked migration set in numeric order (44.711475ms)
+  Error: Duplicate PostgreSQL migration version: 25
+      at loadMigrations (file:///workspace/server/postgres/migrations.js:57:10)
+      at async TestContext.<anonymous> (file:///workspace/server/postgres/migrations.test.js:56:21)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at server/postgres/migrations.test.js:165:1
+✖ applies pending migrations in order and records them with parameters (19.911228ms)
+  Error: Duplicate PostgreSQL migration version: 25
+      at loadMigrations (file:///workspace/server/postgres/migrations.js:57:10)
+      at async runPostgresMigrations (file:///workspace/server/postgres/migrations.js:120:21)
+      at async TestContext.<anonymous> (file:///workspace/server/postgres/migrations.test.js:167:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at server/postgres/migrations.test.js:229:1
+✖ does no transactional work when every migration is already applied (23.71193ms)
+  Error: Duplicate PostgreSQL migration version: 25
+      at loadMigrations (file:///workspace/server/postgres/migrations.js:57:10)
+      at async TestContext.<anonymous> (file:///workspace/server/postgres/migrations.test.js:230:21)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at server/postgres/migrations.test.js:244:1
+✖ rejects a changed checksum before beginning a migration (26.519431ms)
+  Error: Duplicate PostgreSQL migration version: 25
+      at loadMigrations (file:///workspace/server/postgres/migrations.js:57:10)
+      at async TestContext.<anonymous> (file:///workspace/server/postgres/migrations.test.js:245:21)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at server/postgres/migrations.test.js:261:1
+✖ rolls back a failed migration, unlocks, and releases the client (22.056789ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /simulated migration 2 failure/. Input:
+  
+  'Error: Duplicate PostgreSQL migration version: 25'
+  
+      at async TestContext.<anonymous> (file:///workspace/server/postgres/migrations.test.js:264:2)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: Duplicate PostgreSQL migration version: 25
+        at loadMigrations (file:///workspace/server/postgres/migrations.js:57:10)
+        at async runPostgresMigrations (file:///workspace/server/postgres/migrations.js:120:21)
+        at async waitForActual (node:assert:646:5)
+        at async strict.rejects (node:assert:769:25)
+        at async TestContext.<anonymous> (file:///workspace/server/postgres/migrations.test.js:264:2)
+        at async Test.run (node:internal/test_runner/test:1389:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:960:7),
+    expected: /simulated migration 2 failure/,
+    operator: 'rejects',
+    diff: 'simple'
+  }

@@ -6,7 +6,8 @@ import {
 	addActivity, addMessage, aggregateFindings, allSessions, bus, createSession, deleteSession, emit,
 	getSession, dropLive, flushSessions, listSessions, liveEntries, liveFor, loadSessions,
 	markExecutionStarted, markReportPhase, persistSoon, peekLive, setFindingStatus, setStatus,
-	updateActivity, watchRunBus
+	updateActivity, watchRunBus,
+	loadFounderProjectState, writeFounderProjectState
 } from './store.js';
 import { createArtifactStore } from './artifactStore.js';
 import { createEnvironmentService, createLocalEnvironmentBackend } from './environmentService.js';
@@ -376,6 +377,13 @@ export function createLocalApplicationServices(options = {}) {
 				label: 'Runtime evidence bundle (identity · console · network · security blocks)',
 				bridgeExecution: bridge?.execution ?? null
 			});
+		},
+		/** Project-level Founder Mode state (Phase 3), local file mirror. */
+		async getFounderProjectState() {
+			return loadFounderProjectState();
+		},
+		async saveFounderProjectState(state) {
+			return writeFounderProjectState(state);
 		},
 		async addMessage(session, message) {
 			return addMessage(session, message);
