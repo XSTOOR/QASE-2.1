@@ -27,7 +27,7 @@ function item(overrides = {}) {
 		osVersion: '11',
 		browser: overrides.browser ?? 'Chrome',
 		browserCode: overrides.browserCode ?? 'chrome',
-		browserVersion: '140',
+		browserVersion: '151',
 		deviceType: 'desktop',
 		status: 'PENDING',
 		reason: null,

@@ -22,7 +22,7 @@ function item(patch = {}) {
 		osVersion: patch.osVersion ?? '26.0',
 		browserCode: patch.browserCode ?? 'chrome',
 		browser: patch.browser ?? 'chrome',
-		browserVersion: patch.browserVersion ?? '140',
+		browserVersion: patch.browserVersion ?? '151',
 		status: patch.status ?? 'PENDING',
 		reason: patch.reason ?? null,
 		error: patch.error ?? null,

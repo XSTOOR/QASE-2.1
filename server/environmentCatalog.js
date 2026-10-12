@@ -102,13 +102,33 @@ export const BROWSERS = [
  * of the reference; the 'N more' links in that UI count sub-minors and betas
  * which the environment model does not enumerate — majors only).
  */
+/**
+ * 2026.10.12 (#15909): collapsed to exactly ONE major per family — the version
+ * actually installed/launchable on this runtime. A single binary per brand is
+ * what the local registry launches (localBrowserRegistry.js probes one
+ * executable per family); advertising a version ladder inflated the generated
+ * matrix to ~39k rows and launcher default selections to ~500 items per
+ * family, which starved matrix runs before they visibly started. One version
+ * per family keeps every offered configuration honest (available) and the
+ * default queue small.
+ *
+ * The version per family tracks the runtime binary detected at build time:
+ *   chrome 151 (google-chrome-stable 151.0.x), edge 124 (microsoft-edge
+ *   124.0.x), opera 136 (opera-gx 136.0.x — plain opera-stable segfaults in
+ *   this container, see webkit-gtk memory), brave 155, firefox 153 (Playwright
+ *   Gecko bundle v1538 / Firefox 153.0). duckduckgo stays at its latest major
+ *   (3) — mobile-only, honestly NOT_SUPPORTED on Linux by design.
+ * Safari is not independently versioned (tracks the OS) and is unaffected.
+ *
+ * Re-expanding later is a data-only change here.
+ */
 export const BROWSER_VERSIONS = {
-	chrome: ['140', '141', '142', '143', '144', '145', '146', '147', '148', '149', '150', '151', '152', '153', '154', '155', '156'],
-	firefox: ['141', '142', '143', '144', '145', '146', '147', '148', '149', '150', '151', '152', '153', '154', '155', '156', '157', '158'],
-	edge: ['140', '141', '142', '143', '144', '145', '146', '147', '148', '149', '150', '151', '152', '153', '154', '155', '156'],
-	opera: ['122', '123', '124', '125', '126', '127', '128', '129', '130', '131', '132', '133', '134', '135', '136', '137'],
-	brave: ['136', '137', '138', '139', '140'],
-	duckduckgo: ['1', '2', '3']
+	chrome: ['151'],
+	firefox: ['153'],
+	edge: ['124'],
+	opera: ['136'],
+	brave: ['155'],
+	duckduckgo: ['3']
 };
 
 /**
@@ -134,6 +154,14 @@ export function channelForVersion(browserCode, version) {
 	if (!browser || !Array.isArray(browser.channels) || browser.channels.length === 0) return 'stable';
 	const versions = BROWSER_VERSIONS[browser.code];
 	if (!versions) return 'stable';
+	const channelsLast = browser.channels[browser.channels.length - 1] ?? 'stable';
+	if (versions.length === 1) {
+		// #15909: single-version families advertise their SHIPPING channel —
+		// the installed binary is a stable release, never canary/nightly.
+		// Families whose channel list has no literal 'stable' (duckduckgo)
+		// resolve to their last-listed release channel.
+		return browser.channels.includes('stable') ? 'stable' : channelsLast;
+	}
 	const index = versions.indexOf(String(version));
 	if (index < 0) return 'stable';
 	// channels[] is newest-first; distanceFromNewest 0 = newest major.

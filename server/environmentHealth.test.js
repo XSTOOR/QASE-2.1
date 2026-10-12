@@ -17,14 +17,14 @@ const GOOD_ENGINE = async () => ({
 
 function env(overrides = {}) {
 	return {
-		envId: 'ENV-IOS-IP17PRO-26.0-CHR-140',
+		envId: 'ENV-IOS-IP17PRO-26.0-CHR-151',
 		platform: 'ios',
 		device: 'iPhone 17 Pro',
 		os: 'iOS',
 		osVersion: '26.0',
 		browser: 'Chrome',
 		browserCode: 'chrome',
-		browserVersion: '140',
+		browserVersion: '151',
 		deviceType: 'mobile',
 		emulation: { viewport: { width: 402, height: 874 }, hasTouch: true, isMobile: true },
 		...overrides

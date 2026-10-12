@@ -42,14 +42,14 @@ test('local seed is idempotent — double seed yields no duplicates', async () =
 	const models = await backend.list('deviceModels');
 	assert.equal(new Set(models.map((row) => row.id)).size, models.length);
 	const versions = await backend.list('browserVersions');
-	assert.ok(versions.length >= 12, `expected browser version rows, got ${versions.length}`);
+	assert.ok(versions.length >= 6, `expected browser version rows (one per family), got ${versions.length}`);
 });
 
 test('isCombinationSupported accepts valid and rejects invalid pairs (data-driven)', async () => {
 	const backend = tempBackend();
 	await backend.seed();
 	const valid = await backend.isCombinationSupported({
-		deviceSlug: 'IP16PRO', platform: 'ios', osVersion: '18.3', browserCode: 'chrome', browserVersion: '140'
+		deviceSlug: 'IP16PRO', platform: 'ios', osVersion: '18.3', browserCode: 'chrome', browserVersion: '151'
 	});
 	assert.deepEqual(valid, { ok: true });
 

@@ -22,15 +22,15 @@ function item(overrides = {}) {
 		id: `item-${overrides.browserCode ?? 'chrome'}`,
 		ordinal: 0,
 		testCaseId: 'TC-1',
-		environmentId: 'ENV-IOS-IP17PRO-26.0-CHR-140',
-		profileId: 'iphone17pro-ios26-chrome140',
+		environmentId: 'ENV-IOS-IP17PRO-26.0-CHR-151',
+		profileId: 'iphone17pro-ios26-chrome151',
 		platform: 'ios',
 		device: 'iPhone 17 Pro',
 		os: 'iOS',
 		osVersion: '26.0',
 		browser: 'Chrome',
 		browserCode: 'chrome',
-		browserVersion: '140',
+		browserVersion: '151',
 		deviceType: 'mobile',
 		status: 'PENDING',
 		reason: null,
@@ -334,7 +334,7 @@ test('statusCounts tallies the full honest vocabulary', () => {
 test('referenced environments exist in the generated catalog (smoke)', () => {
 	const all = generateEnvironments();
 	const envIds = new Set(all.map((env) => env.envId));
-	assert.ok(envIds.has('ENV-IOS-IP17PRO-26.0-CHR-140'), 'iPhone 17 Pro Chrome env missing');
+	assert.ok(envIds.has('ENV-IOS-IP17PRO-26.0-CHR-151'), 'iPhone 17 Pro Chrome env missing');
 });
 
 /* ── Phase 3 (#14937): cancel + retry at the ORCHESTRATOR level ──── */

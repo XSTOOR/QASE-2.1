@@ -86,20 +86,20 @@ test('#14942: per-configuration rows with actual runner identity, evidence per r
 			status: 'PASSED', verdict: 'pass', sessionId: 's1',
 			runtimeFacts: { launchedEngine: 'webkit', executionType: 'browser_emulation' },
 			artifactRefs: [{ artifactId: 'shot-1' }, { artifactId: 'shot-2' }], defects: [{ bugNumber: 'BUG-0001' }] },
-		{ device: 'Galaxy A15', os: 'Android', osVersion: '13', browser: 'chrome', browserVersion: '140',
+		{ device: 'Galaxy A15', os: 'Android', osVersion: '13', browser: 'chrome', browserVersion: '151',
 			status: 'FAILED', reason: 'One finding', runtimeFacts: { launchedEngine: 'chromium' }, artifactRefs: [], defects: [] }
 	];
 	const section = buildMatrixSectionMarkdown(matrixItemsSession(items));
 	assert.match(section, /Planned 2 · completed 2 · passed 1 · failed 1 · blocked 0 · skipped 0 · cancelled 0 · coverage gaps 0/);
 	assert.match(section, /\*\*PASSED\*\* iPhone 15 Pro Max · iOS · 17\.0 · safari · 17\.0 \(engine: webkit, execution: browser_emulation\) — 📎 2 🐞 1/);
-	assert.match(section, /\*\*FAILED\*\* Galaxy A15 · Android · 13 · chrome · 140 \(engine: chromium\) — One finding/);
+	assert.match(section, /\*\*FAILED\*\* Galaxy A15 · Android · 13 · chrome · 151 \(engine: chromium\) — One finding/);
 });
 
 test('#14942: unexecuted items are coverage gaps with reasons — never passes', () => {
 	const items = [
 		{ device: 'MacBook Air M3', os: 'macOS', osVersion: '14', browser: 'duckduckgo', browserVersion: null,
 			status: 'NOT_SUPPORTED', reason: 'No execution channel for DuckDuckGo' },
-		{ device: 'iPhone 15 Pro', os: 'iOS', osVersion: '17.0', browser: 'chrome', browserVersion: '156',
+		{ device: 'iPhone 15 Pro', os: 'iOS', osVersion: '17.0', browser: 'chrome', browserVersion: '151',
 			status: 'QUEUED', reason: null },
 		// Hand-patched status without an execution must never count as passed.
 		{ device: 'Windows Desktop', os: 'Windows', osVersion: '11', browser: 'edge', browserVersion: '130',
@@ -111,7 +111,7 @@ test('#14942: unexecuted items are coverage gaps with reasons — never passes',
 	assert.match(section, /Planned 3 · completed 2 · passed 0 · failed 0 · blocked 0 · skipped 0 · cancelled 0 · coverage gaps 1/);
 	// Gap rows carry their reason (only non-terminal items are gaps;
 	// NOT_SUPPORTED is terminal — an honest completed-with-reason row).
-	assert.match(section, /⚠ iPhone 15 Pro · iOS · chrome · 156: queued/);
+	assert.match(section, /⚠ iPhone 15 Pro · iOS · chrome · 151: queued/);
 	assert.match(section, /\*\*NOT_SUPPORTED\*\* MacBook Air M3 · macOS · 14 · duckduckgo — No execution channel for DuckDuckGo/);
 	// The unexecuted PASSED keeps its status label but is not counted.
 	assert.match(section, /\*\*PASSED\*\* Windows Desktop/);

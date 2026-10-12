@@ -25,7 +25,7 @@ test('credentials require both values; half-configured integrations return null'
 
 test('connect options carry the environment capability map verbatim', () => {
 	const environments = generateEnvironments();
-	const iPhone = environments.find(env => env.envId === 'ENV-IOS-IP16PRO-18.3-CHR-140');
+	const iPhone = environments.find(env => env.envId === 'ENV-IOS-IP16PRO-18.3-CHR-151');
 	assert.ok(iPhone, 'catalog contains the spec example environment');
 	const options = browserstackConnectOptions(iPhone, CREDENTIALS);
 	assert.equal(options.endpointURL, 'https://cdp.browserstack.com/playwright');
@@ -49,7 +49,7 @@ test('resolveExecution: browserstack envs with credentials execute remotely', as
 	const environments = generateEnvironments();
 	// 2027.01.0 (#14273): macOS devices are hardware models; pick a
 	// MacBook Pro on Sonoma instead of the retired pseudo-device.
-	const macChrome = environments.find(env => env.envId === 'ENV-MAC-MACMBP14-M3-SONOMA-CHR-140');
+	const macChrome = environments.find(env => env.envId === 'ENV-MAC-MACMBP14-M3-SONOMA-CHR-151');
 	const resolved = await resolveExecution(macChrome, CREDENTIALS);
 	assert.equal(resolved.mode, 'environment');
 	assert.match(resolved.label, /environment runtime/);
@@ -81,7 +81,7 @@ test('R3: engineForBrowser maps every browser family to its real engine', () => 
 
 test('R3: a REAL_DEVICE request without a configured runtime BLOCKS — no silent emulation', async () => {
 	const environments = generateEnvironments();
-	const env = environments.find(env => env.envId === 'ENV-IOS-IP16PRO-18.3-CHR-140');
+	const env = environments.find(env => env.envId === 'ENV-IOS-IP16PRO-18.3-CHR-151');
 	const blocked = await resolveExecution({ ...env, executionLevelRequested: 'REAL_DEVICE' }, null);
 	assert.equal(blocked.mode, 'blocked');
 	assert.match(blocked.reason, /REAL DEVICE UNAVAILABLE/);
@@ -130,7 +130,7 @@ test('connectBrowserstack delegates to chromium.connectOverCDP with auth + capab
 		}
 	};
 	const connectOptions = browserstackConnectOptions(
-		generateEnvironments().find(env => env.envId === 'ENV-IOS-IP16PRO-18.3-CHR-140'), CREDENTIALS);
+		generateEnvironments().find(env => env.envId === 'ENV-IOS-IP16PRO-18.3-CHR-151'), CREDENTIALS);
 	const browser = await connectBrowserstack(fakeChromium, connectOptions);
 	assert.equal(browser.fakeBrowser, true);
 	assert.equal(calls[0].endpointURL, 'https://cdp.browserstack.com/playwright');

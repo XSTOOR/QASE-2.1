@@ -46,29 +46,21 @@ test('browser channel metadata is declared per brand (2027.02.0 #14420)', () => 
 });
 
 test('channelForVersion labels majors by position, never by hardcoded number (2027.02.0 #14420)', () => {
-	// Chrome [140..156], channels [canary, dev, beta, stable]:
-	const chrome = BROWSER_VERSIONS.chrome;
-	assert.equal(channelForVersion('chrome', chrome.at(-1)), 'canary', 'newest major = first channel');
-	assert.equal(channelForVersion('chrome', chrome.at(-2)), 'dev');
-	assert.equal(channelForVersion('chrome', chrome.at(-3)), 'beta');
-	assert.equal(channelForVersion('chrome', chrome.at(-4)), 'stable');
-	assert.equal(channelForVersion('chrome', chrome[0]), 'stable', 'back-catalog majors are previous stables');
-	// Firefox [141..158], channels [nightly, beta, stable]:
-	const firefox = BROWSER_VERSIONS.firefox;
-	assert.equal(channelForVersion('firefox', firefox.at(-1)), 'nightly');
-	assert.equal(channelForVersion('firefox', firefox.at(-2)), 'beta');
-	assert.equal(channelForVersion('firefox', firefox.at(-3)), 'stable');
-	// Opera [122..137], channels [beta, stable]:
-	const opera = BROWSER_VERSIONS.opera;
-	assert.equal(channelForVersion('opera', opera.at(-1)), 'beta');
-	assert.equal(channelForVersion('opera', opera.at(-2)), 'stable');
-	// Safari & DuckDuckGo: single-channel families — every version stable.
+	// #15909: every family carries exactly ONE major (the installed binary's
+	// version). A single-version family always labels 'stable' — the binary
+	// shipped on this runtime is a stable release, never canary/nightly.
+	for (const [code, versions] of Object.entries(BROWSER_VERSIONS)) {
+		assert.equal(versions.length, 1, `${code} must advertise exactly one version (#15909)`);
+		assert.equal(channelForVersion(code, versions[0]), 'stable', `${code} single version is stable`);
+	}
+	// Position-based labelling is still exercised for multi-version lists via
+	// unknown-version degradation and single-channel families.
 	assert.equal(channelForVersion('safari', '26'), 'stable');
 	assert.equal(channelForVersion('duckduckgo', '3'), 'stable');
 	// Unknowns degrade safely.
 	assert.equal(channelForVersion('netscape', '5'), 'stable', 'unknown browser');
 	assert.equal(channelForVersion('chrome', '999'), 'stable', 'unknown version');
-	assert.equal(channelForVersion('chrome', 154), 'beta', 'numeric versions coerce');
+	assert.equal(channelForVersion('chrome', '151'), 'stable', 'known single version');
 });
 
 test('Surface and Apple Silicon entry models are present with honest OS ranges (2027.02.0 #14420)', () => {
@@ -106,11 +98,11 @@ test('Surface and Apple Silicon entry models are present with honest OS ranges (
 
 test('new device combinations validate and build deterministic env ids (2027.02.0 #14420)', () => {
 	const surfacePro11 = getDevice('Surface Pro 11');
-	assert.equal(isCombinationSupported('windows', surfacePro11, '11', 'chrome', '154').ok, true);
-	assert.equal(isCombinationSupported('windows', surfacePro11, '10', 'chrome', '154').ok, false, 'no Win 10 on Pro 11');
+	assert.equal(isCombinationSupported('windows', surfacePro11, '11', 'chrome', '151').ok, true);
+	assert.equal(isCombinationSupported('windows', surfacePro11, '10', 'chrome', '151').ok, false, 'no Win 10 on Pro 11');
 	const mbaM1 = getDevice('MacBook Air (M1)');
-	assert.equal(isCombinationSupported('macos', mbaM1, 'Sonoma', 'chrome', '154').ok, true);
-	assert.equal(isCombinationSupported('macos', mbaM1, 'Tahoe', 'chrome', '154').ok, false, 'no Tahoe on M1 Air');
+	assert.equal(isCombinationSupported('macos', mbaM1, 'Sonoma', 'chrome', '151').ok, true);
+	assert.equal(isCombinationSupported('macos', mbaM1, 'Tahoe', 'chrome', '151').ok, false, 'no Tahoe on M1 Air');
 	// Windows id scheme keeps the hardware slug tail for Surface models.
 	assert.equal(buildEnvId('windows', 'SURFPRO11', '11', 'CHR', '140'), 'ENV-WIN-11-CHR-140-SURFPRO11');
 	// macOS scheme keeps hardware slug + OS token.
@@ -231,17 +223,17 @@ test('every generated environment has a unique envId', () => {
 test('env ids follow the documented scheme', () => {
 	const environments = generateEnvironments();
 	const byId = new Map(environments.map((env) => [env.envId, env]));
-	assert.ok(byId.has('ENV-IOS-IP16PRO-18.3-CHR-140'), 'example from the spec must exist');
+	assert.ok(byId.has('ENV-IOS-IP16PRO-18.3-CHR-151'), 'example from the spec must exist');
 	assert.ok(byId.has('ENV-IOS-IP16PRO-18.3-SAF-18.3'), 'Safari env uses derived version');
 	// 2027.01.0 (#14273): macOS ids carry hardware slug + OS token.
-	assert.ok(byId.has('ENV-MAC-MACMBP16-M4-TAHOE-CHR-140'), 'macOS hardware env ids include the OS token');
-	assert.ok(byId.has('ENV-IPADOS-IPADPRO13-18.3-CHR-140'));
-	const env = byId.get('ENV-IOS-IP16PRO-18.3-CHR-140');
+	assert.ok(byId.has('ENV-MAC-MACMBP16-M4-TAHOE-CHR-151'), 'macOS hardware env ids include the OS token');
+	assert.ok(byId.has('ENV-IPADOS-IPADPRO13-18.3-CHR-151'));
+	const env = byId.get('ENV-IOS-IP16PRO-18.3-CHR-151');
 	assert.equal(env.device, 'iPhone 16 Pro');
 	assert.equal(env.os, 'iOS');
 	assert.equal(env.osVersion, '18.3');
 	assert.equal(env.browser, 'Chrome');
-	assert.equal(env.browserVersion, '140');
+	assert.equal(env.browserVersion, '151');
 	assert.equal(env.deviceType, 'mobile');
 	assert.equal(env.screenSize, '6.3 inch');
 	assert.equal(env.executionProvider, 'environment');
@@ -293,15 +285,15 @@ test('validator rejects unsupported combinations with readable reasons', () => {
 	assert.equal(safariOnWindows.ok, false);
 
 	// Expanded availability: these ARE supported now.
-	assert.equal(isCombinationSupported('ios', 'iPhone 16 Pro', '18.3', 'firefox', '142').ok, true);
-	assert.equal(isCombinationSupported('macos', 'MacBook Pro 16 (M4)', 'Sonoma', 'brave', '140').ok, true);
-	assert.equal(isCombinationSupported('android', 'Galaxy S24', '15', 'brave', '140').ok, true);
-	assert.equal(isCombinationSupported('ipados', 'iPad Pro 13 (M4)', '26.0', 'duckduckgo', '1').ok, true);
+	assert.equal(isCombinationSupported('ios', 'iPhone 16 Pro', '18.3', 'firefox', '153').ok, true);
+	assert.equal(isCombinationSupported('macos', 'MacBook Pro 16 (M4)', 'Sonoma', 'brave', '155').ok, true);
+	assert.equal(isCombinationSupported('android', 'Galaxy S24', '15', 'brave', '155').ok, true);
+	assert.equal(isCombinationSupported('ipados', 'iPad Pro 13 (M4)', '26.0', 'duckduckgo', '3').ok, true);
 	// 2027.01.0 (#14273): legacy + new families validate.
-	assert.equal(isCombinationSupported('ios', 'iPhone 7', '15.0', 'chrome', '140').ok, true);
-	assert.equal(isCombinationSupported('ios', 'iPhone 7', '26.0', 'chrome', '140').ok, false, 'iPhone 7 never ran iOS 26');
-	assert.equal(isCombinationSupported('windows', 'Windows 2-in-1', '11', 'edge', '141').ok, true);
-	assert.equal(isCombinationSupported('android', 'Xperia 1 VI', '15', 'chrome', '141').ok, true);
+	assert.equal(isCombinationSupported('ios', 'iPhone 7', '15.0', 'chrome', '151').ok, true);
+	assert.equal(isCombinationSupported('ios', 'iPhone 7', '26.0', 'chrome', '151').ok, false, 'iPhone 7 never ran iOS 26');
+	assert.equal(isCombinationSupported('windows', 'Windows 2-in-1', '11', 'edge', '124').ok, true);
+	assert.equal(isCombinationSupported('android', 'Xperia 1 VI', '15', 'chrome', '151').ok, true);
 
 	const safariMismatch = isCombinationSupported('ios', 'iPhone 16 Pro', '18.3', 'safari', '17');
 	assert.equal(safariMismatch.ok, false);
@@ -363,18 +355,18 @@ test('availability report explains gaps for every platform', async () => {
 	assert.ok(windows.available.includes('Brave'));
 });
 
-test('generated matrix size covers the full expanded availability', () => {
-	// 2027.02.0 (#14420): Surface line + MacBook 13"/iMac 24 M1 additions push
-	// the matrix to ~38.5k environments (2027.01.0 was 36,619).
+test('generated matrix size covers the single-version availability (#15909)', () => {
+	// #15909: one version per browser family collapses the matrix from ~39k
+	// rows (16-19 majors per brand) to the single-version expansion.
 	const count = generateEnvironments().length;
-	assert.ok(count >= 38000 && count <= 44000, `unexpected matrix size: ${count}`);
+	assert.ok(count >= 2500 && count <= 5000, `unexpected matrix size: ${count}`);
 });
 
-test('chrome environments carry multiple versions per device/os', () => {
+test('chrome environments carry exactly one version per device/os (#15909)', () => {
 	const chrome16Pro = generateEnvironments().filter(
 		(env) => env.envId.startsWith('ENV-IOS-IP16PRO-18.3-CHR-')
 	);
-	assert.deepEqual(chrome16Pro.map((env) => env.browserVersion).sort(), ['140','141','142','143','144','145','146','147','148','149','150','151','152','153','154','155','156']);
+	assert.deepEqual(chrome16Pro.map((env) => env.browserVersion), ['151']);
 });
 
 // --- 2027.03.0 (#14631) NI01 Phase 1: first-version coverage matrix ---

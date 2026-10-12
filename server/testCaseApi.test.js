@@ -18,7 +18,7 @@ const TENANT = Object.freeze({
 });
 
 const SAMPLE_ENV = {
-	envId: 'ENV-IOS-IP16PRO-18.3-CHR-140',
+	envId: 'ENV-IOS-IP16PRO-18.3-CHR-151',
 	platform: 'ios',
 	platformLabel: 'iOS',
 	device: 'iPhone 16 Pro',
@@ -26,7 +26,7 @@ const SAMPLE_ENV = {
 	osVersion: '18.3',
 	browser: 'Chrome',
 	browserCode: 'chrome',
-	browserVersion: '140',
+	browserVersion: '151',
 	deviceType: 'mobile',
 	screenSize: '1179x2556',
 	executionProvider: 'environment',
@@ -136,11 +136,11 @@ test('POST /api/test-cases creates with TC-0001 and validates environment assign
 
 		const created = await fx.json('/api/test-cases', {
 			method: 'POST',
-			json: { title: 'Checkout on iPhone', steps: ['open', 'pay'], tags: ['smoke'], environmentIds: ['ENV-IOS-IP16PRO-18.3-CHR-140'] }
+			json: { title: 'Checkout on iPhone', steps: ['open', 'pay'], tags: ['smoke'], environmentIds: ['ENV-IOS-IP16PRO-18.3-CHR-151'] }
 		});
 		assert.equal(created.status, 201);
 		assert.equal(created.body.caseNumber, 'TC-0001');
-		assert.deepEqual(created.body.environmentIds, ['ENV-IOS-IP16PRO-18.3-CHR-140']);
+		assert.deepEqual(created.body.environmentIds, ['ENV-IOS-IP16PRO-18.3-CHR-151']);
 	} finally {
 		await fx.close();
 	}
@@ -154,15 +154,15 @@ test('CRUD: get, patch (title + env add/remove), list filter, delete', async () 
 
 		const patched = await fx.json(`/api/test-cases/${caseNumber}`, {
 			method: 'PATCH',
-			json: { title: 'Renamed', addEnvironmentIds: ['ENV-IOS-IP16PRO-18.3-CHR-140'] }
+			json: { title: 'Renamed', addEnvironmentIds: ['ENV-IOS-IP16PRO-18.3-CHR-151'] }
 		});
 		assert.equal(patched.status, 200);
 		assert.equal(patched.body.title, 'Renamed');
-		assert.deepEqual(patched.body.environmentIds, ['ENV-IOS-IP16PRO-18.3-CHR-140']);
+		assert.deepEqual(patched.body.environmentIds, ['ENV-IOS-IP16PRO-18.3-CHR-151']);
 
 		const removed = await fx.json(`/api/test-cases/${caseNumber}`, {
 			method: 'PATCH',
-			json: { removeEnvironmentIds: ['ENV-IOS-IP16PRO-18.3-CHR-140'] }
+			json: { removeEnvironmentIds: ['ENV-IOS-IP16PRO-18.3-CHR-151'] }
 		});
 		assert.deepEqual(removed.body.environmentIds, []);
 
@@ -188,14 +188,14 @@ test('POST /api/sessions with testCaseId links the run; unassigned env → 422; 
 		// Case with an assigned environment.
 		const created = await fx.json('/api/test-cases', {
 			method: 'POST',
-			json: { title: 'Linked', environmentIds: ['ENV-IOS-IP16PRO-18.3-CHR-140'] }
+			json: { title: 'Linked', environmentIds: ['ENV-IOS-IP16PRO-18.3-CHR-151'] }
 		});
 		const caseNumber = created.body.caseNumber;
 
-		// Wrong environment → 422.
+		// Wrong environment (exists in catalog but not assigned to the case) → 422.
 		const wrongEnv = await fx.json('/api/sessions', {
 			method: 'POST',
-			json: { testCaseId: caseNumber, environmentId: 'ENV-IOS-IP16PRO-18.3-CHR-141' }
+			json: { testCaseId: caseNumber, environmentId: 'ENV-IOS-IP16PRO-18.3-FF-153' }
 		});
 		assert.equal(wrongEnv.status, 422);
 		assert.match(wrongEnv.body.error, /is not assigned to/);
@@ -207,7 +207,7 @@ test('POST /api/sessions with testCaseId links the run; unassigned env → 422; 
 		// Correct pair → 201 with the case snapshot on the session.
 		const linked = await fx.json('/api/sessions', {
 			method: 'POST',
-			json: { testCaseId: caseNumber, environmentId: 'ENV-IOS-IP16PRO-18.3-CHR-140' }
+			json: { testCaseId: caseNumber, environmentId: 'ENV-IOS-IP16PRO-18.3-CHR-151' }
 		});
 		assert.equal(linked.status, 201, `body: ${JSON.stringify(linked.body)}`);
 		assert.ok(linked.body, 'response body must parse as JSON');

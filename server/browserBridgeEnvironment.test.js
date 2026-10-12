@@ -58,7 +58,7 @@ function fakeLocator() {
 
 test('a browserstack environment resolves remote execution and never launches local chromium', async t => {
 	const environments = generateEnvironments();
-	const snapshot = environments.find(env => env.envId === 'ENV-IOS-IP16PRO-18.3-CHR-140');
+	const snapshot = environments.find(env => env.envId === 'ENV-IOS-IP16PRO-18.3-CHR-151');
 	const session = minimalSession({ environmentSnapshot: snapshot });
 	const fake = fakeService();
 
@@ -77,7 +77,7 @@ test('a browserstack environment resolves remote execution and never launches lo
 
 test('without credentials the same environment downgrades to emulated with the device viewport', async t => {
 	const environments = generateEnvironments();
-	const snapshot = environments.find(env => env.envId === 'ENV-IOS-IP16PRO-18.3-CHR-140');
+	const snapshot = environments.find(env => env.envId === 'ENV-IOS-IP16PRO-18.3-CHR-151');
 	const session = minimalSession({ environmentSnapshot: snapshot });
 	const fake = fakeService();
 

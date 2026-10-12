@@ -71,10 +71,10 @@ test('seed sets tenant RLS settings inside the transaction', async () => {
 });
 
 test('get returns the matching row and null otherwise', async () => {
-	const row = { env_id: 'ENV-IOS-IP16PRO-18.3-CHR-140', device: 'iPhone 16 Pro' };
+	const row = { env_id: 'ENV-IOS-IP16PRO-18.3-CHR-151', device: 'iPhone 16 Pro' };
 	const pool = scriptedPool(({ text }) => (text.startsWith('SELECT * FROM environments') ? { rows: [row] } : { rows: [] }));
 	const repo = createPostgresEnvironmentRepository(pool, { tenantContext: TENANT });
-	assert.equal(await repo.get(TENANT, 'ENV-IOS-IP16PRO-18.3-CHR-140'), row);
+	assert.equal(await repo.get(TENANT, 'ENV-IOS-IP16PRO-18.3-CHR-151'), row);
 	const emptyPool = scriptedPool(() => ({ rows: [] }));
 	const emptyRepo = createPostgresEnvironmentRepository(emptyPool, { tenantContext: TENANT });
 	assert.equal(await emptyRepo.get(TENANT, 'ENV-NOPE'), null);
@@ -106,7 +106,7 @@ test('create rejects Safari on Android (Firefox on iOS is valid after the 2026.1
 		() => repo.create(TENANT, { platform: 'android', device: 'Galaxy S24', osVersion: '15', browser: 'safari' }),
 		EnvironmentValidationError
 	);
-	const accepted = await repo.create(TENANT, { platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'firefox', browserVersion: '142' });
+	const accepted = await repo.create(TENANT, { platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'firefox', browserVersion: '153' });
 	assert.equal(accepted.env_id, 'created');
 });
 
@@ -126,7 +126,7 @@ test('create throws EnvironmentConflictError on duplicate env_id', async () => {
 	});
 	const repo = createPostgresEnvironmentRepository(pool, { tenantContext: TENANT });
 	await assert.rejects(
-		() => repo.create(TENANT, { platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'chrome', browserVersion: '140' }),
+		() => repo.create(TENANT, { platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'chrome', browserVersion: '151' }),
 		(error) => {
 			assert.ok(error instanceof EnvironmentConflictError);
 			assert.equal(error.code, 'QASE_ENVIRONMENT_CONFLICT');
@@ -142,10 +142,10 @@ test('create inserts a well-formed record for a valid combination', async () => 
 		return { rows: [] };
 	});
 	const repo = createPostgresEnvironmentRepository(pool, { tenantContext: TENANT });
-	const created = await repo.create(TENANT, { platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'chrome', browserVersion: '140' });
+	const created = await repo.create(TENANT, { platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'chrome', browserVersion: '151' });
 	assert.equal(created.env_id, 'created');
 	const insert = pool._calls.find((call) => call.text.startsWith('INSERT INTO environments'));
-	assert.equal(insert.params[3], 'ENV-IOS-IP16PRO-18.3-CHR-140');
+	assert.equal(insert.params[3], 'ENV-IOS-IP16PRO-18.3-CHR-151');
 	const columns = insert.text.match(/\((id, organization_id.*?)\)\s*VALUES/s)[1];
 	assert.ok(columns.includes('browserstack_capabilities'));
 	assert.ok(columns.includes('is_real_device'));
@@ -174,7 +174,7 @@ test('list builds parameterized filters for every dimension', async () => {
 		platform: 'ios',
 		osVersion: '18.3',
 		browser: 'Chrome',
-		browserVersion: '140',
+		browserVersion: '151',
 		active: 'true'
 	});
 	const select = pool._calls.find((call) => call.text.includes('FROM environments') && call.text.startsWith('SELECT'));
@@ -235,7 +235,7 @@ test('upsertProviderRow rejects non-PROV envIds before touching the database', a
 	const pool = scriptedPool();
 	const repo = createPostgresEnvironmentRepository(pool, { tenantContext: TENANT });
 	await assert.rejects(
-		() => repo.upsertProviderRow(TENANT, { envId: 'ENV-IOS-IP16PRO-18.3-CHR-140' }),
+		() => repo.upsertProviderRow(TENANT, { envId: 'ENV-IOS-IP16PRO-18.3-CHR-151' }),
 		EnvironmentValidationError
 	);
 	assert.equal(pool._calls.filter((call) => call.text.includes('INSERT INTO environments')).length, 0, 'no write attempted');
@@ -305,7 +305,7 @@ test('seed upserts registry provider overlays idempotently (#14275)', async () =
 		async fetchCatalog() {
 			return {
 				environments: [
-					{ envId: 'PGFAKE-1', executionLevel: 'REAL_DEVICE', isRealDevice: true, platform: 'android', device: 'Pg Fake', os: 'Android', osVersion: '15', browser: 'Chrome', browserCode: 'chrome', browserVersion: '141', deviceType: 'mobile' }
+					{ envId: 'PGFAKE-1', executionLevel: 'REAL_DEVICE', isRealDevice: true, platform: 'android', device: 'Pg Fake', os: 'Android', osVersion: '15', browser: 'Chrome', browserCode: 'chrome', browserVersion: '151', deviceType: 'mobile' }
 				],
 				attestations: []
 			};

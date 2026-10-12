@@ -23,9 +23,9 @@ function runsFixture() {
 
 function item(overrides = {}) {
 	return {
-		id: 'item-0', ordinal: 0, testCaseId: 'TC-1', environmentId: 'ENV-IOS-IP17PRO-26.0-CHR-140',
+		id: 'item-0', ordinal: 0, testCaseId: 'TC-1', environmentId: 'ENV-IOS-IP17PRO-26.0-CHR-151',
 		profileId: 'p', platform: 'ios', device: 'iPhone 17 Pro', os: 'iOS', osVersion: '26.0',
-		browser: 'Chrome', browserCode: 'chrome', browserVersion: '140', deviceType: 'mobile',
+		browser: 'Chrome', browserCode: 'chrome', browserVersion: '151', deviceType: 'mobile',
 		status: 'PENDING', reason: null, browserSupport: null, sessionId: null, verdict: null,
 		error: null, findings: [], startedAt: null, finishedAt: null, durationMs: null, ...overrides
 	};

@@ -49,7 +49,7 @@ test('update accepts validated scenario patches; bad patches rejected', async ()
 	const dir = tempDir();
 	const backend = createLocalEnvironmentBackend({ stateDir: dir });
 	const created = await backend.create(null, {
-		platform: 'android', device: 'Pixel 9', osVersion: '15', browser: 'chrome', browserVersion: '141'
+		platform: 'android', device: 'Pixel 9', osVersion: '15', browser: 'chrome', browserVersion: '151'
 	});
 	assert.equal(created.permissionScenario, null, 'no scenario by default');
 	const updated = await backend.update(null, created.envId, {

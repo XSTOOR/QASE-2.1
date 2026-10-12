@@ -262,8 +262,10 @@ test('create with configurationEnvIds pins EXACT configurations (no silent newes
 		const chromeRows = fixtureEnvironments()
 			.filter((env) => env.device === 'iPhone 17 Pro' && env.browserCode === 'chrome')
 			.sort((a, b) => Number(b.browserVersion) - Number(a.browserVersion));
-		assert.ok(chromeRows.length >= 2, 'expected multiple chrome versions on iPhone 17 Pro');
-		const older = chromeRows[chromeRows.length - 1]; // deliberately NOT the newest
+		// #15909: one version per family — the "pin exact version" contract is
+		// exercised with the single available chrome version on the device.
+		assert.ok(chromeRows.length >= 1, 'expected chrome versions on iPhone 17 Pro');
+		const older = chromeRows[chromeRows.length - 1]; // the advertised version
 		const run = await matrix.create({
 			targetUrl: 'https://example.com',
 			kickoffText: 'https://example.com\nCoverage: core flows',

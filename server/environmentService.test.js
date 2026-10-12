@@ -22,9 +22,9 @@ test('local backend seed is idempotent and preserves deprecations', async () => 
 	const first = await backend.seed();
 	assert.ok(first.inserted >= 250);
 
-	await backend.update(null, 'ENV-IOS-IP16PRO-18.3-CHR-140', { active: false });
+	await backend.update(null, 'ENV-IOS-IP16PRO-18.3-CHR-151', { active: false });
 	await backend.seed(); // reseed must not resurrect the deactivated row
-	const env = await backend.get(null, 'ENV-IOS-IP16PRO-18.3-CHR-140');
+	const env = await backend.get(null, 'ENV-IOS-IP16PRO-18.3-CHR-151');
 	assert.equal(env.active, false, 'operator deprecation must survive reseed');
 	assert.equal((await backend.list(null, {})).length >= 250, true);
 	fs.rmSync(dir, { recursive: true, force: true });
@@ -35,10 +35,10 @@ test('local backend persists across restarts via .qase/environments.json', async
 	const backendOne = createLocalEnvironmentBackend({ stateDir: dir });
 	await backendOne.seed();
 	// 2027.01.0 (#14273): macOS uses hardware models; envId carries the OS token.
-	await backendOne.update(null, 'ENV-MAC-MACMBP14-M3-SONOMA-CHR-140', { active: false });
+	await backendOne.update(null, 'ENV-MAC-MACMBP14-M3-SONOMA-CHR-151', { active: false });
 
 	const backendTwo = createLocalEnvironmentBackend({ stateDir: dir }); // fresh instance, same disk
-	const env = await backendTwo.get(null, 'ENV-MAC-MACMBP14-M3-SONOMA-CHR-140');
+	const env = await backendTwo.get(null, 'ENV-MAC-MACMBP14-M3-SONOMA-CHR-151');
 	assert.ok(env, 'records survive a process restart');
 	assert.equal(env.active, false, 'deprecation survives restart');
 	fs.rmSync(dir, { recursive: true, force: true });
@@ -49,13 +49,13 @@ test('local backend filters match the documented dimensions', async () => {
 	const backend = createLocalEnvironmentBackend({ stateDir: dir });
 	await backend.seed();
 
-	const hits = await backend.list(null, { platform: 'ios', osVersion: '18.3', browser: 'Chrome', browserVersion: '140' });
+	const hits = await backend.list(null, { platform: 'ios', osVersion: '18.3', browser: 'Chrome', browserVersion: '151' });
 	assert.ok(hits.length > 0);
 	for (const env of hits) {
 		assert.equal(env.platform, 'ios');
 		assert.equal(env.osVersion, '18.3');
 		assert.equal(env.browser, 'Chrome');
-		assert.equal(env.browserVersion, '140');
+		assert.equal(env.browserVersion, '151');
 	}
 
 	const search = await backend.list(null, { search: 'IP16PRO' });
@@ -73,7 +73,7 @@ test('local backend create enforces validation and uniqueness', async () => {
 		() => backend.create(null, { platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'nonexistent' }),
 		EnvironmentValidationError
 	);
-	const duplicate = await backend.create(null, { platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'chrome', browserVersion: '140' })
+	const duplicate = await backend.create(null, { platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'chrome', browserVersion: '151' })
 		.catch((error) => error);
 	assert.ok(duplicate instanceof EnvironmentConflictError);
 	fs.rmSync(dir, { recursive: true, force: true });
@@ -117,20 +117,20 @@ test('normalizeEnvironmentInput rejects Safari on iOS 17 with wrong version', as
 
 test('environment create carries screenResolution and orientation with device-type defaults', async () => {
 	const mobile = await normalizeEnvironmentInput({
-		platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'chrome', browserVersion: '140'
+		platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'chrome', browserVersion: '151'
 	});
 	assert.equal(mobile.orientation, 'portrait', 'mobile defaults to portrait');
 	assert.ok(mobile.screenResolution, 'mobile resolution derived from device viewport');
 
 	const explicit = await normalizeEnvironmentInput({
-		platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'chrome', browserVersion: '140',
+		platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'chrome', browserVersion: '151',
 		screenResolution: '2622x1206', orientation: 'landscape'
 	});
 	assert.equal(explicit.screenResolution, '2622x1206');
 	assert.equal(explicit.orientation, 'landscape');
 
 	const desktop = await normalizeEnvironmentInput({
-		platform: 'macos', device: 'MacBook Pro 14 (M3)', osVersion: 'Sonoma', browser: 'chrome', browserVersion: '140'
+		platform: 'macos', device: 'MacBook Pro 14 (M3)', osVersion: 'Sonoma', browser: 'chrome', browserVersion: '151'
 	});
 	assert.equal(desktop.orientation, null, 'desktop has no orientation (not applicable)');
 });
@@ -168,7 +168,7 @@ test('disable excludes an environment from picker queries; enable restores it', 
 	const dir = tempDir();
 	const backend = createLocalEnvironmentBackend({ stateDir: dir });
 	await backend.seed();
-	const envId = 'ENV-IOS-IP16PRO-18.3-CHR-140';
+	const envId = 'ENV-IOS-IP16PRO-18.3-CHR-151';
 
 	await backend.update(null, envId, { active: false });
 	const inactive = await backend.list(null, { active: 'true', limit: 20000 });
@@ -237,7 +237,7 @@ test('refreshCatalog upserts only PROV- rows and reports provider metadata', asy
 	} };
 	const spyService = createEnvironmentService(spyBackend);
 	const rows = [
-		{ envId: 'ENV-IOS-IP16PRO-18.3-CHR-140', platform: 'ios' },
+		{ envId: 'ENV-IOS-IP16PRO-18.3-CHR-151', platform: 'ios' },
 		{ envId: 'PROV-FAKE-A', platform: 'android' },
 		{ envId: 'PROV-FAKE-B', platform: 'android' }
 	];
@@ -282,7 +282,7 @@ test('local backend upsertProviderRow rejects non-PROV envIds', async () => {
 	const dir = tempDir();
 	const backend = createLocalEnvironmentBackend({ stateDir: dir });
 	await assert.rejects(
-		() => backend.upsertProviderRow(null, { envId: 'ENV-IOS-IP16PRO-18.3-CHR-140', platform: 'ios' }),
+		() => backend.upsertProviderRow(null, { envId: 'ENV-IOS-IP16PRO-18.3-CHR-151', platform: 'ios' }),
 		EnvironmentValidationError
 	);
 	fs.rmSync(dir, { recursive: true, force: true });
@@ -296,7 +296,7 @@ test('seed merges registry provider overlays and is idempotent across reseeds', 
 		async fetchCatalog() {
 			return {
 				environments: [
-					{ envId: 'SEEDFAKE-1', executionLevel: 'REAL_DEVICE', isRealDevice: true, platform: 'android', device: 'Seed Fake', os: 'Android', osVersion: '15', browser: 'Chrome', browserCode: 'chrome', browserVersion: '141', deviceType: 'mobile' }
+					{ envId: 'SEEDFAKE-1', executionLevel: 'REAL_DEVICE', isRealDevice: true, platform: 'android', device: 'Seed Fake', os: 'Android', osVersion: '15', browser: 'Chrome', browserCode: 'chrome', browserVersion: '151', deviceType: 'mobile' }
 				],
 				attestations: []
 			};
@@ -325,7 +325,7 @@ test('seed merges registry provider overlays and is idempotent across reseeds', 
 // ---------------------------------------------------------------------------
 
 test('R1: withExecutionMetadata never defaults a catalog row to AVAILABLE', () => {
-	const env = withExecutionMetadata({ envId: 'X', platform: 'ios', device: 'iPhone 16 Pro', os: 'iOS', osVersion: '18.3', browser: 'Chrome', browserVersion: '140', active: true });
+	const env = withExecutionMetadata({ envId: 'X', platform: 'ios', device: 'iPhone 16 Pro', os: 'iOS', osVersion: '18.3', browser: 'Chrome', browserVersion: '151', active: true });
 	assert.equal(env.availability, 'UNAVAILABLE', 'no runtime board entry → REAL DEVICE · UNAVAILABLE, never AVAILABLE');
 	assert.equal(env.runtimeSessionId, null);
 });

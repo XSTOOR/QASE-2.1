@@ -73,12 +73,12 @@ test('report markdown includes the linked test case and omits it for unlinked ru
 
 test('report markdown carries the environment snapshot when the run selected one', () => {
 	const withEnvironment = fixture({ environmentSnapshot: {
-		envId: 'ENV-MAC-SONOMA-CHR-140',
+		envId: 'ENV-MAC-SONOMA-CHR-151',
 		platform: 'macos',
 		device: 'MacBook Pro',
 		osVersion: 'Sonoma',
 		browser: 'Chrome',
-		browserVersion: '140',
+		browserVersion: '151',
 		executionProvider: 'environment'
 	} });
 	delete withEnvironment.session.runtimeFacts;
@@ -86,7 +86,7 @@ test('report markdown carries the environment snapshot when the run selected one
 	// Phase 22: a catalog capability hint alone never claims "real device" —
 	// without RECORDED execution facts the report says NOT AVAILABLE FOR REAL
 	// EXECUTION instead of inventing a level.
-	assert.match(markdown, /\*\*Environment:\*\* MacBook Pro · Sonoma · Chrome 140/);
+	assert.match(markdown, /\*\*Environment:\*\* MacBook Pro · Sonoma · Chrome 151/);
 	assert.doesNotMatch(markdown, /real device/i);
 	assert.match(markdown, /\*\*Execution:\*\* NOT AVAILABLE FOR REAL EXECUTION/);
 
@@ -253,7 +253,7 @@ test('R2: Chrome executing when Firefox was selected downgrades the verdict to B
 
 test('R2: browser version drift (selected 140, runtime reports 141) blocks', async () => {
 	const target = fixture({
-		environmentSnapshot: { envId: 'ENV-WIN-CHROME-140', platform: 'windows', browser: 'Chrome', browserCode: 'chrome', browserVersion: '140', os: 'Windows', osVersion: '11' },
+		environmentSnapshot: { envId: 'ENV-WIN-CHROME-140', platform: 'windows', browser: 'Chrome', browserCode: 'chrome', browserVersion: '151', os: 'Windows', osVersion: '11' },
 		runtimeFacts: { executionLevel: 'SIMULATED', userAgent: CHROME_UA, capturedAt: new Date().toISOString() }
 	});
 	const published = await target.finish.run({ ...report, verdict: 'pass' });

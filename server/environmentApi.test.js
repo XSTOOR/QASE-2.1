@@ -13,7 +13,7 @@ const TENANT = Object.freeze({
 });
 
 const SAMPLE = {
-	envId: 'ENV-IOS-IP16PRO-18.3-CHR-140',
+	envId: 'ENV-IOS-IP16PRO-18.3-CHR-151',
 	platform: 'ios',
 	platformLabel: 'iPhone',
 	device: 'iPhone 16 Pro',
@@ -21,13 +21,13 @@ const SAMPLE = {
 	osVersion: '18.3',
 	browser: 'Chrome',
 	browserCode: 'chrome',
-	browserVersion: '140',
+	browserVersion: '151',
 	deviceType: 'mobile',
 	screenSize: '6.3 inch',
 	executionProvider: 'environment',
 	isRealDevice: true,
 	active: true,
-	runtimeCapabilities: { browserName: 'chrome', browserVersion: '140', os: 'ios', osVersion: '18.3', deviceName: 'iPhone 16 Pro', realMobile: true }
+	runtimeCapabilities: { browserName: 'chrome', browserVersion: '151', os: 'ios', osVersion: '18.3', deviceName: 'iPhone 16 Pro', realMobile: true }
 };
 
 async function startFixture(overrides = {}) {
@@ -124,10 +124,10 @@ feedback: {
 test('GET /api/environments returns rows plus total', async () => {
 	const fx = await startFixture();
 	try {
-		const { status, body } = await fx.json('/api/environments?platform=ios&browser=Chrome&osVersion=18.3&browserVersion=140');
+		const { status, body } = await fx.json('/api/environments?platform=ios&browser=Chrome&osVersion=18.3&browserVersion=151');
 		assert.equal(status, 200);
 		assert.equal(body.total, 1);
-		assert.equal(body.environments[0].envId, 'ENV-IOS-IP16PRO-18.3-CHR-140');
+		assert.equal(body.environments[0].envId, 'ENV-IOS-IP16PRO-18.3-CHR-151');
 	} finally {
 		await fx.close();
 	}
@@ -196,15 +196,15 @@ test('POST /api/environments maps validation errors to 422 with a readable reaso
 
 test('POST /api/environments maps duplicate env_id to 409', async () => {
 	const fx = await startFixture({
-		create: async () => { throw new EnvironmentConflictError('ENV-IOS-IP16PRO-18.3-CHR-140'); }
+		create: async () => { throw new EnvironmentConflictError('ENV-IOS-IP16PRO-18.3-CHR-151'); }
 	});
 	try {
 		const { status, body } = await fx.json('/api/environments', {
 			method: 'POST',
-			json: { platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'chrome', browserVersion: '140' }
+			json: { platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'chrome', browserVersion: '151' }
 		});
 		assert.equal(status, 409);
-		assert.equal(body.envId, 'ENV-IOS-IP16PRO-18.3-CHR-140');
+		assert.equal(body.envId, 'ENV-IOS-IP16PRO-18.3-CHR-151');
 	} finally {
 		await fx.close();
 	}
@@ -215,7 +215,7 @@ test('POST /api/environments returns 201 for a valid combination', async () => {
 	try {
 		const { status } = await fx.json('/api/environments', {
 			method: 'POST',
-			json: { platform: 'macos', device: 'macOS Sonoma', osVersion: 'Sonoma', browser: 'chrome', browserVersion: '140' }
+			json: { platform: 'macos', device: 'macOS Sonoma', osVersion: 'Sonoma', browser: 'chrome', browserVersion: '151' }
 		});
 		assert.equal(status, 201);
 	} finally {
@@ -255,7 +255,7 @@ test('filters are passed through to the service untouched', async () => {
 		facets: async () => ({ total: 0 })
 	});
 	try {
-		await fx.json('/api/environments?platform=ios&osVersion=18.3&browser=Chrome&browserVersion=140&active=true&isRealDevice=true&deviceType=mobile&search=IP16PRO');
+		await fx.json('/api/environments?platform=ios&osVersion=18.3&browser=Chrome&browserVersion=151&active=true&isRealDevice=true&deviceType=mobile&search=IP16PRO');
 		assert.equal(seen.length, 1);
 		assert.equal(seen[0].platform, 'ios');
 		assert.equal(seen[0].osVersion, '18.3');
@@ -310,7 +310,7 @@ test('POST /api/environments/bulk creates valid combos and skips invalid ones', 
 		const { status, body } = await fx.json('/api/environments/bulk', {
 			method: 'POST',
 			json: { combinations: [
-				{ platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'chrome', browserVersion: '140' },
+				{ platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'chrome', browserVersion: '151' },
 				{ platform: 'ios', device: 'iPhone 16 Pro', osVersion: '18.3', browser: 'firefox', browserVersion: '150' }
 			] }
 		});
@@ -369,7 +369,7 @@ test('GET /api/catalog/meta returns version and providers without secrets', asyn
 		assert.equal(res.status, 200);
 		assert.equal(typeof res.body.catalogVersion, 'string');
 		assert.ok(Array.isArray(res.body.providers));
-		assert.ok(res.body.providers.some((p) => p.slug === 'builtin' && p.rowCount > 36000), 'builtin provider with real row count');
+		assert.ok(res.body.providers.some((p) => p.slug === 'builtin' && p.rowCount >= 2500 && p.rowCount <= 5000), 'builtin provider with real row count');
 		assert.equal(typeof res.body.generatedAt, 'string');
 		assert.ok(!JSON.stringify(res.body).match(/password|secret|token|access[_-]?key/i), 'no secret material in meta');
 	} finally {

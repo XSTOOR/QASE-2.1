@@ -15,7 +15,9 @@ test('registry returns exactly the builtin catalog when no external providers ar
 	assert.equal(merged.providers.length, 1);
 	assert.equal(merged.providers[0].slug, 'builtin');
 	assert.equal(merged.providers[0].rowCount, merged.environments.length);
-	assert.ok(merged.environments.length > 36000);
+		// #15909: one version per browser family — builtin catalog is the
+	// single-version expansion (~3.3k rows).
+	assert.ok(merged.environments.length >= 2500 && merged.environments.length <= 5000);
 	assert.equal(merged.attestations.length, 0);
 });
 
@@ -26,7 +28,7 @@ test('provider rows are namespaced and additive — builtin rows never modified'
 		async fetchCatalog() {
 			return {
 				environments: [
-					{ envId: 'ENV-AND-GALS24-15-CHR-141', device: 'Galaxy S24', executionLevel: 'REAL_DEVICE', isRealDevice: true, platform: 'android', os: 'Android', osVersion: '15', browser: 'Chrome', browserCode: 'chrome', browserVersion: '141', deviceType: 'mobile' },
+					{ envId: 'ENV-AND-GALS24-15-CHR-151', device: 'Galaxy S24', executionLevel: 'REAL_DEVICE', isRealDevice: true, platform: 'android', os: 'Android', osVersion: '15', browser: 'Chrome', browserCode: 'chrome', browserVersion: '151', deviceType: 'mobile' },
 					{ envId: 'ENV-BS-NEWDEVICE-16-CHR-150', device: 'NewDevice 16', executionLevel: 'REAL_DEVICE', isRealDevice: true, platform: 'android', os: 'Android', osVersion: '16', browser: 'Chrome', browserCode: 'chrome', browserVersion: '150', deviceType: 'mobile' }
 				]
 			};
@@ -41,9 +43,9 @@ test('provider rows are namespaced and additive — builtin rows never modified'
 		assert.ok(providerRows.every((e) => e.envId.startsWith('PROV-FAKEREAL-')));
 		assert.equal(merged.environments.length, builtinCount + 2);
 		// attestation recorded for the combo that also exists builtin (SIMULATED)
-		assert.ok(merged.attestations.some((a) => a.provider === 'fakereal' && a.envId === 'ENV-AND-GALS24-15-CHR-141' && a.executionLevel === 'REAL_DEVICE'));
+		assert.ok(merged.attestations.some((a) => a.provider === 'fakereal' && a.envId === 'ENV-AND-GALS24-15-CHR-151' && a.executionLevel === 'REAL_DEVICE'));
 		// builtin row itself unchanged
-		const builtinRow = merged.environments.find((e) => e.envId === 'ENV-AND-GALS24-15-CHR-141' && !e.providerSlug);
+		const builtinRow = merged.environments.find((e) => e.envId === 'ENV-AND-GALS24-15-CHR-151' && !e.providerSlug);
 		assert.ok(builtinRow);
 		assert.notEqual(builtinRow.executionLevelRequested, 'REAL_DEVICE');
 	} finally {
@@ -110,7 +112,7 @@ test('catalogProviderMeta reports builtin and disconnected providers', async () 
 	try {
 		const meta = await catalogProviderMeta();
 		assert.equal(meta.catalogVersion, '2027.03.0');
-		assert.ok(meta.providers.some((p) => p.slug === 'builtin' && p.rowCount > 36000));
+		assert.ok(meta.providers.some((p) => p.slug === 'builtin' && p.rowCount >= 2500 && p.rowCount <= 5000));
 		const ghost = meta.providers.find((p) => p.slug === 'ghost');
 		assert.equal(ghost.connected, false);
 		assert.equal(ghost.rowCount, 0);

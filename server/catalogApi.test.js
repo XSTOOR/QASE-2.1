@@ -181,7 +181,7 @@ test('POST /api/catalog/browserVersions adds Chrome 160, then env validation acc
 		assert.equal(duplicate.status, 409);
 		assert.equal(duplicate.body.code, 'QASE_CATALOG_CONFLICT');
 
-		const verdict = await fixture.json('/api/catalog/validate?device=IP16PRO&platform=ios&osVersion=18.3&browser=chrome&browserVersion=154');
+		const verdict = await fixture.json('/api/catalog/validate?device=IP16PRO&platform=ios&osVersion=18.3&browser=chrome&browserVersion=151');
 		assert.deepEqual(verdict.body, { ok: true });
 
 		const before = await fixture.json('/api/catalog/validate?device=IP16PRO&platform=ios&osVersion=18.3&browser=chrome&browserVersion=999');
@@ -210,7 +210,7 @@ test('POST /api/catalog/osVersions adds iOS 26.1 and compatibility accepts it on
 		});
 		assert.equal(link.status, 201);
 
-		const verdict = await fixture.json('/api/catalog/validate?device=IP16PRO&platform=ios&osVersion=26.1&browser=chrome&browserVersion=140');
+		const verdict = await fixture.json('/api/catalog/validate?device=IP16PRO&platform=ios&osVersion=26.1&browser=chrome&browserVersion=151');
 		assert.deepEqual(verdict.body, { ok: true });
 	} finally {
 		await fixture.close();
@@ -274,7 +274,7 @@ test('POST validation: missing required fields → 422; unknown browser for vers
 test('GET /api/catalog/validate rejects invalid pairs with reasons', async () => {
 	const fixture = await startFixture();
 	try {
-		const valid = await fixture.json('/api/catalog/validate?device=IP16PRO&platform=ios&osVersion=18.3&browser=chrome&browserVersion=140');
+		const valid = await fixture.json('/api/catalog/validate?device=IP16PRO&platform=ios&osVersion=18.3&browser=chrome&browserVersion=151');
 		assert.deepEqual(valid.body, { ok: true });
 
 		const crossPlatform = await fixture.json('/api/catalog/validate?device=IP16PRO&platform=macos&osVersion=Sonoma&browser=chrome');
