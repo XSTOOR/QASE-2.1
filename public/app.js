@@ -7317,7 +7317,13 @@ el.resetForm?.addEventListener('submit', async event => {
 	}
 });
 
-$('open-settings').onclick = openSettings;
+// Merge note (807bd76 regression): the legacy #open-settings button was
+// removed by DEV's sidebar footer redesign (#15651). Binding onclick on the
+// null element threw during module evaluation and silently killed EVERY
+// handler below this line — no nav, no dialogs, no sign-in. Settings is now
+// reached via #sidebar-open-settings below; keep a guard in case the old
+// button ever returns.
+document.getElementById('open-settings')?.addEventListener('click', openSettings);
 
 // Sidebar footer (#15651): Settings / Account / Sign out. Account uses the
 // route-backed account page (merged from origin/DEV) so URL + dialog stay in sync.
