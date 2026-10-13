@@ -217,6 +217,13 @@ export function createLocalApplicationServices(options = {}) {
 		async get(id) {
 			return getSession(id, ownerUserId());
 		},
+		// #16225: system-scope read for background actors (matrix orchestrator).
+		// Returns the full session regardless of the ambient request actor, so
+		// boot-resumed runs can poll sessions they created under a run owner's
+		// identity. Never exposed over HTTP.
+		async peek(id) {
+			return getSession(id, undefined);
+		},
 		async list(options) {
 			return listSessions({ ...options, ownerUserId: ownerUserId() });
 		},

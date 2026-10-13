@@ -627,11 +627,25 @@ export function createMatrixOrchestrator(services, hooks) {
 		}
 	}
 
-	/** Poll the run store until the session is terminal (or timeout → throws). */
+	/** Poll the run store until the session is terminal (or timeout → throws).
+	 * #16225: the orchestrator is a SYSTEM actor, not a request. runs.get() is
+	 * owner-scoped (AsyncLocalStorage actor → tenantContext fallback), so a
+	 * boot-resumed run — or any fire-and-forget path that escapes the request
+	 * context — read OTHER owners' sessions as undefined and stamped every
+	 * item "Session … disappeared" while the orphaned session kept running,
+	 * leaking its browser and RAM (OOM loop on prod, 2026-10-13). Peek the
+	 * store unscoped instead: the orchestrator already holds the item's own
+	 * sessionId from its own startSession call — no cross-owner data moves. */
+	async function peekSessionUnscoped(sessionId) {
+		if (typeof services.runs.peek === 'function') return services.runs.peek(sessionId);
+		if (typeof services.runs.getAny === 'function') return services.runs.getAny(sessionId);
+		if (typeof services.runs.getUnscoped === 'function') return services.runs.getUnscoped(sessionId);
+		return services.runs.get(sessionId);
+	}
 	async function waitForSession(sessionId, _ignored) {
 		const deadline = Date.now() + MAX_ITEM_MS;
 		for (;;) {
-			const session = await services.runs.get(sessionId);
+			const session = await peekSessionUnscoped(sessionId);
 			if (!session) throw new Error(`Session ${sessionId} disappeared during matrix run.`);
 			if (['done', 'error', 'interrupted', 'awaiting_input'].includes(session.status)) {
 				return session;

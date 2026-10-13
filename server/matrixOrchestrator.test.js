@@ -93,6 +93,13 @@ function runsFixture(outcomes) {
 			return session;
 		},
 		async get(id) { return sessions.get(id); },
+		// #16225: owner-scoped get — returns undefined when the ambient actor
+		// differs from the session owner (this is the PRODUCTION bug shape:
+		// boot-resumed orchestrator reads sessions created under a run owner).
+		async getScoped(id, ownerId) {
+			const session = sessions.get(id);
+			return session && session.ownerUserId === ownerId ? session : undefined;
+		},
 		/** Test helper: finish a session with an outcome. */
 		finish(id, outcome) {
 			const session = sessions.get(id);
@@ -347,6 +354,65 @@ test('resume recovery (#16159): stranded QUEUED items are re-scheduled and the r
 	}
 	const passed = run.items.find((candidate) => candidate.id === 'item-passed');
 	assert.equal(passed.status, 'PASSED', 'already-finished items must be untouched');
+});
+
+test('#16225: boot-resumed run polls sessions ACROSS owners — owner-scoped get() must not read them as "disappeared"', async () => {
+	// Production shape: sessions created under the run owner (621a…), polled
+	// by a boot-resumed orchestrator with NO request actor. A runs.get that
+	// owner-filters (default tenant actor) returned undefined → every item
+	// ERROR "Session … disappeared" while the orphaned session kept running.
+	const runs = runsFixture();
+	const { service, stored } = matrixFixture({ items: [{ id: 'item-a' }] });
+	const OWNER = '621a-owner';
+	const hooks = hooksFor(runs, null);
+	const realStart = hooks.startSession;
+	hooks.startSession = async (run, item) => {
+		const session = await realStart(run, item);
+		session.ownerUserId = OWNER; // session belongs to the run owner
+		runs.finish(session.id, { status: 'done', report: { verdict: 'pass' } });
+		return session;
+	};
+	// Owner-scoped get(): what an ambient/tenant actor would see.
+	const scopedRuns = { ...runs, async get(id) { return runs.getScoped?.(id, 'default-tenant-actor'); } };
+	scopedRuns.create = runs.create.bind(runs);
+	scopedRuns.getAny = (id) => runs.get(id); // unscoped path the orchestrator must use
+	// Start with the REAL orchestrator path (simulating a boot resume of a
+	// stranded run): mark the item QUEUED in the store, then resume.
+	await service.updateItem('matrix-test', 'item-a', { status: 'QUEUED' });
+	stored.status = 'error';
+	const orchestrator = createMatrixOrchestrator({ runs: scopedRuns, matrix: service }, hooks);
+	await orchestrator.resumeRecovery();
+	await new Promise((resolve) => setTimeout(resolve, 300));
+	const run = await service.get();
+	const item = run.items.find((candidate) => candidate.id === 'item-a');
+	assert.equal(item.status, 'PASSED', 'item must complete — scoped get() must not produce "disappeared"');
+	assert.doesNotMatch(item.error ?? '', /disappeared/);
+});
+
+test('#16225 negative control: with the OLD scoped get() only, the same scenario stamps "disappeared" — proves the test detects the bug', async () => {
+	const runs = runsFixture();
+	const { service, stored } = matrixFixture({ items: [{ id: 'item-a' }] });
+	const OWNER = '621a-owner';
+	const hooks = hooksFor(runs, null);
+	const realStart = hooks.startSession;
+	hooks.startSession = async (run, item) => {
+		const session = await realStart(run, item);
+		session.ownerUserId = OWNER;
+		runs.finish(session.id, { status: 'done', report: { verdict: 'pass' } });
+		return session;
+	};
+	// ONLY the scoped get() — no peek/getAny (the pre-fix orchestrator shape).
+	const scopedRuns = { ...runs, async get(id) { return runs.getScoped?.(id, 'default-tenant-actor'); } };
+	scopedRuns.create = runs.create.bind(runs);
+	await service.updateItem('matrix-test', 'item-a', { status: 'QUEUED' });
+	stored.status = 'error';
+	const orchestrator = createMatrixOrchestrator({ runs: scopedRuns, matrix: service }, hooks);
+	await orchestrator.resumeRecovery();
+	await new Promise((resolve) => setTimeout(resolve, 300));
+	const run = await service.get();
+	const item = run.items.find((candidate) => candidate.id === 'item-a');
+	assert.equal(item.status, 'ERROR');
+	assert.match(item.error ?? '', /disappeared/, 'pre-fix behavior reproduced: scoped get() read the session as gone');
 });
 
 // #16159: the pre-RUNNING phase (support resolution / health gate / session
