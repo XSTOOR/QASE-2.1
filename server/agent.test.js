@@ -6,6 +6,7 @@ import { attachUsageCapture, createUsageLogger } from './usageCapture.js';
 import { createBrowserTools } from './browserTools.js';
 import { createFounderReviewTodos, FOUNDER_CATEGORY_IDS } from './founderService.js';
 import { clearSecrets, resolveSecrets, storeSecrets } from './secrets.js';
+import { withUserConfiguration } from './config.js';
 
 function runtimeFixture(overrides = {}) {
 	const session = { id: randomUUID(), mode: 'qa', targetUrl: 'https://example.test', messages: [], activities: [], todos: [], findings: [], secretNames: [], ...overrides };
@@ -251,6 +252,43 @@ test('each mode exposes only its own finalizer and browser capabilities', () => 
 		assert.equal(names.has('run_command'), false);
 		assert.deepEqual([...names].filter(name => name.startsWith('finish_')), [finalizer]);
 		assert.equal(names.has('report_finding'), mode !== 'founder');
+	}
+});
+
+test('a stale saved model falls back to the provider default with a warning and heals the preference', async () => {
+	const saved = { ...process.env };
+	const live = { messages: [] };
+	const addMessageCalls = [];
+	const store = {
+		liveFor: () => live,
+		publish() {},
+		commit: async () => {},
+		addMessage: async (s, item) => { addMessageCalls.push(item); s.messages.push(item); return item; }
+	};
+	const session = { id: randomUUID(), mode: 'founder', messages: [], activities: [], todos: [], findings: [], secretNames: [] };
+	try {
+		process.env.QASE_PROVIDER = 'custom';
+		process.env.QASE_BASE_URL = 'https://llm.drytis.ai';
+		process.env.QASE_API_KEY ||= 'test-key-placeholder';
+		await withUserConfiguration({ model: 'drytis/jev-1.13' }, () => {}, async () => {
+			const record = await ensureRuntime(session, store);
+			try {
+				// Config layer swapped the stale model for the default; the user
+				// was told once and the stored preference healed.
+				assert.equal(addMessageCalls.length, 1);
+				assert.equal(addMessageCalls[0].kind, 'warning');
+				assert.match(addMessageCalls[0].text, /drytis\/jev-1\.13/);
+				assert.match(addMessageCalls[0].text, /z-ai\/glm-5\.2/);
+			} finally { record.dispose?.(); }
+		});
+	} finally {
+		for (const key of ['QASE_PROVIDER', 'QASE_BASE_URL']) {
+			if (key in saved) process.env[key] = saved[key]; else delete process.env[key];
+		}
+		if (!('QASE_API_KEY' in saved)) {
+			// we set it with ||=; restore by checking the original snapshot
+			if (saved.QASE_API_KEY === undefined) delete process.env.QASE_API_KEY; else process.env.QASE_API_KEY = saved.QASE_API_KEY;
+		}
 	}
 });
 

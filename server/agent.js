@@ -5,7 +5,7 @@ import { ALL_TOOLS, CleanSlateNodeAgentRuntime, createNodeProviderConfiguration 
 import { chromium } from 'playwright';
 import { attachBrowserBridge } from './browserBridge.js';
 import { createBrowserTools } from './browserTools.js';
-import { getConfig, getPublicConfig, envKeyDestinationProblem } from './config.js';
+import { getConfig, getPublicConfig, envKeyDestinationProblem, validateModelUsability, defaultModelForProvider as defaultModelFor, getStoredModel, healStoredModel } from './config.js';
 import { buildQaContext } from './prompt.js';
 import { createQaTools } from './qaTools.js';
 import { buildQaChatReport } from './report.js';
@@ -408,7 +408,38 @@ export async function ensureRuntime(session, runStore) {
 	}
 	useBundledChromium();
 
-	const settings = getConfig();
+	let settings = getConfig();
+	// A saved model can go stale (retired/renamed on the gateway) between runs —
+	// the gateway then rejects every completion with 400 "Invalid model name"
+	// and the run dies. Two safety nets:
+	// 1. The config layer swaps known-stale saved models for the provider
+	//    default. Heal the stored copy and tell the user once, so Settings no
+	//    longer references the retired model.
+	// 2. Generic pre-flight: when the effective model is any other stored user
+	//    choice, best-effort verify the gateway will actually serve it; on a
+	//    definitive "not usable", fall back for this run, tell the user, and
+	//    heal the preference.
+	const storedModel = getStoredModel();
+	const fallback = defaultModelFor(settings.provider);
+	if (storedModel && fallback && storedModel !== settings.model && settings.model === fallback) {
+		await runStore.addMessage(session, {
+			role: 'system',
+			text: `The saved model "${storedModel}" is no longer available on the model gateway. This run (and later ones) use "${fallback}" instead — pick a different model in Settings if you want.`,
+			kind: 'warning'
+		});
+		await healStoredModel(fallback).catch(() => undefined);
+	} else if (settings.baseUrl && storedModel && storedModel === settings.model && settings.model !== fallback) {
+		const verdict = await validateModelUsability(settings);
+		if (verdict?.usable === false && fallback) {
+			await runStore.addMessage(session, {
+				role: 'system',
+				text: `The saved model "${settings.model}" is not usable with this key/gateway (${verdict.message}). This run uses "${fallback}" instead — update the model in Settings.`,
+				kind: 'warning'
+			});
+			settings = { ...settings, model: fallback };
+			await healStoredModel(fallback).catch(() => undefined);
+		}
+	}
 	const allowedTools = allowedToolNames(session.mode);
 	const problem = getPublicConfig().problem;
 	if (problem) {

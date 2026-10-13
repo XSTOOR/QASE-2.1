@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getConfig, getPublicConfig, testConnection, withUserConfiguration } from './config.js';
+import { getConfig, getPublicConfig, testConnection, withUserConfiguration, validateModelUsability, getStoredModel, healStoredModel, defaultModelForProvider } from './config.js';
 
 const CANDIDATE = Object.freeze({
 	provider: 'custom', apiKey: 'test-key', baseUrl: 'https://models.openai.com/v1', model: 'quality-model'
@@ -49,6 +49,118 @@ test('user-scope settings that were explicitly saved override env values', async
 	} finally {
 		if ('QASE_API_KEY' in saved) process.env.QASE_API_KEY = saved.QASE_API_KEY; else delete process.env.QASE_API_KEY;
 	}
+});
+
+test('a saved drytis/jev-1.13 model is stale and falls back to the provider default', async () => {
+	const saved = { ...process.env };
+	try {
+		process.env.QASE_PROVIDER = 'custom';
+		process.env.QASE_BASE_URL = 'https://llm.drytis.ai';
+		await withUserConfiguration({ model: 'drytis/jev-1.13' }, () => {}, async () => {
+			const config = getConfig();
+			assert.equal(config.model, 'z-ai/glm-5.2');
+			// The raw stored value is still visible for pre-flight logic.
+			assert.equal(getStoredModel(), 'drytis/jev-1.13');
+		});
+	} finally {
+		for (const key of ['QASE_PROVIDER', 'QASE_BASE_URL']) {
+			if (key in saved) process.env[key] = saved[key]; else delete process.env[key];
+		}
+	}
+});
+
+test('validateModelUsability reports unusable when the gateway rejects the completion', async () => {
+	const verdict = await validateModelUsability(
+		{ ...CANDIDATE, model: 'drytis/jev-1.13' },
+		options({
+			fetchImpl: async url => {
+				if (String(url).endsWith('/models')) {
+					return new Response(JSON.stringify({ data: [{ id: 'drytis/jev-1.13' }] }), {
+						status: 200, headers: { 'content-type': 'application/json' }
+					});
+				}
+				return new Response(JSON.stringify({
+					error: { message: '/chat/completions: Invalid model name passed in model=drytis/jev-1.13.' }
+				}), { status: 400, headers: { 'content-type': 'application/json' } });
+			}
+		})
+	);
+	assert.ok(verdict);
+	assert.equal(verdict.usable, false);
+	assert.match(verdict.message, /Invalid model name passed in model=drytis\/jev-1\.13/);
+});
+
+test('validateModelUsability reports usable when the completion succeeds, and no verdict on probe failure', async () => {
+	const good = await validateModelUsability(CANDIDATE, options({
+		fetchImpl: async url => {
+			if (String(url).endsWith('/models')) {
+				return new Response(JSON.stringify({ data: [{ id: 'quality-model' }] }), {
+					status: 200, headers: { 'content-type': 'application/json' }
+				});
+			}
+			return new Response('data: {"choices":[{"delta":{"content":"ready"}}]}', {
+				status: 200, headers: { 'content-type': 'text/event-stream' }
+			});
+		}
+	}));
+	assert.ok(good);
+	assert.equal(good.usable, true);
+
+	const unreachable = await validateModelUsability(CANDIDATE, options({
+		fetchImpl: async () => { throw new TypeError('fetch failed'); }
+	}));
+	assert.equal(unreachable, undefined);
+});
+
+test('validateModelUsability returns no verdict when the model is not listed either way', async () => {
+	// Gateway reachable, lists models, but the model is absent AND the gateway
+	// 404s the completion endpoint — indeterminate, run proceeds.
+	const verdict = await validateModelUsability(CANDIDATE, options({
+		fetchImpl: async url => {
+			if (String(url).endsWith('/models')) {
+				return new Response(JSON.stringify({ data: [{ id: 'other-model' }] }), {
+					status: 200, headers: { 'content-type': 'application/json' }
+				});
+			}
+			return new Response('Not Found', { status: 404 });
+		}
+	}));
+	// Not listed → matched:false → unusable verdict (definitive from listing).
+	assert.ok(verdict);
+	assert.equal(verdict.usable, false);
+});
+
+test('validateModelUsability treats transient gateway errors (429/5xx) as no verdict, never rewriting a valid choice', async () => {
+	for (const status of [429, 500, 503]) {
+		const verdict = await validateModelUsability(CANDIDATE, options({
+			fetchImpl: async url => {
+				if (String(url).endsWith('/models')) {
+					return new Response(JSON.stringify({ data: [{ id: 'quality-model' }] }), {
+						status: 200, headers: { 'content-type': 'application/json' }
+					});
+				}
+				return new Response(JSON.stringify({ error: { message: `upstream busy (${status})` } }), {
+					status, headers: { 'content-type': 'application/json' }
+				});
+			}
+		}));
+		assert.equal(verdict, undefined, `HTTP ${status} must not be a definitive unusable verdict`);
+	}
+});
+
+test('healStoredModel rewrites the saved model in the active scope', async () => {
+	let savedPayload;
+	await withUserConfiguration({ model: 'drytis/jev-1.13' }, async next => { savedPayload = next; }, async () => {
+		assert.equal(getStoredModel(), 'drytis/jev-1.13');
+		await healStoredModel('z-ai/glm-5.2');
+		assert.equal(getStoredModel(), 'z-ai/glm-5.2');
+	});
+	assert.equal(savedPayload.model, 'z-ai/glm-5.2');
+});
+
+test('defaultModelForProvider maps custom to z-ai/glm-5.2', () => {
+	assert.equal(defaultModelForProvider('custom'), 'z-ai/glm-5.2');
+	assert.equal(defaultModelForProvider('anthropic'), undefined);
 });
 
 test('model probe explains nested transport failures without exposing cause details', async () => {

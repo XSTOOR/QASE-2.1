@@ -85,10 +85,40 @@ const DEFAULT_MODELS = { custom: 'z-ai/glm-5.2' };
 /** Models that were once configured by default but are not served by this
  * gateway. Stored copies of these are stale; fall back to the provider default
  * so accounts created before the change start working without manual edits. */
-const STALE_MODELS = new Set(['gpt-4.1']);
+const STALE_MODELS = new Set(['gpt-4.1', 'drytis/jev-1.13']);
 
 function defaultModelFor(provider) {
 	return DEFAULT_MODELS[provider];
+}
+
+/** The provider-default model (what a stale saved model falls back to), or undefined. */
+export function defaultModelForProvider(provider) {
+	return defaultModelFor(provider);
+}
+
+/** The raw stored model preference (user scope if present, else instance file),
+ * regardless of the env/default layers — used to decide whether the effective
+ * model is a deliberate user choice worth pre-flight validating. */
+export function getStoredModel() {
+	return readStored().model;
+}
+
+/**
+ * Rewrites the stored model preference to a working value after a stale one
+ * was detected at run time, so subsequent runs stop warning. Persists to the
+ * user scope when one is active, else the instance config file. Never throws.
+ */
+export async function healStoredModel(model) {
+	const next = { ...readStored(), model };
+	const scope = userConfiguration.getStore();
+	if (scope) {
+		await scope.save(next);
+		scope.settings = next;
+		return;
+	}
+	stored = next;
+	fs.mkdirSync(CONFIG_DIR, { recursive: true });
+	fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, undefined, '\t'), { mode: 0o600 });
 }
 
 /** The security payload limit is a safety cap, not a tuning knob: keep it in a
@@ -119,6 +149,42 @@ export function getConfig() {
 		if (fallback) merged.model = fallback;
 	}
 	return merged;
+}
+
+/**
+ * Best-effort pre-flight validation of the model a run would use, reusing the
+ * settings probe machinery. Verifies the gateway will actually serve a
+ * completion for the model (list membership alone is insufficient — gateways
+ * can list a model while rejecting it at /chat/completions). Never throws:
+ * a probe failure returns `undefined` so the run proceeds with the configured
+ * model as before. Returns { usable: boolean, message: string } on a
+ * definitive verdict.
+ */
+export async function validateModelUsability(candidate, options = {}) {
+	try {
+		const result = await testConnection(candidate, {
+			timeoutMs: 8000,
+			...options
+		});
+		if (!result?.ok) return undefined; // probe failed (network etc.) — no verdict
+		if (result.matched === false) {
+			// Completion-rejection downgrades carry the HTTP status. Only
+			// definitive rejections (bad request / auth) make a model unusable
+			// — 429 and 5xx are transient gateway states, and rewriting the
+			// user's saved model over one would be wrong.
+			if (result.completionStatus !== undefined && ![400, 401, 403].includes(result.completionStatus)) {
+				return undefined;
+			}
+			return {
+				usable: false,
+				message: result.message || `The model ${candidate?.model ?? ''} is not usable with this key/gateway.`.trim()
+			};
+		}
+		if (result.completionVerified === true) return { usable: true };
+		return undefined; // listed but not completion-verified (best effort)
+	} catch {
+		return undefined;
+	}
 }
 
 /** The same settings with the key reduced to a hint. Safe to send to a browser. */
@@ -543,6 +609,7 @@ async function verifyModelCompletion(config, probe) {
 			listed: true,
 			completion: {
 				ok: false,
+				status: response.status,
 				error: `The gateway listed the model, but the key was rejected for a test completion (HTTP ${response.status}).`
 			}
 		};
@@ -557,6 +624,7 @@ async function verifyModelCompletion(config, probe) {
 		listed: true,
 		completion: {
 			ok: false,
+			status: response.status,
 			error: message
 				? `The gateway lists the model, but a test completion was rejected: ${message}`
 				: `The gateway lists the model, but a test completion was rejected (HTTP ${response.status}).`
@@ -587,6 +655,7 @@ async function finalizeProbeResult(result, probe) {
 			...result,
 			matched: false,
 			completionVerified: false,
+			completionStatus: verified.completion.status,
 			message: verified.completion.error
 		};
 	}
