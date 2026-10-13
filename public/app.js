@@ -6479,14 +6479,23 @@ if (qaUi.dialog) {
 				await selectSession(createdSessionId);
 				toast(`QA run started — ${selectedEnvIds.length.toLocaleString()} browser configuration${selectedEnvIds.length === 1 ? '' : 's'} queued to run one at a time${batches.length > 1 ? ` across ${batches.length} batches` : ''}.`);
 			} else {
-				toast(`QA run started — ${selectedEnvIds.length.toLocaleString()} configurations queued${batches.length > 1 ? ` across ${batches.length} batches.` : '.'}`);
+				// #16159: no session appeared inside the wait window — the run
+				// is queued behind other executions (one browser at a time).
+				// Don't leave the user staring at the previous run: tell them
+				// plainly where their run is and keep watching in the
+				// background; the moment the first session exists, open it.
+				toast(`QA run started — ${selectedEnvIds.length.toLocaleString()} configuration${selectedEnvIds.length === 1 ? '' : 's'} queued. Browsers execute as capacity frees up; this run opens automatically when its first browser starts.`);
+				void refreshRuns();
+				void (async () => {
+					const sessionId = await waitForFirstMatrixSession(matrixRun, { timeoutMs: 10 * 60_000, pollMs: 2_000 });
+					if (sessionId) await selectSession(sessionId).catch(() => undefined);
+				})();
 			}
-			// #14942 Phase 4: the results board IS the live view — per-configuration
-			// statuses, totals, coverage gaps and evidence update while the
-			// orchestrator works; each row drills into its producing session.
-			// Show it after every launch so one active browser is never mistaken
-			// for the whole selection; queued browsers remain visible beside it.
-			openQaMatrixRunDialog(matrixRun?.id);
+			// #16159: the queued-configurations popup no longer opens after
+			// launch. selectSession above already lands the user in the live
+			// run workspace; the results board stays reachable from the run
+			// list / Open-session flows. A modal covering the live view made
+			// every multi-config run LOOK stuck at "Queued".
 			// Optional follow-on flows: the QA run is already underway; each
 			// checked option opens the existing dialog prefilled with the same
 			// target for the user to confirm — nothing starts automatically.

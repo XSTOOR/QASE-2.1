@@ -99,7 +99,13 @@ export function createMatrixOrchestrator(services, hooks) {
 				await services.matrix._setStatus(run.id, 'error', {});
 			}
 			const interrupted = items.filter((item) => item.status === 'RUNNING');
-			if (!interrupted.length && run.status !== 'running') continue;
+			// #16159: QUEUED items stranded by a restart could NEVER resume in
+			// this process — POST /start only accepts PENDING items and the
+			// worker pool only exists while a run is being orchestrated here.
+			// Recovery re-schedules them instead of leaving them Queued forever:
+			// the run re-enters `running` and a fresh drain executes them.
+			const strandedQueued = items.filter((item) => item.status === 'QUEUED');
+			if (!interrupted.length && !strandedQueued.length && run.status !== 'running') continue;
 			for (const item of interrupted) {
 				await services.matrix.updateItem(run.id, item.id, {
 					status: 'ERROR',
@@ -117,6 +123,19 @@ export function createMatrixOrchestrator(services, hooks) {
 					} catch {
 						// best-effort sweep — never block recovery
 					}
+				}
+			}
+			if (strandedQueued.length) {
+				// Re-mark as PENDING so executeRun() schedules them again.
+				for (const item of strandedQueued) {
+					await services.matrix.updateItem(run.id, item.id, { status: 'PENDING' });
+				}
+				await services.matrix._setStatus(run.id, 'running', { error: null });
+				// Fire-and-forget resume of the run's remaining work. Use
+				// start() so the running map guards against double-entry.
+				const resumed = start(run.id, { resumedAfterRestart: true });
+				if (resumed.ok) {
+					hooks.emit?.(run.id, { type: 'matrix_run_started', matrixRunId: run.id, resumed: true });
 				}
 			}
 		}
@@ -182,13 +201,18 @@ export function createMatrixOrchestrator(services, hooks) {
 		return { ok: true };
 	}
 
-	async function executeRun(matrixRunId) {
+	async function executeRun(matrixRunId, options = {}) {
 		// #14649: sweep runs a previous process left `running` (container
 		// restart mid-flight) so this run cannot collide with zombie state.
-		await sweepStaleRuns();
+		// A run resumed BY that sweep (options.resumedAfterRestart) has
+		// already been set running deliberately — skip both the sweep (it
+		// would loop back into recovery) and the already-running guard.
+		if (!options.resumedAfterRestart) {
+			await sweepStaleRuns();
+		}
 		const run = await services.matrix.get(matrixRunId);
 		if (!run) throw new Error(`Unknown matrix run "${matrixRunId}"`);
-		if (run.status === 'running') {
+		if (run.status === 'running' && !options.resumedAfterRestart) {
 			throw new Error(`Matrix run ${matrixRunId} is already running.`);
 		}
 		await services.matrix._setStatus(matrixRunId, 'running', { startedAt: run.startedAt ?? new Date().toISOString() });
@@ -310,27 +334,84 @@ export function createMatrixOrchestrator(services, hooks) {
 		let itemSession = null;
 
 		try {
-			// Capability gate re-resolved at execution time — credentials may
-			// have changed since creation. Falls back to the frozen
-			// creation-time verdict (item.browserSupport) when present.
-			const support = await resolveBrowserSupport(item.platform, item.browserCode);
-			if (support.status === BROWSER_SUPPORT_STATUS.NOT_SUPPORTED
-				|| item.browserSupport?.status === BROWSER_SUPPORT_STATUS.NOT_SUPPORTED) {
-				await mark({ status: 'NOT_SUPPORTED', reason: support.reason ?? item.browserSupport?.reason, finishedAt: startedAt });
-				return;
+			// #16159: the pre-RUNNING phase (browser-support resolution, health
+			// gate, session creation) previously had NO deadline while already
+			// holding a global execution slot — a hang here blocked every
+			// sibling item and the whole board showed Queued forever. Bound it
+			// (default 120s, env-tunable); a blow-through is an honest ERROR,
+			// not a silent stall.
+			const PRELAUNCH_TIMEOUT_MS = (() => {
+				const raw = Number(process.env.QASE_MATRIX_PRELAUNCH_TIMEOUT_S ?? 120);
+				if (!Number.isFinite(raw) || raw <= 0) return 120_000;
+				// An explicit operator override is honoured down to 1s (tests rely
+				// on short timeouts); an unset/absurd value gets the safe default
+				// with the 15s floor.
+				if (process.env.QASE_MATRIX_PRELAUNCH_TIMEOUT_S !== undefined) {
+					return Math.max(1, Math.min(600, Math.floor(raw))) * 1000;
+				}
+				return Math.min(600, Math.max(15, Math.floor(raw))) * 1000;
+			})();
+			const prelaunch = (async () => {
+				// Capability gate re-resolved at execution time — credentials may
+				// have changed since creation. Falls back to the frozen
+				// creation-time verdict (item.browserSupport) when present.
+				const support = await resolveBrowserSupport(item.platform, item.browserCode);
+				if (support.status === BROWSER_SUPPORT_STATUS.NOT_SUPPORTED
+					|| item.browserSupport?.status === BROWSER_SUPPORT_STATUS.NOT_SUPPORTED) {
+					return { unsupported: support.reason ?? item.browserSupport?.reason ?? null };
+				}
+				// RT2 (#14704): pre-execution health gate. REAL probes (engine
+				// launch, network, emulation) run before any session starts; a
+				// failed check blocks the item with the exact reason — never
+				// launched, never Passed.
+				if (hooks.checkEnvironmentHealth) {
+					const environment = await (services.environments?.get?.(item.environmentId) ?? null);
+					const health = await hooks.checkEnvironmentHealth(environment ?? item, { targetUrl: run.targetUrl ?? null });
+					if (health?.verdict === 'BLOCKED') {
+						return { blocked: `Health check blocked execution: ${health.reason}`, healthChecks: health.checks };
+					}
+				}
+				return { ok: true };
+			})();
+			let gate;
+			{
+				// Cancellable race: if the gate resolves first, the timer is
+				// cleared so no stray 120s timer keeps the process alive.
+				let timerExpired = false;
+				let onTimer;
+				let timer;
+				const timeoutPromise = new Promise((_resolve, reject) => {
+					onTimer = () => { timerExpired = true; reject(new Error('PRELAUNCH_TIMEOUT')); };
+					timer = setTimeout(onTimer, PRELAUNCH_TIMEOUT_MS);
+					if (typeof timer?.unref === 'function') timer.unref();
+				});
+				try {
+					gate = await Promise.race([prelaunch, timeoutPromise]);
+				} catch (error) {
+					if (timerExpired) {
+						await mark({
+							status: 'ERROR',
+							error: `Pre-launch checks did not complete within ${Math.round(PRELAUNCH_TIMEOUT_MS / 1000)}s (browser support / environment health / session creation).`,
+							finishedAt: new Date().toISOString(),
+							durationMs: Date.now() - Date.parse(startedAt)
+						});
+						return;
+					}
+					throw error;
+				} finally {
+					clearTimeout(timer);
+				}
 			}
-			// RT2 (#14704): pre-execution health gate. REAL probes (engine
-			// launch, network, emulation) run before any session starts; a
-			// failed check blocks the item with the exact reason — never
-			// launched, never Passed.
-			if (hooks.checkEnvironmentHealth) {
-				const environment = await (services.environments?.get?.(item.environmentId) ?? null);
-				const health = await hooks.checkEnvironmentHealth(environment ?? item, { targetUrl: run.targetUrl ?? null });
-				if (health?.verdict === 'BLOCKED') {
+			if (gate?.ok !== true) {
+				if (gate?.unsupported !== undefined) {
+					await mark({ status: 'NOT_SUPPORTED', reason: gate.unsupported, finishedAt: startedAt });
+					return;
+				}
+				if (gate?.blocked) {
 					await mark({
 						status: 'UNAVAILABLE',
-						reason: `Health check blocked execution: ${health.reason}`,
-						healthChecks: health.checks,
+						reason: gate.blocked,
+						healthChecks: gate.healthChecks,
 						finishedAt: new Date().toISOString(),
 						durationMs: 0
 					});
@@ -342,7 +423,48 @@ export function createMatrixOrchestrator(services, hooks) {
 			// records the honest outcome rather than emulating silently.
 			await mark({ status: 'RUNNING', startedAt });
 
-			itemSession = await hooks.startSession(run, item);
+			// #16159 follow-up (review WARN-1): session creation is ALSO inside
+			// the bounded pre-launch window — a hung startSession (e.g. fork
+			// EAGAIN under PID pressure) held a global slot forever.
+			{
+				let sessionTimerExpired = false;
+				let sessionTimer;
+				const sessionTimeout = new Promise((_resolve, reject) => {
+					sessionTimer = setTimeout(() => { sessionTimerExpired = true; reject(new Error('PRELAUNCH_TIMEOUT')); }, PRELAUNCH_TIMEOUT_MS);
+					if (typeof sessionTimer?.unref === 'function') sessionTimer.unref();
+				});
+				try {
+					// Review WARN-1 (#16159): if the race times out but the
+					// losing startSession promise later resolves, its session
+					// (and browser) would leak — dispose it on late arrival.
+					// Guard on sessionTimerExpired (NOT itemSession): this
+					// wrapper runs inside the race's microtask chain, before
+					// the await assigns itemSession, so a null check would
+					// double-close every normally-created session.
+					const sessionPromise = Promise.resolve(hooks.startSession(run, item)).then(
+						(lateSession) => {
+							if (sessionTimerExpired) {
+								Promise.resolve(hooks.closeSessionBrowser?.(lateSession)).catch(() => undefined);
+							}
+							return lateSession;
+						}
+					);
+					itemSession = await Promise.race([sessionPromise, sessionTimeout]);
+				} catch (error) {
+					if (sessionTimerExpired) {
+						await mark({
+							status: 'ERROR',
+							error: `Session creation did not complete within ${Math.round(PRELAUNCH_TIMEOUT_MS / 1000)}s.`,
+							finishedAt: new Date().toISOString(),
+							durationMs: Date.now() - Date.parse(startedAt)
+						});
+						return;
+					}
+					throw error;
+				} finally {
+					clearTimeout(sessionTimer);
+				}
+			}
 			const session = itemSession;
 			await mark({ sessionId: session.id });
 			await hooks.sendTask(session, run);

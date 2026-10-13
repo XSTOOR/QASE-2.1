@@ -36,6 +36,16 @@ test('created matrix run selects its first real session before entering the shar
 	assert.match(launcher, /await selectSession\(createdSessionId\)/);
 });
 
+test('#16159: the queued-configurations results board never auto-opens after launch', () => {
+	// The launch path must not call openQaMatrixRunDialog — the live run
+	// workspace (selected above) is the landing surface; the board stays
+	// reachable through explicit user actions.
+	const request = launcher.indexOf("await api('/qa-matrix-runs'");
+	const tail = launcher.slice(request);
+	assert.doesNotMatch(tail, /openQaMatrixRunDialog/, 'launch flow must not open the results board modal');
+	assert.match(launcher, /QA run started/);
+});
+
 test('sidebar and main Start testing controls share one launcher implementation', () => {
 	assert.match(app, /el\.newRun\.onclick = openQaStart/);
 	assert.match(app, /\$\('sidebar-new-run'\)\.onclick = openQaStart/);

@@ -312,6 +312,112 @@ test('resume recovery: dangling running run + RUNNING items become ERROR interru
 	assert.equal(passed.status, 'PASSED', 'finished items must be untouched');
 });
 
+// #16159: a restart used to strand every QUEUED item forever — POST /start
+// only accepts PENDING, and the per-run worker pool only exists while this
+// process orchestrates. Recovery now re-schedules them and the run resumes.
+test('resume recovery (#16159): stranded QUEUED items are re-scheduled and the run resumes to completion', async () => {
+	const runs = runsFixture();
+	const { service, stored } = matrixFixture({
+		items: [
+			{ id: 'item-queued-a', status: 'QUEUED' },
+			{ id: 'item-queued-b', status: 'QUEUED' },
+			{ id: 'item-passed', status: 'PASSED', verdict: 'pass', sessionId: 'session-old' }
+		]
+	});
+	// A restart killed the orchestrator mid-drain: status stayed running (or
+	// error after the classic sweep) with two items stranded QUEUED.
+	stored.status = 'error';
+	const hooks = hooksFor(runs, null);
+	const realStart = hooks.startSession;
+	hooks.startSession = async (run, item) => {
+		const session = await realStart(run, item);
+		runs.finish(session.id, { status: 'done', report: { verdict: 'pass' } });
+		return session;
+	};
+	const orchestrator = createMatrixOrchestrator({ runs, matrix: service }, hooks);
+	await orchestrator.resumeRecovery();
+	// Give the fire-and-forget resume drain time to execute both items.
+	await new Promise((resolve) => setTimeout(resolve, 300));
+	const run = await service.get();
+	assert.equal(run.status, 'done');
+	for (const id of ['item-queued-a', 'item-queued-b']) {
+		const finalItem = run.items.find((candidate) => candidate.id === id);
+		assert.equal(finalItem.status, 'PASSED', `${id} must be re-executed, not stranded QUEUED`);
+		assert.ok(finalItem.sessionId, `${id} must carry its new session`);
+	}
+	const passed = run.items.find((candidate) => candidate.id === 'item-passed');
+	assert.equal(passed.status, 'PASSED', 'already-finished items must be untouched');
+});
+
+// #16159: the pre-RUNNING phase (support resolution / health gate / session
+// creation) holds a global slot; a hang there blocked the entire queue. It is
+// now bounded — a blow-through surfaces as an honest ERROR. (Explicit env
+// override shortens the timeout to 1s for the test.)
+test('pre-launch hang (#16159): a health gate that never resolves errors the item instead of stalling the queue forever', async () => {
+	process.env.QASE_MATRIX_PRELAUNCH_TIMEOUT_S = '1';
+	try {
+		const runs = runsFixture();
+		const { service } = matrixFixture({ items: [{}, { id: 'item-after' }] });
+		const hooks = hooksFor(runs, null);
+		const realStart = hooks.startSession;
+		let healthCalls = 0;
+		hooks.checkEnvironmentHealth = () => {
+			healthCalls += 1;
+			// Only the FIRST item's health check hangs forever; the sibling
+			// must sail through and prove the queue is not starved.
+			return healthCalls === 1 ? new Promise(() => {}) : Promise.resolve({ verdict: 'PASS', checks: [] });
+		};
+		hooks.startSession = async (run, item) => {
+			const session = await realStart(run, item);
+			runs.finish(session.id, { status: 'done', report: { verdict: 'pass' } });
+			return session;
+		};
+		const orchestrator = createMatrixOrchestrator({ runs, matrix: service }, hooks);
+		orchestrator.start('matrix-test');
+		// The hung item times out (~1s) and its sibling still executes.
+		await new Promise((resolve) => setTimeout(resolve, 4000));
+		const items = (await service.get()).items;
+		assert.equal(items[0].status, 'ERROR');
+		assert.match(items[0].error, /Pre-launch checks did not complete/);
+		assert.equal(items[1].status, 'PASSED', 'sibling items must not be starved');
+	} finally {
+		delete process.env.QASE_MATRIX_PRELAUNCH_TIMEOUT_S;
+	}
+});
+
+test('pre-launch hang (#16159 review WARN-1): a startSession resolving AFTER the timeout disposes its late session instead of leaking it', async () => {
+	process.env.QASE_MATRIX_PRELAUNCH_TIMEOUT_S = '1';
+	try {
+		const runs = runsFixture();
+		const { service } = matrixFixture({ items: [{}] });
+		const hooks = hooksFor(runs, null);
+		const realStart = hooks.startSession;
+		let startSessionCalls = 0;
+		hooks.startSession = async (run, item) => {
+			startSessionCalls += 1;
+			// Session creation outlives the 1s timeout, then resolves.
+			await new Promise((resolve) => setTimeout(resolve, 1800));
+			const session = await realStart(run, item);
+			runs.finish(session.id, { status: 'done', report: { verdict: 'pass' } });
+			return session;
+		};
+		const closed = [];
+		hooks.closeSessionBrowser = async (session) => { closed.push(session.id); };
+		const orchestrator = createMatrixOrchestrator({ runs, matrix: service }, hooks);
+		orchestrator.start('matrix-test');
+		// The item times out (~1s) and errors; the late session resolves at
+		// ~1.8s and must be closed exactly once (not leaked, not doubled).
+		await new Promise((resolve) => setTimeout(resolve, 4000));
+		const item = (await service.get()).items[0];
+		assert.equal(item.status, 'ERROR');
+		assert.match(item.error, /Session creation did not complete/);
+		assert.equal(startSessionCalls, 1);
+		assert.equal(closed.length, 1, 'late session is disposed exactly once');
+	} finally {
+		delete process.env.QASE_MATRIX_PRELAUNCH_TIMEOUT_S;
+	}
+});
+
 test('statusCounts tallies the full honest vocabulary', () => {
 	const counts = statusCounts([
 		{ status: 'PASSED' }, { status: 'PASSED' }, { status: 'FAILED' },
