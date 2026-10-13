@@ -444,6 +444,20 @@ test('fetchConfigurationWindow passes filters + pagination and reports hasMore',
 	assert.equal(result.hasMore, false); // 100 + 1 < 12 is false
 });
 
+test('#16045: fetchConfigurationWindow serializes deviceType when set and omits it when empty', async () => {
+	const seen = [];
+	const fetcher = async (url) => {
+		seen.push(url);
+		return { ok: true, json: async () => ({ configurations: [configuration()], totals: { configurations: 12 } }) };
+	};
+	await fetchConfigurationWindow({ deviceType: 'mobile' }, { fetcher });
+	assert.match(seen[0], /deviceType=mobile/);
+	await fetchConfigurationWindow({ deviceType: '' }, { fetcher });
+	assert.doesNotMatch(seen[1], /deviceType=/);
+	await fetchConfigurationWindow({}, { fetcher });
+	assert.doesNotMatch(seen[2], /deviceType=/);
+});
+
 test('fetchConfigurationWindow hasMore is true when window is partial', async () => {
 	// #15439: windows are device-grouped — hasMore comes from the server's
 	// device-group pagination, not raw row arithmetic.

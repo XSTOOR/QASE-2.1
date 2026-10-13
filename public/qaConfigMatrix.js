@@ -709,6 +709,18 @@ export const PLATFORM_GROUPS = [
 ];
 
 /**
+ * #16045: device categories users think in FIRST, composing with the
+ * platform groups above (Phones + Android = Android phones). The catalog's
+ * deviceType vocabulary is mobile|tablet|desktop (laptops are 'desktop' —
+ * see server/environmentCatalog.js deviceType assignment).
+ */
+export const DEVICE_CATEGORIES = [
+	{ id: 'mobile', label: 'Phones' },
+	{ id: 'tablet', label: 'Tablets' },
+	{ id: 'desktop', label: 'Desktops' }
+];
+
+/**
  * Group configurations into platform → device → OS → browser-version rows.
  * One row per (device, osVersion, browserCode) with sorted version list,
  * newest first. Device rows carry execution types present + manufacturer.
@@ -1026,7 +1038,7 @@ export async function fetchConfigurationIndex({ fetcher = globalThis.fetch, sign
  */
 export async function fetchConfigurationWindow(filters = {}, { fetcher = globalThis.fetch, signal = null, limit = 200, offset = 0 } = {}) {
 	const params = new URLSearchParams();
-	for (const key of ['platform', 'manufacturer', 'osVersion', 'orientation', 'browserCode', 'search']) {
+	for (const key of ['platform', 'manufacturer', 'osVersion', 'orientation', 'browserCode', 'search', 'deviceType']) {
 		if (filters[key]) params.set(key, filters[key]);
 	}
 	params.set('groupBy', 'device');

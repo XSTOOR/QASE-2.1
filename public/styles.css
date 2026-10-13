@@ -12890,6 +12890,110 @@ dialog:not([open]) { display: none !important; }
   border-radius: 8px;
 }
 
+/* #16045 — device category chips (Phones/Tablets/Desktops) above platform tabs. */
+.qa-matrix-category-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.qa-matrix-category-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted, #9aa0aa);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.qa-matrix-category-chip:hover { color: var(--text, #e6e6e6); }
+
+.qa-matrix-category-chip.is-active {
+  border-color: var(--accent, #8b5cf6);
+  color: var(--text, #e6e6e6);
+  background: color-mix(in srgb, var(--accent, #8b5cf6) 12%, transparent);
+  font-weight: 600;
+}
+
+.qa-matrix-category-chip:focus-visible {
+  outline: 2px solid var(--accent, #8b5cf6);
+  outline-offset: 2px;
+}
+
+/* #16046 — popular device quick-picks (curated, catalog-matched). */
+.qa-matrix-popular {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.qa-matrix-popular-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #9aa0aa);
+  margin-right: 2px;
+}
+
+.qa-matrix-popular-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text, #e6e6e6);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.qa-matrix-popular-chip:hover {
+  border-color: color-mix(in srgb, var(--accent, #8b5cf6) 50%, transparent);
+}
+
+.qa-matrix-popular-chip.is-selected {
+  border-color: var(--accent, #8b5cf6);
+  background: color-mix(in srgb, var(--accent, #8b5cf6) 14%, transparent);
+  font-weight: 600;
+}
+
+.qa-matrix-popular-chip:focus-visible {
+  outline: 2px solid var(--accent, #8b5cf6);
+  outline-offset: 2px;
+}
+
+/* #16046 — grouped device sections (Phones/Tablets/Desktops headers). */
+.qa-matrix-device-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 8px;
+  margin-top: 4px;
+  background: var(--bg-elevated, #16181d);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #9aa0aa);
+}
+
+.qa-matrix-device-group-count {
+  font-weight: 500;
+}
+
 /* #15968 — browser toggle cards: one click selects a browser family. */
 .qa-matrix-browser-cards {
   display: flex;

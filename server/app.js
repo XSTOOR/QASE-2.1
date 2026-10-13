@@ -1001,18 +1001,21 @@ export function createApplication(options = {}) {
 							limit,
 							offset: offset ?? 0
 						},
-						{
-							platform: query.platform,
-							manufacturer: query.manufacturer,
-							osVersion: query.osVersion,
-							orientation: query.orientation,
-							browserCode: query.browserCode,
-							search: query.search
-						}
-					);
-					response.set('Cache-Control', 'no-store');
-					response.json(result);
-					return;
+					{
+						platform: query.platform,
+						manufacturer: query.manufacturer,
+						osVersion: query.osVersion,
+						orientation: query.orientation,
+						browserCode: query.browserCode,
+						search: query.search,
+						// #16045: category filter — filterConfigurations already
+						// supports the field; the route now forwards it.
+						deviceType: query.deviceType
+					}
+				);
+				response.set('Cache-Control', 'no-store');
+				response.json(result);
+				return;
 				}
 				const result = await buildQaConfigurations(
 					{
@@ -1029,7 +1032,8 @@ export function createApplication(options = {}) {
 						osVersion: query.osVersion,
 						orientation: query.orientation,
 						browserCode: query.browserCode,
-						search: query.search
+						search: query.search,
+						deviceType: query.deviceType
 					}
 				);
 				response.set('Cache-Control', 'no-store');

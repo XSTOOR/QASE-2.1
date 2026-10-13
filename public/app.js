@@ -14,6 +14,7 @@ import {
 	isSelectable,
 	executionTypeLabel,
 	PLATFORM_GROUPS,
+	DEVICE_CATEGORIES,
 	buildSummary,
 	isValidTargetUrl,
 	MATRIX_BATCH_SIZE,
@@ -5001,7 +5002,7 @@ const qaMatrixState = {
 	// list is picking a device for. Lives OUTSIDE the persisted selection
 	// (session-scoped convenience, like activeTab).
 	activeFamily: null,
-	filters: { search: '', platform: '', manufacturer: '', osVersion: '', orientation: '' },
+	filters: { search: '', platform: '', manufacturer: '', osVersion: '', orientation: '', deviceType: '' },
 	// #15969: remembered platform tab so re-renders keep the user's tab.
 	activeTab: 'all'
 };
@@ -5092,16 +5093,18 @@ async function qaMatrixLoadWindow(offset, signal) {
 	}
 	qaMatrixState.windowLoading = true;
 	try {
-		const page = await fetchConfigurationWindow(
-			{
-				search: qaMatrixState.filters.search,
-				platform: qaMatrixState.filters.platform || undefined,
-				manufacturer: qaMatrixState.filters.manufacturer || undefined,
-				osVersion: qaMatrixState.filters.osVersion || undefined,
-				orientation: qaMatrixState.filters.orientation || undefined
-			},
-			{ signal, limit: 12, offset }
-		);
+			const page = await fetchConfigurationWindow(
+				{
+					search: qaMatrixState.filters.search,
+					platform: qaMatrixState.filters.platform || undefined,
+					manufacturer: qaMatrixState.filters.manufacturer || undefined,
+					osVersion: qaMatrixState.filters.osVersion || undefined,
+					orientation: qaMatrixState.filters.orientation || undefined,
+					// #16045: active category chip (mobile|tablet|desktop).
+					deviceType: qaMatrixState.filters.deviceType || undefined
+				},
+				{ signal, limit: 12, offset }
+			);
 		if (signal?.aborted) return;
 		qaMatrixState.windowRows = offset === 0
 			? page.configurations
@@ -5413,13 +5416,54 @@ function qaMatrixRender() {
 	// Platform tabs (tablist) — the tab is a FILTER over the windowed rows;
 	// 'All' shows the interleaved server order. Counts are selectable
 	// configurations per platform from the compact index (search-aware).
+	// #16045: tab counts now respect the ACTIVE CATEGORY; category chip
+	// counts respect the ACTIVE PLATFORM — both dimensions stay consistent.
+	const activeCategory = qaMatrixState.filters.deviceType || '';
 	const tabCounts = new Map();
 	let allCount = 0;
 	for (const configuration of filtered) {
 		if (!isSelectable(configuration)) continue;
+		if (activeCategory && configuration.deviceType !== activeCategory) continue;
 		allCount += 1;
 		tabCounts.set(configuration.platform, (tabCounts.get(configuration.platform) ?? 0) + 1);
 	}
+	// #16045: category chips ABOVE the platform tabs — the dimension users
+	// think in first (Phones/Tablets/Desktops). One click narrows the device
+	// list; composes with platform tabs and search. Applies in both modes.
+	const categoryCounts = new Map();
+	for (const configuration of filtered) {
+		if (!isSelectable(configuration)) continue;
+		if (qaMatrixState.filters.platform && configuration.platform !== qaMatrixState.filters.platform) continue;
+		categoryCounts.set(configuration.deviceType, (categoryCounts.get(configuration.deviceType) ?? 0) + 1);
+	}
+	const categoryRow = document.createElement('div');
+	categoryRow.className = 'qa-matrix-category-chips';
+	categoryRow.setAttribute('role', 'group');
+	categoryRow.setAttribute('aria-label', 'Device categories');
+	const makeCategoryChip = (id, label, count) => {
+		const chip = document.createElement('button');
+		chip.type = 'button';
+		chip.className = `qa-matrix-category-chip${activeCategory === id ? ' is-active' : ''}`;
+		chip.dataset.role = 'category-chip';
+		chip.dataset.deviceType = id;
+		chip.setAttribute('aria-pressed', String(activeCategory === id));
+		chip.textContent = `${label} (${count.toLocaleString()})`;
+		chip.title = id === '' ? 'Show phones, tablets and desktops' : `Show only ${label.toLowerCase()}`;
+		chip.addEventListener('click', () => {
+			if (activeCategory === id) return;
+			qaMatrixState.filters.deviceType = id;
+			qaMatrixRender();
+			void qaMatrixLoadWindow(0, qaMatrixState.abort?.signal);
+		});
+		return chip;
+	};
+	categoryRow.append(makeCategoryChip('', 'All', [...categoryCounts.values()].reduce((sum, value) => sum + value, 0)));
+	for (const category of DEVICE_CATEGORIES) {
+		if (categoryCounts.has(category.id)) {
+			categoryRow.append(makeCategoryChip(category.id, category.label, categoryCounts.get(category.id)));
+		}
+	}
+	deviceHeader.append(categoryRow);
 	const tabGroup = document.createElement('div');
 	tabGroup.className = 'qa-matrix-platform-tabs';
 	tabGroup.setAttribute('role', 'tablist');
@@ -5487,7 +5531,203 @@ function qaMatrixRender() {
 	matrix.devices.append(deviceHeader);
 
 	// One flat row per device (windowed rows deduped by device key).
+	// #16046: row construction extracted into qaMatrixDeviceRow so the
+	// grouped sections and the popular quick-picks reuse the EXACT same row
+	// markup and behavior.
 	const deviceList = deviceListFromWindow(qaMatrixState.windowRows);
+
+	/**
+	 * #16046: shared device-row builder. Identical markup/behavior to the
+	 * #15969/#16043 row: cross mode toggles the device; perBrowser mode
+	 * assigns/unassigns it for the ACTIVE family. Returns a <button>.
+	 */
+	const qaMatrixDeviceRow = (device) => {
+		const available = device.selectableCount > 0;
+		// #16043: in perBrowser mode the row acts on the ACTIVE family.
+		// A device is possible for it only when at least one of its rows
+		// for that family is selectable; impossible rows are disabled
+		// with an honest reason.
+		let perBrowserSupports = null;
+		if (perBrowser && activeFamily) {
+			perBrowserSupports = qaMatrixState.index.some(configuration =>
+				configuration.browserCode === activeFamily
+				&& isSelectable(configuration)
+				&& deviceKeyOf(configuration) === device.key);
+		}
+		const activeAssignment = perBrowser && activeFamily ? selection.deviceAssignments[activeFamily] : undefined;
+		const isAssignedHere = perBrowser && activeAssignment === device.key;
+		const isSelected = perBrowser ? isAssignedHere : selection.deviceKeys.has(device.key);
+		const row = document.createElement('button');
+		row.type = 'button';
+		row.className = `qa-matrix-device-row${available ? '' : ' is-unavailable'}${isSelected ? ' is-selected' : ''}${isAssignedHere ? ' is-assigned' : ''}`;
+		row.dataset.role = 'device-row';
+		row.dataset.deviceKey = device.key;
+		row.setAttribute('role', 'option');
+		row.setAttribute('aria-selected', String(isSelected));
+		if (!available) {
+			row.disabled = true;
+			row.setAttribute('aria-disabled', 'true');
+			row.title = device.unavailableReason ?? 'No available configurations for this device.';
+		} else if (perBrowser && !activeFamily) {
+			row.disabled = true;
+			row.setAttribute('aria-disabled', 'true');
+			row.title = 'Select a browser first — the device list picks one device for each browser.';
+		} else if (perBrowser && perBrowserSupports === false) {
+			row.disabled = true;
+			row.setAttribute('aria-disabled', 'true');
+			const activeLabel = families.find((family) => family.code === activeFamily)?.label ?? activeFamily;
+			row.title = `No configurations for ${activeLabel} on this device.`;
+		} else if (perBrowser) {
+			row.title = isAssignedHere
+				? `Remove ${device.device} as the device for this browser`
+				: `Use ${device.device} for this browser`;
+		}
+		const identity = document.createElement('span');
+		identity.className = 'qa-matrix-device-row-identity';
+		const name = document.createElement('span');
+		name.className = 'qa-matrix-device-row-name';
+		name.textContent = `${device.manufacturer ? `${device.manufacturer} ` : ''}${device.device}`;
+		identity.append(name);
+		const osSummary = document.createElement('span');
+		osSummary.className = 'qa-matrix-device-row-os';
+		osSummary.textContent = device.osVersions.length > 0
+			? `${device.osLabel ? `${device.osLabel} ` : ''}${device.osVersions.slice(0, 3).join(' · ')}${device.osVersions.length > 3 ? ' · …' : ''}`
+			: (device.osLabel ?? '');
+		identity.append(osSummary);
+		row.append(identity);
+		const badges = document.createElement('span');
+		badges.className = 'qa-matrix-badges';
+		badges.setAttribute('aria-label', 'Device capabilities');
+		for (const executionType of device.executionTypes) {
+			const badge = document.createElement('span');
+			badge.className = `qa-matrix-badge badge-${executionType}`;
+			badge.textContent = executionTypeLabel(executionType);
+			badges.append(badge);
+		}
+		// #16043: rows show WHICH browsers are assigned to this device in
+		// perBrowser mode — brand icons make the mapping glanceable.
+		if (perBrowser) {
+			const assignedFamilies = Object.entries(selection.deviceAssignments)
+				.filter(([, key]) => key === device.key)
+				.map(([code]) => code)
+				.filter((code) => selection.browserFamilies.has(code));
+			for (const code of assignedFamilies) {
+				const icon = brandIcon(code, 14);
+				icon.classList.add('qa-matrix-assigned-family-icon');
+				icon.title = `Device for ${families.find((family) => family.code === code)?.label ?? code}`;
+				badges.append(icon);
+			}
+		}
+		row.append(badges);
+		if (isSelected) {
+			const check = document.createElement('span');
+			check.className = 'qa-matrix-device-row-check';
+			check.setAttribute('aria-hidden', 'true');
+			check.textContent = '✓';
+			row.append(check);
+		}
+		row.addEventListener('click', () => {
+			if (perBrowser) {
+				// #16043: one click assigns the device to the active
+				// family; clicking the ASSIGNED row removes it.
+				if (!activeFamily || perBrowserSupports === false) return;
+				if (isAssignedHere) {
+					qaMatrixApplySelection(unassignDevice(qaMatrixState.selection, activeFamily));
+				} else {
+					try {
+						qaMatrixApplySelection(assignDevice(qaMatrixState.selection, qaMatrixState.index, activeFamily, device.key));
+					} catch {
+						setQaFormError('That device has no available configurations for this browser.');
+					}
+				}
+				return;
+			}
+			// #15969: ONE click toggles the device in the explicit
+			// selection model — no separate checkbox, no scope view.
+			const next = createSelectionState({
+				deviceKeys: selection.deviceKeys,
+				browserFamilies: selection.browserFamilies,
+				deselectedEnvIds: selection.deselectedEnvIds
+			});
+			toggleDevice(next, device.key, !selection.deviceKeys.has(device.key));
+			qaMatrixApplySelection(next);
+		});
+		return row;
+	};
+
+	// #16046: popular quick-picks — curated flagship devices matched against
+	// the compact index (exact device name, ≥1 selectable config). The
+	// curation list is ordered to guarantee CATEGORY DIVERSITY first
+	// (one phone, one tablet, one desktop…), then fills up with the remaining
+	// names — so the strip is never six phones. Hidden entirely when nothing
+	// matches. Ignores category/platform/search — it is the constant shortcut
+	// layer; the list below stays filterable.
+	const POPULAR_DEVICE_NAMES = ['iPhone 17', 'iPad (10th Gen)', 'MacBook Air (M1)', 'Galaxy S25', 'iPad Pro 13 (M4)', 'Surface Laptop 5', 'iPhone 16', 'Galaxy S24', 'Pixel 10', 'Pixel 9', 'iMac (24-inch M1)'];
+	const popularMatches = [];
+	for (const deviceName of POPULAR_DEVICE_NAMES) {
+		if (popularMatches.length >= 6) break;
+		const match = qaMatrixState.index.find(configuration =>
+			configuration.device === deviceName && isSelectable(configuration));
+		if (match && !popularMatches.some((entry) => entry.key === deviceKeyOf(match))) {
+			popularMatches.push({ name: deviceName, key: deviceKeyOf(match), platform: match.platform });
+		}
+	}
+	if (popularMatches.length > 0) {
+		const popular = document.createElement('div');
+		popular.className = 'qa-matrix-popular';
+		popular.dataset.role = 'popular-devices';
+		const popularLabel = document.createElement('span');
+		popularLabel.className = 'qa-matrix-popular-label';
+		popularLabel.textContent = 'Popular';
+		popular.append(popularLabel);
+		const platformLabels = new Map(PLATFORM_GROUPS.map((group) => [group.id, group.label]));
+		for (const entry of popularMatches) {
+			const chip = document.createElement('button');
+			chip.type = 'button';
+			chip.className = 'qa-matrix-popular-chip';
+			chip.dataset.role = 'popular-device';
+			chip.dataset.deviceKey = entry.key;
+			const isSelectedPopular = perBrowser
+				? (activeFamily ? selection.deviceAssignments[activeFamily] === entry.key : false)
+				: selection.deviceKeys.has(entry.key);
+			chip.classList.toggle('is-selected', isSelectedPopular);
+			chip.setAttribute('aria-pressed', String(isSelectedPopular));
+			chip.textContent = `${entry.name} · ${platformLabels.get(entry.platform) ?? entry.platform}`;
+			// The chip behaves EXACTLY like the device row for that key.
+			chip.addEventListener('click', () => {
+				const target = deviceList.find((device) => device.key === entry.key);
+				if (target) {
+					qaMatrixDeviceRow(target).click();
+					return;
+				}
+				// Device not in the current window (filtered out / not yet
+				// loaded): act directly on the model — same semantics.
+				if (perBrowser) {
+					if (!activeFamily) return;
+					if (selection.deviceAssignments[activeFamily] === entry.key) {
+						qaMatrixApplySelection(unassignDevice(qaMatrixState.selection, activeFamily));
+					} else {
+						try {
+							qaMatrixApplySelection(assignDevice(qaMatrixState.selection, qaMatrixState.index, activeFamily, entry.key));
+						} catch {
+							setQaFormError('That device has no available configurations for this browser.');
+						}
+					}
+					return;
+				}
+				const next = createSelectionState({
+					deviceKeys: selection.deviceKeys,
+					browserFamilies: selection.browserFamilies,
+					deselectedEnvIds: selection.deselectedEnvIds
+				});
+				toggleDevice(next, entry.key, !selection.deviceKeys.has(entry.key));
+				qaMatrixApplySelection(next);
+			});
+			popular.append(chip);
+		}
+		deviceHeader.append(popular);
+	}
+
 	if (deviceList.length === 0) {
 		const empty = document.createElement('p');
 		empty.className = 'qa-matrix-empty';
@@ -5498,118 +5738,37 @@ function qaMatrixRender() {
 		rowList.className = 'qa-matrix-device-rows';
 		rowList.setAttribute('role', 'listbox');
 		rowList.setAttribute('aria-label', 'Devices');
-		for (const device of deviceList) {
-			const available = device.selectableCount > 0;
-			// #16043: in perBrowser mode the row acts on the ACTIVE family.
-			// A device is possible for it only when at least one of its rows
-			// for that family is selectable; impossible rows are disabled
-			// with an honest reason.
-			let perBrowserSupports = null;
-			if (perBrowser && activeFamily) {
-				perBrowserSupports = qaMatrixState.index.some(configuration =>
-					configuration.browserCode === activeFamily
-					&& isSelectable(configuration)
-					&& deviceKeyOf(configuration) === device.key);
+		// #16046: with no category active, rows are grouped under sticky
+		// Phones/Tablets/Desktops headers so the full list reads in
+		// understandable sections; a category chip active → one section,
+		// no header (today's behavior). Rows themselves are unchanged.
+		const appendSection = (label, devices, count) => {
+			if (devices.length === 0) return;
+			if (label) {
+				const header = document.createElement('div');
+				header.className = 'qa-matrix-device-group-header';
+				header.dataset.role = 'device-group-header';
+				const headerLabel = document.createElement('span');
+				headerLabel.textContent = label;
+				const headerCount = document.createElement('span');
+				headerCount.className = 'qa-matrix-device-group-count';
+				headerCount.textContent = count != null ? `(${count.toLocaleString()})` : `(${devices.length})`;
+				header.append(headerLabel, headerCount);
+				rowList.append(header);
 			}
-			const activeAssignment = perBrowser && activeFamily ? selection.deviceAssignments[activeFamily] : undefined;
-			const isAssignedHere = perBrowser && activeAssignment === device.key;
-			const isSelected = perBrowser ? isAssignedHere : selection.deviceKeys.has(device.key);
-			const row = document.createElement('button');
-			row.type = 'button';
-			row.className = `qa-matrix-device-row${available ? '' : ' is-unavailable'}${isSelected ? ' is-selected' : ''}${isAssignedHere ? ' is-assigned' : ''}`;
-			row.dataset.role = 'device-row';
-			row.dataset.deviceKey = device.key;
-			row.setAttribute('role', 'option');
-			row.setAttribute('aria-selected', String(isSelected));
-			if (!available) {
-				row.disabled = true;
-				row.setAttribute('aria-disabled', 'true');
-				row.title = device.unavailableReason ?? 'No available configurations for this device.';
-			} else if (perBrowser && !activeFamily) {
-				row.disabled = true;
-				row.setAttribute('aria-disabled', 'true');
-				row.title = 'Select a browser first — the device list picks one device for each browser.';
-			} else if (perBrowser && perBrowserSupports === false) {
-				row.disabled = true;
-				row.setAttribute('aria-disabled', 'true');
-				const activeLabel = families.find((family) => family.code === activeFamily)?.label ?? activeFamily;
-				row.title = `No configurations for ${activeLabel} on this device.`;
-			} else if (perBrowser) {
-				row.title = isAssignedHere
-					? `Remove ${device.device} as the device for this browser`
-					: `Use ${device.device} for this browser`;
+			for (const device of devices) rowList.append(qaMatrixDeviceRow(device));
+		};
+		if (activeCategory) {
+			appendSection(null, deviceList);
+		} else {
+			const categoryIds = DEVICE_CATEGORIES.map((category) => category.id);
+			for (const category of DEVICE_CATEGORIES) {
+				const devices = deviceList.filter((device) => device.deviceType === category.id);
+				const count = categoryCounts.get(category.id) ?? devices.length;
+				appendSection(category.label, devices, count);
 			}
-			const identity = document.createElement('span');
-			identity.className = 'qa-matrix-device-row-identity';
-			const name = document.createElement('span');
-			name.className = 'qa-matrix-device-row-name';
-			name.textContent = `${device.manufacturer ? `${device.manufacturer} ` : ''}${device.device}`;
-			identity.append(name);
-			const osSummary = document.createElement('span');
-			osSummary.className = 'qa-matrix-device-row-os';
-			osSummary.textContent = device.osVersions.length > 0
-				? `${device.osLabel ? `${device.osLabel} ` : ''}${device.osVersions.slice(0, 3).join(' · ')}${device.osVersions.length > 3 ? ' · …' : ''}`
-				: (device.osLabel ?? '');
-			identity.append(osSummary);
-			row.append(identity);
-			const badges = document.createElement('span');
-			badges.className = 'qa-matrix-badges';
-			badges.setAttribute('aria-label', 'Device capabilities');
-			for (const executionType of device.executionTypes) {
-				const badge = document.createElement('span');
-				badge.className = `qa-matrix-badge badge-${executionType}`;
-				badge.textContent = executionTypeLabel(executionType);
-				badges.append(badge);
-			}
-			// #16043: rows show WHICH browsers are assigned to this device in
-			// perBrowser mode — brand icons make the mapping glanceable.
-			if (perBrowser) {
-				const assignedFamilies = Object.entries(selection.deviceAssignments)
-					.filter(([, key]) => key === device.key)
-					.map(([code]) => code)
-					.filter((code) => selection.browserFamilies.has(code));
-				for (const code of assignedFamilies) {
-					const icon = brandIcon(code, 14);
-					icon.classList.add('qa-matrix-assigned-family-icon');
-					icon.title = `Device for ${families.find((family) => family.code === code)?.label ?? code}`;
-					badges.append(icon);
-				}
-			}
-			row.append(badges);
-			if (isSelected) {
-				const check = document.createElement('span');
-				check.className = 'qa-matrix-device-row-check';
-				check.setAttribute('aria-hidden', 'true');
-				check.textContent = '✓';
-				row.append(check);
-			}
-			row.addEventListener('click', () => {
-				if (perBrowser) {
-					// #16043: one click assigns the device to the active
-					// family; clicking the ASSIGNED row removes it.
-					if (!activeFamily || perBrowserSupports === false) return;
-					if (isAssignedHere) {
-						qaMatrixApplySelection(unassignDevice(qaMatrixState.selection, activeFamily));
-					} else {
-						try {
-							qaMatrixApplySelection(assignDevice(qaMatrixState.selection, qaMatrixState.index, activeFamily, device.key));
-						} catch {
-							setQaFormError('That device has no available configurations for this browser.');
-						}
-					}
-					return;
-				}
-				// #15969: ONE click toggles the device in the explicit
-				// selection model — no separate checkbox, no scope view.
-				const next = createSelectionState({
-					deviceKeys: selection.deviceKeys,
-					browserFamilies: selection.browserFamilies,
-					deselectedEnvIds: selection.deselectedEnvIds
-				});
-				toggleDevice(next, device.key, !selection.deviceKeys.has(device.key));
-				qaMatrixApplySelection(next);
-			});
-			rowList.append(row);
+			const others = deviceList.filter((device) => !categoryIds.includes(device.deviceType));
+			if (others.length > 0) appendSection('Other', others);
 		}
 		matrix.devices.append(rowList);
 	}
