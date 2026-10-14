@@ -1607,6 +1607,17 @@ body.studio-workspace[data-page="results"] .app {
   min-height: 0;
   background: var(--surface-2);
 }
+/* #16228: the results page is a single-column evidence view — the sidebar
+   collapse preference must NOT shrink it to the 64px rail. The collapsed
+   rules above (html[data-qase-sidebar="collapsed"] body.studio-workspace
+   .app, specificity 0-3-2) outweigh this page rule (0-3-1) in the cascade,
+   collapsing the viewer to 64px and clipping the results head to a ~95px
+   sliver. Mirror the same html[data-qase-sidebar] prefix here so the page
+   rule wins on equal-or-later source order, in every sidebar state. */
+html[data-qase-sidebar] body.studio-workspace[data-page="results"] .app {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
 body.studio-workspace[data-page="results"] :is(
   .workspace-mobile-nav,
   .runs,
