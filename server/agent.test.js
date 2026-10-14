@@ -788,3 +788,62 @@ test('Phase 4: within budget nothing is evicted', async () => {
 		delete process.env.QASE_MATRIX_PARALLEL;
 	}
 });
+
+// ── #16225 follow-up: runaway empty-completion loop abort ────────────────
+
+test('consecutive empty provider completions abort the run as error, not interrupted', async () => {
+	const { session, record, store } = runtimeFixture();
+	const statuses = [];
+	store.setStatus = async (s, status, detail) => { s.status = status; statuses.push(status); };
+	record.runtime.cleanSlateService = {
+		logProviderReportedUsage() { /* SDK original */ }
+	};
+	record.turnUsage = { reports: [], estimates: [] };
+	// Mirror ensureRuntime: the wrapped provider-report hook feeds the run's
+	// harvest, and runTurn wires record.onUsageHarvested as the observation
+	// funnel — in production the SDK runtime invokes the wrapper, whose
+	// harvestUsage calls record.onUsageHarvested. Simulate the same chain.
+	const release = attachUsageCapture(record.runtime.cleanSlateService, {
+		onUsage: usage => record.onUsageHarvested?.(usage)
+	});
+	record.runtime.logger = createUsageLogger({ onEstimate: () => undefined });
+	const EMPTY_LIMIT = Number(process.env.QASE_EMPTY_COMPLETION_LIMIT ?? 5) || 5;
+	let observed = 0;
+	record.runtime.run = async function* () {
+		for (let i = 0; i < EMPTY_LIMIT + 3; i++) {
+			record.runtime.cleanSlateService.logProviderReportedUsage({}, { inputTokens: 27000, outputTokens: 0 });
+			await new Promise(resolve => setImmediate(resolve));
+			if (record.controller?.signal.aborted) return; // loop stopped us
+			yield { type: 'context_usage', turnId: `t${i}` };
+			observed = i + 1;
+		}
+	};
+	await runTurn(session, { task: 'Run QA' }, store);
+	assert.ok(observed < EMPTY_LIMIT, `the generator stopped before the finalizer (observed turn index ${observed}, limit ${EMPTY_LIMIT})`);
+	assert.equal(session.status, 'error', 'loop abort ends as error');
+	const errorMessages = (session.messages ?? []).filter(m => m.kind === 'error' && /empty responses/.test(m.text ?? ''));
+	assert.ok(errorMessages.length >= 1, 'a user-visible error message explains the empty-completion stop');
+	assert.equal(statuses.includes('interrupted'), false, 'loop abort is NOT a user stop');
+	release();
+});
+
+test('a user stop still ends interrupted when completions are healthy', async () => {
+	const { session, record, store } = runtimeFixture();
+	const statuses = [];
+	store.setStatus = async (s, status) => { s.status = status; statuses.push(status); };
+	record.runtime.cleanSlateService = {
+		logProviderReportedUsage() { /* SDK original */ }
+	};
+	record.turnUsage = { reports: [], estimates: [] };
+	const release = attachUsageCapture(record.runtime.cleanSlateService, {
+		onUsage: usage => record.turnUsage.reports.push(usage)
+	});
+	record.runtime.run = async function* () {
+		record.runtime.cleanSlateService.logProviderReportedUsage({}, { inputTokens: 100, outputTokens: 80 });
+		await new Promise(resolve => setImmediate(resolve));
+		record.controller?.abort(); // user pressed Stop
+	};
+	await runTurn(session, { task: 'Run QA' }, store);
+	assert.equal(session.status, 'interrupted', 'user stop keeps the historical outcome');
+	release();
+});

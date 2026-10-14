@@ -19,7 +19,7 @@ import { clearSecrets, redact, secretNames } from './secrets.js';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
 import { guardSqaBrowserTool } from './sqaBrowserBudget.js';
 import { guardSecurityPayloadTool } from './securityPayloadBudget.js';
-import { applyUsage, attachUsageCapture, createUsageLedger, createUsageLogger, subtractUsage } from './usageCapture.js';
+import { applyUsage, attachUsageCapture, createEmptyOutputGuard, createUsageLedger, createUsageLogger, subtractUsage } from './usageCapture.js';
 
 export { guardSqaBrowserTool } from './sqaBrowserBudget.js';
 
@@ -41,6 +41,9 @@ export { guardSqaBrowserTool } from './sqaBrowserBudget.js';
  */
 const BROWSER_IDLE_MS = Number(process.env.QASE_BROWSER_IDLE_MS ?? 0);
 const MODEL_TIMEOUT_RETRIES = Math.max(0, Number(process.env.QASE_MODEL_TIMEOUT_RETRIES ?? 2));
+// #16225 follow-up: consecutive REAL empty completions (billed input, zero
+// output) tolerated before the run is aborted as a model-gateway loop.
+const EMPTY_COMPLETION_LIMIT = Math.min(50, Math.max(1, Math.floor(Number(process.env.QASE_EMPTY_COMPLETION_LIMIT ?? 5)) || 5));
 const MODEL_TIMEOUT_RETRY_DELAY_MS = Math.max(0, Number(process.env.QASE_MODEL_TIMEOUT_RETRY_DELAY_MS ?? 1200));
 const INCOMPLETE_RUN_CONTINUATIONS = Math.max(0, Number(process.env.QASE_INCOMPLETE_RUN_CONTINUATIONS ?? 2));
 
@@ -673,6 +676,10 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	const controller = new AbortController();
 	record.running = true;
 	record.controller = controller;
+	// #16225 follow-up: reset the loop-abort marker for this turn; the guard
+	// itself lives on the record (wired in ensureRuntime at the single usage
+	// funnel) so it survives runTurn re-entry across automatic continuations.
+	record.emptyLoopAbort = false;
 	bridge.setAbortSignal?.(controller.signal);
 	clearTimeout(record.idleTimer);
 	record.idleTimer = undefined;
@@ -872,6 +879,25 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	record.onUsageHarvested = usage => {
 		const tracked = turnUsageLedger.track(usage);
 		if (!tracked) return;
+		// #16225 follow-up: observe every REAL report through the shared
+		// record-level guard. Created lazily here so the observation point is
+		// this single funnel — the ONLY place every harvested report passes
+		// through in production (ensureRuntime's harvest delegates here via
+		// record.onUsageHarvested).
+		record.emptyOutputGuard ??= createEmptyOutputGuard({
+			limit: EMPTY_COMPLETION_LIMIT,
+			onBreach: (usage2) => {
+				if (!record.running || !record.controller || record.controller.signal.aborted) return;
+				record.emptyLoopAbort = true;
+				console.error(JSON.stringify({
+					event: 'empty_completion_loop_abort', runId: session.id, model: getConfig().model,
+					consecutiveEmptyCompletions: record.emptyOutputGuard.emptyStreak(),
+					lastInputTokens: usage2.inputTokens ?? 0, ts: new Date().toISOString()
+				}));
+				record.controller.abort();
+			}
+		});
+		record.emptyOutputGuard.observe(tracked);
 		if (tracked.estimated === true) {
 			// Estimates commit live too (throttled): on providers that never
 			// report usage in-stream this is the only accounting available, and
@@ -1052,8 +1078,19 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		// suspended it. Only the runtime knows which.
 		const pending = runtime.getPendingQuestion();
 		if (controller.signal.aborted) {
-			await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
-			deleteRunSnapshot(session.id);
+			// #16225 follow-up: a loop abort is a model-gateway failure, not a
+			// user stop — the honest terminal state is error so the matrix
+			// item's slot frees immediately and the run is retriable.
+			if (record.emptyLoopAbort) {
+				const message = 'The model gateway returned empty responses for several turns in a row. The run was stopped to prevent a retry loop — try again, or pick a different model in Settings.';
+				await runStore.addMessage(session, { role: 'system', text: message, kind: 'error' });
+				await runStore.setStatus(session, 'error', message);
+				clearSecrets(session.id);
+				deleteRunSnapshot(session.id);
+			} else {
+				await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
+				deleteRunSnapshot(session.id);
+			}
 		} else if (successfulFinalizer) {
 			// An idempotent SQA/Founder finalizer can return its durable existing
 			// artifact. Require the actual successful result rather than treating
@@ -1102,8 +1139,16 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 			await completeRun();
 			deleteRunSnapshot(session.id);
 		} else if (controller.signal.aborted) {
-			await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
-			deleteRunSnapshot(session.id);
+			if (record.emptyLoopAbort) {
+				const message = 'The model gateway returned empty responses for several turns in a row. The run was stopped to prevent a retry loop — try again, or pick a different model in Settings.';
+				await runStore.addMessage(session, { role: 'system', text: message, kind: 'error' });
+				await runStore.setStatus(session, 'error', message);
+				clearSecrets(session.id);
+				deleteRunSnapshot(session.id);
+			} else {
+				await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
+				deleteRunSnapshot(session.id);
+			}
 		} else if (retryAttempt < MODEL_TIMEOUT_RETRIES && isRetryableModeInterruption(error, session.mode)) {
 			retryAfterTimeout = true;
 			const interrupted = !isRetryableModelTimeout(error);
@@ -1221,7 +1266,10 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	const stoppedBeforeContinuation = async () => {
 		record.running = false;
 		record.controller = undefined;
-		if (session.status !== 'interrupted') await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
+		// #16225 follow-up: the empty-completion loop abort already set the
+		// honest terminal state (error) above — do not clobber it with a
+		// "Stopped by user." overwrite on the way out.
+		if (session.status !== 'interrupted' && !record.emptyLoopAbort) await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
 		clearSecrets(session.id);
 		session.secretNames = [];
 	};

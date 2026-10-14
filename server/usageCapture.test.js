@@ -128,3 +128,63 @@ test('createUsageLogger harvests estimate lines only — Azure usage lines are t
 	assert.deepEqual(real, [], 'Azure usage lines are NOT harvested here (attachUsageCapture covers them)');
 	assert.deepEqual(estimated, [{ inputTokens: 1000, outputTokens: 200, estimated: true }]);
 });
+
+// ── Empty-output runaway guard (#16225 follow-up) ─────────────────────────
+
+import { createEmptyOutputGuard } from './usageCapture.js';
+
+test('empty-output guard: fires after N consecutive empty REAL reports', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 3, onBreach: report => breaches.push(report) });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	assert.equal(breaches.length, 0);
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	assert.equal(breaches.length, 0);
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	assert.equal(breaches.length, 1, 'third consecutive empty report breaches');
+});
+
+test('empty-output guard: a non-empty report resets the streak', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 2, onBreach: r => breaches.push(r) });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	guard.observe({ inputTokens: 500, outputTokens: 40 });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	assert.equal(breaches.length, 0, 'streak was reset by the non-empty report');
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	assert.equal(breaches.length, 1);
+});
+
+test('empty-output guard: estimates never trigger', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 2, onBreach: r => breaches.push(r) });
+	guard.observe({ inputTokens: 500, outputTokens: 0, estimated: true });
+	guard.observe({ inputTokens: 500, outputTokens: 0, estimated: true });
+	guard.observe({ inputTokens: 500, outputTokens: 0, estimated: true });
+	assert.equal(breaches.length, 0, 'estimated reports are not model truth');
+});
+
+test('empty-output guard: inputTokens=0 reports are ignored entirely', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 2, onBreach: r => breaches.push(r) });
+	guard.observe({ inputTokens: 0, outputTokens: 0 });
+	guard.observe({ inputTokens: 0, outputTokens: 0 });
+	assert.equal(breaches.length, 0);
+	assert.equal(guard.emptyStreak(), 0, 'non-completion reports do not count toward the streak');
+});
+
+test('empty-output guard: keeps firing on further empties (abort is idempotent)', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 1, onBreach: r => breaches.push(r) });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	assert.equal(breaches.length, 3, 'each empty report past the limit re-fires');
+});
+
+test('empty-output guard: limit is clamped to at least 1', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 0, onBreach: r => breaches.push(r) });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	assert.equal(breaches.length, 1, 'degenerate limit still trips on the first empty report');
+});

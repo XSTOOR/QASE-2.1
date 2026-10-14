@@ -98,6 +98,54 @@ export function subtractUsage(current, delta) {
 }
 
 /**
+ * Runaway-empty-completion guard (#16225 follow-up).
+ *
+ * A model gateway can degrade into serving EMPTY completions — every call
+ * bills input tokens and returns outputTokens: 0 — while the agent runtime
+ * treats each empty response as "continue with another turn". The result is
+ * an unbounded loop (~1 turn / 2s, 27k input tokens each) that starves the
+ * matrix orchestrator's global execution budget until the item's 20-minute
+ * timeout. The config-time probe cannot catch this (a tiny max_tokens=20
+ * completion succeeds), so it must be caught at run time.
+ *
+ * The guard observes REAL provider usage reports (estimates are never model
+ * truth): a report counts as "empty" only when it definitely billed input
+ * (inputTokens > 0) and produced no output (outputTokens === 0). N
+ * consecutive empty reports breach the limit; any non-empty report resets
+ * the streak. Breaches re-fire on subsequent empties — the caller's abort is
+ * expected to be idempotent.
+ */
+export function createEmptyOutputGuard({ limit, onBreach } = {}) {
+	const effectiveLimit = Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : 1;
+	let streak = 0;
+	return {
+		/** Feed one harvested usage report. Returns the running streak. */
+		observe(usage) {
+			if (!usage || typeof usage !== 'object') return streak;
+			if (usage.estimated === true) return streak; // estimates are not model truth
+			if (!(usage.inputTokens > 0)) return streak; // no billed input → not a completion
+			if ((usage.outputTokens ?? 0) === 0) {
+				streak += 1;
+				if (streak >= effectiveLimit && typeof onBreach === 'function') {
+					try {
+						onBreach(usage);
+					} catch {
+						// The guard must never break the usage pipeline.
+					}
+				}
+			} else {
+				streak = 0;
+			}
+			return streak;
+		},
+		/** Current consecutive-empty count (for diagnostics/tests). */
+		emptyStreak() {
+			return streak;
+		}
+	};
+}
+
+/**
  * Wraps a usage harvest so every model call is counted exactly once.
  *
  * Each real provider report and each estimate gets a unique call id. Reports
