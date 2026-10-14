@@ -4,6 +4,27 @@ import { isIP } from 'node:net';
 import * as path from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { PublicInputError } from './publicErrors.js';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * UI asset version (ticket #16228 follow-up / #15766 round-3 rule): derived
+ * from the ?v= cache-bust stamps in public/index.html. The client compares
+ * its own bundled version against GET /api/config — a mismatch means the tab
+ * is running stale code behind a hash route that never refetches assets, and
+ * the client performs ONE clean reload instead of rendering a broken page.
+ */
+export function uiAssetVersion() {
+	try {
+		const html = fs.readFileSync(
+			path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public', 'index.html'),
+			'utf8'
+		);
+		const stamps = [...html.matchAll(/[?&]v=(\d{8}-\d+)\b/g)].map(match => match[1]);
+		return stamps.sort().at(-1) ?? null;
+	} catch {
+		return null;
+	}
+}
 
 const userConfiguration = new AsyncLocalStorage();
 export function withUserConfiguration(settings, save, work) {
@@ -194,6 +215,7 @@ export function getPublicConfig() {
 		provider: config.provider,
 		baseUrl: config.baseUrl,
 		model: config.model,
+		uiVersion: uiAssetVersion(),
 		reasoning: config.reasoning,
 		maxTurns: config.maxTurns,
 		headless: config.headless,

@@ -7054,6 +7054,64 @@ function paintConfig(config) {
 	state.config = config;
 	// #15643: the sidebar model badge was removed with the Advanced section;
 	// model status surfaces via Settings and the launcher gate instead.
+	// #16228 follow-up (rule from #15766 round 3): a tab that loaded older
+	// assets never refetches them — hash routes keep stale code alive. The
+	// server stamps /api/config with the CURRENT asset version; a mismatch
+	// here means this tab is stale. ONE clean reload, guarded against loops.
+	ensureUiVersionFresh(config);
+}
+
+/** Asset version bundled into THIS document's script URLs (e.g. 20261014-3). */
+function currentUiAssetVersion() {
+	const scripts = document.querySelectorAll('script[src], link[href]');
+	const stamps = [];
+	for (const node of scripts) {
+		const stamp = /[?&]v=(\d{8}-\d+)\b/.exec(node.getAttribute('src') ?? node.getAttribute('href') ?? '');
+		if (stamp) stamps.push(stamp[1]);
+	}
+	return stamps.sort().at(-1) ?? null;
+}
+
+/**
+ * Stale-tab handshake: reload ONCE when the server's asset version is newer
+ * than this document's. Session-guarded so a reload loop cannot form; if
+ * the reloaded tab is still behind (intercepting cache), it degrades to a
+ * visible banner with a manual Reload button instead of spinning forever.
+ */
+function ensureUiVersionFresh(config) {
+	const serverVersion = config?.uiVersion;
+	const localVersion = currentUiAssetVersion();
+	if (!serverVersion) return; // server could not read a stamp — never reload
+	if (localVersion && String(serverVersion) === String(localVersion)) return;
+	if (sessionStorage.getItem('qase.ui.reload') === serverVersion) {
+		renderStaleUiBanner(serverVersion);
+		return;
+	}
+	try {
+		sessionStorage.setItem('qase.ui.reload', String(serverVersion));
+	} catch { /* private mode — the banner fallback covers it */ }
+	console.warn(`[qase] stale client UI (have ${localVersion ?? '?'}), reloading for ${serverVersion}.`);
+	window.location.reload();
+}
+
+/** Visible escape hatch when a reload did not (or cannot) refresh assets. */
+function renderStaleUiBanner(serverVersion) {
+	if (document.getElementById('stale-ui-banner')) return;
+	const banner = document.createElement('div');
+	banner.id = 'stale-ui-banner';
+	banner.setAttribute('role', 'alert');
+	const text = document.createElement('span');
+	text.textContent = `This tab is running an older version of Qase (page has ${currentUiAssetVersion() ?? 'no version'}, latest is ${serverVersion}). If the page looks blank or broken, reload once.`;
+	const button = document.createElement('button');
+	button.type = 'button';
+	button.className = 'btn btn-primary';
+	button.textContent = 'Reload';
+	button.onclick = () => {
+		sessionStorage.removeItem('qase.ui.reload');
+		window.location.reload();
+	};
+	banner.append(text, button);
+	(document.body ?? document.documentElement).prepend(banner);
 }
 
 /**
@@ -8814,8 +8872,69 @@ async function bootWorkspace() {
 		}
 	}
 	await pageRouter.start();
+	startRenderWatchdog();
 	void refreshBugs();
 	if (pageRouter.current().name === 'runs') el.composerInput.focus();
+}
+
+/**
+ * #16228 permanent safety net: if the workspace finishes booting but the
+ * running UI is inert (auth gate hidden, app not interactive, no pointer
+ * events landing on workspace chrome), surface a recovery banner instead of
+ * a silent blank page. Paint failures (GPU layer loss, corrupted layout
+ * state) must never leave the user with no way forward.
+ */
+function startRenderWatchdog() {
+	window.setTimeout(() => {
+		try {
+			const gate = el.authGate;
+			const app = document.querySelector('.app');
+			if (!gate || gate.hidden !== true || !app) return;
+			// Route-appropriate paint probe: the results page hides the runs
+			// sidebar and chat by design (body[data-page="results"]), so
+			// probe the target the current page must paint — the runs
+			// sidebar elsewhere, the results header/viewer on the results
+			// page. checkVisibility() covers display, visibility, opacity
+			// and content-visibility; fall back to geometry where absent.
+			const page = document.body.dataset.page;
+			const resultsView = page === 'results';
+			const probe = resultsView ? $('results-page-head') : $('workspace-runs');
+			const interactiveVisible = node => {
+				if (typeof node.checkVisibility === 'function') return node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+				return node.offsetParent !== null && node.getBoundingClientRect().width > 0;
+			};
+			if (probe && probe.getBoundingClientRect().width > 100
+				&& [...probe.querySelectorAll('button, a, input, textarea, [tabindex]')].some(interactiveVisible)) return;
+			// On the results page the tabs (Findings/Report) are interactive
+			// children of the viewer, not the header — probe the panel's
+			// visible interactive surface as a second pass before alarming.
+			const viewer = resultsView ? $('workspace-viewer') : null;
+			if (viewer && [...viewer.querySelectorAll('button, a, input, textarea, [tabindex]')].some(interactiveVisible)) return;
+			const banner = document.createElement('div');
+			banner.id = 'render-watchdog-banner';
+			banner.setAttribute('role', 'alert');
+			banner.style.cssText = 'position:fixed;inset:auto 0 0 0;z-index:2147483647;display:flex;gap:12px;align-items:center;justify-content:center;padding:12px 16px;background:#1c1c22;color:#f2f2f4;font:14px/1.4 system-ui,sans-serif;border-top:1px solid #3a3a44;flex-wrap:wrap';
+			const text = document.createElement('span');
+			text.textContent = 'The workspace did not render correctly.';
+			const reload = document.createElement('button');
+			reload.type = 'button';
+			reload.textContent = 'Reload page';
+			reload.style.cssText = 'padding:6px 14px;border-radius:8px;border:1px solid #565666;background:#4b4bf4;color:#fff;cursor:pointer';
+			reload.onclick = () => {
+				sessionStorage.removeItem('qase.ui.reload');
+				window.location.reload();
+			};
+			const runsLink = document.createElement('button');
+			runsLink.type = 'button';
+			runsLink.textContent = 'Go to runs list';
+			runsLink.style.cssText = 'padding:6px 14px;border-radius:8px;border:1px solid #565666;background:transparent;color:#f2f2f4;cursor:pointer';
+			runsLink.onclick = () => { banner.remove(); void pageRouter.navigate({ name: 'runs' }); };
+			banner.append(text, reload, runsLink);
+			document.body.append(banner);
+			console.error('[qase] render watchdog: workspace booted but its primary view is not interactive/painted.',
+				{ page: document.body.dataset.page, route: pageRouter.current()?.name });
+		} catch { /* the watchdog itself must never throw */ }
+	}, 10_000);
 }
 
 (async function boot() {

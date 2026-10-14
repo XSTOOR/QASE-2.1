@@ -51,3 +51,8 @@ userDocs/image_73eed07c.png
 
 # #15971: internal agent tooling/specs/reports — never publish (leaks absolute preview URLs)
 .drytis/
+
+
+# #16228: local-only scratch (user screenshots, extracted browsers)
+userDocs/
+.local-browsers/
