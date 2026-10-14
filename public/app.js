@@ -8790,6 +8790,8 @@ async function bootWorkspace() {
 			} catch {
 				localStorage.removeItem('qase.session');
 				state.sessionId = undefined;
+				// Honest notice, not silence: the workspace opens usable either way.
+				setPageRouteNotice('Your last run could not be opened. Pick a run from the list or start a new test.');
 				if (initialRoute.name === 'runs') {
 					initialRoute = { name: 'runs' };
 					await pageRouter.navigate(initialRoute, { replace: true, applyRoute: false });
