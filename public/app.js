@@ -334,6 +334,21 @@ async function api(path, options = {}) {
 	return response.status === 204 ? undefined : response.json();
 }
 
+/**
+ * Boot-critical fetch with a bounded deadline (#16228). A server that hangs
+ * (not fails) must degrade the boot into the runs list rather than leaving a
+ * permanently blank workspace behind the hidden auth gate.
+ */
+async function apiWithTimeout(path, timeoutMs, options = {}) {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(new DOMException('Signal timed out.', 'TimeoutError')), timeoutMs);
+	try {
+		return await api(path, { ...options, signal: controller.signal });
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 async function apiText(path, options = {}) {
 	return (await apiResponse(path, options)).text();
 }
@@ -1072,6 +1087,19 @@ function applyStageDevice(session) {
 	}
 }
 
+
+// #16228: boot-time session selection with a hard deadline. A hung server
+// during boot (not a failed request — a request that never answers) must fall
+// back to the runs list instead of leaving a blank workspace.
+function selectSessionWithTimeout(id, options, timeoutMs) {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error(`Timed out opening run ${id}.`)), timeoutMs);
+		selectSession(id, options).then(
+			value => { clearTimeout(timer); resolve(value); },
+			error => { clearTimeout(timer); reject(error); }
+		);
+	});
+}
 
 async function selectSession(id, { updateRoute = true } = {}) {
 	if (document.body.dataset.workspaceView === 'runs') setWorkspaceView('agent');
@@ -8718,7 +8746,7 @@ async function bootWorkspace() {
 	await loadDevices();
 	void loadEnvironments();
 
-	const runs = await api('/sessions').catch(() => []);
+	const runs = await apiWithTimeout('/sessions', 15000).catch(() => []);
 	const launchParameters = new URLSearchParams(window.location.search);
 	const requestedRunId = launchParameters.get('run');
 	let initialRoute = pageRouter.current();
@@ -8742,7 +8770,7 @@ async function bootWorkspace() {
 	}
 	if (!selectedInitialRun && (initialRoute.name === 'run' || initialRoute.name === 'results')) {
 		try {
-			await selectSession(initialRoute.runId, { updateRoute: false });
+			await selectSessionWithTimeout(initialRoute.runId, { updateRoute: false }, 20000);
 			selectedInitialRun = true;
 		} catch {
 			initialRoute = { name: 'runs' };
@@ -8753,7 +8781,20 @@ async function bootWorkspace() {
 		const remembered = localStorage.getItem('qase.session');
 		const target = runs.find(run => run.id === remembered) ?? runs[0];
 		if (target) {
-			await selectSession(target.id, { updateRoute: false });
+			try {
+				// #16228: an unreachable or corrupted remembered run must never kill
+				// boot after the auth gate is hidden — that leaves a permanently
+				// blank page with no way forward. Fall back to the runs list, the
+				// same contract the URL-route paths above already honor.
+				await selectSessionWithTimeout(target.id, { updateRoute: false }, 20000);
+			} catch {
+				localStorage.removeItem('qase.session');
+				state.sessionId = undefined;
+				if (initialRoute.name === 'runs') {
+					initialRoute = { name: 'runs' };
+					await pageRouter.navigate(initialRoute, { replace: true, applyRoute: false });
+				}
+			}
 			if (initialRoute.name === 'runs') {
 				initialRoute = { name: state.session?.status === 'done' ? 'results' : 'run', runId: target.id };
 				await pageRouter.navigate(initialRoute, { replace: true, applyRoute: false });

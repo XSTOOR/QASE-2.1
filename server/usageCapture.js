@@ -115,16 +115,38 @@ export function subtractUsage(current, delta) {
  * the streak. Breaches re-fire on subsequent empties — the caller's abort is
  * expected to be idempotent.
  */
-export function createEmptyOutputGuard({ limit, onBreach } = {}) {
+export function createEmptyOutputGuard({ limit, estimateLimit, onBreach } = {}) {
 	const effectiveLimit = Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : 1;
+	// #16228: some gateways (z-ai/glm-5.2 via llm.drytis.ai) NEVER report real
+	// in-stream usage — every report arrives as estimated:true. The real-report
+	// streak above is then permanently blind and runaway empty loops spin for
+	// hours (4M+ input tokens per run observed in production). Track a second,
+	// higher-threshold streak over estimated zero-output reports so degraded
+	// gateways are still stopped — the threshold is deliberately looser because
+	// estimates are noisier than provider truth.
+	const effectiveEstimateLimit = Number.isFinite(estimateLimit) && estimateLimit >= 1
+		? Math.floor(estimateLimit) : Infinity;
 	let streak = 0;
+	let estimateStreak = 0;
 	return {
 		/** Feed one harvested usage report. Returns the running streak. */
 		observe(usage) {
 			if (!usage || typeof usage !== 'object') return streak;
-			if (usage.estimated === true) return streak; // estimates are not model truth
 			if (!(usage.inputTokens > 0)) return streak; // no billed input → not a completion
 			if ((usage.outputTokens ?? 0) === 0) {
+				if (usage.estimated === true) {
+					// Estimates are not model truth — only the looser second
+					// streak counts them, never the strict one.
+					estimateStreak += 1;
+					if (estimateStreak >= effectiveEstimateLimit && typeof onBreach === 'function') {
+						try {
+							onBreach(usage);
+						} catch {
+							// The guard must never break the usage pipeline.
+						}
+					}
+					return streak;
+				}
 				streak += 1;
 				if (streak >= effectiveLimit && typeof onBreach === 'function') {
 					try {
@@ -135,12 +157,17 @@ export function createEmptyOutputGuard({ limit, onBreach } = {}) {
 				}
 			} else {
 				streak = 0;
+				estimateStreak = 0;
 			}
 			return streak;
 		},
 		/** Current consecutive-empty count (for diagnostics/tests). */
 		emptyStreak() {
 			return streak;
+		},
+		/** Current consecutive estimated-empty count (#16228 diagnostics/tests). */
+		estimatedEmptyStreak() {
+			return estimateStreak;
 		}
 	};
 }

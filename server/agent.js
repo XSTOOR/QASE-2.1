@@ -44,6 +44,10 @@ const MODEL_TIMEOUT_RETRIES = Math.max(0, Number(process.env.QASE_MODEL_TIMEOUT_
 // #16225 follow-up: consecutive REAL empty completions (billed input, zero
 // output) tolerated before the run is aborted as a model-gateway loop.
 const EMPTY_COMPLETION_LIMIT = Math.min(50, Math.max(1, Math.floor(Number(process.env.QASE_EMPTY_COMPLETION_LIMIT ?? 5)) || 5));
+// #16228: gateways that only ever report estimated usage need a second, looser
+// threshold — otherwise the strict guard above is permanently blind on them
+// and runaway empty loops spin for hours (observed in production).
+const EMPTY_ESTIMATE_LIMIT = Math.min(200, Math.max(1, Math.floor(Number(process.env.QASE_EMPTY_ESTIMATE_LIMIT ?? 30)) || 30));
 const MODEL_TIMEOUT_RETRY_DELAY_MS = Math.max(0, Number(process.env.QASE_MODEL_TIMEOUT_RETRY_DELAY_MS ?? 1200));
 const INCOMPLETE_RUN_CONTINUATIONS = Math.max(0, Number(process.env.QASE_INCOMPLETE_RUN_CONTINUATIONS ?? 2));
 
@@ -886,12 +890,15 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		// record.onUsageHarvested).
 		record.emptyOutputGuard ??= createEmptyOutputGuard({
 			limit: EMPTY_COMPLETION_LIMIT,
+			estimateLimit: EMPTY_ESTIMATE_LIMIT,
 			onBreach: (usage2) => {
 				if (!record.running || !record.controller || record.controller.signal.aborted) return;
 				record.emptyLoopAbort = true;
 				console.error(JSON.stringify({
 					event: 'empty_completion_loop_abort', runId: session.id, model: getConfig().model,
 					consecutiveEmptyCompletions: record.emptyOutputGuard.emptyStreak(),
+					consecutiveEstimatedEmptyCompletions: record.emptyOutputGuard.estimatedEmptyStreak(),
+					estimatedUsage: usage2.estimated === true,
 					lastInputTokens: usage2.inputTokens ?? 0, ts: new Date().toISOString()
 				}));
 				record.controller.abort();
