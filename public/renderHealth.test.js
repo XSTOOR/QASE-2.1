@@ -6,6 +6,7 @@ test('paint probes follow full-page destinations rather than the intentionally h
   assert.deepEqual(renderProbeIds('bugs'), ['bugs-view']);
   assert.deepEqual(renderProbeIds('account'), ['profile-dialog']);
   assert.deepEqual(renderProbeIds('new-run'), ['qa-start']);
+  assert.deepEqual(renderProbeIds('matrix-run'), ['qa-matrix-run-dialog']);
   assert.deepEqual(renderProbeIds('results'), ['results-page-head', 'workspace-viewer']);
   assert.deepEqual(renderProbeIds('run'), ['workspace-runs', 'workspace-agent']);
 });
