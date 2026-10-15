@@ -1,6 +1,14 @@
 # QASE deployment handoff
 
-Release `qase-2026-10-15-run-startup-r2` retains the compact recent-run cards and updates the UI asset version to `20261015-19`.
+Release `qase-2026-10-16-automatic-startup-r3` retains the compact recent-run cards and updates the UI asset version to `20261016-2`.
+
+## Automatic startup and feedback UX
+
+- The default launcher is “Let QASE choose”. Browser/device selection is no longer required. Custom configurations remain an explicit option.
+- The server plans one desktop configuration from the current catalog. After scheduler admission it performs health checks and selects a healthy Chromium, Firefox or WebKit-compatible environment. Browser processes are not probed outside the shared capacity budget, and unavailable environments fail honestly rather than claiming execution.
+- Startup uses a dedicated full-page status view, not the technical QA-run popup. It explains capacity waiting, reports queue position when available, transitions to the real session, and makes diagnostics optional. Leaving the page stops its polling/navigation. Interrupted queued work can reconnect once without creating another run.
+- Feedback loads and submissions are bound to their run. Late responses cannot overwrite another run; a duplicate save acknowledgement recovers the existing record for editing while preserving the draft. Background synchronization never opens a feedback modal automatically.
+- Local UI verification uses an explicitly labelled simulated agent with notifications disabled. It is not evidence of a successful production model run. Live authenticated canaries remain a rollout gate.
 
 ## Production startup hotfix
 

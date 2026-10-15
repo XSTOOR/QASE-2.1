@@ -27,7 +27,7 @@ const TENANT = Object.freeze({
 	actorName: 'Matrix Test'
 });
 
-async function startApp() {
+async function startApp({ automaticBrowserOptions } = {}) {
 	const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-matrix-api-'));
 	const composed = await createConfiguredApplicationServices({
 		stateDirectory: stateDir,
@@ -35,6 +35,7 @@ async function startApp() {
 	});
 	const services = composed.services;
 	const application = createApplication({
+		automaticBrowserOptions,
 		services,
 		access: createInstanceAccess({ tenantContext: TENANT }),
 		authRequired: false, // unit-test composition — no auth service attached
@@ -297,6 +298,34 @@ test('a swept error run with PENDING items can be restarted; a done run cannot',
  * Over the REAL composition: the per-request 2,000 cap now enforces the
  * per-BATCH limit; a parent carries plan metadata only; batches are
  * idempotent on (parentId, batchKey); the parent GET aggregates batches. */
+
+test('automatic QA launch selects a healthy browser without client configuration IDs', async () => {
+	let probes = 0;
+	const app = await startApp({ automaticBrowserOptions: { health: async () => { probes++; return { verdict: 'READY' }; } } });
+	const starts = [];
+	app.services.matrixOrchestrator.start = id => { starts.push(id); return { ok: true }; };
+	try {
+		const result = await app.json('/api/qa-matrix-runs', { method: 'POST', json: { targetUrl: 'https://example.com', browserMode: 'automatic' } });
+		assert.equal(result.status, 201, JSON.stringify(result.body));
+		assert.equal(result.body.browserSelection.mode, 'automatic');
+		assert.equal(result.body.items.length, 1);
+		assert.deepEqual(starts, [result.body.id]);
+		assert.equal(probes, 0, 'HTTP creation must not spawn browser probes outside scheduler admission');
+		const conflict = await app.json('/api/qa-matrix-runs', { method: 'POST', json: { targetUrl: 'https://example.com', browserMode: 'automatic', configurationEnvIds: ['stale-env'] } });
+		assert.equal(conflict.status, 422);
+	} finally { await app.close(); }
+});
+
+test('an empty automatic browser catalog returns 503 without creating queued work', async () => {
+	const app = await startApp({ automaticBrowserOptions: { health: async () => ({ verdict: 'BLOCKED' }) } });
+	try {
+		app.services.environments.list = async () => [];
+		const before = (await app.services.matrix.list()).length;
+		const result = await app.json('/api/qa-matrix-runs', { method: 'POST', json: { targetUrl: 'https://example.com', browserMode: 'automatic' } });
+		assert.equal(result.status, 503);
+		assert.equal((await app.services.matrix.list()).length, before);
+	} finally { await app.close(); }
+});
 
 test('Phase 2: parent + batches over HTTP — cap is per-request, batches idempotent, parent view aggregates', async () => {
 	const app = await startApp();

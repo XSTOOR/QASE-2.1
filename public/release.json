@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-10-15-run-startup-r2",
-  "uiVersion": "20261015-19",
+  "releaseId": "qase-2026-10-16-automatic-startup-r3",
+  "uiVersion": "20261016-2",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Production startup hotfix; durable queue route, bounded agent initialization and owner-scoped matrix endpoints"
+  "source": "Automatic browser selection under scheduler admission, non-modal startup UX and run-bound feedback recovery"
 }

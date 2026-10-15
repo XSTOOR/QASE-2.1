@@ -94,7 +94,8 @@ export function createMatrixRoutes({ matrix, orchestrator, bugs, onError, events
 						// linkage is supplemental — ship the run without it
 					}
 				}
-				response.json({ run: { ...run, items }, orchestratorActive: orchestrator ? orchestrator.isActive(run.id) : false });
+				response.json({ run: { ...run, items }, orchestratorActive: orchestrator ? orchestrator.isActive(run.id) : false,
+					execution: orchestrator?.queueStatus?.(run.id) ?? null });
 			} catch (error) {
 				onError?.(error, response);
 			}
@@ -110,8 +111,9 @@ export function createMatrixRoutes({ matrix, orchestrator, bugs, onError, events
 				// `error` runs swept by resume recovery (container restart) keep
 				// their PENDING items — they may be restarted. `running`/`done`
 				// runs may not.
-				const restartable = run.status === 'pending'
-					|| (run.status === 'error' && run.items.some((item) => item.status === 'PENDING'));
+				const restartable = run.kind !== 'parent' && !orchestrator.isActive(run.id)
+					&& ['pending', 'running', 'error'].includes(run.status)
+					&& run.items.some(item => ['PENDING', 'QUEUED'].includes(item.status));
 				if (!restartable) {
 					response.status(409).json({ error: `Matrix run is ${run.status} with no pending profiles; only pending (or interrupted-with-pending) runs can start.` });
 					return;
