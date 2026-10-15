@@ -12,6 +12,9 @@ import { listRunSnapshots, loadRunSnapshot } from './agent.js';
 import { runWithRequestActor } from './requestActor.js';
 import { recordEvent, durationBucket } from './analytics.js';
 import { createInviteService } from './invites.js';
+// RT1 (#14680): local branded-browser registry feeds browser executability.
+import { probeLocalBrowsers, playwrightLaunchProbe } from './localBrowserRegistry.js';
+import { setLocalRegistrySnapshot } from './browserSupportResolution.js';
 import * as path from 'node:path';
 
 /** Local analytics counters live beside the session store. */
@@ -27,6 +30,29 @@ const host = String(process.env.QASE_HOST ?? '127.0.0.1').trim() || '127.0.0.1';
 const {
 	services, mode: runStoreMode, executionMode, tenantContext, pool, executionQueue
 } = await createConfiguredApplicationServices();
+// RT1 (#14680): probe the REAL local branded binaries at boot (Chrome/Brave/
+// Opera where installed) and feed the support resolver. Launch-verified with
+// a short-lived Playwright start — a binary that exists but cannot launch is
+// recorded as such, never as executable. TTL re-probes keep it fresh.
+try {
+	const localBrowsers = await probeLocalBrowsers({ launchProbe: playwrightLaunchProbe(), force: true });
+	setLocalRegistrySnapshot(localBrowsers);
+	logger.info?.('local-browser-registry', {
+		brands: localBrowsers.brands.map((b) => ({ code: b.code, status: b.status, version: b.version, launchVerified: b.launchVerified }))
+	});
+	// Refresh the snapshot on the registry's TTL cadence (launch probes are
+	// cheap, bounded, and keep availability truthful after binary changes).
+	setInterval(() => {
+		probeLocalBrowsers({ launchProbe: playwrightLaunchProbe(), force: true })
+			.then(setLocalRegistrySnapshot)
+			.catch(() => { /* keep the last good snapshot */ });
+	}, 5 * 60 * 1000).unref?.();
+} catch (error) {
+	logger.error?.('local-browser-registry probe failed', error);
+	// Honest degraded state: no snapshot → branded codes resolve their
+	// engine fallback; nothing claims a branded binary that was not verified.
+	setLocalRegistrySnapshot(null);
+}
 const access = createInstanceAccess({ tenantContext });
 
 // Inbound-traffic keepalive: workspace containers pause after an idle window.
@@ -104,7 +130,8 @@ const { app, demoEnabled } = createApplication({
 	drytisIntegrationApi: drytisIntegration?.api,
 	drytisDelivery: drytisIntegration ? {
 		deliveryClient: drytisIntegration.deliveryClient,
-		ticketsTarget: drytisIntegration.ticketsTarget
+		ticketsTarget: drytisIntegration.ticketsTarget,
+		founderHandoffTarget: drytisIntegration.founderHandoffTarget
 	} : undefined,
 	isDraining: () => shuttingDown
 });
@@ -186,7 +213,7 @@ server = app.listen(port, host, () => {
 				// Unscoped get — same reason as listInterrupted: the boot actor is
 				// the default tenant actor and would hide user-owned sessions.
 				get: id => services.runs.getAny?.(id) ?? services.runs.get(id),
-				ensureRuntime: session => services.agent.ensureRuntime(session),
+				ensureRuntime: async session => services.agent.ensureRuntime(session),
 				runTurn: (session, options) => services.agent.runTurn(session, options),
 				addMessage: services.runs.addMessage.bind(services.runs),
 				setStatus: services.runs.setStatus.bind(services.runs),

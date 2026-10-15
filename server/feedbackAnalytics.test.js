@@ -64,6 +64,7 @@ function memoryServices() {
 		services: {
 			configuration: { getPublic: async () => ({ provider: 'custom', ready: true }) },
 			lifecycle: { close: async () => {} },
+		environments: { seed: async () => ({ inserted: 0 }), list: async () => [], get: async () => undefined, create: async () => ({}), update: async () => ({}), facets: async () => ({}), availability: () => [], catalogVersion: () => 'test' },
 			reports: { buildMarkdown: () => '# report' },
 			events: {
 				publish,
@@ -126,6 +127,8 @@ function memoryServices() {
 			readiness: { check: async () => true },
 			// DEV added a feedback service group to the runtime contract.
 			feedback: { create: async () => ({}), get: async () => undefined, list: async () => [], update: async () => ({}), remove: async () => undefined, stats: async () => ({}), forRun: async () => undefined },
+			// PUSHKAR added an environments service group to the runtime contract.
+			environments: { seed: async () => undefined, list: async () => ({ rows: [], total: 0 }), get: async () => null, create: async () => ({}), update: async () => ({}), facets: async () => ({ total: 0 }), availability: () => ({ ready: [] }), catalogVersion: () => '0' },
 		}
 	};
 }

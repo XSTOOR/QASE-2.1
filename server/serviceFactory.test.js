@@ -68,13 +68,40 @@ test('local mode loads only local services and never constructs PostgreSQL infra
 		createPostgresServices() {
 			calls.push('postgres:services');
 			throw new Error('PostgreSQL services must not be constructed in local mode.');
+		},
+		createEnvironmentRepository() {
+			calls.push('postgres:environment-repository');
+			throw new Error('PostgreSQL environment repository must not be constructed in local mode.');
+		},
+		createLocalEnvironmentBackend() {
+			calls.push('local:environment-backend');
+			return {
+				async seed() { calls.push('local:environment-seed'); },
+				async list() { return []; },
+				async get() { return null; },
+				async create() { return {}; },
+				async update() { return null; }
+			};
+		},
+		createLocalDeviceCatalog() {
+			calls.push('local:device-catalog-backend');
+			return {
+				async seed() { calls.push('local:device-catalog-seed'); },
+				async list() { return []; },
+				async create() { return null; },
+				async isCombinationSupported() { return { ok: true }; }
+			};
 		}
 	});
 
 	assert.equal(result.mode, 'local');
 	assert.equal(result.services, localServices);
 	assert.ok(result.tenantContext);
-	assert.deepEqual(calls, ['local:create', 'local:load']);
+	assert.deepEqual(calls, [
+		'local:create', 'local:load',
+		'local:device-catalog-backend', 'local:device-catalog-seed',
+		'local:environment-backend', 'local:environment-seed'
+	]);
 });
 
 test('postgres mode awaits migrations and service loading before becoming available', async () => {
@@ -122,6 +149,27 @@ test('postgres mode awaits migrations and service loading before becoming availa
 			assert.ok(options.tenantContext);
 			calls.push('services:create');
 			return services;
+		},
+		createEnvironmentRepository(receivedPool, options) {
+			assert.equal(receivedPool, pool);
+			assert.ok(options.tenantContext);
+			calls.push('environment-repository:create');
+			return {
+				async seed() { calls.push('environment-repository:seed'); },
+				async list() { return []; },
+				async get() { return null; },
+				async create() { return {}; },
+				async update() { return null; }
+			};
+		},
+		createDeviceCatalogRepository() {
+			calls.push('device-catalog:create');
+			return {
+				async seed() { calls.push('device-catalog:seed'); },
+				async list() { return []; },
+				async create() { return null; },
+				async isCombinationSupported() { return { ok: true }; }
+			};
 		}
 	});
 	void creation.finally(() => {
@@ -146,9 +194,14 @@ test('postgres mode awaits migrations and service loading before becoming availa
 	assert.equal(result.mode, 'postgres');
 	assert.equal(result.services, services);
 	assert.equal(result.tenantContext, result.tenantContext);
+	assert.ok(calls.includes('environment-repository:create'));
+	assert.ok(calls.includes('environment-repository:seed'));
+	assert.equal(result.pool, pool);
 	assert.deepEqual(calls, [
 		'pool:create', 'migrate:start', 'migrate:done',
-		'repository:create', 'services:create', 'services:load:start', 'services:load:done'
+		'repository:create', 'services:create', 'services:load:start', 'services:load:done',
+		'device-catalog:create', 'device-catalog:seed',
+		'environment-repository:create', 'environment-repository:seed'
 	]);
 });
 
@@ -227,7 +280,20 @@ test('distributed API mode wires Redis, encrypted secrets, queue, and remote age
 			assert.equal(options.queue, executionQueue);
 			assert.equal(options.realtime, eventTransport);
 			return remoteAgent;
-		}
+		},
+		createEnvironmentRepository: () => ({
+			async seed() { calls.push('environment-repository:seed'); },
+			async list() { return []; },
+			async get() { return null; },
+			async create() { return {}; },
+			async update() { return null; }
+		}),
+		createDeviceCatalogRepository: () => ({
+			async seed() { calls.push('device-catalog:seed'); },
+			async list() { return []; },
+			async create() { return null; },
+			async isCombinationSupported() { return { ok: true }; }
+		})
 	});
 	assert.equal(result.executionMode, 'distributed');
 	assert.equal(result.executionRole, 'api');

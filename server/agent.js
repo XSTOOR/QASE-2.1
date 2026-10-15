@@ -1,12 +1,14 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { availableParallelism, cpus, totalmem } from 'node:os';
 import { ALL_TOOLS, CleanSlateNodeAgentRuntime, createNodeProviderConfiguration } from '@cleanslate/sdk';
 import { chromium } from 'playwright';
 import { attachBrowserBridge } from './browserBridge.js';
 import { createBrowserTools } from './browserTools.js';
-import { getConfig, getPublicConfig, envKeyDestinationProblem } from './config.js';
+import { getConfig, getPublicConfig, envKeyDestinationProblem, validateModelUsability, defaultModelForProvider as defaultModelFor, getStoredModel, healStoredModel } from './config.js';
 import { buildQaContext } from './prompt.js';
 import { createQaTools } from './qaTools.js';
+import { captureRuntimeFacts } from './runtimeCapture.js';
 import { buildQaChatReport } from './report.js';
 import { buildFounderContext, buildFounderSynthesisContext } from './founderPrompt.js';
 import { createFounderTools, founderFinishReadiness } from './founderTools.js';
@@ -17,7 +19,8 @@ import { isCredentialQuestion } from '../public/questionPresentation.js';
 import { clearSecrets, redact, secretNames } from './secrets.js';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
 import { guardSqaBrowserTool } from './sqaBrowserBudget.js';
-import { applyUsage, attachUsageCapture, createUsageLedger, createUsageLogger, subtractUsage } from './usageCapture.js';
+import { guardSecurityPayloadTool } from './securityPayloadBudget.js';
+import { applyUsage, attachUsageCapture, createEmptyOutputGuard, createUsageLedger, createUsageLogger, subtractUsage } from './usageCapture.js';
 
 export { guardSqaBrowserTool } from './sqaBrowserBudget.js';
 
@@ -39,6 +42,13 @@ export { guardSqaBrowserTool } from './sqaBrowserBudget.js';
  */
 const BROWSER_IDLE_MS = Number(process.env.QASE_BROWSER_IDLE_MS ?? 0);
 const MODEL_TIMEOUT_RETRIES = Math.max(0, Number(process.env.QASE_MODEL_TIMEOUT_RETRIES ?? 2));
+// #16225 follow-up: consecutive REAL empty completions (billed input, zero
+// output) tolerated before the run is aborted as a model-gateway loop.
+const EMPTY_COMPLETION_LIMIT = Math.min(50, Math.max(1, Math.floor(Number(process.env.QASE_EMPTY_COMPLETION_LIMIT ?? 5)) || 5));
+// #16228: gateways that only ever report estimated usage need a second, looser
+// threshold — otherwise the strict guard above is permanently blind on them
+// and runaway empty loops spin for hours (observed in production).
+const EMPTY_ESTIMATE_LIMIT = Math.min(200, Math.max(1, Math.floor(Number(process.env.QASE_EMPTY_ESTIMATE_LIMIT ?? 30)) || 30));
 const MODEL_TIMEOUT_RETRY_DELAY_MS = Math.max(0, Number(process.env.QASE_MODEL_TIMEOUT_RETRY_DELAY_MS ?? 1200));
 const INCOMPLETE_RUN_CONTINUATIONS = Math.max(0, Number(process.env.QASE_INCOMPLETE_RUN_CONTINUATIONS ?? 2));
 
@@ -351,29 +361,93 @@ export async function closeBrowser(sessionId, runStore) {
 }
 
 /** Suspend idle browsers belonging to this account only. */
-async function closeOtherBrowsers(keepSession, runStore) {
+export async function closeOtherBrowsers(keepSession, runStore) {
+	// Pipeline Phase 4 (#15496): capacity-aware eviction. Parallel matrix
+	// items each need their OWN live browser, so "close every other idle
+	// same-owner browser" is only applied down to the live-browser budget
+	// (one per matrix parallelism slot, floor 2 for interactive sessions).
+	// Sessions NOT actively running are evicted oldest-first (LRU by
+	// last-use) until the budget is met; running siblings are never touched.
+	// The owner check is applied to EVERY candidate — other tenants' sessions
+	// never count against this owner's budget.
+	const capacity = Math.max(2, matrixBrowserBudget());
 	const live = typeof runStore.listLive === 'function'
 		? runStore.listLive()
 		: (await runStore.list({ limit: 100 })).map(summary => ({ id: summary.id, record: runStore.peekLive?.(summary.id) }));
-	await Promise.all(
-		live
-			.filter(entry => entry.id !== keepSession.id)
-			.map(async entry => {
-				const candidate = await runStore.get(entry.id);
-				if (!candidate || candidate.ownerUserId !== keepSession.ownerUserId) return;
-				return !entry.record || entry.record.running ? undefined : closeBrowser(entry.id, runStore);
-			})
-	);
+	let runningSiblings = 0;
+	const evictable = [];
+	for (const entry of live) {
+		if (entry.id === keepSession.id) continue;
+		const candidate = await runStore.get(entry.id);
+		if (!candidate || candidate.ownerUserId !== keepSession.ownerUserId) continue;
+		if (entry.record?.running) {
+			runningSiblings += 1;
+			continue;
+		}
+		evictable.push({ id: entry.id, lastUsedAt: entry.record?.lastUsedAt ?? 0 });
+	}
+	let over = (1 + runningSiblings + evictable.length) - capacity;
+	if (over <= 0) return;
+	evictable.sort((a, b) => (a.lastUsedAt ?? 0) - (b.lastUsedAt ?? 0));
+	for (const victim of evictable) {
+		if (over <= 0) break;
+		await closeBrowser(victim.id, runStore);
+		over -= 1;
+	}
 }
 
-export function ensureRuntime(session, runStore) {
+/** Pipeline Phase 4 (#15496): the live-browser budget — matches the matrix
+ *  orchestrator's environment-clamped QASE_MATRIX_PARALLEL (same clamp
+ *  formula, independent implementation; both floor at 1 and cap at 8). */
+function matrixBrowserBudget() {
+	const raw = Number(process.env.QASE_MATRIX_PARALLEL ?? 2);
+	const configured = Number.isFinite(raw) ? Math.max(1, Math.floor(raw)) : 2;
+	const cores = (availableParallelism?.() ?? cpus()?.length ?? 4);
+	const coreBudget = Math.max(1, cores - 2);
+	const totalMb = Math.round(((totalmem?.() ?? 6 * 1024 ** 3) / (1024 ** 2)));
+	const memBudget = Math.max(1, Math.min(8, Math.floor((totalMb - 1536) / 600)));
+	return Math.min(configured, coreBudget, memBudget, 8);
+}
+
+export async function ensureRuntime(session, runStore) {
 	const record = runStore.liveFor(session.id);
 	if (record.runtime) {
 		return record;
 	}
 	useBundledChromium();
 
-	const settings = getConfig();
+	let settings = getConfig();
+	// A saved model can go stale (retired/renamed on the gateway) between runs —
+	// the gateway then rejects every completion with 400 "Invalid model name"
+	// and the run dies. Two safety nets:
+	// 1. The config layer swaps known-stale saved models for the provider
+	//    default. Heal the stored copy and tell the user once, so Settings no
+	//    longer references the retired model.
+	// 2. Generic pre-flight: when the effective model is any other stored user
+	//    choice, best-effort verify the gateway will actually serve it; on a
+	//    definitive "not usable", fall back for this run, tell the user, and
+	//    heal the preference.
+	const storedModel = getStoredModel();
+	const fallback = defaultModelFor(settings.provider);
+	if (storedModel && fallback && storedModel !== settings.model && settings.model === fallback) {
+		await runStore.addMessage(session, {
+			role: 'system',
+			text: `The saved model "${storedModel}" is no longer available on the model gateway. This run (and later ones) use "${fallback}" instead — pick a different model in Settings if you want.`,
+			kind: 'warning'
+		});
+		await healStoredModel(fallback).catch(() => undefined);
+	} else if (settings.baseUrl && storedModel && storedModel === settings.model && settings.model !== fallback) {
+		const verdict = await validateModelUsability(settings);
+		if (verdict?.usable === false && fallback) {
+			await runStore.addMessage(session, {
+				role: 'system',
+				text: `The saved model "${settings.model}" is not usable with this key/gateway (${verdict.message}). This run uses "${fallback}" instead — update the model in Settings.`,
+				kind: 'warning'
+			});
+			settings = { ...settings, model: fallback };
+			await healStoredModel(fallback).catch(() => undefined);
+		}
+	}
 	const allowedTools = allowedToolNames(session.mode);
 	const problem = getPublicConfig().problem;
 	if (problem) {
@@ -479,14 +553,18 @@ export function ensureRuntime(session, runStore) {
 	const modeTools = session.mode === 'founder'
 		? createFounderTools(session, runStore)
 		: [
-			...createQaTools(session, runStore),
+			...createQaTools(session, runStore, {
+				deviceRuntime: null,
+				captureRuntimeFacts: () => captureRuntimeFacts(session, record.bridge, record),
+				isCancelled: () => Boolean(record.controller?.signal.aborted)
+			}),
 			...(session.mode === 'sqa' ? createSqaTools(session, runStore) : [])
 		];
 	const sessionTools = [...modeTools, ...createBrowserTools(() => record.bridge)]
 		.filter(tool => allowedTools.has(tool.name));
 	const headless = runtime.headlessRuntime;
 	const registeredTools = [...ALL_TOOLS, ...sessionTools].filter(tool => allowedTools.has(tool.name)).map(tool => {
-		const guardedTool = guardSqaBrowserTool(tool, session);
+		const guardedTool = guardSecurityPayloadTool(guardSqaBrowserTool(tool, session), session, settings.securityPayloadLimit);
 		if (session.mode !== 'founder' || guardedTool.name !== 'update_todo') return guardedTool;
 		const canonicalPlan = createFounderReviewTodos();
 		return {
@@ -523,7 +601,18 @@ export function ensureRuntime(session, runStore) {
 	};
 
 	const service = headless.getToolContext().browserAutomationService;
-	const bridge = attachBrowserBridge(session, service, runStore, { device: session.device, deviceLandscape: session.deviceLandscape === true });
+	const bridge = await attachBrowserBridge(session, service, runStore, {
+		device: session.device,
+		deviceLandscape: session.deviceLandscape === true,
+		environment: session.environmentSnapshot
+	});
+
+	// Phase 20: record the honest execution level + provider on the session as
+	// soon as the runtime exists. Runtime facts (observed UA/viewport/DPR) are
+	// attached by the bridge when the browser context is created; they flow
+	// into the same session fields so reports and history carry them.
+	session.executionLevel = bridge.execution?.level ?? null;
+	session.executionProviderActual = bridge.execution?.provider ?? null;
 
 	record.runtime = runtime;
 	record.bridge = bridge;
@@ -531,6 +620,9 @@ export function ensureRuntime(session, runStore) {
 	record.dispose = () => {
 		record.releaseUsageCapture?.();
 		record.releaseUsageCapture = undefined;
+		// Phase 21: release the device session (frees the device; queue advances).
+		record.releaseDeviceSession?.();
+		record.releaseDeviceSession = undefined;
 		bridge.dispose();
 		try {
 			runtime.dispose();
@@ -546,12 +638,41 @@ export function ensureRuntime(session, runStore) {
  * Returns when the model stops — either because the task is done or because it
  * asked a blocking question.
  */
-export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, incompleteAttempt = 0 }, runStore) {
+export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, incompleteAttempt = 0 }, runStore, deviceRuntime) {
 	// Rehydrate only placeholder names before rebuilding prompt context. Values
 	// remain inside the encrypted host vault and browser substitution boundary.
 	session.secretNames = secretNames(session.id);
-	const record = ensureRuntime(session, runStore);
+	const record = await ensureRuntime(session, runStore);
 	const { runtime, bridge } = record;
+	// Consult the Device Runtime Manager (if attached) for the session's
+	// environment before executing — it decides the execution level honestly
+	// (REAL_DEVICE / VIRTUAL_DEVICE / SIMULATED) based on provider availability.
+	if (deviceRuntime) {
+		try {
+			const selected = await deviceRuntime.selectForRun({ session, ...record });
+			if (selected) {
+				record.executionLevel = selected.executionLevel;
+				record.executionProviderActual = selected.provider;
+				record.deviceSession = selected.deviceSession ?? null;
+				record.deviceSessionId = selected.deviceSession?.sessionId ?? null;
+				// Persist honest execution facts on the run (works for both
+				// stores; no-op when the run has not been committed yet).
+				if (typeof runStore.persistExecutionFacts === 'function') {
+					try {
+						runStore.persistExecutionFacts(session.id, {
+							executionLevel: selected.executionLevel,
+							executionProviderActual: selected.provider,
+							runtimeFacts: selected.runtimeFacts ?? null
+						}).catch?.(() => undefined);
+					} catch (persistError) {
+						console.warn('[agent] failed to persist execution facts:', persistError.message);
+					}
+				}
+			}
+		} catch (runtimeError) {
+			console.warn('[agent] device runtime manager selection failed:', runtimeError.message);
+		}
+	}
 	const previousArtifact = finalArtifact(session);
 	const pendingQuestionBeforeRun = session.pendingQuestion;
 	const canResumePendingQuestion = resumeAnswer !== undefined && Boolean(runtime.getPendingQuestion?.());
@@ -564,6 +685,10 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	const controller = new AbortController();
 	record.running = true;
 	record.controller = controller;
+	// #16225 follow-up: reset the loop-abort marker for this turn; the guard
+	// itself lives on the record (wired in ensureRuntime at the single usage
+	// funnel) so it survives runTurn re-entry across automatic continuations.
+	record.emptyLoopAbort = false;
 	bridge.setAbortSignal?.(controller.signal);
 	clearTimeout(record.idleTimer);
 	record.idleTimer = undefined;
@@ -763,6 +888,28 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	record.onUsageHarvested = usage => {
 		const tracked = turnUsageLedger.track(usage);
 		if (!tracked) return;
+		// #16225 follow-up: observe every REAL report through the shared
+		// record-level guard. Created lazily here so the observation point is
+		// this single funnel — the ONLY place every harvested report passes
+		// through in production (ensureRuntime's harvest delegates here via
+		// record.onUsageHarvested).
+		record.emptyOutputGuard ??= createEmptyOutputGuard({
+			limit: EMPTY_COMPLETION_LIMIT,
+			estimateLimit: EMPTY_ESTIMATE_LIMIT,
+			onBreach: (usage2) => {
+				if (!record.running || !record.controller || record.controller.signal.aborted) return;
+				record.emptyLoopAbort = true;
+				console.error(JSON.stringify({
+					event: 'empty_completion_loop_abort', runId: session.id, model: getConfig().model,
+					consecutiveEmptyCompletions: record.emptyOutputGuard.emptyStreak(),
+					consecutiveEstimatedEmptyCompletions: record.emptyOutputGuard.estimatedEmptyStreak(),
+					estimatedUsage: usage2.estimated === true,
+					lastInputTokens: usage2.inputTokens ?? 0, ts: new Date().toISOString()
+				}));
+				record.controller.abort();
+			}
+		});
+		record.emptyOutputGuard.observe(tracked);
 		if (tracked.estimated === true) {
 			// Estimates commit live too (throttled): on providers that never
 			// report usage in-stream this is the only accounting available, and
@@ -943,8 +1090,19 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		// suspended it. Only the runtime knows which.
 		const pending = runtime.getPendingQuestion();
 		if (controller.signal.aborted) {
-			await runStore.setStatus(session, 'idle', 'Stopped by user.');
-			deleteRunSnapshot(session.id);
+			// #16225 follow-up: a loop abort is a model-gateway failure, not a
+			// user stop — the honest terminal state is error so the matrix
+			// item's slot frees immediately and the run is retriable.
+			if (record.emptyLoopAbort) {
+				const message = 'The model gateway returned empty responses for several turns in a row. The run was stopped to prevent a retry loop — try again, or pick a different model in Settings.';
+				await runStore.addMessage(session, { role: 'system', text: message, kind: 'error' });
+				await runStore.setStatus(session, 'error', message);
+				clearSecrets(session.id);
+				deleteRunSnapshot(session.id);
+			} else {
+				await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
+				deleteRunSnapshot(session.id);
+			}
 		} else if (successfulFinalizer) {
 			// An idempotent SQA/Founder finalizer can return its durable existing
 			// artifact. Require the actual successful result rather than treating
@@ -993,8 +1151,16 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 			await completeRun();
 			deleteRunSnapshot(session.id);
 		} else if (controller.signal.aborted) {
-			await runStore.setStatus(session, 'idle', 'Stopped by user.');
-			deleteRunSnapshot(session.id);
+			if (record.emptyLoopAbort) {
+				const message = 'The model gateway returned empty responses for several turns in a row. The run was stopped to prevent a retry loop — try again, or pick a different model in Settings.';
+				await runStore.addMessage(session, { role: 'system', text: message, kind: 'error' });
+				await runStore.setStatus(session, 'error', message);
+				clearSecrets(session.id);
+				deleteRunSnapshot(session.id);
+			} else {
+				await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
+				deleteRunSnapshot(session.id);
+			}
 		} else if (retryAttempt < MODEL_TIMEOUT_RETRIES && isRetryableModeInterruption(error, session.mode)) {
 			retryAfterTimeout = true;
 			const interrupted = !isRetryableModelTimeout(error);
@@ -1027,14 +1193,50 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		// Retain cancellation and the running lock through an automatic retry or
 		// phase handoff. Stop must remain effective while the model is backing off.
 		const continuing = !controller.signal.aborted && (continueIncompleteRun || retryAfterTimeout);
+		// Capture while the device session/attestation still belongs to this turn.
+		await captureRuntimeFacts(session, bridge, record);
 		if (!continuing) {
 			record.running = false;
 			record.controller = undefined;
+			// Phase 21: release the device session when the turn truly ends —
+			// frees the device (board → AVAILABLE, queue advances).
+			if (deviceRuntime && record.deviceSessionId) {
+				const result = session.status === 'error' ? 'failed' : 'done';
+				const sessionId = record.deviceSessionId;
+				record.deviceSessionId = null;
+				Promise.resolve(deviceRuntime.completeSession?.(sessionId, { result }))
+					.catch(() => undefined);
+			}
 		}
 		session.secretNames = secretNames(session.id);
 		// One last frame so the panel shows where the run actually finished.
 		void bridge.captureFrame();
 		bridge.stopFrames();
+		// Phase 22: promote the run's final frame into a persisted evidence
+		// artifact stamped with environment + execution-level metadata, so the
+		// run keeps tangible evidence that survives completion. Runs after the
+		// final frame so the artifact IS the final state of the page.
+		if (typeof runStore.saveEvidenceArtifact === 'function') {
+			try {
+				await bridge.frameCapture;
+				await runStore.saveEvidenceArtifact(session, { bridge });
+			} catch (artifactError) {
+				console.warn('[agent] evidence artifact capture failed:', sanitizeErrorDetail(artifactError));
+			}
+		}
+		// R4 #14493: persist the runtime evidence bundle (observed identity,
+		// console, network, security blocks) alongside the final frame so every
+		// PASS verdict is traceable to the exact runtime that executed it.
+		if (typeof runStore.saveEvidenceBundle === 'function') {
+			try {
+				const diagnostics = typeof record.bridge?.service?.getDiagnostics === 'function'
+					? await record.bridge.service.getDiagnostics('ide', {}).catch(() => null)
+					: null;
+				await runStore.saveEvidenceBundle(session, { bridge }, { diagnostics });
+			} catch (bundleError) {
+				console.warn('[agent] evidence bundle capture failed:', sanitizeErrorDetail(bundleError));
+			}
+		}
 
 		// The browser stays with the session unless a timeout was asked for.
 		clearTimeout(record.idleTimer);
@@ -1052,7 +1254,10 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	const stoppedBeforeContinuation = async () => {
 		record.running = false;
 		record.controller = undefined;
-		if (session.status !== 'idle') await runStore.setStatus(session, 'idle', 'Stopped by user.');
+		// #16225 follow-up: the empty-completion loop abort already set the
+		// honest terminal state (error) above — do not clobber it with a
+		// "Stopped by user." overwrite on the way out.
+		if (session.status !== 'interrupted' && !record.emptyLoopAbort) await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
 		clearSecrets(session.id);
 		session.secretNames = [];
 	};
@@ -1121,7 +1326,7 @@ export function summariseResult(toolName, result) {
 	}
 	if (toolName === 'browser_media') {
 		const application = result.observed?.requests?.filter(request => request.source === 'application').at(-1);
-		return `Synthetic microphone: ${JSON.stringify({ permission: result.permission, probe: result.probe, application, requestCount: result.observed?.requests?.length }).slice(0, 950)}`;
+		return `Media check: ${JSON.stringify({ capability: result.capability, reason: result.reason, permission: result.permission, cameraPermission: result.observed?.cameraPermission, verdict: result.verdict, probe: result.probe, callControls: result.callControls, application, requestCount: result.observed?.requests?.length }).slice(0, 950)}`;
 	}
 	if (toolName === 'browser_test_meeting_link') {
 		return `Meeting prejoin check: ${JSON.stringify({ url: result.url, title: result.title, joined: result.joined, code: result.code }).slice(0, 950)}`;

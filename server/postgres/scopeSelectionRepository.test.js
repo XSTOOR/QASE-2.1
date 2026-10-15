@@ -42,8 +42,8 @@ function scriptedPool(handler = () => ({ rows: [], rowCount: 0 })) {
 	return { pool, calls };
 }
 
-test('migration 021 adds scope_selection as a jsonb array column', () => {
-	const sql = readFileSync(join(here, 'migrations', '021_run_scope_selection.sql'), 'utf8');
+test('migration 035 adds scope_selection as a jsonb array column', () => {
+	const sql = readFileSync(join(here, 'migrations', '035_run_scope_selection.sql'), 'utf8');
 	assert.match(sql, /ADD COLUMN IF NOT EXISTS scope_selection jsonb/);
 	assert.match(sql, /qa_runs_scope_selection_values/);
 	assert.match(sql, /CHECK \(scope_selection IS NULL OR jsonb_typeof\(scope_selection\) = 'array'\)/);

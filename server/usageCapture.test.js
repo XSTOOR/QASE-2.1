@@ -128,3 +128,114 @@ test('createUsageLogger harvests estimate lines only — Azure usage lines are t
 	assert.deepEqual(real, [], 'Azure usage lines are NOT harvested here (attachUsageCapture covers them)');
 	assert.deepEqual(estimated, [{ inputTokens: 1000, outputTokens: 200, estimated: true }]);
 });
+
+// ── Empty-output runaway guard (#16225 follow-up) ─────────────────────────
+
+import { createEmptyOutputGuard } from './usageCapture.js';
+
+test('empty-output guard: fires after N consecutive empty REAL reports', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 3, onBreach: report => breaches.push(report) });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	assert.equal(breaches.length, 0);
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	assert.equal(breaches.length, 0);
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	assert.equal(breaches.length, 1, 'third consecutive empty report breaches');
+});
+
+test('empty-output guard: a non-empty report resets the streak', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 2, onBreach: r => breaches.push(r) });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	guard.observe({ inputTokens: 500, outputTokens: 40 });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	assert.equal(breaches.length, 0, 'streak was reset by the non-empty report');
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	assert.equal(breaches.length, 1);
+});
+
+test('empty-output guard: estimates never trigger', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 2, onBreach: r => breaches.push(r) });
+	guard.observe({ inputTokens: 500, outputTokens: 0, estimated: true });
+	guard.observe({ inputTokens: 500, outputTokens: 0, estimated: true });
+	guard.observe({ inputTokens: 500, outputTokens: 0, estimated: true });
+	assert.equal(breaches.length, 0, 'estimated reports are not model truth');
+});
+
+test('empty-output guard: inputTokens=0 reports are ignored entirely', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 2, onBreach: r => breaches.push(r) });
+	guard.observe({ inputTokens: 0, outputTokens: 0 });
+	guard.observe({ inputTokens: 0, outputTokens: 0 });
+	assert.equal(breaches.length, 0);
+	assert.equal(guard.emptyStreak(), 0, 'non-completion reports do not count toward the streak');
+});
+
+test('empty-output guard: keeps firing on further empties (abort is idempotent)', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 1, onBreach: r => breaches.push(r) });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	assert.equal(breaches.length, 3, 'each empty report past the limit re-fires');
+});
+
+test('empty-output guard: limit is clamped to at least 1', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 0, onBreach: r => breaches.push(r) });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	assert.equal(breaches.length, 1, 'degenerate limit still trips on the first empty report');
+});
+
+// ── Estimated-usage runaway guard (#16228) ────────────────────────────────
+// Production evidence: the z-ai/glm-5.2 gateway via llm.drytis.ai only ever
+// reports estimated usage, so the strict real-report guard was permanently
+// blind and runaway empty loops spun for hours. The estimate streak closes
+// that hole with a deliberately looser threshold.
+
+test('empty-output guard: estimate streak fires at estimateLimit when only estimates arrive (#16228)', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 2, estimateLimit: 4, onBreach: r => breaches.push(r) });
+	for (let i = 0; i < 3; i++) guard.observe({ inputTokens: 500, outputTokens: 0, estimated: true });
+	assert.equal(breaches.length, 0, 'below the estimate limit: no breach');
+	assert.equal(guard.estimatedEmptyStreak(), 3);
+	guard.observe({ inputTokens: 500, outputTokens: 0, estimated: true });
+	assert.equal(breaches.length, 1, 'fourth consecutive estimated empty breaches');
+	assert.equal(guard.emptyStreak(), 0, 'the strict streak stays untouched by estimates');
+});
+
+test('empty-output guard: estimates alone never trip the strict limit (#16228)', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 2, onBreach: r => breaches.push(r) });
+	for (let i = 0; i < 50; i++) guard.observe({ inputTokens: 500, outputTokens: 0, estimated: true });
+	assert.equal(breaches.length, 0, 'no estimateLimit configured → estimates stay inert');
+});
+
+test('empty-output guard: any output resets both streaks (#16228)', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 2, estimateLimit: 3, onBreach: r => breaches.push(r) });
+	guard.observe({ inputTokens: 500, outputTokens: 0, estimated: true });
+	guard.observe({ inputTokens: 500, outputTokens: 0, estimated: true });
+	guard.observe({ inputTokens: 500, outputTokens: 99, estimated: true });
+	assert.equal(guard.estimatedEmptyStreak(), 0, 'estimated output resets the estimate streak');
+	guard.observe({ inputTokens: 500, outputTokens: 0, estimated: true });
+	guard.observe({ inputTokens: 500, outputTokens: 0, estimated: true });
+	assert.equal(breaches.length, 0, 'streak restarted — two empties do not reach limit 3');
+});
+
+test('empty-output guard: real empty reports still use the strict limit (#16228)', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 2, estimateLimit: 100, onBreach: r => breaches.push(r) });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	guard.observe({ inputTokens: 500, outputTokens: 0 });
+	assert.equal(breaches.length, 1, 'real reports keep the original semantics');
+});
+
+test('empty-output guard: estimateLimit is clamped to at least 1 (#16228)', () => {
+	const breaches = [];
+	const guard = createEmptyOutputGuard({ limit: 5, estimateLimit: 0, onBreach: r => breaches.push(r) });
+	guard.observe({ inputTokens: 500, outputTokens: 0, estimated: true });
+	assert.equal(breaches.length, 0, 'estimateLimit 0 degenerates to inert, never trips the strict streak');
+});

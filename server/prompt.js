@@ -1,6 +1,73 @@
 import { describeDeviceForPrompt } from './deviceProfiles.js';
 import { isEngineId } from './browserEngines.js';
 import { BROWSER_WORKFLOW_GUIDANCE } from './browserWorkflowPrompt.js';
+import { QA_STANDARD_TESTS, QA_SECURITY_TEST_IDS } from './qaTestCatalog.js';
+
+/**
+ * Plan guidance derived from the run's test selection. Absent selection means
+ * the historical full-coverage run: no new section, prompt unchanged.
+ */
+export function buildQaTestSelectionContext(selectedTests) {
+	if (!Array.isArray(selectedTests) || selectedTests.length === 0) return '';
+	const byId = new Map(QA_STANDARD_TESTS.map(test => [test.id, test]));
+	const selected = selectedTests.map(id => byId.get(id)).filter(Boolean);
+	if (selected.length === 0) return '';
+	const available = QA_STANDARD_TESTS.filter(test => test.availability.available);
+	const fullCoverage = selected.length === available.length && selected.every(test => test.availability.available);
+	const lines = selected.map(test => `- ${test.title}: ${test.focus}`).join('\n');
+	if (fullCoverage) {
+		return `# Selected standard tests
+every standard test area below is selected — cover each one in the plan:
+${lines}`.trim() + buildQaSecurityHonestyNote(selectedTests);
+	}
+	const excluded = QA_STANDARD_TESTS
+		.filter(test => !selectedTests.includes(test.id))
+		.map(test => test.title).join(', ');
+	return `# Selected standard tests
+The operator selected which standard tests this run must cover. Cover each
+selected test area in your update_todo plan:
+${lines}
+
+Do not spend the run testing the unselected areas (${excluded}). If an
+unselected area blocks a selected one (for example an untested form is the only
+path to a selected flow), note it in the finding instead of expanding scope.` + buildQaSecurityHonestyNote(selectedTests);
+}
+
+/**
+ * The honesty contract for security-category checks: outcomes must be
+ * passed/failed/not-tested-with-reason, evidence is required, and nothing
+ * unexecuted may ever be reported as passed. Appended whenever the selection
+ * includes a security check (and once for any selection, reminding that
+ * unavailable security checks are reported as not implemented).
+ */
+function buildQaSecurityHonestyNote(selectedTests) {
+	const hasSecurity = selectedTests.some(id => QA_SECURITY_TEST_IDS.includes(id) && !['security_mitm', 'security_dos'].includes(id));
+	const unavailable = ['security_mitm', 'security_dos']
+		.filter(id => QA_SECURITY_TEST_IDS.includes(id))
+		.map(id => id === 'security_mitm'
+			? 'Man-in-the-middle scenarios (not implemented — requires an agreed, configured MITM scenario)'
+			: 'Denial-of-service scenarios (not implemented — requires an agreed, configured DoS scenario)');
+	if (!hasSecurity) {
+		// No security checks selected — no note needed.
+		return '';
+	}
+	return `
+
+# Security check outcomes — the honesty contract
+
+These checks are security-category. Report each one honestly in the final
+report and in todo skip-notes:
+- passed: only with concrete positive evidence observed in the browser session.
+- failed: with a finding carrying severity, evidence, safe reproduction steps,
+  and a suggested fix.
+- not tested: with a reason (no login system, missing second account, target
+  unreachable, payload limit reached). A skipped check is NEVER failed and NEVER
+  passed.
+Console errors alone are not a security result. Absence of evidence (for
+example no observable difference from SQL-injection probes) must be reported as
+what it is — no evidence found — never as proof of safety.
+Do not attempt man-in-the-middle or denial-of-service testing: ${unavailable.join('; ')}. Record them as not tested with that reason if the operator expected them.`;
+}
 /**
  * The operating brief handed to the agent on every turn.
  *
@@ -10,6 +77,9 @@ import { BROWSER_WORKFLOW_GUIDANCE } from './browserWorkflowPrompt.js';
  */
 
 export function buildQaContext(session, liveUrl) {
+	const selectedTestsContext = session.mode === 'qa'
+		? buildQaTestSelectionContext(session.selectedTests)
+		: '';
 	const target = session.targetUrl
 		? `Target under test: ${session.targetUrl}`
 		: 'No target URL yet. Call ask_question immediately to request the full URL, then stop. Never ask only in prose.';
@@ -53,6 +123,7 @@ ${target}
 ${credentials}
 ${location}
 ${memory}
+${selectedTestsContext}
 ${environmentNotes}
 
 # Tools you may use
@@ -76,6 +147,8 @@ reads, shell commands, edits or web fetches.
 2. Publish a test plan with update_todo before you start clicking. Cover the
    flows that matter: navigation, forms and their validation, authentication,
    search, responsive breakpoints if reachable, console health, broken links.
+   When a test selection is listed above, that selection — not this default
+   list — defines the coverage the run must deliver.
 3. Work the plan one item at a time, marking items in_progress and completed as
    you go. Re-snapshot after anything that changes the page.
 4. Locate elements by role, text, label, placeholder or test id rather than by

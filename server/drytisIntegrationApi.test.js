@@ -62,6 +62,15 @@ function memoryServices(options = {}) {
 				calls.statuses.push({ id: session.id, status, detail });
 			}
 		},
+		feedback: {
+			create: async () => ({}),
+			get: async () => null,
+			list: async () => [],
+			update: async () => ({}),
+			remove: async () => true,
+			stats: async () => ({}),
+			forRun: async () => null
+		},
 		agent: {
 			isRemote: options.remote === true,
 			ensureRuntime(session) {

@@ -38,6 +38,16 @@ function createAnalyticsServices() {
 	];
 	const services = {
 		readiness: { check: () => ({ ready: true, checks: {} }) },
+		environments: {
+			seed: async () => ({ inserted: 0 }),
+			list: async () => [],
+			get: async () => null,
+			create: async input => input,
+			update: async (envId, patch) => ({ envId, ...patch }),
+			facets: async () => ({ total: 0, platform: [], device: [], os: [], osVersion: [], browser: [], browserVersion: [], deviceType: [], executionProvider: [], isRealDevice: [], active: [] }),
+			availability: () => [],
+			catalogVersion: () => 'test'
+		},
 		lifecycle: { close() {} },
 		feedback: {
 			create: async input => input,

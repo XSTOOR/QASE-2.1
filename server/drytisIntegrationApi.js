@@ -641,7 +641,7 @@ export function createDrytisIntegrationApi({
 			});
 		}
 		if (isRunning(session)) return { started: false, alreadyRunning: true };
-		try { services.agent.ensureRuntime(session); }
+		try { await services.agent.ensureRuntime(session); }
 		catch (error) {
 			await persistStartFailure(session, error);
 			return { started: false, failed: true };

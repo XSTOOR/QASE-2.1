@@ -33,7 +33,7 @@ async function setup(t) {
 	});
 	const session = { id: 'drytis-navigation-fixture', targetUrl, device: 'desktop', messages: [], status: 'running' };
 	const policy = createBrowserPolicy({ getTargetUrl: () => targetUrl, environment: { NODE_ENV: 'production' }, resolveHost: async () => [{ address: '93.184.216.34', family: 4 }] });
-	const bridge = attachBrowserBridge(session, service, { publish() {}, async commit() {} }, { policy });
+	const bridge = await attachBrowserBridge(session, service, { publish() {}, async commit() {} }, { policy });
 	t.after(async () => { bridge.dispose(); await service.dispose(); });
 	await service.open(targetUrl);
 	bridge.stopFrames();

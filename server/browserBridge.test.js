@@ -105,7 +105,7 @@ test('browser bridge blocks out-of-scope navigation and gates destructive clicks
 		environment: { NODE_ENV: 'test' },
 		now: () => clock
 	});
-	const bridge = attachBrowserBridge(session, service, runStore, { policy });
+	const bridge = await attachBrowserBridge(session, service, runStore, { policy });
 
 	const direct = await service.open('https://outside.example.test/');
 	assert.equal(direct.success, false);
@@ -139,7 +139,7 @@ test('browser bridge fails ambiguous and obscured click targets before the drive
 		messages: []
 	};
 	const { service, calls } = fakeService();
-	const bridge = attachBrowserBridge(session, service, fakeRunStore(), {
+	const bridge = await attachBrowserBridge(session, service, fakeRunStore(), {
 		policy: createBrowserPolicy({
 			getTargetUrl: () => session.targetUrl,
 			environment: { NODE_ENV: 'test' }
@@ -210,7 +210,7 @@ test('browser bridge installs a context-wide route that blocks private subresour
 		environment: { NODE_ENV: 'production' },
 		resolveHost: async () => [{ address: '93.184.216.34', family: 4 }]
 	});
-	const bridge = attachBrowserBridge(session, service, runStore, { policy });
+	const bridge = await attachBrowserBridge(session, service, runStore, { policy });
 	await service.ensurePage();
 	assert.equal(typeof context.routeHandler, 'function');
 	assert.equal(context.initScripts.length, 2);
@@ -272,7 +272,7 @@ test('browser bridge coalesces concurrent captures and does not publish identica
 			title: 'Target'
 		};
 	};
-	const bridge = attachBrowserBridge(session, service, runStore, {
+	const bridge = await attachBrowserBridge(session, service, runStore, {
 		policy: createBrowserPolicy({
 			getTargetUrl: () => session.targetUrl,
 			environment: { NODE_ENV: 'test' }

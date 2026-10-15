@@ -6,6 +6,7 @@ import { attachUsageCapture, createUsageLogger } from './usageCapture.js';
 import { createBrowserTools } from './browserTools.js';
 import { createFounderReviewTodos, FOUNDER_CATEGORY_IDS } from './founderService.js';
 import { clearSecrets, resolveSecrets, storeSecrets } from './secrets.js';
+import { withUserConfiguration } from './config.js';
 
 function runtimeFixture(overrides = {}) {
 	const session = { id: randomUUID(), mode: 'qa', targetUrl: 'https://example.test', messages: [], activities: [], todos: [], findings: [], secretNames: [], ...overrides };
@@ -166,7 +167,7 @@ test('usage is preserved when a run is stopped mid-stream', async () => {
 
 	await runTurn(session, { task: 'Stop me' }, store);
 
-	assert.equal(session.status, 'idle', 'run reported as stopped');
+	assert.equal(session.status, 'interrupted', 'run reported as stopped');
 	assert.equal(session.tokenUsage.inputTokens, 4000, 'usage accumulated before the stop is kept');
 	assert.equal(session.tokenUsage.outputTokens, 800);
 });
@@ -254,6 +255,43 @@ test('each mode exposes only its own finalizer and browser capabilities', () => 
 	}
 });
 
+test('a stale saved model falls back to the provider default with a warning and heals the preference', async () => {
+	const saved = { ...process.env };
+	const live = { messages: [] };
+	const addMessageCalls = [];
+	const store = {
+		liveFor: () => live,
+		publish() {},
+		commit: async () => {},
+		addMessage: async (s, item) => { addMessageCalls.push(item); s.messages.push(item); return item; }
+	};
+	const session = { id: randomUUID(), mode: 'founder', messages: [], activities: [], todos: [], findings: [], secretNames: [] };
+	try {
+		process.env.QASE_PROVIDER = 'custom';
+		process.env.QASE_BASE_URL = 'https://llm.drytis.ai';
+		process.env.QASE_API_KEY ||= 'test-key-placeholder';
+		await withUserConfiguration({ model: 'drytis/jev-1.13' }, () => {}, async () => {
+			const record = await ensureRuntime(session, store);
+			try {
+				// Config layer swapped the stale model for the default; the user
+				// was told once and the stored preference healed.
+				assert.equal(addMessageCalls.length, 1);
+				assert.equal(addMessageCalls[0].kind, 'warning');
+				assert.match(addMessageCalls[0].text, /drytis\/jev-1\.13/);
+				assert.match(addMessageCalls[0].text, /z-ai\/glm-5\.2/);
+			} finally { record.dispose?.(); }
+		});
+	} finally {
+		for (const key of ['QASE_PROVIDER', 'QASE_BASE_URL']) {
+			if (key in saved) process.env[key] = saved[key]; else delete process.env[key];
+		}
+		if (!('QASE_API_KEY' in saved)) {
+			// we set it with ||=; restore by checking the original snapshot
+			if (saved.QASE_API_KEY === undefined) delete process.env.QASE_API_KEY; else process.env.QASE_API_KEY = saved.QASE_API_KEY;
+		}
+	}
+});
+
 test('the real SDK registry and advertised descriptions enforce each mode boundary', async () => {
 	const saved = process.env.QASE_API_KEY;
 	process.env.QASE_API_KEY ||= 'qualification-placeholder';
@@ -261,7 +299,7 @@ test('the real SDK registry and advertised descriptions enforce each mode bounda
 		for (const mode of ['qa','sqa','founder']) {
 			const live = {};
 			const session = {id:randomUUID(),mode,secretNames:[],activities:[],findings:[],todos:[],messages:[]};
-			const record = ensureRuntime(session, {liveFor:()=>live,publish(){},commit:async()=>{}});
+			const record = await ensureRuntime(session, {liveFor:()=>live,publish(){},commit:async()=>{}});
 			try {
 				const names=record.runtime.headlessRuntime.getTools().map(tool=>tool.name);
 				assert.deepEqual(new Set(names),allowedToolNames(mode));
@@ -427,7 +465,7 @@ test('graceful model cancellation stops without launching an automatic continuat
 	};
 	await runTurn(fixture.session, { task: 'Run QA' }, fixture.store);
 	assert.equal(calls, 1);
-	assert.equal(fixture.session.status, 'idle');
+	assert.equal(fixture.session.status, 'interrupted');
 	assert.equal(fixture.statuses.at(-1).detail, 'Stopped by user.');
 	assert.equal(fixture.record.running, false);
 	assert.equal(fixture.record.controller, undefined);
@@ -514,7 +552,7 @@ test('Stop remains effective during timeout backoff and releases the running loc
 	await runTurn(fixture.session, { task: 'Run QA' }, fixture.store);
 	assert.deepEqual(stateAtStop, { running: true, hasController: true });
 	assert.equal(calls, 1);
-	assert.equal(fixture.session.status, 'idle');
+	assert.equal(fixture.session.status, 'interrupted');
 	assert.equal(fixture.record.running, false);
 	assert.equal(fixture.record.controller, undefined);
 });
@@ -588,7 +626,7 @@ test('cancellation during unfinished-tool cleanup prevents a planned continuatio
 	};
 	await runTurn(fixture.session, { task: 'Run QA' }, fixture.store);
 	assert.equal(calls, 1);
-	assert.equal(fixture.session.status, 'idle');
+	assert.equal(fixture.session.status, 'interrupted');
 	assert.equal(fixture.record.controller, undefined);
 });
 
@@ -675,4 +713,137 @@ test('Founder evidence handoff starts one synthesis turn with durable evidence p
 	assert.equal(fixture.clearCount(), 1);
 	assert.equal(fixture.session.status, 'done');
 	assert.deepEqual(fixture.session.founder.observations, observations);
+});
+
+/* ── Pipeline Phase 4 (#15496): closeOtherBrowsers LRU eviction ── */
+
+test('Phase 4: evicts oldest-idle same-owner browsers first; running + foreign-owner untouched', async () => {
+	const { closeOtherBrowsers } = await import('./agent.js');
+	// Capacity is max(2, clamp) — force a small, deterministic budget.
+	process.env.QASE_MATRIX_PARALLEL = '1';
+	// closeBrowser suspends the entry's bridge — record victims there
+	// (the ESM namespace is frozen; patching exports is impossible).
+	const victims = [];
+	const makeEntry = (id, owner, running, lastUsedAt) => ({
+		id,
+		record: { running, lastUsedAt, bridge: { hasPage: () => true, suspend: async () => { victims.push(id); } }, idleTimer: null },
+		owner
+	});
+	const keep = { id: 'keep', ownerUserId: 'owner-1' };
+	const entries = [
+		makeEntry('keep', 'owner-1', true, 999),
+		makeEntry('running-sibling', 'owner-1', true, 998),
+		makeEntry('idle-new', 'owner-1', false, 500),
+		makeEntry('idle-old', 'owner-1', false, 100),
+		makeEntry('idle-mid', 'owner-1', false, 300),
+		makeEntry('foreign-idle', 'owner-2', false, 50),
+		makeEntry('foreign-running', 'owner-2', true, 900)
+	];
+	const runStore = {
+		listLive: () => entries,
+		liveFor: (id) => entries.find((entry) => entry.id === id)?.record,
+		get: async (id) => ({ id, ownerUserId: entries.find((entry) => entry.id === id)?.owner })
+	};
+	try {
+		await closeOtherBrowsers(keep, runStore);
+		// Budget: max(2, clamp)=2 on this container (cores 3 → clamp 1).
+		// Same-owner: keep(1) + running-sibling(1) + 3 idle = 5 > 2 → evict 3 oldest.
+		assert.ok(!victims.includes('running-sibling'), 'running sibling never evicted');
+		assert.ok(!victims.includes('foreign-idle') && !victims.includes('foreign-running'), 'foreign-owner sessions never touched');
+		assert.ok(!victims.includes('keep'), 'the keep session is never evicted');
+		assert.ok(victims.length >= 3, `expected all same-owner idle browsers evicted when budget=2 (got ${victims.join(',')})`);
+		// Oldest first.
+		const order = victims.indexOf('idle-old');
+		const mid = victims.indexOf('idle-mid');
+		const newest = victims.indexOf('idle-new');
+		assert.ok(order !== -1 && mid !== -1 && newest !== -1, 'all idle same-owner entries eligible');
+		assert.ok(order < mid && mid < newest, `LRU order violated: ${victims.join(',')}`);
+	} finally {
+		delete process.env.QASE_MATRIX_PARALLEL;
+	}
+});
+
+test('Phase 4: within budget nothing is evicted', async () => {
+	const { closeOtherBrowsers } = await import('./agent.js');
+	process.env.QASE_MATRIX_PARALLEL = '1';
+	const victims = [];
+	const makeEntry = (id, owner, running, lastUsedAt) => ({
+		id,
+		record: { running, lastUsedAt, bridge: { hasPage: () => true, suspend: async () => { victims.push(id); } }, idleTimer: null },
+		owner
+	});
+	const keep = { id: 'keep', ownerUserId: 'owner-1' };
+	const runStore = {
+		listLive: () => [
+			makeEntry('keep', 'owner-1', true, 999),
+			makeEntry('one-idle', 'owner-1', false, 100)
+		],
+		liveFor: (id) => (id === 'one-idle' ? makeEntry('one-idle', 'owner-1', false, 100).record : undefined),
+		get: async (id) => ({ id, ownerUserId: 'owner-1' })
+	};
+	try {
+		await closeOtherBrowsers(keep, runStore);
+		assert.deepEqual(victims, [], 'keep + 1 idle fits the floor-2 budget — no eviction');
+	} finally {
+		delete process.env.QASE_MATRIX_PARALLEL;
+	}
+});
+
+// ── #16225 follow-up: runaway empty-completion loop abort ────────────────
+
+test('consecutive empty provider completions abort the run as error, not interrupted', async () => {
+	const { session, record, store } = runtimeFixture();
+	const statuses = [];
+	store.setStatus = async (s, status, detail) => { s.status = status; statuses.push(status); };
+	record.runtime.cleanSlateService = {
+		logProviderReportedUsage() { /* SDK original */ }
+	};
+	record.turnUsage = { reports: [], estimates: [] };
+	// Mirror ensureRuntime: the wrapped provider-report hook feeds the run's
+	// harvest, and runTurn wires record.onUsageHarvested as the observation
+	// funnel — in production the SDK runtime invokes the wrapper, whose
+	// harvestUsage calls record.onUsageHarvested. Simulate the same chain.
+	const release = attachUsageCapture(record.runtime.cleanSlateService, {
+		onUsage: usage => record.onUsageHarvested?.(usage)
+	});
+	record.runtime.logger = createUsageLogger({ onEstimate: () => undefined });
+	const EMPTY_LIMIT = Number(process.env.QASE_EMPTY_COMPLETION_LIMIT ?? 5) || 5;
+	let observed = 0;
+	record.runtime.run = async function* () {
+		for (let i = 0; i < EMPTY_LIMIT + 3; i++) {
+			record.runtime.cleanSlateService.logProviderReportedUsage({}, { inputTokens: 27000, outputTokens: 0 });
+			await new Promise(resolve => setImmediate(resolve));
+			if (record.controller?.signal.aborted) return; // loop stopped us
+			yield { type: 'context_usage', turnId: `t${i}` };
+			observed = i + 1;
+		}
+	};
+	await runTurn(session, { task: 'Run QA' }, store);
+	assert.ok(observed < EMPTY_LIMIT, `the generator stopped before the finalizer (observed turn index ${observed}, limit ${EMPTY_LIMIT})`);
+	assert.equal(session.status, 'error', 'loop abort ends as error');
+	const errorMessages = (session.messages ?? []).filter(m => m.kind === 'error' && /empty responses/.test(m.text ?? ''));
+	assert.ok(errorMessages.length >= 1, 'a user-visible error message explains the empty-completion stop');
+	assert.equal(statuses.includes('interrupted'), false, 'loop abort is NOT a user stop');
+	release();
+});
+
+test('a user stop still ends interrupted when completions are healthy', async () => {
+	const { session, record, store } = runtimeFixture();
+	const statuses = [];
+	store.setStatus = async (s, status) => { s.status = status; statuses.push(status); };
+	record.runtime.cleanSlateService = {
+		logProviderReportedUsage() { /* SDK original */ }
+	};
+	record.turnUsage = { reports: [], estimates: [] };
+	const release = attachUsageCapture(record.runtime.cleanSlateService, {
+		onUsage: usage => record.turnUsage.reports.push(usage)
+	});
+	record.runtime.run = async function* () {
+		record.runtime.cleanSlateService.logProviderReportedUsage({}, { inputTokens: 100, outputTokens: 80 });
+		await new Promise(resolve => setImmediate(resolve));
+		record.controller?.abort(); // user pressed Stop
+	};
+	await runTurn(session, { task: 'Run QA' }, store);
+	assert.equal(session.status, 'interrupted', 'user stop keeps the historical outcome');
+	release();
 });

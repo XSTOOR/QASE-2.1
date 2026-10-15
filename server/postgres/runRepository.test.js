@@ -659,6 +659,7 @@ test('token usage round-trips on the run row and surfaces in list summaries', as
 			pending_question: null,
 			context_usage: null,
 			token_usage: usage,
+			report_verdict: 'blocked',
 			secret_names: [],
 			created_at: new Date(NOW - 1_000),
 			updated_at: new Date(NOW),
@@ -669,12 +670,46 @@ test('token usage round-trips on the run row and surfaces in list summaries', as
 	const repository = createPostgresRunRepository({ pool: fake.pool, tenantContext: TENANT, now: () => NOW });
 
 	// create: token_usage rides in the run INSERT alongside context_usage;
-	// queuedAt and pausedAt (DEV timing) are the trailing write-once columns.
+	// pausedAt, selected_tests (standard-QA test selection) and
+	// security_authorization are the trailing write-once columns.
 	await repository.create(session({ tokenUsage: usage }), { eventType: 'run.created', actorType: 'user' });
 	const runInsert = fake.calls.find(call => call.text.startsWith('INSERT INTO qa_runs'));
 	assert.match(runInsert.text, /token_usage/);
-	assert.equal(runInsert.params[runInsert.params.length - 1], null);
-	assert.equal(runInsert.params[runInsert.params.length - 3].getTime(), new Date(NOW).getTime());
+	// Structural integrity of the INSERT: the number of target columns must
+	// equal the number of VALUES expressions, and the highest placeholder must
+	// bind every param. (A fake pool never parses SQL, so an off-by-one here
+	// would otherwise pass silently and break real Postgres at parse time.)
+	const columnList = runInsert.text.match(/INSERT INTO qa_runs \(([\s\S]*?)\)\s*VALUES/)?.[1] ?? '';
+	const columnCount = columnList.split(',').length;
+	// Expressions include literals (NULL, 0), so the real invariant is:
+	// (placeholders bound = params.length) and (columns = placeholders + literals).
+	const placeholders = [...runInsert.text.matchAll(/\$(\d+)/g)].map(match => Number(match[1]));
+	const maxPlaceholder = Math.max(...placeholders);
+	const literalCount = columnCount - placeholders.length;
+	assert.equal(
+		new Set(placeholders).size,
+		runInsert.params.length,
+		`distinct placeholders (${new Set(placeholders).size}) must equal params length (${runInsert.params.length})`
+	);
+	assert.equal(
+		maxPlaceholder,
+		runInsert.params.length,
+		`highest placeholder $${maxPlaceholder} must equal params length (${runInsert.params.length})`
+	);
+	assert.ok(
+		literalCount === 2,
+		`expected exactly 2 literal VALUES expressions (NULL, 0), found ${literalCount} — column/expr imbalance?`
+	);
+	// Param tail after cohort: createdAt(-12), updatedAt(-13), queued_at(-11,
+	// null without queuedAt), paused_at(-10), selected_tests, security_authorization,
+	// then the environment block, then matrix_run_id (trailing, null).
+	assert.equal(runInsert.params[runInsert.params.length - 1], null);          // matrix_run_id
+	assert.equal(runInsert.params[runInsert.params.length - 2], null);          // runtime_facts
+	assert.equal(runInsert.params[runInsert.params.length - 3], null);          // execution_provider_actual
+	assert.equal(runInsert.params[runInsert.params.length - 4], null);          // execution_level_actual
+	assert.equal(runInsert.params[runInsert.params.length - 11], null);         // queued_at
+	assert.equal(runInsert.params[runInsert.params.length - 10], null);         // paused_at
+	assert.equal(runInsert.params[runInsert.params.length - 12].getTime(), new Date(NOW).getTime()); // updated_at
 
 	// save: token_usage is updated on the run row (append-only usage rows stay untouched).
 	const saveStart = fake.calls.length;
@@ -698,6 +733,9 @@ test('token usage round-trips on the run row and surfaces in list summaries', as
 	// list: totals ride the summary payload.
 	const summaries = await repository.list();
 	assert.deepEqual(summaries[0].tokenUsage, usage);
+	assert.equal(summaries[0].reportVerdict, 'blocked');
+	const verdictQuery = fake.calls.find(call => call.text.includes('FROM qa_runs') && call.text.includes('AS report_verdict'));
+	assert.ok(verdictQuery, 'list SELECT carries the current report verdict for blocked-run presentation');
 
 	// list: plan progress rides the summary payload, derived from the child table.
 	const listCall = fake.calls.find(call => call.text.includes('FROM qa_runs') && call.text.includes('todo_total'));
@@ -863,7 +901,10 @@ test('get and list read PostgreSQL authoritatively without crossing tenant scope
 		messageCount: 3,
 		todoTotal: 0,
 		todoCompleted: 0,
-		tokenUsage: undefined
+		tokenUsage: undefined,
+		executionLevel: undefined,
+		executionProviderActual: undefined,
+		runtimeFacts: undefined
 	}]);
 	const scopedRunReads = fake.calls.filter(call => call.text.includes('FROM qa_runs'));
 	assert.ok(scopedRunReads.every(call => /organization_id = \$1 AND project_id = \$2/.test(call.text)));

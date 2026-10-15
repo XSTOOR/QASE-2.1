@@ -33,6 +33,7 @@ function createMemoryServices({ authFile } = {}) {
 		agent: { ensureRuntime: () => undefined, runTurn: noop, closeBrowser: noop, getLiveState: () => ({ running: false }), stop: noop, invalidateIdleRuntimes: noop },
 		readiness: { check: async () => ({ ready: true, checks: {} }) },
 		lifecycle: { close() {} },
+		environments: { seed: async () => ({ inserted: 0 }), list: async () => ({ rows: [], total: 0 }), get: async () => null, create: async () => ({}), update: async () => ({}), facets: async () => ({ total: 0 }), availability: () => ({ ready: [] }), catalogVersion: () => '0' },
 		// DEV (User Feedback feature) added a feedback service group to the
 		// runtime contract; a stub is enough for the pilot-flow surface.
 		feedback: { create: noop, get: async () => undefined, list: async () => [], update: noop, remove: noop, stats: async () => ({}), forRun: async () => undefined },
@@ -134,6 +135,18 @@ describe('controlled pilot registration (production, closed)', () => {
 		// The code must still be usable.
 		const retry = await register(base, { email: 'bob@example.com', password: 'a-very-long-password-123', displayName: 'Bob', inviteCode: invite.code });
 		assert.equal(retry.status, 201);
+	});
+
+	it('concurrent registration with one invite admits exactly one account', async () => {
+		const h = harness({}); const isolatedBase = await listen(h.server);
+		try {
+			const { code } = await h.inviteService.create({});
+			const results = await Promise.all(['race-one', 'race-two'].map(name => register(isolatedBase, {
+				email: `${name}@example.com`, password: 'a-very-long-password-123', displayName: name, inviteCode: code
+			})));
+			assert.deepEqual(results.map(item => item.status).sort(), [201, 403]);
+			assert.equal(results.filter(item => item.setCookie.includes('qase_session=')).length, 1);
+		} finally { await new Promise(resolve => h.server.close(resolve)); rmSync(h.dir, { recursive: true, force: true }); }
 	});
 
 	it('pilot-status defaults to false; reports true when QASE_PILOT_MODE=true', async () => {

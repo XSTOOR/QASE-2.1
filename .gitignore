@@ -1,6 +1,7 @@
 # Dependencies and generated output
 node_modules/
 node_modules.broken/
+server.corrupt-*/
 coverage/
 .nyc_output/
 test-results/
@@ -10,6 +11,7 @@ tmp/
 temp/
 *.log
 *.zip
+*.zip.sha256
 artifacts/
 
 # Private runtime state and credentials
@@ -47,3 +49,11 @@ userDocs/image_21567749.png
 /*.png
 /*.deb
 userDocs/image_73eed07c.png
+
+# #15971: internal agent tooling/specs/reports — never publish (leaks absolute preview URLs)
+.drytis/
+
+
+# #16228: local-only scratch (user screenshots, extracted browsers)
+userDocs/
+.local-browsers/

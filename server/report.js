@@ -1,3 +1,4 @@
+import { getDeviceProfile } from './deviceProfiles.js';
 import { QA_SCOPE_OPTIONS } from '../public/qaScopeCatalog.js';
 import { formatFeedbackTimestamp } from './displayTime.js';
 
@@ -9,6 +10,36 @@ const VERDICT_LABELS = {
 	fail: 'Fail',
 	blocked: 'Blocked'
 };
+
+function deviceLine(session) {
+	const profile = getDeviceProfile(session.device);
+	const width = session.deviceLandscape ? profile.viewport.height : profile.viewport.width;
+	const height = session.deviceLandscape ? profile.viewport.width : profile.viewport.height;
+	const orientation = session.deviceLandscape ? 'landscape' : 'portrait';
+	return profile.label + ' (' + orientation + ', ' + width + '\u00d7' + height + ', DPR ' + profile.deviceScaleFactor + ', touch)';
+}
+
+function environmentLine(session) {
+	const snapshot = session.environmentSnapshot;
+	if (!snapshot) return undefined;
+	const parts = [
+		snapshot.device ?? snapshot.deviceLabel,
+		snapshot.osVersion,
+		[snapshot.browser, snapshot.browserVersion].filter(Boolean).join(' ')
+	].filter(Boolean);
+	const label = parts.join(' · ');
+	// Phase 22: the execution label comes from RECORDED facts, never from the
+	// catalog capability hint — a simulated run must never read "real device".
+	const level = session.runtimeFacts?.executionLevel ?? session.executionLevel;
+	const rawProvider = session.runtimeFacts?.provider ?? session.executionProviderActual;
+	// D7: user-facing report text uses QASE-neutral provider labels; the raw
+	// provider key stays internal (API contract unchanged).
+	const provider = { browserstack: 'remote environment runtime', local: 'local runtime' }[rawProvider] ?? rawProvider;
+	if (level === 'REAL_DEVICE') return `${label} — REAL DEVICE${provider ? ` (${provider})` : ''}`;
+	if (level === 'VIRTUAL_DEVICE') return `${label} — VIRTUAL DEVICE${provider ? ` (${provider})` : ''}`;
+	if (level === 'SIMULATED') return `${label} — SIMULATED${provider ? ` (${provider})` : ''}`;
+	return provider ? `${label} — ${provider}` : label;
+}
 
 /** A deterministic completion reply, grounded in the saved QA results. */
 export function buildQaChatReport(session) {
@@ -65,9 +96,32 @@ export function buildReportMarkdown(session) {
 
 	lines.push(`# QA report — ${session.targetUrl ?? session.title}`);
 	lines.push('');
+	if (session.testCaseSnapshot?.title || session.testCaseId) {
+		lines.push(`- **Test case:** ${session.testCaseSnapshot?.title ?? session.testCaseId}${session.testCaseSnapshot?.caseNumber ? ` (${session.testCaseSnapshot.caseNumber})` : ''}`);
+	}
 	lines.push(`- **Run:** ${new Date(session.createdAt).toLocaleString()}`);
 	lines.push(`- **Verdict:** ${report ? VERDICT_LABELS[report.verdict] ?? report.verdict : 'Run not finished'}`);
 	lines.push(`- **Findings:** ${session.findings.length}`);
+	const environment = environmentLine(session) ?? deviceLine(session);
+	if (environment) lines.push(`- **Environment:** ${environment}`);
+	// Phase 22: execution level is always stated — from RECORDED facts, never
+	// the requested level — so no simulated run can pass as real-device evidence.
+	const execution = session.runtimeFacts?.executionLevel ?? session.executionLevel;
+	if (execution) {
+		const rawProvider = session.runtimeFacts?.provider ?? session.executionProviderActual;
+		const provider = { browserstack: 'remote environment runtime', local: 'local runtime' }[rawProvider] ?? rawProvider;
+		lines.push(`- **Execution:** ${execution === 'REAL_DEVICE' ? 'REAL DEVICE' : execution}${provider ? ` (${provider})` : ''}`);
+		// R2 #14491: the runtime-authoritative browser identity — what the
+		// runtime OBSERVED, never the catalog's claim.
+		const identity = session.report?.runtimeIdentity;
+		if (identity?.browserCode) {
+			const observed = [identity.browserCode, identity.browserVersion].filter(Boolean).join(' ');
+			const enginePart = identity.engine ? `, ${identity.engine} engine` : '';
+			lines.push(`- **Runtime browser (observed):** ${observed}${enginePart}`);
+		}
+	} else if (session.environmentSnapshot) {
+		lines.push('- **Execution:** NOT AVAILABLE FOR REAL EXECUTION');
+	}
 	if (session.tokenUsage && Number.isFinite(session.tokenUsage.totalTokens)) {
 		const usage = session.tokenUsage;
 		const fmt = value => (Number.isFinite(value) ? value.toLocaleString('en-US') : '—');
@@ -129,9 +183,94 @@ export function buildReportMarkdown(session) {
 		lines.push('## Recommendations', '', ...report.recommendations.map(item => `- ${item}`), '');
 	}
 
+	const matrixSection = buildMatrixSectionMarkdown(session);
+	if (matrixSection) lines.push(matrixSection);
+
 	const feedback = buildFeedbackSectionMarkdown(session);
 	if (feedback) lines.push(feedback);
 
+	return lines.join('\n');
+}
+
+/**
+ * Matrix coverage gap section (#14652 NI04 spec item 3). Rendered only for
+ * sessions spawned by a matrix run — the caller injects session.matrixCoverage
+ * (the computeMatrixCoverage output for that run) before report generation,
+ * mirroring the userFeedback injection pattern above. Every figure comes from
+ * the recorded item statuses; nothing is hardcoded.
+ */
+export function buildMatrixSectionMarkdown(session) {
+	const matrix = session.matrixCoverage;
+	if (!matrix || !matrix.execution) return '';
+	const exec = matrix.execution;
+	const lines = [];
+	lines.push('## Matrix coverage', '');
+	lines.push(`Profiles requested ${exec.profilesRequested} · executed ${exec.profilesExecuted} · passed ${exec.passed} · failed ${exec.failed} · not run ${exec.notRun} · unavailable ${exec.unavailable} · not supported ${exec.notSupported} · blocked ${exec.blocked} · error ${exec.error}`, '');
+	// RT5 (#14757): distinct coverage-state breakdown — every state listed
+	// separately; unexecuted environments never appear as Passed.
+	if (Array.isArray(exec.stateCounts) && exec.stateCounts.length) {
+		lines.push('**Coverage states**', '');
+		for (const state of exec.stateCounts) {
+			lines.push(`- ${state.label}: ${state.count}`);
+		}
+		lines.push('');
+	}
+	lines.push('**Devices**', '');
+	for (const category of matrix.deviceCategories ?? []) {
+		const mark = category.covered ? '✓' : '⚠';
+		lines.push(`- ${mark} ${category.label} — ${category.executed}/${category.requested} executed`);
+	}
+	lines.push('', '**Browsers**', '');
+	for (const browser of matrix.browsers ?? []) {
+		const mark = browser.covered ? '✓' : '⚠';
+		const reason = !browser.covered && browser.gapReason ? ` — ${browser.gapReason}` : '';
+		lines.push(`- ${mark} ${browser.browser} — ${browser.executed}/${browser.requested} executed${reason}`);
+	}
+	lines.push('');
+
+	// #14942 (Phase 4): per-configuration rows + totals for the whole QA matrix
+	// run, straight from the recorded items. Same honesty rules as the UI board:
+	// an unexecuted configuration can never appear as a pass, and every
+	// non-terminal item surfaces as a coverage gap with its recorded reason.
+	const items = session.matrixCoverage?.runItems ?? session.matrixItems ?? null;
+	if (Array.isArray(items) && items.length) {
+		const passed = items.filter((item) => item.status === 'PASSED' && (item.verdict || item.sessionId));
+		const failed = items.filter((item) => item.status === 'FAILED');
+		const blocked = items.filter((item) => item.status === 'BLOCKED');
+		const skipped = items.filter((item) => item.status === 'SKIPPED');
+		const cancelled = items.filter((item) => item.status === 'CANCELLED');
+		const terminal = ['PASSED', 'FAILED', 'BLOCKED', 'SKIPPED', 'CANCELLED', 'NOT_RUN', 'UNAVAILABLE', 'NOT_SUPPORTED', 'ERROR'];
+		const gaps = items.filter((item) => !terminal.includes(item.status));
+
+		lines.push('**Configurations**', '');
+		const completedCount = items.filter((item) => terminal.includes(item.status)).length;
+		lines.push(`Planned ${items.length} · completed ${completedCount} · passed ${passed.length} · failed ${failed.length} · blocked ${blocked.length} · skipped ${skipped.length} · cancelled ${cancelled.length} · coverage gaps ${gaps.length}`, '');
+		for (const item of items) {
+			const identity = [item.device, item.os, item.osVersion, item.browser ?? item.browserCode, item.browserVersion]
+				.filter(Boolean).join(' · ');
+			const facts = item.runtimeFacts ?? {};
+			const actual = facts.launchedEngine || facts.engine
+				? ` (engine: ${facts.launchedEngine ?? facts.engine}` +
+					(facts.executionType || item.executionLevel ? `, execution: ${facts.executionType ?? item.executionLevel}` : '') + ')'
+				: '';
+			const reason = item.reason ? item.reason : '';
+			const evidence = [
+				Array.isArray(item.artifactRefs) && item.artifactRefs.length ? `📎 ${item.artifactRefs.length}` : null,
+				Array.isArray(item.defects) && item.defects.length ? `🐞 ${item.defects.length}` : null
+			].filter(Boolean).join(' ');
+			const tail = [evidence, reason].filter(Boolean).join(' · ');
+			lines.push(`- **${String(item.status ?? '')}** ${identity}${actual}${tail ? ` — ${tail}` : ''}`);
+		}
+		if (gaps.length) {
+			lines.push('', '**Coverage gaps**', '');
+			for (const item of gaps) {
+				const identity = [item.device, item.os, item.browser ?? item.browserCode, item.browserVersion]
+					.filter(Boolean).join(' · ');
+				lines.push(`- ⚠ ${identity}: ${String(item.status ?? '').toLowerCase()}${item.reason ? ` — ${item.reason}` : ''}`);
+			}
+		}
+		lines.push('');
+	}
 	return lines.join('\n');
 }
 

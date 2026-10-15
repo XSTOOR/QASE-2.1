@@ -81,7 +81,9 @@ function createMemoryServices() {
 		readiness: { check: () => ({ ready: true, checks: {} }) },
 		// DEV added a feedback service group to the runtime contract.
 		feedback: { create: async () => ({}), get: async () => undefined, list: async () => [], update: async () => ({}), remove: async () => undefined, stats: async () => ({}), forRun: async () => undefined },
-		lifecycle: { close: () => Promise.resolve() }
+		lifecycle: { close: () => Promise.resolve() },
+		// PUSHKAR added an environments service group to the runtime contract.
+		environments: { seed: async () => ({ inserted: 0 }), list: async () => ({ rows: [], total: 0 }), get: async () => null, create: async () => ({}), update: async () => ({}), facets: async () => ({ total: 0 }), availability: () => ({ ready: [] }), catalogVersion: () => '0' }
 	};
 }
 

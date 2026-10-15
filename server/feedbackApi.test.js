@@ -41,6 +41,19 @@ function createFakeAuthService() {
 async function startServer({ auth, role } = {}) {
 	const services = createLocalApplicationServices({ tenantContext: TENANT, auth });
 	await services.runs.load();
+	// The merged contract requires the environments service group even for
+	// feedback-only fixtures; a minimal in-memory stub satisfies the routes
+	// this suite never exercises.
+	services.environments = {
+		seed: async () => undefined,
+		list: async () => ({ rows: [], total: 0 }),
+		get: async () => null,
+		create: async () => ({}),
+		update: async () => ({}),
+		facets: async () => ({ total: 0 }),
+		availability: () => ({ ready: [] }),
+		catalogVersion: () => '0'
+	};
 	const application = createApplication({
 		services,
 		access: createInstanceAccess({ tenantContext: TENANT }),

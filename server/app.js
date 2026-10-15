@@ -2,15 +2,19 @@ import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
+import compression from 'compression';
 import { createInstanceAccess, securityHeaders } from './instanceAccess.js';
 import { isDeviceId, DEFAULT_DEVICE_ID, publicDeviceProfile, DEVICE_PROFILES } from './deviceProfiles.js';
 import { engineRegistryResolved, isEngineId } from './browserEngines.js';
 import { probeTargetReachability } from './targetReachability.js';
 import { assertApplicationServices } from './contracts.js';
 import { mountDemoSite } from './demoSite.js';
+import { mountDefectFixtures, listDefectFixtures, getDefectFixture, fixtureExpectation } from './defectFixtures.js';
+import { verifyFixtureAgainstProfile } from './defectFixtureRunner.js';
 import { createOperationalControls } from './operations.js';
 import { runWithRequestActor } from './requestActor.js';
 import { authThrottleKey, createAuthThrottle } from './authThrottle.js';
+import { InviteError } from './invites.js';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
 import {
 	FOUNDER_CATEGORIES,
@@ -26,12 +30,27 @@ import {
 	FOUNDER_PUBLIC_ONLY_ANSWER,
 	recordFounderPublicOnlyDecision
 } from './founderService.js';
+import { detectFounderProjectContext } from './founderContext.js';
+import { projectStateFromSession, reconcileSelections } from './founderProjectState.js';
+import { createFounderHandoffService, FounderHandoffError } from './founderHandoff.js';
 import { buildSqaReportMarkdown } from './sqaAssessment.js';
+import { computeMatrixCoverage } from './matrixCoverage.js';
+import { createCatalogRoutes } from './catalogApi.js';
+import { createTestCaseRoutes } from './testCaseApi.js';
+import { createBugRoutes } from './bugApi.js';
+import { createMatrixRoutes } from './matrixApi.js';
+import { createMatrixOrchestrator } from './matrixOrchestrator.js';
+import { checkEnvironmentHealth } from './environmentHealth.js';
+import { createMailer } from './mailer.js';
+import { resolveBrowserSupport } from './browserSupportResolution.js';
 import { buildFeedbackSectionMarkdown } from './report.js';
 import { normalizeQaScopeSelection } from '../public/qaScopeCatalog.js';
 import { createConfiguredTelegramNotifier } from './telegramNotifier.js';
 import { resolveDisplayTimeZone, formatFeedbackTimestamp } from './displayTime.js';
 import { createSqaState, createSqaTodoPlan, publicSqaCatalog, recordReviewerSqaObservation } from './sqaService.js';
+import { preflightSqaRuntime } from './sqaRuntime.js';
+import { publicQaTestCatalog } from './qaTestCatalog.js';
+import { validateQaSelectedTests, validateSecurityAuthorization } from './appQaSelection.js';
 import { renderReportPdf } from './reportPdf.js';
 import { buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
 import { PublicInputError, publicInput } from './publicErrors.js';
@@ -70,6 +89,47 @@ function track(name, dimensions) {
 /** Cohort dimension: pilot users' events carry cohort='pilot'. */
 function cohortFor(authRole) {
 	return authRole === 'pilot' ? { cohort: 'pilot' } : {};
+}
+
+/**
+ * Resolve an optional environmentId for run creation. Returns undefined for a
+ * run without an environment (back-compat), the frozen environment record on a
+ * hit, and a 422-worthy public error for unknown or deactivated environments.
+ */
+async function resolveEnvironmentForRun(services, environmentId) {
+	if (environmentId === undefined || environmentId === null || environmentId === '') return undefined;
+	if (typeof environmentId !== 'string') {
+		throw new PublicInputError('environmentId must be a string.', 422);
+	}
+	const environment = await services.environments.get(environmentId);
+	if (!environment) {
+		throw new PublicInputError(`Unknown environment "${environmentId}".`, 422);
+	}
+	if (environment.active !== true) {
+		throw new PublicInputError(`Environment "${environmentId}" is inactive (deprecated) and cannot start new runs.`, 422);
+	}
+	return environment;
+}
+
+/**
+ * Resolve an optional testCaseId for run creation (Phase 4). Returns undefined
+ * when no case is given (back-compat). When a case IS given, the environment
+ * (if any) must be assigned to the case. Returns the case for snapshotting.
+ */
+async function resolveTestCaseForRun(services, testCaseId, environmentId) {
+	if (testCaseId === undefined || testCaseId === null || testCaseId === '') return undefined;
+	if (typeof testCaseId !== 'string') {
+		throw new PublicInputError('testCaseId must be a string.', 422);
+	}
+	const { TestCaseValidationError } = await import('./testCaseService.js');
+	try {
+		return await services.testCases.resolveForRun(testCaseId, environmentId);
+	} catch (error) {
+		if (error instanceof TestCaseValidationError) {
+			throw new PublicInputError(error.message, 422);
+		}
+		throw error;
+	}
 }
 
 /** Pulls the site under test out of whatever the user typed. */
@@ -129,6 +189,7 @@ export function createApplication(options = {}) {
 	const logger = options.logger;
 	if (logger !== undefined && typeof logger?.error !== 'function') throw new TypeError('Application logger is invalid.');
 	const isDraining = typeof options.isDraining === 'function' ? options.isDraining : () => false;
+	const mailer = options.mailer ?? createMailer({ environment, logger });
 	const activeTurns = new Set();
 	const drytisIntegrationApi = options.drytisIntegrationApi;
 	if (drytisIntegrationApi !== undefined && typeof drytisIntegrationApi?.mount !== 'function') {
@@ -147,6 +208,36 @@ export function createApplication(options = {}) {
 
 	const app = express();
 	app.disable('x-powered-by');
+
+	// Project-level Founder Mode persistence (Phase 3): on every successful
+	// founder finalization, mirror the validated report into the per-project
+	// founder state store. Failures are logged and never break the run —
+	// the run-level report remains the source of truth for recovery.
+	const founderProjectState = typeof services.runs.getFounderProjectState === 'function'
+		? {
+			get: services.runs.getFounderProjectState.bind(services.runs),
+			save: services.runs.saveFounderProjectState.bind(services.runs)
+		}
+		: undefined;
+	if (typeof services.events.subscribeGlobal === 'function' && founderProjectState) {
+		services.events.subscribeGlobal(async (sessionId, event) => {
+			if (event?.type !== 'founder.finalized') return;
+			try {
+				const session = await services.runs.getAny?.(sessionId);
+				const state = projectStateFromSession(session);
+				if (!state) return;
+				// Regeneration replaces the set; selections that still name a
+				// live recommendation id survive into the new state.
+				const previous = await founderProjectState.get();
+				const previousSelections = previous?.recommendationSet?.recommendations && Array.isArray(previous.selections)
+					? previous.selections
+					: [];
+				await founderProjectState.save(reconcileSelections({ ...state, selections: previousSelections }));
+			} catch (error) {
+				logger?.error?.(`[Founder project state] Could not persist after finalization: ${error?.message ?? error}`);
+			}
+		});
+	}
 	// Telegram feedback notifications: built once, disabled/invalid → undefined.
 	// Delivery is fire-and-forget AFTER the record is persisted; feedback
 	// storage and reports never depend on it.
@@ -170,6 +261,10 @@ export function createApplication(options = {}) {
 		app.set('trust proxy', 1);
 	}
 	app.use(operations.middleware);
+	app.use(securityHeaders);
+	// Gzip the big catalog payloads (the full-catalog index is ~13MB raw,
+	// ~300KB gzipped) — keeps the launcher's first load off the SSE limit.
+	app.use(compression());
 	app.use(securityHeaders);
 
 	app.get('/healthz', (_request, response) => {
@@ -197,12 +292,37 @@ export function createApplication(options = {}) {
 	// bytes. It must be mounted before any JSON middleware can transform them.
 	drytisIntegrationApi?.mount(app);
 
+	// QA matrix launcher (#14942): the request body carries every selected
+	// configuration id (a full default selection is ~37k ids ≈ 2MB). The route
+	// itself caps the RUN at 2000 configurations with an actionable 422 —
+	// the global 1mb limit would preempt that with a bare 413 ("Request body
+	// is too large") that gives the user nothing to act on. A generous
+	// route-specific limit lets the cap message win; arbitrary bulk beyond it
+	// is still bounded.
+	app.use('/api/qa-matrix-runs', express.json({ limit: '8mb' }));
 	app.use(express.json({ limit: '1mb' }));
 	app.get('/login', (_request, response) => {
+		// The HTML shell must never be served from cache — a stale shell
+		// referencing pre-versioned asset URLs resurrects broken layouts.
+		response.set('Cache-Control', 'no-cache');
 		response.sendFile(path.join(publicDirectory, 'index.html'));
 	});
-	app.use(express.static(publicDirectory));
+	// Versioned assets (?v=…) are immutable per version — cache hard. Everything
+	// else (unversioned paths, index.html) revalidates every load.
+	app.use(express.static(publicDirectory, {
+		setHeaders(response, filePath) {
+			if (filePath.endsWith('.html')) response.set('Cache-Control', 'no-cache');
+			else if (/[?&]v=/.test(response.req?.url ?? '') || filePath.endsWith('.css') || filePath.endsWith('.js')) {
+				response.set('Cache-Control', 'public, max-age=0, must-revalidate');
+			}
+		}
+	}));
+	// #14650 (NI02 Phase 2): known-defect fixture pages — mounted BEFORE
+	// mountDemoSite because its router has a catch-all 404 under /demo that
+	// would otherwise swallow /demo/defects/*. Reproduction depends on the
+	// emulated form factor (viewport/touch), never fabricated.
 	if (demoEnabled) {
+		mountDefectFixtures(app);
 		mountDemoSite(app);
 	}
 
@@ -242,7 +362,9 @@ export function createApplication(options = {}) {
 	});
 
 	app.use('/api', (request, response, next) => {
-		const publicAuthRoute = request.path === '/auth/register' || request.path === '/auth/login' || request.path === '/pilot-status';
+	const publicAuthRoute = request.path === '/auth/register' || request.path === '/auth/login' || request.path === '/pilot-status'
+		|| request.path === '/auth/forgot-password' || request.path === '/auth/reset-password'
+		|| request.path === '/auth/verify-reset-otp' || request.path === '/auth/recover';
 		if (!authService || !authRequired || publicAuthRoute) {
 			return runWithRequestActor({ ...request.auth, requestId: request.qaseRequestId }, next);
 		}
@@ -266,8 +388,9 @@ export function createApplication(options = {}) {
 	});
 
 	function authFailure(response, error) {
-		const status = error instanceof AuthError ? error.status : 500;
-		response.status(status).json({ error: error instanceof AuthError ? error.message : 'Authentication is temporarily unavailable. Please try again.' });
+		const expected = error instanceof AuthError || error instanceof InviteError;
+		const status = expected ? error.status : 500;
+		response.status(status).json({ error: expected ? error.message : 'Authentication is temporarily unavailable. Please try again.' });
 	}
 
 	// Operator endpoints: pilot-role users (invite-admitted beta users) are
@@ -286,7 +409,7 @@ export function createApplication(options = {}) {
 	});
 	const fallbackAuthThrottle = createAuthThrottle();
 	app.use('/api/auth', async (request, response, next) => {
-		if (request.method !== 'POST' || !['/login', '/register', '/password'].includes(request.path)) return next();
+		if (request.method !== 'POST' || !['/login', '/register', '/password', '/forgot-password', '/reset-password', '/verify-reset-otp', '/recovery-codes', '/recover'].includes(request.path)) return next();
 		const consume = authService?.consumeAuthAttempt ?? fallbackAuthThrottle;
 		try {
 			const ipAllowed = await consume(authThrottleKey(`ip:${request.ip}`), 40);
@@ -321,10 +444,9 @@ export function createApplication(options = {}) {
 			response.status(403).json({ error: 'Registration is invite-only on this instance. Enter an invite code.' });
 			return;
 		}
-		// Validate the code up front (so closed mode rejects invalid codes with
-		// a uniform 403 before any account work), but only CONSUME it after
-		// registration succeeds — a failed registration (weak password, dupe
-		// email, throttle) must not burn the operator's invite.
+		// Prevalidate for a uniform admission error. redeem rechecks under its
+		// lock and persists consumption before registering; known validation
+		// failures release the code, while uncertain storage failures fail closed.
 		if (inviteCode !== undefined && String(inviteCode).trim() !== '') {
 			try {
 				await inviteService.validate(inviteCode);
@@ -339,17 +461,13 @@ export function createApplication(options = {}) {
 			}
 		}
 		try {
-			const result = await authService.register({ ...(request.body ?? {}), ...(invited ? { role: 'pilot' } : {}) });
+			const register = () => authService.register({ ...(request.body ?? {}), ...(invited ? { role: 'pilot' } : {}) });
+			let result;
 			if (invited) {
-				// Only now is the admission final — mark the code used with the
-				// registrant's email. On a race (someone else consumed it in the
-				// validation window) we keep the account but log the anomaly.
-				try {
-					await inviteService.consume(inviteCode, String(request.body?.email ?? '').trim().toLowerCase());
-				} catch (error) {
-					options.logger?.error?.('invite consumption failed after registration', { error: error instanceof Error ? error.message : String(error) });
-				}
-			}
+				const email = String(request.body?.email ?? '').trim().toLowerCase();
+				if (typeof inviteService.redeem === 'function') result = await inviteService.redeem(inviteCode, email, register);
+				else { await inviteService.consume(inviteCode, email); result = await register(); }
+			} else result = await register();
 			setAuthCookies(response, result.token, result.csrf, { secure: safeCookies(request) });
 			response.status(201).json(result.user);
 		} catch (error) { authFailure(response, error); }
@@ -383,6 +501,79 @@ export function createApplication(options = {}) {
 			await authService.changePassword(request.auth.userId, request.body ?? {});
 			clearAuthCookies(response, { secure: safeCookies(request) });
 			response.status(204).end();
+		} catch (error) { authFailure(response, error); }
+	});
+
+	// Password reset via email OTP (public, pre-auth, throttled). The request
+	// endpoint is deliberately oracle-free — identical response whether or not
+	// the account exists. The 6-digit OTP travels ONLY inside the email body
+	// (mock outbox in dev/test, SMTP in production); it is never returned by
+	// any API response and never logged. After a verified OTP the client gets a
+	// short-lived, single-use reset authorization to set the new password.
+	app.post('/api/auth/forgot-password', async (request, response) => {
+		if (!authService?.requestPasswordReset) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		const neutral = { message: 'If an account exists for that email, a reset code has been sent.' };
+		try {
+			const issued = await authService.requestPasswordReset(String(request.body?.email ?? ''));
+			if (issued) {
+				const text = `A password reset was requested for your Qase account (${issued.user.email}).\n\nYour verification code is: ${issued.otp}\n\nIt expires in 5 minutes and can be used only once. If you did not request this, you can ignore this email — your password stays unchanged.`;
+				await mailer.send({
+					to: issued.user.email,
+					subject: 'Your Qase password-reset code',
+					text,
+					html: `<p>A password reset was requested for your Qase account (<strong>${issued.user.email}</strong>).</p><p>Your verification code is:</p><p style="font-size:22px;letter-spacing:4px"><strong>${issued.otp}</strong></p><p>It expires in <strong>5 minutes</strong> and can be used only once.</p><p>If you did not request this, you can ignore this email — your password stays unchanged.</p>`
+				});
+			}
+			response.json(neutral);
+		} catch (error) {
+			// Even a mailer failure must not leak account existence.
+			authFailure(response, error);
+		}
+	});
+
+	app.post('/api/auth/verify-reset-otp', async (request, response) => {
+		if (!authService?.verifyResetOtp) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		try {
+			const verified = await authService.verifyResetOtp({ email: request.body?.email, otp: request.body?.otp });
+			// The authorization token is the ONLY secret issued; it is handed
+			// to the verified client and consumed once at reset-password.
+			response.json({ message: 'Code verified. Choose a new password.', authorization: verified.authorization });
+		} catch (error) { authFailure(response, error); }
+	});
+
+	app.post('/api/auth/reset-password', async (request, response) => {
+		if (!authService?.resetPassword) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		try {
+			await authService.resetPassword({ token: request.body?.authorization, password: request.body?.password });
+			response.json({ message: 'Password updated. You can now sign in.' });
+		} catch (error) { authFailure(response, error); }
+	});
+
+	// Recovery codes (#15725/#15727). Generation is AUTHENTICATED and gated on
+	// the current password; the plaintext codes appear exactly once in this one
+	// response and are never logged or persisted in the clear. Status is a
+	// read-only count for the Profile → Security panel (never the codes).
+	app.post('/api/auth/recovery-codes', async (request, response) => {
+		if (!authService?.generateRecoveryCodes) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		try {
+			const generated = await authService.generateRecoveryCodes(request.auth.userId, { currentPassword: request.body?.currentPassword });
+			response.json(generated);
+		} catch (error) { authFailure(response, error); }
+	});
+	app.get('/api/auth/recovery-codes', async (request, response) => {
+		if (!authService?.recoveryCodeStatus) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		response.json(await authService.recoveryCodeStatus(request.auth.userId));
+	});
+	// Public, pre-auth, throttled. Deliberately oracle-free: identical response
+	// for unknown email / account without codes / wrong or used code, so the
+	// endpoint cannot be used to enumerate accounts. A matched unused code is
+	// consumed atomically and exchanged for the same short-lived, single-use
+	// reset authorization the email-OTP flow issues (reset-password above).
+	app.post('/api/auth/recover', async (request, response) => {
+		if (!authService?.recoverWithCode) { response.status(404).json({ error: 'Authentication is not configured.' }); return; }
+		try {
+			const recovered = await authService.recoverWithCode({ email: request.body?.email, code: request.body?.code });
+			response.json({ message: 'Recovery code accepted. Choose a new password.', authorization: recovered.authorization });
 		} catch (error) { authFailure(response, error); }
 	});
 
@@ -427,6 +618,35 @@ export function createApplication(options = {}) {
 	}
 
 	/**
+	 * Resolve the detected Founder project context for the requesting owner
+	 * from trusted run records (QA + Founder modes only). Shared by
+	 * GET /api/founder/context and POST /api/founder/sessions enrichment.
+	 * Returns undefined when nothing usable is found — never throws on empty
+	 * history so a first launch stays frictionless.
+	 */
+	async function founderDetectedContext(request) {
+		const ownerUserId = request.auth?.userId;
+		const listAll = services.runs.listAll ?? services.runs.list.bind(services.runs);
+		const summaries = await listAll({ limit: 100, ownerUserId });
+		const getAny = services.runs.getAny?.bind(services.runs) ?? services.runs.get.bind(services.runs);
+		const runs = [];
+		for (const summary of summaries) {
+			if (summary.mode !== 'qa' && summary.mode !== 'founder') continue;
+			const session = await getAny(summary.id);
+			if (session && (!ownerUserId || session.ownerUserId === ownerUserId)) runs.push(session);
+		}
+		const detected = detectFounderProjectContext({ runs });
+		// Only enrich the founder scope with the facts the schema accepts;
+		// drop transport-only fields (detectedAt, targetName) at this boundary.
+		return {
+			targetUrl: detected.targetUrl,
+			studio: detected.studio,
+			previousFindings: detected.previousFindings,
+			previousFounder: detected.previousFounder
+		};
+	}
+
+	/**
 	 * Attaches the requesting user's feedback for this run (reports embed the
 	 * submitter's own record; nothing from other runs or users leaks in).
 	 */
@@ -449,11 +669,54 @@ export function createApplication(options = {}) {
 		return session;
 	}
 
+	/**
+	 * #14652 (NI04): inject the matrix coverage snapshot for sessions spawned
+	 * by a matrix run, so the downloaded report renders the per-run gap
+	 * section from ACTUAL item data (userFeedback-style injection — the
+	 * session record itself is never mutated in the store).
+	 */
+	async function attachMatrixCoverage(session) {
+		if (!session?.matrixRunId || !services.matrix?.get || !services.matrix?.list) return session;
+		try {
+			const run = await services.matrix.get(session.matrixRunId);
+			if (!run) return session;
+			session.matrixCoverage = computeMatrixCoverage([run]);
+			// #14942 (Phase 4): the report layer renders per-configuration rows
+			// from the recorded items (see buildMatrixSectionMarkdown). Items are
+			// enriched with the same per-environment defect linkage the API uses,
+			// so report rows carry their own evidence counts.
+			const items = Array.isArray(run.items) ? run.items : [];
+			const byEnvironment = new Map();
+			for (const item of items) {
+				if (!item.environmentId) continue;
+				if (!byEnvironment.has(item.environmentId)) {
+					try {
+						byEnvironment.set(item.environmentId, await services.bugs.list({ environmentId: item.environmentId }));
+					} catch {
+						byEnvironment.set(item.environmentId, []);
+					}
+				}
+				const defects = byEnvironment.get(item.environmentId) ?? [];
+				item.defects = defects.map(({ bugNumber, title, severity, status }) => ({ bugNumber, title, severity, status }));
+			}
+			session.matrixItems = items;
+		} catch (error) {
+			console.warn('attachMatrixCoverage failed:', error?.message ?? error);
+			session.matrixCoverage = undefined;
+		}
+		return session;
+	}
+
 	/** Runs a turn detached: HTTP returns immediately and progress arrives by SSE. */
 	function startTurn(session, turnOptions) {
 		let turn;
 		try {
-			turn = Promise.resolve(services.agent.runTurn(session, turnOptions));
+			turn = Promise.resolve(services.agent.runTurn(
+				session,
+				turnOptions,
+				services.runs,
+				services.deviceRuntime
+			));
 		} catch (error) {
 			turn = Promise.reject(error);
 		}
@@ -480,6 +743,11 @@ export function createApplication(options = {}) {
 		response.json(publicSqaCatalog());
 	});
 
+	app.get('/api/qa/catalog', (_request, response) => {
+		response.set('Cache-Control', 'private, max-age=300');
+		response.json(publicQaTestCatalog());
+	});
+
 	app.get('/api/founder/catalog', (_request, response) => {
 		response.set('Cache-Control', 'private, max-age=300');
 		response.json({
@@ -489,6 +757,146 @@ export function createApplication(options = {}) {
 			confidenceLevels: FOUNDER_LEVELS,
 			caveat: FOUNDER_CAVEAT
 		});
+	});
+
+	// Detected project context for the Founder launcher: target URL candidates,
+	// Studio project metadata availability, prior findings and prior Founder
+	// context. Computed from trusted server-side run records for the
+	// requesting owner; never accepts request-body input.
+	app.get('/api/founder/context', async (request, response) => {
+		try {
+			const ownerUserId = request.auth?.userId;
+			const listAll = services.runs.listAll ?? services.runs.list.bind(services.runs);
+			const summaries = await listAll({ limit: 100, ownerUserId });
+			const getAny = services.runs.getAny?.bind(services.runs) ?? services.runs.get.bind(services.runs);
+			const runs = [];
+			for (const summary of summaries) {
+				if (summary.mode !== 'qa' && summary.mode !== 'founder') continue;
+				const session = await getAny(summary.id);
+				if (session && (!ownerUserId || session.ownerUserId === ownerUserId)) runs.push(session);
+			}
+			response.set('Cache-Control', 'no-store');
+			response.json(detectFounderProjectContext({ runs }));
+		} catch (error) {
+			safeErrorResponse(request, response, error, 500);
+		}
+	});
+
+	// Saved Founder Mode project state (Phase 3): last successful
+	// recommendation set, selections and handoff status. The state is shared
+	// at the trusted tenant-project scope; writes additionally require a
+	// non-pilot actor (pilots may read, never mutate).
+	app.get('/api/founder/state', async (request, response) => {
+		if (!founderProjectState) {
+			response.status(501).json({ error: 'Founder project state persistence is not available in this mode.' });
+			return;
+		}
+		try {
+			const state = reconcileSelections(await founderProjectState.get());
+			response.set('Cache-Control', 'no-store');
+			response.json({ state: state ?? null });
+		} catch (error) {
+			safeErrorResponse(request, response, error, 500);
+		}
+	});
+
+	// Persist user selections (and only selections — the recommendation set
+	// itself is only written at finalization time from a validated report).
+	app.patch('/api/founder/state/selections', async (request, response) => {
+		if (!founderProjectState) {
+			response.status(501).json({ error: 'Founder project state persistence is not available in this mode.' });
+			return;
+		}
+		if (request.auth?.role === 'pilot') {
+			response.status(403).json({ error: 'Pilot accounts cannot modify Founder Mode selections.' });
+			return;
+		}
+		try {
+			const raw = request.body?.selectedRecommendationIds;
+			if (!Array.isArray(raw) || raw.length > 50 || !raw.every(id => typeof id === 'string' && id.length <= 128)) {
+				response.status(400).json({ error: 'selectedRecommendationIds must be an array of up to 50 recommendation ids.' });
+				return;
+			}
+			const current = await founderProjectState.get();
+			if (!current?.recommendationSet?.recommendations) {
+				response.status(409).json({ error: 'No saved recommendation set exists yet. Finalize a Founder review first.' });
+				return;
+			}
+			const known = new Set(current.recommendationSet.recommendations.map(item => item.id));
+			const unknown = raw.filter(id => !known.has(id));
+			if (unknown.length > 0) {
+				response.status(400).json({ error: `Unknown recommendation ids: ${unknown.join(', ')}.` });
+				return;
+			}
+			const next = reconcileSelections({ ...current, selections: [...new Set(raw)] });
+			await founderProjectState.save(next);
+			response.json({ state: next });
+		} catch (error) {
+			safeErrorResponse(request, response, error, 500);
+		}
+	});
+
+	// The signed delivery client is reused only when a founder-specific target
+	// is configured; otherwise the handoff stays export-only rather than
+	// silently delivering founder payloads to the QA tickets endpoint.
+	const founderDeliveryTarget = drytisDelivery?.founderHandoffTarget;
+	const founderHandoff = founderProjectState
+		? createFounderHandoffService({
+			deliveryClient: founderDeliveryTarget ? drytisDelivery.deliveryClient : undefined,
+			target: founderDeliveryTarget,
+			get: async () => reconcileSelections(await founderProjectState.get()),
+			save: state => founderProjectState.save(state),
+			tenantProjectId: services.tenantContext?.projectId
+		})
+		: undefined;
+	app.locals.qaseFounderHandoff = founderHandoff;
+
+	// Explicit Founder → Studio handoff (Phase 4): selection alone never
+	// triggers a delivery; the client must POST the selected ids here.
+	app.post('/api/founder/handoff', async (request, response) => {
+		if (!founderProjectState) {
+			response.status(501).json({ error: 'Founder project state persistence is not available in this mode.' });
+			return;
+		}
+		if (request.auth?.role === 'pilot') {
+			response.status(403).json({ error: 'Pilot accounts cannot send Founder recommendations to Studio.' });
+			return;
+		}
+		let payloadOnly = false;
+		try {
+			const raw = request.body?.selectedRecommendationIds;
+			if (!Array.isArray(raw) || raw.length === 0 || raw.length > 50
+				|| !raw.every(id => typeof id === 'string' && id.length > 0 && id.length <= 128)) {
+				response.status(400).json({ error: 'selectedRecommendationIds must be a non-empty array of up to 50 recommendation ids.' });
+				return;
+			}
+			// Fallback path: export requests NEVER deliver — the payload is
+			// returned ready for copy/download without claiming a build started.
+			payloadOnly = request.body?.export === true;
+			const handoffService = request.app.locals.qaseFounderHandoff;
+			if (!handoffService) {
+				response.status(501).json({ error: 'Founder handoff is not configured on this instance.' });
+				return;
+			}
+			if (payloadOnly) {
+				const payload = await handoffService.build(raw);
+				response.json({ ok: false, unavailable: true, payload });
+				return;
+			}
+			const result = await handoffService.send(raw);
+			response.json({
+				ok: result.ok,
+				...(result.unavailable ? { unavailable: true, payload: result.payload } : {}),
+				handoff: result.handoff,
+				state: await founderProjectState.get()
+			});
+		} catch (error) {
+			if (error instanceof FounderHandoffError) {
+				response.status(error.status).json({ error: error.message, code: error.code });
+				return;
+			}
+			safeErrorResponse(request, response, error, 500);
+		}
 	});
 
 	app.put('/api/config', async (request, response) => {
@@ -510,6 +918,689 @@ export function createApplication(options = {}) {
 			default: DEFAULT_DEVICE_ID,
 			devices: DEVICE_PROFILES.map(profile => publicDeviceProfile(profile.id))
 		});
+	});
+
+	app.get('/api/engines', async (_request, response) => {
+		response.json({
+			default: 'chromium',
+			engines: await engineRegistryResolved()
+		});
+	});
+
+	// Apple compatibility matrix: list/filter environments. All facet dimensions
+	// are accepted as query params (platform, device, os, osVersion, browser,
+	// browserVersion, deviceType, executionProvider, active, isRealDevice, search,
+	// limit, offset).
+	// DB-backed catalog routes (Phase 2 of the device matrix): /api/catalog/*.
+	// #14648: mount the read-only /api/catalog/meta route BEFORE the
+	// /api/catalog/:entity wildcard these routes register, otherwise 'meta'
+	// resolves as an unknown catalog entity and the metadata endpoint 400s.
+	if (services.deviceCatalog) {
+		app.get('/api/catalog/meta', async (_request, response) => {
+			try {
+				const { catalogProviderMeta } = await import('./catalogProviderRegistry.js');
+				response.set('Cache-Control', 'no-store');
+				response.json(await catalogProviderMeta());
+			} catch (error) {
+				safeErrorResponse(request, response, error);
+			}
+		});
+		const { route: catalogRoutes } = createCatalogRoutes({
+			catalogBackend: services.deviceCatalog,
+			onError: safeErrorResponse
+		});
+		catalogRoutes(app);
+	}
+
+	// Launcher configuration catalog (QA matrix Phase 1, #14935): the complete
+	// honestly-annotated device–OS–browser–version set for the Start QA
+	// dialog. Derived from the environment catalog + browser support
+	// resolution + runtime board — no new data source, no invented versions.
+	if (services.environments) {
+		app.get('/api/qa-configurations', async (request, response) => {
+			try {
+				const query = request.query ?? {};
+				const limit = query.limit === undefined ? 200 : Number(query.limit);
+				if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > 80000)) {
+					response.status(400).json({ error: 'limit must be an integer from 1 through 80000.' });
+					return;
+				}
+				const offset = query.offset === undefined ? undefined : Number(query.offset);
+				if (offset !== undefined && (!Number.isSafeInteger(offset) || offset < 0)) {
+					response.status(400).json({ error: 'offset must be a non-negative integer.' });
+					return;
+				}
+				const { buildQaConfigurations, buildQaConfigurationsByDevice } = await import('./qaConfigurations.js');
+				const { catalogProviderMeta } = await import('./catalogProviderRegistry.js');
+				const [providersMeta] = await Promise.all([
+					catalogProviderMeta().catch(() => ({ providers: [] })),
+					Promise.resolve()
+				]);
+				const providers = (providersMeta?.providers ?? []).map((provider) => ({
+					slug: provider.slug,
+					name: provider.name ?? provider.slug,
+					kind: provider.kind ?? 'catalog',
+					connected: Boolean(provider.connected),
+					stale: Boolean(provider.stale)
+				}));
+				const board = services.deviceRuntime && typeof services.deviceRuntime.deviceBoard === 'function'
+					? services.deviceRuntime.deviceBoard()
+					: [];
+				// #15439 Issue 2: device-grouped windows — one window returns ALL
+				// rows of `limit` DEVICE groups in canonical platform order, so
+				// the tree shows iPhone/iPad/Android/desktops from the first
+				// screen instead of 200 rows of one device.
+				if (query.groupBy === 'device') {
+					const result = await buildQaConfigurationsByDevice(
+						{
+							environmentsService: services.environments,
+							providers,
+							board,
+							limit,
+							offset: offset ?? 0
+						},
+					{
+						platform: query.platform,
+						manufacturer: query.manufacturer,
+						osVersion: query.osVersion,
+						orientation: query.orientation,
+						browserCode: query.browserCode,
+						search: query.search,
+						// #16045: category filter — filterConfigurations already
+						// supports the field; the route now forwards it.
+						deviceType: query.deviceType
+					}
+				);
+				response.set('Cache-Control', 'no-store');
+				response.json(result);
+				return;
+				}
+				const result = await buildQaConfigurations(
+					{
+						environmentsService: services.environments,
+						providers,
+						board,
+						limit,
+						offset,
+						index: query.index === '1' || query.index === 'true'
+					},
+					{
+						platform: query.platform,
+						manufacturer: query.manufacturer,
+						osVersion: query.osVersion,
+						orientation: query.orientation,
+						browserCode: query.browserCode,
+						search: query.search,
+						deviceType: query.deviceType
+					}
+				);
+				response.set('Cache-Control', 'no-store');
+				response.json(result);
+			} catch (error) {
+				safeErrorResponse(request, response, error);
+			}
+		});
+	}
+
+	// Device runtime control plane (Phase 21): availability board, sessions,
+	// queue, honest fallbacks. Never downgrades a level silently.
+	if (services.deviceRuntime) {
+		const runtime = services.deviceRuntime;
+		// Pre-register every environment on the availability board so the UI
+		// can show honest execution type / availability before first use.
+		if (typeof runtime.seedBoard === 'function' && services.environments?.list) {
+			// RT2 (#14704): pass the real browser-support resolver so the board
+			// reflects which browsers the local runtime can genuinely execute.
+			const reseedBoard = () => Promise.resolve(services.environments.list({ limit: 80000 }))
+				.then((rows) => runtime.seedBoard(Array.isArray(rows) ? rows : rows?.environments ?? [], { resolveBrowserSupport }))
+				.catch(() => { /* board fills lazily via sessions */ });
+			void reseedBoard();
+			// RT2 (#14753): the board is LIVE, not boot-only. Re-run the
+			// resolver on an interval so a capability change (binary removed /
+			// installed, registry TTL re-probe) flips statuses within one
+			// refresh interval. seedBoard preserves live sessions (BUSY/
+			// RUNNING wins — never rewritten) so this is safe mid-flight.
+			setInterval(() => { void reseedBoard(); }, 60_000).unref?.();
+		}
+		app.get('/api/device-runtime/devices', (request, response) => {
+			response.json({
+				devices: runtime.deviceBoard(),
+				providers: runtime.providers
+			});
+		});
+		app.post('/api/device-runtime/sessions', async (request, response) => {
+			try {
+				const body = request.body ?? {};
+				let environment = body.environment ?? null;
+				if (!environment && typeof body.environmentId === 'string') {
+					environment = await services.environments.get(body.environmentId).catch(() => null);
+				}
+				const result = await runtime.requestSession({
+					environment,
+					requestedLevel: body.requestedLevel,
+					linkedRunId: body.linkedRunId,
+					linkedTestCaseId: body.linkedTestCaseId,
+					allowQueue: body.allowQueue !== false
+				});
+				const statusByResult = { started: 201, queued: 202, busy: 409, not_available: 503, failed: 500 };
+				response.status(statusByResult[result.status] ?? 200).json(result);
+			} catch (error) {
+				safeErrorResponse(request, response, error);
+			}
+		});
+		app.get('/api/device-runtime/sessions', (request, response) => {
+			response.json({ sessions: services.deviceRuntime.listSessions({ status: request.query?.status }) });
+		});
+		app.get('/api/device-runtime/sessions/:id', (request, response) => {
+			const session = runtime.getSession(request.params.id);
+			if (!session) {
+				response.status(404).json({ error: 'Unknown device session.' });
+				return;
+			}
+			response.json(session);
+		});
+		app.post('/api/device-runtime/sessions/:id/cancel', async (request, response) => {
+			const result = await runtime.cancelSession(request.params.id);
+			if (!result.cancelled) {
+				response.status(409).json(result);
+				return;
+			}
+			response.json(result);
+		});
+	}
+
+	// Test cases with multi-environment assignment (Phase 4): /api/test-cases.
+	if (services.testCases) {
+		const testCaseRoutes = createTestCaseRoutes({
+			testCases: services.testCases,
+			runs: services.runs,
+			autogen: services.testCaseAutogen ?? null,
+			onError: safeErrorResponse
+		});
+		testCaseRoutes(app);
+	}
+
+	// Bug reports with BUG-XXXX ids + auto environment association (Phase 6).
+	if (services.bugs) {
+		createBugRoutes({
+			bugs: services.bugs,
+			onError: safeErrorResponse
+		})(app);
+	}
+
+	// Matrix runs — one shared workflow across device/browser profiles
+	// (#14633 NI02 Phase 1). The orchestrator binds to the session machinery
+	// that lives in this closure (startTurn, resolveEnvironmentForRun).
+	if (services.matrix) {
+		// Engine follows the browser: firefox → Firefox engine, safari → WebKit,
+		// everything else Chromium (the same mapping resolveExecution applies at
+		// launch — this is just the session-level default tag).
+		const engineForMatrixItem = (item) => {
+			if (item.browserCode === 'firefox') return 'firefox';
+			if (item.browserCode === 'safari') return 'webkit';
+			return 'chromium';
+		};
+		const orchestrator = createMatrixOrchestrator(
+			{ runs: services.runs, agent: services.agent, matrix: services.matrix, environments: services.environments },
+			{
+				// RT2 (#14704): pre-execution health gate — real engine/network/
+				// emulation probes; a FAIL blocks the item with the exact reason.
+				checkEnvironmentHealth,
+				// Start a real session for the item — the same path
+				// POST /api/sessions + message uses, so emulation, runtime gates,
+				// findings, and reports behave identically for matrix items.
+				startSession: async (matrixRun, item) => {
+					const environment = await resolveEnvironmentForRun(services, item.environmentId);
+					const session = await services.runs.create(
+						`${matrixRun.title} — ${item.device} · ${item.browser} ${item.browserVersion}`,
+						{
+							device: DEFAULT_DEVICE_ID,
+							engine: engineForMatrixItem(item),
+							ownerUserId: matrixRun.ownerUserId ?? undefined,
+							environmentId: environment.envId,
+							environmentSnapshot: environment,
+							testCaseId: item.testCaseId ?? matrixRun.items?.[0]?.testCaseId ?? undefined,
+							selectedTests: matrixRun.selectedTests ?? undefined,
+							securityAuthorization: matrixRun.securityAuthorization ?? undefined,
+							scopeSelection: matrixRun.scopeSelection ?? undefined,
+							matrixRunId: matrixRun.id
+						}
+					);
+					return session;
+				},
+				sendTask: async (session, matrixRun) => {
+					// #15043 (B1): QA-start runs carry their own kickoff text
+					// (target URL + coverage message); test-case runs send the
+					// raw target as before.
+					const text = matrixRun.kickoffText ?? matrixRun.targetUrl;
+					await services.runs.addMessage(session, { role: 'user', text });
+					session.targetUrl = matrixRun.targetUrl;
+					await services.agent.ensureRuntime(session);
+					startTurn(session, { task: text });
+				},
+				// Pipeline Phase 3 (#15493): authorized auto-answer — resume a
+				// paused child with the SAME session and turn machinery the
+				// interactive /answer route uses, so policy-covered questions
+				// (target permission, scan continuation) don't block an
+				// unattended run.
+				resumeSession: async (session, answer) => {
+					if (!session?.pendingQuestion) return false;
+					const text = String(answer ?? '').trim();
+					if (!text) return false;
+					await services.runs.addMessage(session, { role: 'user', text, kind: 'answer' });
+					startTurn(session, { resumeAnswer: text });
+					return true;
+				},
+				// Pipeline Phase 3 (#15493): browser hygiene — close the item's
+				// child-session browser after every execution (suspend
+				// semantics: the conversation survives; the process does not).
+				closeSessionBrowser: async (session) => {
+					await services.agent.closeBrowser(session.id, services.runs);
+				},
+				// #14650 (NI02 Phase 2): per-profile evidence — list the
+				// artifacts the session ACTUALLY produced (screenshots/video
+				// from the existing Phase-22 store). Empty list = none
+				// captured; never fabricated.
+				collectArtifacts: async (session) => {
+					const list = services.artifacts?.list?.(session.id) ?? [];
+					return list.map((meta) => ({
+						artifactId: meta.artifactId,
+						type: meta.type,
+						contentType: meta.contentType,
+						bytes: meta.bytes,
+						capturedAt: meta.capturedAt,
+						label: meta.label ?? null
+					}));
+				},
+				// #14650 (NI02 Phase 2): known-defect fixtures verified per
+				// profile — the ENGINE probes the fixture page under the
+				// item's emulated context; verdicts record reproduced
+				// TRUE/FALSE/NOT_VERIFIED with evidence, never a guess.
+				// Note: listDefectFixtures() entries are summary-only (no
+				// verify/affects functions) — resolve the FULL fixture by id
+				// at verification time, never execute the stripped form.
+				resolveEnvironment: (item) => resolveEnvironmentForRun(services, item.environmentId),
+				verifyFixtures: listDefectFixtures(),
+				runFixtureVerification: ({ fixture, environment }) => {
+					const fullFixture = getDefectFixture(fixture?.id);
+					if (!fullFixture) {
+						return Promise.resolve({
+							reproduced: 'NOT_VERIFIED',
+							evidence: null,
+							error: `Unknown fixture "${fixture?.id}".`,
+							expected: 'NOT_VERIFIED'
+						});
+					}
+					const baseUrl = process.env.QASE_PUBLIC_URL?.trim()
+						|| `http://127.0.0.1:${Number(process.env.PORT ?? 5173)}`;
+					// The full fixture (with its affects predicate) is resolved
+					// HERE — the caller only ever sees the serializable summary,
+					// so the expectation must be computed on the full object.
+					return verifyFixtureAgainstProfile({ fixture: fullFixture, environment, baseUrl })
+						.then((verdict) => ({
+							...verdict,
+							expected: fixtureExpectation(fullFixture, environment)
+						}));
+				},
+			emit: (matrixRunId, payload) => {
+				// #14649: matrix events ride the existing SSE run bus keyed by
+				// matrix-run id. services.events.publish() re-targets a SESSION
+				// aggregate (it stamps updatedAt on its first argument), so we
+				// go through the raw run-store bus instead. Fan-out failures
+				// must never stall execution — swallow + log.
+				try {
+					services.runs?.bus?.emit?.(matrixRunId, {
+						type: payload.type,
+						sessionId: matrixRunId,
+						ts: Date.now(),
+						...payload
+					});
+				} catch (error) {
+					console.error('[matrix] event emit failed', matrixRunId, error);
+				}
+			}
+		}
+		);
+		services.matrixOrchestrator = orchestrator;
+		// #14633 (NI02 Phase 1): clean up any matrix run a previous container
+		// died mid-flight — dangling RUNNING items become ERROR "interrupted".
+		orchestrator.resumeRecovery();
+		// #15043 (B1): QA-start path — Start QA submits its selected
+		// device–browser configurations here; one matrix run, one item per
+		// configuration, honest statuses for everything not executable.
+		app.post('/api/qa-matrix-runs', async (request, response) => {
+			try {
+				const body = request.body ?? {};
+				const targetUrl = String(body.targetUrl ?? '').trim();
+				if (!/^https?:\/\//i.test(targetUrl)) {
+					response.status(400).json({ error: 'targetUrl must be an http(s) URL.' });
+					return;
+				}
+				const envIds = Array.isArray(body.configurationEnvIds)
+					? body.configurationEnvIds.map(String).filter(Boolean)
+					: [];
+				// Pipeline Phase 2: parent-run creation carries the plan
+				// metadata but no configurations; batches carry the configs.
+				const isParentRequest = body.kind === 'parent';
+				if (isParentRequest && envIds.length > 0) {
+					response.status(422).json({ error: 'A parent run carries no configurations — send them in batches.' });
+					return;
+				}
+				if (!isParentRequest && envIds.length === 0) {
+					response.status(400).json({ error: 'At least one configuration is required.' });
+					return;
+				}
+				// Per-request cap = per-BATCH limit (Phase 2). A request larger
+				// than one batch is a client bug — the client must plan batches;
+				// never self-inflict a months-long single queue.
+				const MAX_MATRIX_CONFIGURATIONS = 2000;
+				if (envIds.length > MAX_MATRIX_CONFIGURATIONS) {
+					response.status(422).json({
+						error: `Too many configurations in one request (${envIds.length}). The per-batch limit is 2,000 — split the selection into batches.`
+					});
+					return;
+				}
+				// Validate the QA context exactly as POST /api/sessions does —
+				// the same tests/scope/security rules apply to every item.
+				let selectedTests;
+				let securityAuthorization;
+				try {
+					selectedTests = validateQaSelectedTests(body.selectedTests);
+					securityAuthorization = validateSecurityAuthorization(body.securityAuthorization, selectedTests);
+				} catch (error) {
+					response.status(422).json({ error: error instanceof Error ? error.message : String(error) });
+					return;
+				}
+				let scopeSelection = null;
+				if (body.scopeSelection !== undefined && body.scopeSelection !== null) {
+					const { normalizeQaScopeSelection } = await import('../public/qaScopeCatalog.js');
+					try {
+						scopeSelection = normalizeQaScopeSelection(body.scopeSelection);
+					} catch (error) {
+						response.status(422).json({ error: error instanceof Error ? error.message : String(error) });
+						return;
+					}
+				}
+				// Unknown envIds are NOT rejected here — the matrix service
+				// records them as honest BLOCKED items ("no longer in the
+				// catalog") so every selected configuration gets a result.
+				if (isParentRequest) {
+					const parent = await services.matrix.createParentRun({
+						title: String(body.title ?? `QA run — ${targetUrl}`).slice(0, 120),
+						targetUrl,
+						kickoffText: body.kickoffText,
+						selectedTests,
+						securityAuthorization,
+						scopeSelection,
+						totalPlanned: Number(body.totalPlanned ?? 0) || 0
+					}, { ownerUserId: request.auth?.userId ?? null });
+					response.status(201).json(parent);
+					return;
+				}
+				if (body.parentId || body.batchKey) {
+					// Phase 2 batch: idempotent on (parentId, batchKey).
+					const { run: batch, created } = await services.matrix.createBatch({
+						parentId: body.parentId,
+						batchKey: body.batchKey,
+						batchIndex: body.batchIndex,
+						title: body.title,
+						targetUrl,
+						testCaseId: body.testCaseId,
+						configurationEnvIds: envIds,
+						kickoffText: body.kickoffText,
+						selectedTests,
+						securityAuthorization,
+						scopeSelection
+					}, { ownerUserId: request.auth?.userId ?? null });
+					if (created && orchestrator) {
+						const started = orchestrator.start(batch.id);
+						if (!started.ok) {
+							response.status(409).json({ error: started.error });
+							return;
+						}
+					}
+					response.status(created ? 201 : 200).json(await services.matrix.get(batch.id));
+					return;
+				}
+				const record = await services.matrix.create({
+					title: String(body.title ?? `QA run — ${targetUrl}`).slice(0, 120),
+					targetUrl,
+					testCaseId: body.testCaseId,
+					configurationEnvIds: envIds,
+					kickoffText: body.kickoffText,
+					selectedTests,
+					securityAuthorization,
+					scopeSelection
+				}, { ownerUserId: request.auth?.userId ?? null });
+				const started = orchestrator.start(record.id);
+				if (!started.ok) {
+					response.status(409).json({ error: started.error });
+					return;
+				}
+				response.status(201).json(await services.matrix.get(record.id));
+			} catch (error) {
+				safeErrorResponse(request, response, error);
+			}
+		});
+		createMatrixRoutes({
+			matrix: services.matrix,
+			orchestrator,
+			bugs: services.bugs,
+			onError: safeErrorResponse,
+			// Pipeline Phase 5 (#15500): matrix SSE transport — the results
+			// board subscribes for push updates on /api/matrix-runs/:id/events.
+			events: services.events
+		})(app);
+	}
+
+	// Coverage dashboard aggregation (Phase 7): cases × environments × runs.
+	if (services.coverage) {
+		app.get('/api/coverage', async (request, response) => {
+			try {
+				const payload = await services.coverage.snapshot();
+				// Read-your-write matters for the dashboard (a run just finished
+				// must appear immediately), so never cache the snapshot.
+				response.set('Cache-Control', 'no-store');
+				response.json(payload);
+			} catch (error) {
+				safeErrorResponse(request, response, error);
+			}
+		});
+	}
+
+	app.get('/api/environments', async (request, response) => {
+		try {
+			const query = request.query;
+			const limit = query.limit === undefined ? undefined : Number(query.limit);
+			if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > 80000)) {
+				response.status(400).json({ error: 'limit must be an integer from 1 through 80000.' });
+				return;
+			}
+			const offset = query.offset === undefined ? undefined : Number(query.offset);
+			if (offset !== undefined && (!Number.isSafeInteger(offset) || offset < 0)) {
+				response.status(400).json({ error: 'offset must be a non-negative integer.' });
+				return;
+			}
+			const rows = await services.environments.list(query);
+			const total = (await services.environments.facets(query)).total;
+			// Read-your-write matters for the admin UI (edit → refresh must show
+			// the new value), so the environment list is never cached.
+			response.set('Cache-Control', 'no-store');
+			response.json({ total, count: rows.length, environments: rows });
+		} catch (error) {
+			safeErrorResponse(request, response, error);
+		}
+	});
+
+	// Facet counts per filter dimension for the admin UI dropdowns.
+	app.get('/api/environments/facets', async (request, response) => {
+		try {
+			response.set('Cache-Control', 'no-store');
+			response.json(await services.environments.facets(request.query));
+		} catch (error) {
+			safeErrorResponse(request, response, error);
+		}
+	});
+
+	// Browser availability per platform, including why unavailable browsers
+	// (Brave, DuckDuckGo, Firefox-on-iOS) are excluded from the matrix.
+	// #14632: short cache — verdicts recompute per call server-side and must
+	// not survive a provider-credential change on the client for long.
+	app.get('/api/environments/availability', (_request, response) => {
+		response.set('Cache-Control', 'private, max-age=30');
+		response.json(services.environments.availability());
+	});
+
+	// #14648: read-only catalog metadata — version, registered
+	// providers with connected/rowCount, generatedAt (incl. live browser
+	// support report). No secrets, ever. Registered earlier (before the
+	// /api/catalog/:entity wildcard) when the device catalog is attached.
+	app.get('/api/catalog/meta', async (_request, response) => {
+		try {
+			const { catalogProviderMeta } = await import('./catalogProviderRegistry.js');
+			response.set('Cache-Control', 'no-store');
+			response.json(await catalogProviderMeta());
+		} catch (error) {
+			safeErrorResponse(request, response, error);
+		}
+	});
+
+	// #14275 (Phase 2): admin-gated manual catalog refresh — re-fetches
+	// provider overlays (provider rows only; builtin rows are untouchable).
+	app.post('/api/catalog/refresh', async (request, response) => {
+		try {
+			const identity = request.auth;
+			const isAdmin = !identity?.role || ['owner', 'admin'].includes(identity.role);
+			if (!isAdmin) {
+				response.status(403).json({ error: 'Catalog refresh requires an admin session.' });
+				return;
+			}
+			const result = await services.environments.refreshCatalog();
+			response.json(result);
+		} catch (error) {
+			safeErrorResponse(request, response, error);
+		}
+	});
+
+	// Bulk environment operations (Phase 3 device matrix UI). Mounted BEFORE
+	// /api/environments/:envId so the literal "bulk" segment isn't treated as an id.
+	app.post('/api/environments/bulk', async (request, response) => {
+		try {
+			const body = request.body ?? {};
+			const result = await services.environments.bulkCreate(body.combinations ?? []);
+			response.status(201).json(result);
+		} catch (error) {
+			if (error?.code === 'QASE_ENVIRONMENT_INVALID') {
+				response.status(422).json({ error: error.message });
+				return;
+			}
+			safeErrorResponse(request, response, error);
+		}
+	});
+
+	app.post('/api/environments/bulk-toggle', async (request, response) => {
+		try {
+			const body = request.body ?? {};
+			if (!Array.isArray(body.envIds)) {
+				response.status(400).json({ error: 'envIds must be an array.' });
+				return;
+			}
+			if (body.envIds.length > 1000) {
+				response.status(400).json({ error: 'envIds is limited to 1000 entries per request.' });
+				return;
+			}
+			const active = body.active !== false;
+			const result = await services.environments.bulkToggleActive(body.envIds, active);
+			response.json(result);
+		} catch (error) {
+			safeErrorResponse(request, response, error);
+		}
+	});
+
+	app.get('/api/environments/:envId', async (request, response) => {
+		try {
+			const environment_ = await services.environments.get(request.params.envId);
+			if (!environment_) {
+				response.status(404).json({ error: 'Unknown environment.' });
+				return;
+			}
+			response.set('Cache-Control', 'private, max-age=60');
+			response.json(environment_);
+		} catch (error) {
+			safeErrorResponse(request, response, error);
+		}
+	});
+
+	app.post('/api/environments', async (request, response) => {
+		try {
+			const created = await services.environments.create(request.body ?? {});
+			response.status(201).json(created);
+		} catch (error) {
+			if (error?.code === 'QASE_ENVIRONMENT_INVALID') {
+				response.status(422).json({ error: error.message });
+				return;
+			}
+			if (error?.code === 'QASE_ENVIRONMENT_CONFLICT') {
+				response.status(409).json({ error: error.message, envId: error.envId });
+				return;
+			}
+			safeErrorResponse(request, response, error);
+		}
+	});
+
+	app.patch('/api/environments/:envId', async (request, response) => {
+		try {
+			const patch = request.body ?? {};
+			if (typeof patch.active !== 'boolean' && patch.active !== undefined) {
+				response.status(400).json({ error: 'active must be a boolean.' });
+				return;
+			}
+			if (patch.executionProvider !== undefined && !['local', 'browserstack'].includes(patch.executionProvider)) {
+				response.status(400).json({ error: 'executionProvider must be "environment" or "local".' });
+				return;
+			}
+			if (patch.executionLevelRequested !== undefined && patch.executionLevelRequested !== null
+				&& !['REAL_DEVICE', 'VIRTUAL_DEVICE', 'SIMULATED'].includes(patch.executionLevelRequested)) {
+				response.status(400).json({ error: 'executionLevelRequested must be REAL_DEVICE, VIRTUAL_DEVICE or SIMULATED.' });
+				return;
+			}
+			if (patch.orientation !== undefined && patch.orientation !== null && !['portrait', 'landscape'].includes(patch.orientation)) {
+				response.status(400).json({ error: 'orientation must be "portrait" or "landscape".' });
+				return;
+			}
+			if (patch.description !== undefined && patch.description !== null && typeof patch.description !== 'string') {
+				response.status(400).json({ error: 'description must be a string.' });
+				return;
+			}
+			const updated = await services.environments.update(request.params.envId, patch);
+			if (!updated) {
+				response.status(404).json({ error: 'Unknown environment.' });
+				return;
+			}
+			response.json(updated);
+		} catch (error) {
+			// Phase 20 scenario validation errors are user input errors, not 500s.
+			if (error?.code === 'QASE_ENVIRONMENT_INVALID') {
+				response.status(422).json({ error: error.message });
+				return;
+			}
+			safeErrorResponse(request, response, error);
+		}
+	});
+
+	// Delete a saved environment (Phase 10 drawer). Test cases / runs keep their
+	// envId references; history is never rewritten.
+	app.delete('/api/environments/:envId', async (request, response) => {
+		try {
+			const deleted = await services.environments.remove(request.params.envId);
+			if (!deleted) {
+				response.status(404).json({ error: 'Unknown environment.' });
+				return;
+			}
+			response.json({ deleted: true, envId: request.params.envId });
+		} catch (error) {
+			safeErrorResponse(request, response, error);
+		}
 	});
 
 	app.get('/api/engines', async (_request, response) => {
@@ -898,14 +1989,41 @@ export function createApplication(options = {}) {
 	});
 
 	app.post('/api/sessions', async (request, response) => {
-		const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
-		const deviceLandscape = request.body?.deviceLandscape === true;
-		const engine = isEngineId(request.body?.engine) ? request.body.engine : 'chromium';
-		const cohort = cohortFor(request.auth?.role).cohort;
-		const scopeSelection = normalizeQaScopeSelection(request.body?.scopeSelection);
-		const session = await services.runs.create(engine === 'chromium' ? undefined : `QA — ${engine}`, { device, deviceLandscape, engine, ownerUserId: request.auth?.userId, cohort, scopeSelection });
-		track('run_created', { mode: session.mode, ...cohortFor(request.auth?.role) });
-		response.status(201).json(session);
+		try {
+			const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
+			const deviceLandscape = request.body?.deviceLandscape === true;
+			const engine = isEngineId(request.body?.engine) ? request.body.engine : 'chromium';
+			let selectedTests;
+			let securityAuthorization;
+			try {
+				selectedTests = validateQaSelectedTests(request.body?.selectedTests);
+				securityAuthorization = validateSecurityAuthorization(request.body?.securityAuthorization, selectedTests);
+			} catch (error) {
+				response.status(400).json({ error: error instanceof Error ? error.message : 'Invalid test selection.' });
+				return;
+			}
+			const environment = await resolveEnvironmentForRun(services, request.body?.environmentId);
+			const testCase = await resolveTestCaseForRun(services, request.body?.testCaseId, environment?.envId);
+			const cohort = cohortFor(request.auth?.role).cohort;
+			const scopeSelection = normalizeQaScopeSelection(request.body?.scopeSelection);
+			const session = await services.runs.create(
+				engine === 'chromium' ? undefined : `QA — ${engine}`,
+				{
+					device, deviceLandscape, engine, ownerUserId: request.auth?.userId,
+					cohort, selectedTests, securityAuthorization,
+					...(scopeSelection ? { scopeSelection } : {}),
+					environmentId: environment?.envId,
+					environmentSnapshot: environment,
+					testCaseId: testCase?.caseNumber,
+					testCaseSnapshot: testCase,
+					...(scopeSelection ? { scopeSelection } : {})
+				}
+			);
+			track('run_created', { mode: session.mode, ...cohortFor(request.auth?.role) });
+			response.status(201).json(session);
+		} catch (error) {
+			safeErrorResponse(request, response, error);
+		}
 	});
 
 	app.post('/api/sqa/sessions', async (request, response) => {
@@ -915,12 +2033,20 @@ export function createApplication(options = {}) {
 			const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
 			const deviceLandscape = request.body?.deviceLandscape === true;
 			const engine = isEngineId(request.body?.engine) ? request.body.engine : 'chromium';
-			session = await services.runs.create(`SQA — ${sqa.scope.target.name}`, { device, deviceLandscape, engine, ownerUserId: request.auth?.userId, cohort: cohortFor(request.auth?.role).cohort });
+			const environment = await resolveEnvironmentForRun(services, request.body?.environmentId);
+			const executionEngine = await preflightSqaRuntime({ environment, engine });
+			session = await services.runs.create(`SQA — ${sqa.scope.target.name}`, {
+				device, deviceLandscape, engine: executionEngine, ownerUserId: request.auth?.userId,
+				cohort: cohortFor(request.auth?.role).cohort,
+				environmentId: environment?.envId, environmentSnapshot: environment
+			});
 			session.mode = 'sqa';
 			session.sqa = sqa;
 			session.todos = createSqaTodoPlan(sqa);
 			session.device = device;
 			session.deviceLandscape = deviceLandscape;
+			session.environmentId = environment?.envId;
+			session.environmentSnapshot = environment;
 			// Persist the host-owned assessment plan before the metadata-only SQA
 			// creation event so PostgreSQL and local mode expose identical progress.
 			await services.runs.commit(session, 'todos', { todos: session.todos });
@@ -941,20 +2067,31 @@ export function createApplication(options = {}) {
 		try {
 			// Tenant and actor identity always come from trusted per-instance
 			// context. Only the explicit Founder review scope crosses this boundary.
+			// Detected project context is resolved server-side (never from the body)
+			// so the launcher cannot inject untrusted Studio or findings data.
+			const detectedContext = await founderDetectedContext(request);
 			const founder = publicInput(() => createFounderState({
 				authorizationConfirmed: request.body?.authorizationConfirmed,
 				target: request.body?.target,
-				productContext: request.body?.productContext
+				productContext: request.body?.productContext,
+				projectContext: detectedContext
 			}));
 			const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
 			const deviceLandscape = request.body?.deviceLandscape === true;
 			const engine = isEngineId(request.body?.engine) ? request.body.engine : 'chromium';
-			session = await services.runs.create(`Founder — ${founder.scope.target.name}`, { device, deviceLandscape, engine, ownerUserId: request.auth?.userId, cohort: cohortFor(request.auth?.role).cohort });
+			const environment = await resolveEnvironmentForRun(services, request.body?.environmentId);
+			session = await services.runs.create(`Founder — ${founder.scope.target.name}`, {
+				device, deviceLandscape, engine, ownerUserId: request.auth?.userId,
+				cohort: cohortFor(request.auth?.role).cohort,
+				environmentId: environment?.envId, environmentSnapshot: environment
+			});
 			session.mode = 'founder';
 			session.founder = founder;
 			session.todos = createFounderReviewTodos();
 			session.device = device;
 			session.deviceLandscape = deviceLandscape;
+			session.environmentId = environment?.envId;
+			session.environmentSnapshot = environment;
 			// `founder.created` intentionally skips relational child rewrites in the
 			// PostgreSQL repository. Persist the host-owned plan explicitly first so
 			// progress is visible before the model's first update_todo call.
@@ -1073,6 +2210,7 @@ export function createApplication(options = {}) {
 		if (deleted) {
 			const cleanup = await Promise.allSettled([
 				Promise.resolve().then(() => services.secrets.clear(session.id)),
+				Promise.resolve().then(() => services.artifacts?.removeAll(session.id)),
 				Promise.resolve().then(() => services.agent.purgeArtifacts?.(session.id))
 			]);
 			const failed = cleanup
@@ -1151,7 +2289,7 @@ export function createApplication(options = {}) {
 			// report reader) that any TLS/connect failure for this host is
 			// the environment's, not the site's.
 			try {
-				const probe = await probeTargetReachability(url);
+				const probe = await (options.probeTargetReachability ?? probeTargetReachability)(url, { environment });
 				if (!probe.ok && probe.unreachable) {
 					await services.runs.addMessage(session, {
 						role: 'system',
@@ -1183,7 +2321,7 @@ export function createApplication(options = {}) {
 		}
 
 		try {
-			services.agent.ensureRuntime(session);
+			await services.agent.ensureRuntime(session);
 		} catch (error) {
 			const message = sanitizeErrorDetail(error);
 			await services.runs.addMessage(session, { role: 'system', text: message, kind: 'error' });
@@ -1272,6 +2410,27 @@ export function createApplication(options = {}) {
 		response.json({ ok: true });
 	});
 
+	// Phase 22: evidence artifacts with environment + execution-level metadata.
+	app.get('/api/sessions/:id/artifacts', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		response.json({ artifacts: services.artifacts?.list(session.id) ?? [] });
+	});
+
+	app.get('/api/sessions/:id/artifacts/:artifactId', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		const found = services.artifacts?.get(session.id, request.params.artifactId);
+		if (!found) {
+			response.status(404).json({ error: 'Unknown artifact.' });
+			return;
+		}
+		response.set('Content-Type', found.meta.contentType);
+		response.set('X-Qase-Execution-Level', found.meta.executionLevel ?? 'UNKNOWN');
+		response.set('X-Qase-Execution-Provider', found.meta.executionProvider ?? 'unknown');
+		response.send(found.bytes);
+	});
+
 	app.get('/api/sessions/:id/report.md', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
@@ -1293,7 +2452,7 @@ export function createApplication(options = {}) {
 		} else if (session.mode === 'founder') {
 			markdown = buildFounderReportMarkdown(session);
 		} else {
-			markdown = services.reports.buildMarkdown(await attachUserFeedback(session, request.auth?.userId));
+			markdown = services.reports.buildMarkdown(await attachMatrixCoverage(await attachUserFeedback(session, request.auth?.userId)));
 		}
 		response.type('text/markdown').send(markdown);
 	});

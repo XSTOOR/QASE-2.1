@@ -30,12 +30,14 @@ test('resolveEngine returns the matching playwright launcher type', async () => 
 	assert.equal((await resolveEngine('webkit')).type.name(), 'webkit');
 });
 
-test('webkit resolution either works with GTK+xvfb or reports unavailable with a reason', async () => {
+test('webkit resolution supports native launch or Linux GTK with a useful unavailable reason', async () => {
 	const engine = await resolveEngine('webkit');
 	if (engine.available) {
-		assert.ok(engine.launch.executablePath.includes('minibrowser-gtk'), 'uses the GTK bundle');
-		assert.match(engine.launch.env.DISPLAY, /^:\d+$/);
-		assert.ok(engine.launch.env.LD_LIBRARY_PATH.includes('minibrowser-gtk'));
+		if (engine.launch.executablePath) {
+			assert.equal(process.platform, 'linux');
+			assert.ok(engine.launch.executablePath.includes('minibrowser-gtk'));
+			assert.match(engine.launch.env.DISPLAY, /^:\d+$/);
+		} else assert.deepEqual(engine.launch, {});
 	} else {
 		assert.ok(engine.reason && engine.reason.length > 10, 'unavailable engines carry a human reason');
 	}
@@ -72,16 +74,29 @@ test('store.createSession accepts a valid engine and rejects junk', async () => 
 	assert.throws(() => createSession('bad-engine', { engine: 'netscape' }), /unknown browser engine/);
 });
 
-test('firefox resolves unavailable when the browser bundle is missing', async () => {
-	// Point the registry at a directory with no firefox-* bundle.
-	const saved = process.env.PLAYWRIGHT_BROWSERS_PATH;
-	process.env.PLAYWRIGHT_BROWSERS_PATH = '/tmp/definitely-not-playwright';
-	try {
-		const engine = await resolveEngine('firefox');
+test('firefox resolves unavailable when its actual executable is missing', async () => {
+		const engine = await resolveEngine('firefox', { exists: () => false });
 		assert.equal(engine.available, false);
 		assert.match(engine.reason, /Firefox browser bundle is not installed/);
-	} finally {
-		if (saved === undefined) delete process.env.PLAYWRIGHT_BROWSERS_PATH;
-		else process.env.PLAYWRIGHT_BROWSERS_PATH = saved;
-	}
+});
+
+for (const platform of ['win32', 'darwin']) {
+	test(`native WebKit on ${platform} never requires GTK, HOME, or Xvfb`, async () => {
+		let displayCalls = 0;
+		const engine = await resolveEngine('webkit', { platform, exists: () => true, ensureDisplay: async () => { displayCalls++; return null; } });
+		assert.equal(engine.available, true);
+		assert.deepEqual(engine.launch, {});
+		assert.equal(displayCalls, 0);
+	});
+}
+test('Linux GTK remains supported without hardcoding a Playwright revision', async () => {
+	const engine = await resolveEngine('webkit', { platform: 'linux', exists: () => true, ensureDisplay: async () => ({ ready: true, display: ':88' }) });
+	assert.equal(engine.available, true);
+	assert.match(engine.launch.executablePath, /minibrowser-gtk/);
+	assert.equal(engine.launch.env.DISPLAY, ':88');
+});
+test('missing native WebKit gives an actionable installation command', async () => {
+	const engine = await resolveEngine('webkit', { platform: 'win32', exists: () => false });
+	assert.equal(engine.available, false);
+	assert.match(engine.reason, /npx playwright install webkit/);
 });

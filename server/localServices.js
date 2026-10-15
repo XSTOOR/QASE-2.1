@@ -3,13 +3,19 @@ import { getPublicConfig, saveConfig, testConnection, withUserConfiguration } fr
 import { buildReportMarkdown } from './report.js';
 import { clearSecrets, secretNames, storeSecrets } from './secrets.js';
 import {
-	addActivity, addMessage, aggregateFindings, bus, createSession, deleteSession, emit, getSession,
-	dropLive, flushSessions, listSessions, liveEntries, liveFor, loadSessions, markExecutionStarted,
-	markReportPhase, peekLive, setFindingStatus, setStatus, updateActivity, watchRunBus
+	addActivity, addMessage, aggregateFindings, allSessions, bus, createSession, deleteSession, emit,
+	getSession, dropLive, flushSessions, listSessions, liveEntries, liveFor, loadSessions,
+	markExecutionStarted, markReportPhase, persistSoon, peekLive, setFindingStatus, setStatus,
+	updateActivity, watchRunBus,
+	loadFounderProjectState, writeFounderProjectState
 } from './store.js';
+import { createArtifactStore } from './artifactStore.js';
+import { createEnvironmentService, createLocalEnvironmentBackend } from './environmentService.js';
+import { createLocalDeviceCatalogBackend } from './localDeviceCatalog.js';
 import { purgeRunWorkspace } from './workspaceLifecycle.js';
 import { createLocalAuthService } from './auth.js';
 import { currentRequestActor } from './requestActor.js';
+import { collectEvidenceBundle } from './evidenceBundle.js';
 import {
 	closeFeedbackStore, createFeedback, deleteFeedback, feedbackStats,
 	findFeedbackForRun, getFeedback, listFeedback, updateFeedback
@@ -30,6 +36,22 @@ export function createRuntimeApplicationServices(runStore, options = {}) {
 		return withUserConfiguration(settings, next => options.auth.saveSettings(userId, next), work);
 	}
 	const purgeWorkspace = options.purgeRunWorkspace ?? purgeRunWorkspace;
+	// Phase 21: device runtime manager consulted by every run turn; may be absent.
+	const deviceRuntime = options.deviceRuntime ?? null;
+	// Phase 22: persisted evidence artifacts with execution-level metadata.
+	const artifacts = options.artifactStore ?? createArtifactStore();
+	// Device-matrix environment service (NIHARIKA). The runtime contract
+	// (contracts.js) requires `environments`; compose a local backend-backed
+	// instance so every local composition is contract-complete. Real startup
+	// (serviceFactory) may override with its own configured instance.
+	let environments = options.environments;
+	if (!environments) {
+		const catalogBackend = options.deviceCatalogBackend ?? createLocalDeviceCatalogBackend();
+		environments = createEnvironmentService(
+			createLocalEnvironmentBackend({ catalogBackend }),
+			{ tenantContext: options.tenantContext ?? null }
+		);
+	}
 	// subscribeGlobal exists only in local mode; PostgreSQL deployments
 	// fan events out through their realtime transport instead.
 	const subscribeGlobal = typeof runStore.subscribeGlobal === 'function'
@@ -49,6 +71,8 @@ export function createRuntimeApplicationServices(runStore, options = {}) {
 			stats: feedbackStats,
 			forRun: (runId, submittedBy) => findFeedbackForRun(runId, submittedBy)
 		},
+		artifacts,
+		environments,
 		events: {
 			publish: runStore.publish,
 			subscribe: runStore.subscribe,
@@ -90,8 +114,8 @@ export function createRuntimeApplicationServices(runStore, options = {}) {
 				}
 				if (disposalError) throw disposalError;
 			},
-			ensureRuntime: session => inWorkspace(() => ensureRuntime(session, runStore), session),
-			runTurn: (session, turnOptions) => inWorkspace(() => runTurn(session, turnOptions, runStore), session),
+			ensureRuntime: async session => inWorkspace(() => ensureRuntime(session, runStore), session),
+			runTurn: (session, turnOptions, fallbackRuntime) => inWorkspace(() => runTurn(session, turnOptions, runStore, deviceRuntime ?? fallbackRuntime), session),
 			getLiveState(sessionId) {
 				const record = runStore.peekLive?.(sessionId);
 				return {
@@ -172,8 +196,13 @@ export function createLocalApplicationServices(options = {}) {
 	let initialized = false;
 	let closed = false;
 	const ownerUserId = () => currentRequestActor()?.actorUserId ?? options.tenantContext?.actorUserId;
+	// Phase 22: evidence artifacts shared by this run store and services.artifacts.
+	const artifactStore = options.artifactStore ?? createArtifactStore();
 
 	const runStore = {
+		// #14649: raw run-bus emitter for non-session event sources (the matrix
+		// orchestrator publishes progress keyed by matrix-run id through this).
+		bus,
 		async load() {
 			loadSessions();
 			initialized = true;
@@ -187,6 +216,13 @@ export function createLocalApplicationServices(options = {}) {
 		},
 		async get(id) {
 			return getSession(id, ownerUserId());
+		},
+		// #16225: system-scope read for background actors (matrix orchestrator).
+		// Returns the full session regardless of the ambient request actor, so
+		// boot-resumed runs can poll sessions they created under a run owner's
+		// identity. Never exposed over HTTP.
+		async peek(id) {
+			return getSession(id, undefined);
 		},
 		async list(options) {
 			return listSessions({ ...options, ownerUserId: ownerUserId() });
@@ -266,8 +302,13 @@ export function createLocalApplicationServices(options = {}) {
 		async getAny(id) {
 			return getSession(id, undefined);
 		},
-		async listAll(options) {
-			return listSessions({ ...(options ?? {}), ownerUserId: undefined });
+		/**
+		 * Unscoped full-record list for coverage aggregation (Phase 7). list()
+		 * caps at 100 and filters by owner; the coverage matrix needs every
+		 * case×environment pair's latest run.
+		 */
+		async listAll() {
+			return listSessions({ unbounded: true });
 		},
 		async delete(id) {
 			return deleteSession(id, ownerUserId());
@@ -283,6 +324,73 @@ export function createLocalApplicationServices(options = {}) {
 		},
 		async aggregateFindings(options) {
 			return aggregateFindings({ ...options, ownerUserId: options?.ownerUserId ?? ownerUserId() });
+		},
+		/** Persist execution-level facts (level/provider/runtime facts) on a run. */
+		async persistExecutionFacts(runId, { executionLevel, executionProviderActual, runtimeFacts } = {}) {
+			const session = getSession(runId, undefined);
+			if (!session) return null;
+			if (executionLevel !== undefined) session.executionLevel = executionLevel;
+			if (executionProviderActual !== undefined) session.executionProviderActual = executionProviderActual;
+			if (runtimeFacts !== undefined) session.runtimeFacts = runtimeFacts;
+			persistSoon();
+			emit(session, 'execution_facts', {
+				executionLevel: session.executionLevel,
+				executionProviderActual: session.executionProviderActual,
+				runtimeFacts: session.runtimeFacts
+			});
+			return session;
+		},
+		/** Phase 22: persist a final-frame evidence artifact for the run. */
+		async saveEvidenceArtifact(session, bridgeHandle) {
+			// The agent passes { bridge } so runtime facts are available on it.
+			const bridge = bridgeHandle?.getLastFrame ? bridgeHandle : bridgeHandle?.bridge;
+			// RT5 (#14757): wire the session's video sink BEFORE any artifact
+			// flow — videos finalized at context close flow into the same
+			// per-session artifact store (stamped with execution metadata).
+			if (bridge?.setVideoSink) {
+				bridge.setVideoSink(async (bytes, meta) => {
+					if (!bytes?.length) return null;
+					return artifactStore.save(session, {
+						type: 'video',
+						fileName: meta.fileName,
+						bytes,
+						label: 'Session video recording (context-level, Chromium only)',
+						bridgeExecution: bridge.execution ?? null
+					});
+				});
+			}
+			const frame = bridge?.getLastFrame?.();
+			if (!frame?.base64) return null;
+			return artifactStore.save(session, {
+				type: 'screenshot',
+				fileName: `final-frame-${session.id.slice(0, 8)}.jpg`,
+				bytes: frame.base64,
+				label: 'Final browser frame at end of run',
+				bridgeExecution: bridge?.execution ?? null
+			});
+		},
+		/**
+		 * R4 #14493: persist the run's runtime-sourced evidence bundle —
+		 * observed identity, console, network, security blocks — as a JSON
+		 * artifact. Never fabricates: unobservable entries are recorded absent.
+		 */
+		async saveEvidenceBundle(session, bridgeHandle, { diagnostics = null } = {}) {
+			const bridge = bridgeHandle?.getLastFrame ? bridgeHandle : bridgeHandle?.bridge;
+			const { bundle } = collectEvidenceBundle({ session, bridge, diagnostics });
+			return artifactStore.save(session, {
+				type: 'evidence-bundle',
+				fileName: `evidence-bundle-${session.id.slice(0, 8)}.json`,
+				bytes: Buffer.from(JSON.stringify(bundle, null, 2), 'utf8'),
+				label: 'Runtime evidence bundle (identity · console · network · security blocks)',
+				bridgeExecution: bridge?.execution ?? null
+			});
+		},
+		/** Project-level Founder Mode state (Phase 3), local file mirror. */
+		async getFounderProjectState() {
+			return loadFounderProjectState();
+		},
+		async saveFounderProjectState(state) {
+			return writeFounderProjectState(state);
 		},
 		async addMessage(session, message) {
 			return addMessage(session, message);
@@ -327,5 +435,9 @@ export function createLocalApplicationServices(options = {}) {
 		tenantContext: options.tenantContext,
 		file: options.authFile
 	});
-	return createRuntimeApplicationServices(runStore, { ...options, auth: options.auth ?? auth });
+	return createRuntimeApplicationServices(runStore, {
+		...options,
+		auth: options.auth ?? auth,
+		deviceRuntime: options.deviceRuntime
+	});
 }

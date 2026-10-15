@@ -92,12 +92,14 @@ test('listSessions summaries carry plan progress alongside usage totals', async 
 		{ text: 'Check the footer', status: 'pending' },
 		{ text: 'Verify navigation', status: 'in_progress' }
 	];
+	planned.report = { verdict: 'blocked', summary: 'Credentials were unavailable.' };
 	store.emit(planned, 'todos', { todos: planned.todos });
 	const empty = store.createSession('Idle run');
 
 	const summary = Object.fromEntries(store.listSessions().map(entry => [entry.title, entry]));
 	assert.equal(summary['Partially planned run'].todoTotal, 4);
 	assert.equal(summary['Partially planned run'].todoCompleted, 2);
+	assert.equal(summary['Partially planned run'].reportVerdict, 'blocked');
 	assert.equal(summary['Idle run'].todoTotal, 0);
 	assert.equal(summary['Idle run'].todoCompleted, 0);
 	store.flushSessions();
@@ -321,6 +323,7 @@ test('pilot cohort is persisted on the session and survives a reload', async t =
 });
 
 test('session history is persisted with owner-only permissions', async t => {
+	if (process.platform === 'win32') { t.skip('POSIX permission bits are not enforced by Windows; Linux CI verifies mode 0600.'); return; }
 	const originalDirectory = process.cwd();	const isolatedDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'qase-session-mode-'));
 	t.after(async () => {
 		process.chdir(originalDirectory);

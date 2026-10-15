@@ -77,7 +77,7 @@ test('search is debounced and refresh is coalesced', () => {
 });
 
 test('the bugs view stylesheet is linked and the dashboard hides while open', () => {
-	assert.match(html, /<link rel="stylesheet" href="bugsView.css">/);
+	assert.match(html, /<link rel="stylesheet" href="bugsView\.css(\?v=[\w-]+)?">/);
 	assert.match(bugsStyles, /\.app\.is-hidden \{\s*\n\s*display: none;/);
 	assert.match(app, /classList\.toggle\('is-hidden', open\)/);
 });

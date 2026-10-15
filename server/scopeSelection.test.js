@@ -11,9 +11,11 @@ async function freshStore() {
 	return import(`./store.js?scope=${Date.now()}-${Math.random()}`);
 }
 
+const originalDirectory = process.cwd();
+
 test('store persists a whitelisted scopeSelection on run creation', async t => {
 	const store = await freshStore();
-	t.after(() => process.chdir('/workspace'));
+	t.after(() => { store.flushSessions(); process.chdir(originalDirectory); });
 	const session = store.createSession('Scoped run', { scopeSelection: ['desktop-layout', 'ui-consistency', 'junk'] });
 	assert.deepEqual(session.scopeSelection, ['desktop-layout', 'ui-consistency']);
 	const legacy = store.createSession('Legacy run', {});
@@ -22,7 +24,7 @@ test('store persists a whitelisted scopeSelection on run creation', async t => {
 
 test('store rejects a non-array scopeSelection', async t => {
 	const store = await freshStore();
-	t.after(() => process.chdir('/workspace'));
+	t.after(() => { store.flushSessions(); process.chdir(originalDirectory); });
 	assert.throws(() => store.createSession('Bad', { scopeSelection: 'forms' }), /invalid scope selection/);
 	assert.throws(() => store.createSession('Bad', { scopeSelection: 42 }), /invalid scope selection/);
 });

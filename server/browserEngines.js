@@ -9,10 +9,9 @@
  * available.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { chromium, firefox, webkit } from 'playwright';
-
-const WEBKIT_GTK = `${process.env.PLAYWRIGHT_BROWSERS_PATH || `${process.env.HOME}/.cache/ms-playwright`}/webkit-2336/minibrowser-gtk`;
 
 export const ENGINE_IDS = ['chromium', 'firefox', 'webkit'];
 
@@ -29,6 +28,7 @@ let xvfb = null; // { proc, display, ready }
  * child process handle so it dies with the server (no nohup/&/disown).
  */
 export async function ensureXvfb(display = ':77') {
+	if (process.platform !== 'linux') return null;
 	if (process.env.QASE_DISABLE_XVFB === 'true') return null;
 	if (xvfb?.ready) return xvfb;
 	const lockPath = `/tmp/.X${display.replace(':', '')}-lock`;
@@ -56,24 +56,11 @@ export async function ensureXvfb(display = ':77') {
 	});
 }
 
-function webkitGtkAvailable() {
-	return existsSync(`${WEBKIT_GTK}/MiniBrowser`) && existsSync(`${WEBKIT_GTK}/lib`);
-}
-
-function browserBundleDir(prefix) {
-	const root = `${process.env.PLAYWRIGHT_BROWSERS_PATH || `${process.env.HOME}/.cache/ms-playwright`}`;
-	try {
-		return readdirSync(root).some(entry => entry.startsWith(prefix));
-	} catch {
-		return false;
-	}
-}
-
 /**
  * Resolve an engine id to its playwright launcher. Returns
  * { id, type, launch: {...}, available, reason }.
  */
-export async function resolveEngine(engineId = 'chromium') {
+export async function resolveEngine(engineId = 'chromium', { platform = process.platform, exists = existsSync, ensureDisplay = ensureXvfb } = {}) {
 	const id = ENGINE_IDS.includes(engineId) ? engineId : 'chromium';
 	if (id === 'chromium') {
 		return { id, type: chromium, launch: {}, available: true, reason: null };
@@ -81,7 +68,7 @@ export async function resolveEngine(engineId = 'chromium') {
 	if (id === 'firefox') {
 		// Headless Firefox launches natively; the only unavailable case is a
 		// missing browser bundle (e.g. `playwright install firefox` not run).
-		if (!browserBundleDir('firefox-')) {
+		if (!exists(firefox.executablePath())) {
 			return { id, type: firefox, launch: {}, available: false, reason: 'The Firefox browser bundle is not installed on this server.' };
 		}
 		return {
@@ -104,12 +91,19 @@ export async function resolveEngine(engineId = 'chromium') {
 			available: true, reason: null
 		};
 	}
-	// WebKit: the WPE headless build crashes in this container; use the GTK
-	// bundle under Xvfb instead.
-	if (!webkitGtkAvailable()) {
-		return { id, type: webkit, launch: {}, available: false, reason: 'The WebKit (GTK) browser bundle is not installed on this server.' };
+	// Ask Playwright for its platform/version-specific executable. A Windows
+	// installation has Playwright.exe, not a Linux minibrowser-gtk directory.
+	const executable = webkit.executablePath();
+	const gtk = join(dirname(executable), 'minibrowser-gtk');
+	const useGtk = platform === 'linux' && exists(join(gtk, 'MiniBrowser')) && exists(join(gtk, 'lib'));
+	if (!useGtk) {
+		return {
+			id, type: webkit, launch: {}, available: exists(executable),
+			reason: exists(executable) ? null : 'The WebKit browser bundle is not installed on this server. Run: npx playwright install webkit'
+		};
 	}
-	const display = await ensureXvfb();
+	// Retain the Linux/container WPE crash workaround only where GTK exists.
+	const display = await ensureDisplay();
 	if (!display?.ready) {
 		return { id, type: webkit, launch: {}, available: false, reason: 'No display available for the WebKit (Safari engine) browser.' };
 	}
@@ -117,13 +111,13 @@ export async function resolveEngine(engineId = 'chromium') {
 		id,
 		type: webkit,
 		launch: {
-			executablePath: `${WEBKIT_GTK}/MiniBrowser`,
+			executablePath: join(gtk, 'MiniBrowser'),
 			env: {
 				PATH: process.env.PATH,
 				HOME: process.env.HOME,
 				LANG: process.env.LANG,
 				DISPLAY: display.display,
-				LD_LIBRARY_PATH: `${WEBKIT_GTK}/lib:${WEBKIT_GTK}/sys/lib${process.env.LD_LIBRARY_PATH ? `:${process.env.LD_LIBRARY_PATH}` : ''}`
+				LD_LIBRARY_PATH: `${gtk}/lib:${gtk}/sys/lib${process.env.LD_LIBRARY_PATH ? `:${process.env.LD_LIBRARY_PATH}` : ''}`
 			}
 		},
 		available: true,

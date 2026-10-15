@@ -23,7 +23,7 @@ try {
     const service=new CleanSlateNodeBrowserAutomation({headless:true});
     const session={id:'efficiency-fixture',targetUrl,device,messages:[],status:'running'};
     const store={publish(){},async commit(){}};
-    const policy=createBrowserPolicy({getTargetUrl:()=>targetUrl,environment:{NODE_ENV:'test'}});
+    const policy=createBrowserPolicy({getTargetUrl:()=>targetUrl,environment:{NODE_ENV:'test',QASE_BROWSER_ALLOWED_PRIVATE_HOSTS:'127.0.0.1'}});
     const bridge=attachBrowserBridge(session,service,store,{policy});
     try {
       await service.open(targetUrl);bridge.stopFrames();

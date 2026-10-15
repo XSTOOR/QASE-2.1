@@ -1,4 +1,5 @@
 import express from 'express';
+import { mountSecurityFixtures } from './demoSecurityFixtures.js';
 
 /**
  * A deliberately broken practice site, mounted at /demo.
@@ -162,6 +163,10 @@ export function mountDemoSite(app) {
 		response.status(404).send(shell('Not found', `${nav}<main><h1>404 — Not found</h1></main>`));
 	});
 
+	// Security-check fixtures (safe + intentionally vulnerable variants) mount
+	// before the 404 catch-all so their routes resolve.
+	mountSecurityFixtures(demo);
+
 	// --- Deliberately vulnerable endpoints for the security suite demos ---
 	// These exist ONLY as positive cases for Qase's own security_check tool
 	// and its tests. The nav links to them so a run can discover them, but
@@ -173,6 +178,7 @@ export function mountDemoSite(app) {
 			<p class="muted">Deliberately vulnerable pages used to demonstrate security testing. Nothing here is real.</p>
 			<p><a href="/demo/vuln/search">Guestbook search (XSS sandbox)</a></p>
 			<p><a href="/demo/vuln/notes">Notes lookup (SQL sandbox)</a></p>
+			<p><a href="/demo/security">Security fixtures (safe vs vulnerable)</a></p>
 		</main>`));
 	});
 

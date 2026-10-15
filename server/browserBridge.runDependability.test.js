@@ -68,14 +68,14 @@ function fakeLocator(descriptor = {}) {
 	return locator;
 }
 
-function makeBridge(policy, overrides = {}) {
+async function makeBridge(policy, overrides = {}) {
 	const session = {
 		id: '00000000-0000-4000-8000-000000000101',
 		targetUrl: 'https://app.example.test/start',
 		messages: []
 	};
 	const { service, calls } = fakeService(overrides);
-	const bridge = attachBrowserBridge(session, service, fakeRunStore(), { policy });
+	const bridge = await attachBrowserBridge(session, service, fakeRunStore(), { policy });
 	return { session, service, calls, bridge };
 }
 
@@ -89,7 +89,7 @@ function grantedPolicy() {
 }
 
 test('browser_wait clamps ms and timeoutMs to the documented 30000ms bound', async () => {
-	const { service, calls, bridge } = makeBridge(grantedPolicy());
+	const { service, calls, bridge } = await makeBridge(grantedPolicy());
 
 	await service.wait('ide', { ms: 5_000_000 });
 	await service.wait('ide', { timeoutMs: 600_000, url: 'https://app.example.test/done' });
@@ -105,7 +105,7 @@ test('browser_wait clamps ms and timeoutMs to the documented 30000ms bound', asy
 
 test('abort during an in-flight browser action rejects immediately with AbortError', async () => {
 	// The hung action must be in place BEFORE attachBrowserBridge wraps it.
-	const { service, calls, bridge } = makeBridge(grantedPolicy(), {
+	const { service, calls, bridge } = await makeBridge(grantedPolicy(), {
 		click: () => new Promise(() => {}) // never settles — simulates a hung Playwright action
 	});
 	const controller = new AbortController();
@@ -134,7 +134,7 @@ test('a confirmed destructive action executes once; identical re-execution is re
 		environment: { NODE_ENV: 'test' },
 		now: () => clock
 	});
-	const bridge = attachBrowserBridge(session, service, fakeRunStore(), { policy });
+	const bridge = await attachBrowserBridge(session, service, fakeRunStore(), { policy });
 
 	// First attempt: blocked, confirmation required.
 	const blocked = await service.click('ide', { text: 'Send message' });
@@ -169,9 +169,9 @@ test('a confirmed destructive action executes once; identical re-execution is re
 	// guard standing between the recovered turn and the repeat.
 	clock += 1;
 	session.messages.push({ role: 'user', text: 'Proceed again.', ts: clock });
-	const { service: recoveredService, calls: recoveredCalls, bridge: recoveredBridge } = (() => {
+	const { service: recoveredService, calls: recoveredCalls, bridge: recoveredBridge } = await (async () => {
 		const built = fakeService();
-		const attached = attachBrowserBridge(session, built.service, fakeRunStore(), { policy });
+		const attached = await attachBrowserBridge(session, built.service, fakeRunStore(), { policy });
 		return { ...built, bridge: attached };
 	})();
 	const afterRestart = await recoveredService.click('ide', { text: 'Send message' });

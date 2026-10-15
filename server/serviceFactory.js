@@ -9,9 +9,61 @@ import { createPostgresExecutionQueue } from './postgres/executionQueue.js';
 import { createDistributedApiAgent } from './distributedExecution.js';
 import { createDistributedSecrets } from './distributedSecrets.js';
 import { createLocalAuthService, createPostgresAuthService } from './auth.js';
+import { createEnvironmentService, createLocalEnvironmentBackend } from './environmentService.js';
+import { registerCatalogProvider } from './catalogProviderRegistry.js';
+import { createBrowserstackCatalogProvider } from './browserstackCatalogProvider.js';
+import { createPostgresEnvironmentRepository } from './postgres/environmentRepository.js';
+import { createLocalDeviceCatalogBackend } from './localDeviceCatalog.js';
+import { createPostgresDeviceCatalogRepository } from './postgres/deviceCatalogRepository.js';
+import { createDeviceRuntimeManager } from './deviceRuntime/manager.js';
+import { createLocalSimulationProvider } from './deviceRuntime/localSimulationProvider.js';
+import { createBrowserstackRuntimeProvider } from './deviceRuntime/browserstackRuntimeProvider.js';
+import { createNullRealDeviceProvider } from './deviceRuntime/nullRealDeviceProvider.js';
+import { createTestCaseService, createLocalTestCaseBackend } from './testCaseService.js';
+import { createPostgresTestCaseRepository } from './postgres/testCaseRepository.js';
+import { createBugService, createLocalBugBackend } from './bugService.js';
+import { createPostgresBugRepository } from './postgres/bugRepository.js';
+import { createCoverageService } from './coverageService.js';
+import { createMatrixService, createLocalMatrixBackend } from './matrixService.js';
+import { createPostgresMatrixRepository } from './postgres/matrixRunRepository.js';
+import { createTestCaseAutogen, autogenSettingsFromEnv } from './testCaseAutogen.js';
+import { getConfig as readModelConfig } from './config.js';
 
 export const RUN_STORE_MODES = Object.freeze(['local', 'postgres']);
 export const EXECUTION_MODES = Object.freeze(['local', 'distributed']);
+
+/**
+ * Auto-generate test cases when a QA run publishes its report. Subscribes to
+ * the run bus; failures are logged and swallowed so generation can never
+ * affect the run itself. Called for both local and postgres service paths.
+ */
+function attachTestCaseAutogen({ services, environment, getConfig }) {
+	if (!services?.testCases || typeof services.runs?.subscribeGlobal !== 'function') return;
+	const configProvider = getConfig ?? readModelConfig;
+	// Reusable engine for the API surface ("Generate from run"); the same
+	// settings and config resolution the bus trigger uses.
+	services.testCaseAutogen = {
+		async generateForRun(session) {
+			const engine = createTestCaseAutogen({
+				testCases: services.testCases,
+				settings: autogenSettingsFromEnv(environment),
+				config: configProvider(),
+				logger: (line) => console.log(line)
+			});
+			return engine.generateForSession(session);
+		}
+	};
+	services.runs.subscribeGlobal(async (sessionId, event) => {
+		try {
+			if (event?.type !== 'report') return;
+			const session = services.runs.get ? await services.runs.get(sessionId) : null;
+			if (!session) return;
+			await services.testCaseAutogen.generateForRun(session);
+		} catch (error) {
+			console.log(`[autogen] generation failed for run ${sessionId}: ${error?.message ?? error}`);
+		}
+	});
+}
 
 export function configuredExecutionMode(environment = process.env) {
 	const mode = String(environment.QASE_EXECUTION_MODE ?? 'local').trim().toLowerCase();
@@ -67,10 +119,69 @@ export async function createConfiguredApplicationServices(options = {}) {
 
 	if (mode === 'local') {
 		if (executionMode === 'distributed') throw new Error('Distributed execution requires QASE_RUN_STORE=postgres.');
-		const services = (options.createLocalServices ?? createLocalApplicationServices)({ tenantContext });
+		// Phase 21: create the manager FIRST so every run turn can consult it.
+		// RT1 (#14680): no external device-testing provider participates in
+		// availability or execution. QASE's own runtime = the local simulation
+		// provider (real local binaries + emulated device profiles). The
+		// BrowserStack provider is registered ONLY when credentials are
+		// explicitly configured AND the operator opts in via
+		// QASE_ENABLE_EXTERNAL_PROVIDERS=true — otherwise it stays dormant and
+		// never upgrades availability.
+		const externalEnabled = String(process.env.QASE_ENABLE_EXTERNAL_PROVIDERS ?? '').trim().toLowerCase() === 'true';
+		const stackCredentials = Boolean(String(process.env.BROWSERSTACK_USERNAME ?? '').trim())
+			&& Boolean(String(process.env.BROWSERSTACK_ACCESS_KEY ?? '').trim());
+		const runtimeProviders = [createLocalSimulationProvider()];
+		if (externalEnabled && stackCredentials) runtimeProviders.push(createBrowserstackRuntimeProvider());
+		runtimeProviders.push(createNullRealDeviceProvider());
+		const deviceRuntime = options.createDeviceRuntimeManager?.() ?? createDeviceRuntimeManager({
+			providers: runtimeProviders
+		});
+		const services = (options.createLocalServices ?? createLocalApplicationServices)({ tenantContext, deviceRuntime });
 		services.tenantContext = tenantContext;
 		await services.auth?.load?.();
 		await services.runs.load();
+		const deviceCatalog = options.createLocalDeviceCatalog?.() ?? createLocalDeviceCatalogBackend();
+		await deviceCatalog.seed();
+		services.environments = createEnvironmentService(
+			options.createLocalEnvironmentBackend?.({ catalogBackend: deviceCatalog }) ?? createLocalEnvironmentBackend({ catalogBackend: deviceCatalog }),
+
+			{ tenantContext }
+		);
+		// #14275 (Phase 2): register the BrowserStack catalog provider
+		// (inert without credentials) BEFORE seeding so the registry-sourced
+		// seed can merge provider overlays.
+		registerCatalogProvider(createBrowserstackCatalogProvider());
+		await services.environments.seed();
+		services.environments.attachCatalog(deviceCatalog);
+		services.deviceCatalog = deviceCatalog;
+		services.testCases = createTestCaseService(
+			options.createLocalTestCaseBackend?.() ?? createLocalTestCaseBackend(),
+			{ environments: services.environments, tenantContext }
+		);
+		// Phase 6: bug reports with BUG-XXXX ids + auto environment association.
+		services.bugs = createBugService(
+			options.createLocalBugBackend?.() ?? createLocalBugBackend(),
+			{ environments: services.environments, runs: services.runs, tenantContext }
+		);
+		// Phase 21: device runtime manager with the three honest providers.
+		services.deviceRuntime = deviceRuntime;
+		// #14633 (NI02 Phase 1): server-side matrix runs — orchestrator hooks
+		// are bound by app.js where the session-creation machinery lives.
+		// Created BEFORE coverage so the coverage service can bind its list.
+		services.matrix = createMatrixService(
+			options.createLocalMatrixBackend?.() ?? createLocalMatrixBackend(),
+			{ environments: services.environments, runs: services.runs, testCases: services.testCases }
+		);
+		// Phase 7: coverage dashboard aggregation (test cases × environments × runs).
+		services.coverage = createCoverageService({
+			testCases: services.testCases,
+			environments: services.environments,
+			runs: services.runs,
+			listRuns: services.runs.listAll?.bind(services.runs),
+			listMatrixRuns: services.matrix?.list?.bind(services.matrix),
+			tenantContext
+		});
+		attachTestCaseAutogen({ services, environment, getConfig: options.getConfig });
 		return { mode, executionMode, services, tenantContext, pool: undefined };
 	}
 
@@ -102,9 +213,21 @@ export async function createConfiguredApplicationServices(options = {}) {
 				environment, tenantContext
 			});
 		}
+		// Phase 21: create the manager before services so run turns can consult it.
+		// RT1 (#14680): same external-provider demotion as the local branch.
+		const externalEnabled = String(process.env.QASE_ENABLE_EXTERNAL_PROVIDERS ?? '').trim().toLowerCase() === 'true';
+		const stackCredentials = Boolean(String(process.env.BROWSERSTACK_USERNAME ?? '').trim())
+			&& Boolean(String(process.env.BROWSERSTACK_ACCESS_KEY ?? '').trim());
+		const runtimeProviders = [createLocalSimulationProvider()];
+		if (externalEnabled && stackCredentials) runtimeProviders.push(createBrowserstackRuntimeProvider());
+		runtimeProviders.push(createNullRealDeviceProvider());
+		const deviceRuntime = options.createDeviceRuntimeManager?.() ?? createDeviceRuntimeManager({
+			providers: runtimeProviders
+		});
 		services = (options.createPostgresServices ?? createPostgresApplicationServices)({
 			repository,
 			tenantContext,
+			deviceRuntime,
 			 eventTransport,
 			auth,
 			hydrateAll: executionMode !== 'distributed',
@@ -112,6 +235,47 @@ export async function createConfiguredApplicationServices(options = {}) {
 		});
 		await services.runs.load();
 		await credentialVault?.load();
+		const deviceCatalog = (options.createDeviceCatalogRepository ?? createPostgresDeviceCatalogRepository)(pool);
+		await deviceCatalog.seed();
+		const environmentRepository = (options.createEnvironmentRepository ?? createPostgresEnvironmentRepository)(
+			pool,
+			{ tenantContext, catalogBackend: deviceCatalog }
+		);
+		services.environments = createEnvironmentService(environmentRepository, { tenantContext });
+		// #14275 (Phase 2): register the BrowserStack catalog provider BEFORE
+		// seeding so the registry-sourced seed can merge provider overlays.
+		// Without BROWSERSTACK_* credentials it is connected:false and
+		// contributes nothing — the builtin catalog stands alone.
+		registerCatalogProvider(createBrowserstackCatalogProvider());
+		await services.environments.seed();
+		services.environments.attachCatalog(deviceCatalog);
+		services.deviceCatalog = deviceCatalog;
+		services.testCases = createTestCaseService(
+			(options.createTestCaseRepository ?? createPostgresTestCaseRepository)(pool, { tenantContext }),
+			{ environments: services.environments, tenantContext }
+		);
+		services.bugs = createBugService(
+			(options.createBugRepository ?? createPostgresBugRepository)(pool, { tenantContext }),
+			{ environments: services.environments, runs: services.runs, tenantContext }
+		);
+		// #14633 (NI02 Phase 1): matrix runs over the postgres backend.
+		// Created BEFORE coverage so the coverage service can bind its list.
+		services.matrix = createMatrixService(
+			(options.createMatrixRepository ?? createPostgresMatrixRepository)(pool, { tenantContext }),
+			{ environments: services.environments, runs: services.runs, testCases: services.testCases }
+		);
+		// Phase 7: coverage dashboard aggregation (test cases × environments × runs).
+		services.coverage = createCoverageService({
+			testCases: services.testCases,
+			environments: services.environments,
+			runs: services.runs,
+			listRuns: services.runs.listAll?.bind(services.runs),
+			listMatrixRuns: services.matrix?.list?.bind(services.matrix),
+			tenantContext
+		});
+		attachTestCaseAutogen({ services, environment, getConfig: options.getConfig });
+		// Phase 21: device runtime manager with the three honest providers.
+		services.deviceRuntime = deviceRuntime;
 		let executionQueue;
 		if (executionMode === 'distributed') {
 			executionQueue = (options.createExecutionQueue ?? createPostgresExecutionQueue)({

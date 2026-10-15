@@ -48,7 +48,7 @@ async function setup(t, device = 'desktop') {
 			QASE_BROWSER_ALLOWED_PRIVATE_HOSTS: process.env.QASE_BROWSER_ALLOWED_PRIVATE_HOSTS ?? '127.0.0.1'
 		}
 	});
-	const bridge = attachBrowserBridge(session, service, store, { policy });
+	const bridge = await attachBrowserBridge(session, service, store, { policy });
 	t.after(async () => { bridge.dispose(); await service.dispose(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
 	await service.open(targetUrl);
 	bridge.stopFrames();

@@ -48,14 +48,23 @@ describe('probeTargetReachability', () => {
 	});
 
 	it('reports the split-horizon condition instead of a site defect', async () => {
-		// The dev container's split-horizon DNS resolves this CNAME chain to an
-		// internal pod IP; public DNS returns Cloudflare addresses. The probe
-		// must describe the environment, not blame the site.
-		const result = await probeTargetReachability('https://www.drytis.com/');
-		assert.equal(result.ok, true);
-		assert.equal(result.note, 'split-horizon-dns');
-		assert.match(result.detail, /run environment/);
-		assert.match(result.detail, /10\.3\.87\.24/);
+		// Hermetic: stub the CNAME chase so the first hop resolves to a private
+		// pod IP regardless of where the suite runs. The original live-network
+		// version depended on the dev container's split-horizon DNS for
+		// www.drytis.com, which drifted overnight (now resolves publicly).
+		const original = __internals.chaseOverride;
+		__internals.chaseOverride = async () => ([
+			{ name: 'www.drytis.com', cname: 'drytis-website-bpdgc6.prod.drytis.dev', ips: ['10.3.87.24'] }
+		]);
+		try {
+			const result = await probeTargetReachability('https://www.drytis.com/');
+			assert.equal(result.ok, true);
+			assert.equal(result.note, 'split-horizon-dns');
+			assert.match(result.detail, /run environment/);
+			assert.match(result.detail, /10\.3\.87\.24/);
+		} finally {
+			__internals.chaseOverride = original;
+		}
 	}, 30_000);
 
 	it('verifies a healthy public HTTPS target end to end', async () => {

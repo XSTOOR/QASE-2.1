@@ -19,8 +19,22 @@ import { normalizeQaScopeSelection } from '../public/qaScopeCatalog.js';
  * kept on a parallel `runtime` record that never reaches disk.
  */
 
-const STATE_DIR = path.join(process.cwd(), '.qase');
-const STATE_FILE = path.join(STATE_DIR, 'sessions.json');
+// Resolved lazily from the working directory at call time: tests (and embedded
+// deployments) chdir into an isolated scratch directory AFTER this module was
+// first imported, and the frozen-at-import constant made them read/write the
+// ambient workspace's .qase state instead of their own.
+function statePaths() {
+	const stateDir = path.join(process.cwd(), '.qase');
+	return { stateDir, stateFile: path.join(stateDir, 'sessions.json') };
+}
+
+/** Project-level Founder Mode state (Phase 3): one file per instance,
+ *  matching the trusted single-tenant project context of local mode.
+ *  Resolved lazily alongside statePaths() for the same chdir reasons. */
+function founderProjectStatePaths() {
+	const { stateDir } = statePaths();
+	return { founderProjectStateFile: path.join(stateDir, 'founder-project-state.json') };
+}
 
 /** Live, non-serialisable per-session handles, keyed by session id. */
 const live = new Map();
@@ -75,15 +89,16 @@ let saveTimer;
 
 function persistNow() {
 	let tmp;
+	const { stateDir, stateFile } = statePaths();
 	try {
-		fs.mkdirSync(STATE_DIR, { recursive: true });
+		fs.mkdirSync(stateDir, { recursive: true });
 		// Atomic-write pattern: write to a temp file then rename, so a crash
 		// mid-write can never leave a truncated sessions.json behind. Include a
 		// nonce because a killed/corrupted process can leave its old PID path as
 		// a directory; PID reuse must never disable all future persistence.
-		tmp = `${STATE_FILE}.tmp-${process.pid}-${randomUUID()}`;
+		tmp = `${stateFile}.tmp-${process.pid}-${randomUUID()}`;
 		fs.writeFileSync(tmp, JSON.stringify([...sessions.values()], undefined, '\t'), { mode: 0o600 });
-		fs.renameSync(tmp, STATE_FILE);
+		fs.renameSync(tmp, stateFile);
 	} catch (error) {
 		if (tmp) {
 			try { fs.unlinkSync(tmp); } catch { /* best-effort cleanup */ }
@@ -100,6 +115,8 @@ function persistSoon() {
 	saveTimer.unref?.();
 }
 
+export { persistSoon };
+
 /** Flushes pending local history before the process exits. */
 export function flushSessions() {
 	clearTimeout(saveTimer);
@@ -108,8 +125,11 @@ export function flushSessions() {
 }
 
 export function loadSessions() {
+	const { stateFile } = statePaths();
+	// Founder project-level state loads lazily via the founderProjectState
+	// accessors below; sessions first.
 	try {
-		const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+		const raw = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
 		for (const session of Array.isArray(raw) ? raw : []) {
 			session.mode = session.mode === 'sqa' || session.mode === 'founder' ? session.mode : 'qa';
 			if (session.mode === 'qa') {
@@ -195,6 +215,28 @@ export function createSession(title = 'New test run', options = {}) {
 	if (options.engine !== undefined && !isEngineId(options.engine)) {
 		throw new TypeError('Run creation received an unknown browser engine.');
 	}
+	if (options.environmentId !== undefined && typeof options.environmentId !== 'string') {
+		throw new TypeError('Run creation received an invalid environment id.');
+	}
+	if (options.environmentSnapshot !== undefined
+		&& (!options.environmentSnapshot || typeof options.environmentSnapshot !== 'object' || Array.isArray(options.environmentSnapshot))) {
+		throw new TypeError('Run creation received an invalid environment snapshot.');
+	}
+	// #14633 (NI02 Phase 1): matrix-run linkage — set when this session was
+	// spawned by the matrix orchestrator so the run can be traced back.
+	if (options.matrixRunId !== undefined && typeof options.matrixRunId !== 'string') {
+		throw new TypeError('Run creation received an invalid matrix run id.');
+	}
+	if (options.testCaseId !== undefined && typeof options.testCaseId !== 'string') {
+		throw new TypeError('Run creation received an invalid test case id.');
+	}
+	if (options.testCaseSnapshot !== undefined
+		&& (!options.testCaseSnapshot || typeof options.testCaseSnapshot !== 'object' || Array.isArray(options.testCaseSnapshot))) {
+		throw new TypeError('Run creation received an invalid test case snapshot.');
+	}
+	if (options.engine !== undefined && !isEngineId(options.engine)) {
+		throw new TypeError('Run creation received an unknown browser engine.');
+	}
 	if (options.drytisIntegration !== undefined) {
 		if (!options.drytisIntegration || typeof options.drytisIntegration !== 'object'
 			|| Array.isArray(options.drytisIntegration)
@@ -205,6 +247,27 @@ export function createSession(title = 'New test run', options = {}) {
 	if (options.findings !== undefined && !Array.isArray(options.findings)) {
 		throw new TypeError('Initial run findings must be an array.');
 	}
+	// Standard-QA test selection: validated at the API boundary
+	// (appQaSelection.js). undefined = full coverage (legacy behavior).
+	if (options.selectedTests !== undefined) {
+		if (!Array.isArray(options.selectedTests)
+			|| options.selectedTests.length === 0
+			|| options.selectedTests.some(id => typeof id !== 'string')) {
+			throw new TypeError('Run test selection must be a non-empty array of test ids.');
+		}
+	}
+	// Security testing authorization: required whenever the selection includes
+	// a security-category check (enforced at the API boundary).
+	if (options.securityAuthorization !== undefined) {
+		const auth = options.securityAuthorization;
+		if (typeof auth !== 'object' || Array.isArray(auth)
+			|| typeof auth.confirmed !== 'boolean'
+			|| (auth.notes !== undefined && typeof auth.notes !== 'string')) {
+			throw new TypeError('Security authorization must be { confirmed: boolean, notes?: string }.');
+		}
+	}
+	// Coverage scope selection (Supported Coverage panel): normalized via the
+	// shared qaScopeCatalog; undefined = full coverage (legacy behavior).
 	if (options.scopeSelection !== undefined) {
 		const normalized = normalizeQaScopeSelection(options.scopeSelection);
 		if (normalized === undefined) {
@@ -226,6 +289,18 @@ export function createSession(title = 'New test run', options = {}) {
 		/** Analytics cohort ('pilot' for invite-admitted users) — read by the
 		 *  run_started/run_finished status hook, which has no request context. */
 		cohort: options.cohort === 'pilot' ? 'pilot' : undefined,
+		/** Apple compatibility environment this run executes in (frozen snapshot). */
+		environmentId: options.environmentId,
+		environmentSnapshot: options.environmentSnapshot ? structuredClone(options.environmentSnapshot) : undefined,
+		/** #14633 (NI02 Phase 1): matrix run that spawned this session, if any. */
+		matrixRunId: options.matrixRunId,
+		/** Test case this run executes (Phase 4; frozen snapshot). */
+		testCaseId: options.testCaseId,
+		testCaseSnapshot: options.testCaseSnapshot ? structuredClone(options.testCaseSnapshot) : undefined,
+		engine: isEngineId(options.engine) ? options.engine : 'chromium',
+		/** Analytics cohort ('pilot' for invite-admitted users) — read by the
+		 *  run_started/run_finished status hook, which has no request context. */
+		cohort: options.cohort === 'pilot' ? 'pilot' : undefined,
 		/** Coverage values selected in the New QA Run dialog (whitelisted). */
 		scopeSelection: normalizeQaScopeSelection(options.scopeSelection) ?? undefined,
 		messages: [],
@@ -234,9 +309,19 @@ export function createSession(title = 'New test run', options = {}) {
 		todos: [],
 		report: undefined,
 		pendingQuestion: undefined,
+		/** Selected standard QA test ids; undefined = full coverage. */
+		selectedTests: options.selectedTests ? [...options.selectedTests] : undefined,
+		/** Security testing authorization for runs with security checks. */
+		securityAuthorization: options.securityAuthorization
+			? structuredClone(options.securityAuthorization)
+			: undefined,
 		contextUsage: undefined,
 		/** Token usage recorded after each run: provider-reported or estimated. */
 		tokenUsage: undefined,
+		/** Phase 20: honest execution level actually used (SIMULATED/VIRTUAL_DEVICE/REAL_DEVICE), observed runtime facts. */
+		executionLevel: options.executionLevel,
+		executionProviderActual: options.executionProviderActual,
+		runtimeFacts: options.runtimeFacts ? structuredClone(options.runtimeFacts) : undefined,
 		/** Names of secrets held for this session — never the values. */
 		secretNames: []
 	};
@@ -254,7 +339,12 @@ export function getSession(id, ownerUserId) {
 	return !ownerUserId || session?.ownerUserId === ownerUserId ? session : undefined;
 }
 
-export function listSessions({ limit = 100, ownerUserId } = {}) {
+export function listSessions({ limit = 100, ownerUserId, unbounded = false } = {}) {
+	// Unbounded mode for coverage aggregation (listAll) — every full record,
+	// no cap and no owner filter; the capped list() stays request-scoped.
+	if (unbounded) {
+		return [...sessions.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+	}
 	const bounded = Number.isSafeInteger(limit) ? Math.min(100, Math.max(1, limit)) : 100;
 	return [...sessions.values()]
 		.filter(session => !ownerUserId || session.ownerUserId === ownerUserId)
@@ -269,6 +359,10 @@ export function listSessions({ limit = 100, ownerUserId } = {}) {
 			device: isDeviceId(session.device) ? session.device : DEFAULT_DEVICE_ID,
 			deviceLandscape: session.deviceLandscape === true,
 			engine: isEngineId(session.engine) ? session.engine : 'chromium',
+			// Test-case join key (Phase 11 bulk flows): last-run aggregation
+			// and per-environment records map runs to cases without full loads.
+			testCaseId: session.testCaseId ?? undefined,
+			engine: isEngineId(session.engine) ? session.engine : 'chromium',
 			createdAt: session.createdAt,
 			updatedAt: session.updatedAt,
 			// Needed by boot-time recovery (runResume), which runs without a
@@ -281,13 +375,31 @@ export function listSessions({ limit = 100, ownerUserId } = {}) {
 			durationSeconds: activeDurationSeconds(session),
 			findingCount: session.findings.length,
 			messageCount: session.messages.length,
+			...(session.report?.verdict ? { reportVerdict: session.report.verdict } : {}),
 			// Plan progress for the sidebar card — derived, never stored.
 			todoTotal: Array.isArray(session.todos) ? session.todos.length : 0,
 			todoCompleted: Array.isArray(session.todos)
 				? session.todos.filter(todo => todo?.status === 'completed').length
 				: 0,
-			tokenUsage: session.tokenUsage
+			tokenUsage: session.tokenUsage,
+			executionLevel: session.executionLevel,
+			executionProviderActual: session.executionProviderActual,
+			// Environment join keys (Phase 23): let the UI map runs to devices
+			// without loading each full session.
+			environmentId: session.environmentId ?? session.environmentSnapshot?.envId ?? undefined,
+			environmentSnapshot: session.environmentSnapshot
+				? { envId: session.environmentSnapshot.envId, device: session.environmentSnapshot.device }
+				: undefined
 		}));
+}
+
+/**
+ * All sessions, unscoped and capped only by memory — full records. Used by
+ * coverage aggregation (Phase 7), which needs every case×environment pair's
+ * latest run; request-scoped list() caps at 100 and filters by owner.
+ */
+export function allSessions() {
+	return [...sessions.values()];
 }
 
 export function deleteSession(id, ownerUserId) {
@@ -488,6 +600,7 @@ export function updateActivity(session, id, patch) {
 export function setStatus(session, status, detail) {
 	applyStatusTiming(session, status);
 	session.status = status;
+	session.statusDetail = detail || undefined;
 	// Compatibility aliases: keep the Phase-4 UI timer / analytics fields in
 	// lockstep with the server-authoritative timing fields above.
 	if (session.startedAt !== undefined && typeof session.runStartedAt !== 'number') {
@@ -622,4 +735,26 @@ export function activeDurationSeconds(session, now = Date.now()) {
 	}
 	const end = session.completedAt ?? now;
 	return Math.max(0, Math.floor((end - session.startedAt) / 1000 - pausedSeconds));
+}
+
+/**
+ * Project-level Founder Mode state (Phase 3), local-mode mirror of the
+ * Postgres founder_project_state table: one record for the trusted
+ * single-tenant project context of this instance.
+ */
+export function loadFounderProjectState() {
+	try {
+		const { founderProjectStateFile } = founderProjectStatePaths();
+		const raw = JSON.parse(fs.readFileSync(founderProjectStateFile, 'utf8'));
+		return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+export function writeFounderProjectState(state) {
+	const { stateDir, founderProjectStateFile } = founderProjectStatePaths();
+	fs.mkdirSync(stateDir, { recursive: true });
+	fs.writeFileSync(founderProjectStateFile, JSON.stringify(state));
+	return state;
 }

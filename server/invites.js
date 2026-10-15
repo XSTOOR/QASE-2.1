@@ -187,5 +187,32 @@ export function createInviteService({
 		return { ready: true, invites: state.data.invites.length, used: state.data.invites.filter(invite => invite.usedAt).length };
 	}
 
-	return { create, validate, consume, list, check };
+	/** Reserve durably before account creation. Failed account validation releases
+	 * the reservation; a process crash leaves the code consumed (fail closed).
+	 * The same lock covers validation, registration, and final admission.
+	 */
+	function redeem(rawCode, email, register) {
+		return withLock(async () => {
+			await load();
+			const code = normalizeCode(rawCode);
+			const invite = state.data.invites.find(candidate => constantTimeEquals(normalizeCode(candidate.code), code));
+			if (!invite || invite.usedAt !== undefined || invite.expiresAt <= now()) {
+				throw new InviteError('This invite code is not valid.', 'invalid_invite', 403);
+			}
+			invite.usedAt = now(); invite.usedBy = email;
+			await persist();
+			try { return await register(); }
+			catch (error) {
+				// Only validation failures known to precede account creation can
+				// release a code. An I/O failure may occur after an account was
+				// committed; keep that reservation consumed rather than admit twice.
+				if (!['invalid_input', 'invalid_email', 'invalid_display_name', 'weak_password', 'email_taken'].includes(error?.code)) throw error;
+				delete invite.usedAt; delete invite.usedBy;
+				await persist();
+				throw error;
+			}
+		});
+	}
+
+	return { create, validate, consume, redeem, list, check };
 }

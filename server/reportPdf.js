@@ -46,16 +46,49 @@ function deviceLine(session) {
 	return profile.label + ' (' + orientation + ', ' + width + '\u00d7' + height + ', DPR ' + profile.deviceScaleFactor + ', touch)';
 }
 
+function environmentLine(session) {
+	const snapshot = session.environmentSnapshot;
+	if (!snapshot) return undefined;
+	const parts = [
+		snapshot.device ?? snapshot.deviceLabel,
+		snapshot.osVersion,
+		[snapshot.browser, snapshot.browserVersion].filter(Boolean).join(' ')
+	].filter(Boolean);
+	const label = parts.join(' \u00b7 ');
+	// Phase 22: the execution label comes from RECORDED facts, never from the
+	// catalog capability hint — a simulated run must never read "real device".
+	const level = session.runtimeFacts?.executionLevel ?? session.executionLevel;
+	const rawProvider = session.runtimeFacts?.provider ?? session.executionProviderActual;
+	// D7: user-facing PDF text uses QASE-neutral provider labels.
+	const provider = { browserstack: 'remote environment runtime', local: 'local runtime' }[rawProvider] ?? rawProvider;
+	if (level === 'REAL_DEVICE') return `${label} \u2014 REAL DEVICE${provider ? ` (${provider})` : ''}`;
+	if (level === 'VIRTUAL_DEVICE') return `${label} \u2014 VIRTUAL DEVICE${provider ? ` (${provider})` : ''}`;
+	if (level === 'SIMULATED') return `${label} \u2014 SIMULATED${provider ? ` (${provider})` : ''}`;
+	return provider ? `${label} \u2014 ${provider}` : label;
+}
+
 function headerBlock(session, title, verdictText) {
 	const created = new Date(session.createdAt).toISOString();
 	const finished = session.updatedAt ? new Date(session.updatedAt).toISOString() : '\u2014';
-	const rows = [
-		['Run ID', session.id],
-		['Target', session.targetUrl ?? '\u2014'],
-		['Device', deviceLine(session)],
-		['Started', created],
-		['Updated', finished]
-	];
+		const rows = [
+			['Run ID', session.id],
+			['Test case', session.testCaseSnapshot?.title
+				? `${session.testCaseSnapshot.title}${session.testCaseSnapshot.caseNumber ? ` (${session.testCaseSnapshot.caseNumber})` : ''}`
+				: (session.testCaseId ?? '\u2014')],
+			['Target', session.targetUrl ?? '\u2014'],
+			['Device', environmentLine(session) ?? deviceLine(session)],
+			['Started', created],
+			['Updated', finished]
+		];
+	// Phase 22: an explicit Execution row so every PDF states the level.
+	const pdfLevel = session.runtimeFacts?.executionLevel ?? session.executionLevel;
+	if (pdfLevel) {
+		const rawPdfProvider = session.runtimeFacts?.provider ?? session.executionProviderActual;
+		const pdfProvider = { browserstack: 'remote environment runtime', local: 'local runtime' }[rawPdfProvider] ?? rawPdfProvider;
+		rows.push(['Execution', `${pdfLevel === 'REAL_DEVICE' ? 'REAL DEVICE' : pdfLevel}${pdfProvider ? ` (${pdfProvider})` : ''}`]);
+	} else if (session.environmentSnapshot) {
+		rows.push(['Execution', 'NOT AVAILABLE FOR REAL EXECUTION']);
+	}
 	if (verdictText) rows.push(['Verdict', verdictText]);
 	if (session.tokenUsage && Number.isFinite(session.tokenUsage.totalTokens)) {
 		const usage = session.tokenUsage;

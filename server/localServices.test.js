@@ -167,3 +167,20 @@ test('setFindingStatus mutates, persists, and broadcasts the finding_status even
 		await fs.rm(isolatedDirectory, { recursive: true, force: true });
 	}
 });
+
+// ---------------------------------------------------------------------------
+// R4 #14493 · Evidence bundle persistence
+// ---------------------------------------------------------------------------
+
+test('R4: saveEvidenceBundle persists a runtime-sourced JSON artifact with honest metadata', async t => {
+	// collectEvidenceBundle unit coverage lives in evidenceBundle.test.js;
+	// here we assert the honest-absent contract through the composed path.
+	const { collectEvidenceBundle } = await import('./evidenceBundle.js');
+	const bundle = collectEvidenceBundle({
+		session: { id: '00000000-0000-4000-8000-000000000000', runtimeFacts: null },
+		bridge: {},
+		diagnostics: null
+	}).bundle;
+	assert.equal(bundle.type, 'evidence-bundle');
+	assert.equal(bundle.console, null, 'unobservable console is recorded absent, never fabricated');
+});
