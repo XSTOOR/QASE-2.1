@@ -17,6 +17,18 @@ import { TestCaseValidationError } from './testCaseService.js';
 
 export function createMatrixRoutes({ matrix, orchestrator, bugs, onError, events }) {
 	return (app) => {
+		// The scheduler intentionally reads all owners. HTTP must not inherit
+		// that privilege: status, cancellation and SSE are owner-scoped.
+		app.use('/api/matrix-runs/:id', async (request, response, next) => {
+			try {
+				const run = await matrix.get(request.params.id);
+				if (!run || (request.auth?.userId && run.ownerUserId !== request.auth.userId)) {
+					response.status(404).json({ error: 'Matrix run not found.' });
+					return;
+				}
+				next();
+			} catch (error) { onError?.(error, response); }
+		});
 		app.post('/api/matrix-runs', async (request, response) => {
 			try {
 				const record = await matrix.create(request.body, { ownerUserId: request.auth?.userId ?? null });
@@ -37,9 +49,10 @@ export function createMatrixRoutes({ matrix, orchestrator, bugs, onError, events
 			}
 		});
 
-		app.get('/api/matrix-runs', async (_request, response) => {
+		app.get('/api/matrix-runs', async (request, response) => {
 			try {
-				const runs = await matrix.list();
+				const records = await matrix.list();
+				const runs = records.filter(run => !request.auth?.userId || run.ownerUserId === request.auth.userId);
 				// Summaries only — items are fetched per-run (they can be large).
 				response.json({
 					runs: runs.map(({ items, ...summary }) => ({
