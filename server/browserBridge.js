@@ -714,7 +714,9 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 					? envEngine
 					: ENGINE_IDS.includes(session.engine) ? session.engine : 'chromium';
 				const engine = await resolveEngine(engineId);
-				if (!engine.available) {
+				// Remote device providers use the launcher type to connect; they
+				// do not need that engine's executable installed on this host.
+				if (!engine.available && execution.mode !== 'environment') {
 					const error = new Error(`ENGINE_UNAVAILABLE: ${engine.reason}`);
 					error.code = 'ENGINE_UNAVAILABLE';
 					throw error;

@@ -29,38 +29,35 @@ test('#15970: selectionDimensions counts families, devices, runs', () => {
 	});
 });
 
-test('#15970: summary primary line is browsers × devices → runs', () => {
-	assert.match(app, /dimensions\.families\.toLocaleString\(\)\} browser/);
-	assert.match(app, /dimensions\.devices\.toLocaleString\(\)\} device/);
-	assert.match(app, /dimensions\.runs\.toLocaleString\(\)\} run/);
-	// selectionDimensions is imported and used in the render.
-	assert.match(app, /selectionDimensions\(qaMatrixState\.index, qaMatrixState\.selectedEnvIds\)/);
+const picker = await readFile(new URL('./matrixPicker.js', import.meta.url), 'utf8');
+test("summary shows the exact global run total, not a theoretical cross product", () => {
+	assert.ok(picker.includes("selected.size.toLocaleString()"), "selected.size.toLocaleString()");
+	assert.ok(picker.includes("selectedDevices.length"), "selectedDevices.length");
+	assert.ok(picker.includes("new Set(index.filter(row => selected.has(row.envId)).map(row => row.browserCode)).size"), "new Set(index.filter(row => selected.has(row.envId)).map(row => row.browserCode)).size");
 });
 
-test('#15970: zero states are plain language', () => {
-	assert.match(app, /No browsers or devices selected — pick at least one of each\./);
-	assert.match(app, /No browsers or devices available — connect an execution provider\./);
+test("zero states tell users how to select a valid combination", () => {
+	assert.ok(picker.includes("Choose at least one browser above"), "Choose at least one browser above");
+	assert.ok(picker.includes("No configurations selected yet."), "No configurations selected yet.");
+	assert.ok(picker.includes("No matching devices. Reset filters"), "No matching devices. Reset filters");
 });
 
-test('#15970: honesty notes are kept as secondary segments', () => {
-	assert.match(app, /available configurations/);
-	assert.match(app, /will run as \$\{Math\.ceil\(summary\.total \/ MATRIX_BATCH_SIZE\)\} batches/);
-	assert.match(app, /runs one browser at a time/);
-	assert.match(app, /providerNotes\.join\(', '\)/);
+test("large selections explain runtime cost and batching", () => {
+	assert.ok(picker.includes("MATRIX_BATCH_SIZE"), "MATRIX_BATCH_SIZE");
+	assert.ok(picker.includes("Math.ceil(selected.size / MATRIX_BATCH_SIZE)"), "Math.ceil(selected.size / MATRIX_BATCH_SIZE)");
+	assert.ok(picker.includes("More configurations take longer"), "More configurations take longer");
 });
 
-test('#15970: Start gating tooltip matches the two-selector model', () => {
-	assert.match(app, /'Select at least one browser and one device\.'/);
-	// The old wording is gone.
-	assert.doesNotMatch(app, /Select at least one available browser and device\./);
-	assert.doesNotMatch(app, /Choose an available browser and device to start\./);
+test("exact review includes all execution dimensions and supports removal", () => {
+	assert.ok(picker.includes("config.osVersion"), "config.osVersion");
+	assert.ok(picker.includes("config.browserVersion"), "config.browserVersion");
+	assert.ok(picker.includes("config.orientation"), "config.orientation");
+	assert.ok(picker.includes("executionTypeLabel(config.executionType)"), "executionTypeLabel(config.executionType)");
+	assert.ok(picker.includes("ids.delete(config.envId)"), "ids.delete(config.envId)");
 });
 
-test('#15970: summary tooltip keeps per-family counts', () => {
-	assert.match(app, /summary\.byFamily[\s\S]{0,200}map\(\(\[code, count\]\) => `\$\{code\}: \$\{count\}`\)/);
-});
-
-test('#15970 (Phase 1 carry-over): browser card version display is capped', () => {
-	assert.match(app, /family\.versions\.slice\(0, 2\)\.join\(', '\)/);
-	assert.match(app, /family\.versions\.length - 2/);
+test("engine-equivalence notes are preserved for selected browser families", () => {
+	assert.ok(picker.includes("family.note"), "family.note");
+	assert.ok(picker.includes("selection.browserFamilies.has(family.code)"), "selection.browserFamilies.has(family.code)");
+	assert.ok(picker.includes("notes.join"), "notes.join");
 });

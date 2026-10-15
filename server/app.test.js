@@ -337,6 +337,7 @@ async function startFixture(options = {}) {
 		demoEnabled: options.demoEnabled,
 		environment: options.environment ?? {},
 		isDraining: options.isDraining,
+		probeTargetReachability: options.probeTargetReachability ?? (async () => ({ ok: true })),
 		sseHeartbeatMs: 1_000
 	});
 	const server = await new Promise(resolve => {
@@ -389,7 +390,7 @@ test('login entry route serves the existing application without masking unknown 
 	const login = await fixture.request('/login');
 	assert.equal(login.status, 200);
 	assert.match(login.headers.get('content-type') ?? '', /^text\/html\b/);
-	assert.match(await login.text(), /<title>Qase — autonomous QA agent<\/title>/);
+	assert.match(await login.text(), /<title>QASE — Autonomous quality assurance<\/title>/);
 
 	const loginHead = await fixture.request('/login', { method: 'HEAD' });
 	assert.equal(loginHead.status, 200);
@@ -758,6 +759,27 @@ test('SQA catalog and authorized scope creation stay pending until evidence is e
 	const finalReport = await fixture.request(`/api/sessions/${created.id}/report.md`);
 	assert.equal(finalReport.status, 200);
 	assert.match(await finalReport.text(), /^# SQA assessment/);
+});
+
+test('SQA refuses an unsupported runtime before creating an assessment or starting the model', async t => {
+	const fixture = await startFixture();
+	t.after(() => fixture.close());
+	fixture.services.environments.get = async () => ({
+		envId: 'unsupported-sqa-browser', active: true, platform: 'ios', browserCode: 'duckduckgo',
+		device: 'Test phone', browser: 'DuckDuckGo', executionProvider: 'local'
+	});
+	const response = await fixture.request('/api/sqa/sessions', {
+		method: 'POST', json: {
+			authorizationConfirmed: true, profiles: ['core'], attributes: ['web_application'],
+			target: { name: 'Runtime validation', release: 'test', environment: 'local' },
+			environmentId: 'unsupported-sqa-browser'
+		}
+	});
+	assert.equal(response.status, 422);
+	assert.match((await body(response)).error, /SQA cannot start.*NOT SUPPORTED/);
+	assert.equal(fixture.state.events.filter(event => event.type === 'sqa.created').length, 0);
+	assert.equal(fixture.state.ensureCalls.length, 0);
+	assert.equal(fixture.state.runCalls.length, 0);
 });
 
 test('a pending SQA scope accepts its first target URL and starts the agent', async t => {

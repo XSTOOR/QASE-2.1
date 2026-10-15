@@ -47,14 +47,12 @@ test('every QA-matrix launcher identifier resolves to a definition in app.js', (
 	// covered by including region-local definitions too.)
 	const localDefined = definedNames(region);
 	const required = [
-		'loadQaMatrixCatalog', 'qaMatrixLoadWindow', 'qaMatrixFiltered',
+		'loadQaMatrixCatalog', 'renderMatrixPicker',
 		'qaMatrixApplySelection', 'qaMatrixSetState', 'qaSelectionStore',
 		'qaMatrixEffectiveSelection', 'qaMatrixRender', 'qaMatrixWiring',
-		'createSelectionState', 'toggleDevice', 'toggleBrowserFamily',
-		'selectAllDevices', 'deselectAllDevices', 'selectAllBrowsers', 'deselectAllBrowsers',
-		'deviceListFromWindow', 'familyRows', 'buildSummary', 'PLATFORM_GROUPS',
-		'fetchQaConfigurations', 'fetchConfigurationIndex', 'fetchConfigurationWindow',
-		'isSelectable', 'deviceKeyOf', 'brandIcon', 'executionTypeLabel', 'syncQaSubmitState'
+		'createSelectionState', 'computeExplicitSelection',
+		'fetchQaConfigurations', 'fetchConfigurationIndex',
+		'isSelectable', 'deviceKeyOf', 'brandIcon', 'syncQaSubmitState'
 	];
 	const missing = required.filter(name => !defined.has(name) && !localDefined.has(name));
 	assert.deepEqual(missing, [], `missing definitions: ${missing.join(', ')}`);

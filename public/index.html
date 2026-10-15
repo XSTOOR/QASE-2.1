@@ -3,68 +3,70 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#ffffff">
+<meta name="theme-color" content="#0b1220">
 <meta name="color-scheme" content="light dark">
 <meta name="description" content="Qase is an autonomous website QA workspace with live browser testing, findings, and reports.">
-<title>Qase — autonomous QA agent</title>
-<script src="theme.js?v=3"></script>
-<script src="studioMode.js?v=20261014-7"></script>
-<link rel="stylesheet" href="styles.css?v=20261014-7">
-<link rel="stylesheet" href="bugsView.css?v=20261014-7">
-<link rel="stylesheet" href="entry-terminal.css?v=20261014-7">
-<link rel="stylesheet" href="studio-workspace.css?v=20261014-7">
-<link rel="stylesheet" href="studio-embed.css?v=20261014-7">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a84ff'/><path d='M11 8h10M13 8v7L9.5 22a2 2 0 0 0 1.8 3h9.4a2 2 0 0 0 1.8-3L19 15V8' stroke='%23fff' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<title>QASE — Autonomous quality assurance</title>
+<script src="theme.js?v=20261015-11"></script>
+<script src="studioMode.js?v=20261014-6"></script>
+<link rel="stylesheet" href="styles.css?v=20261015-15">
+<link rel="stylesheet" href="bugsView.css?v=20261014-6">
+<link rel="stylesheet" href="studio-workspace.css?v=20261015-6">
+<link rel="stylesheet" href="studio-embed.css?v=20261015-7">
+<link rel="stylesheet" href="journey.css?v=20261015-4">
+<link rel="stylesheet" href="matrixPicker.css?v=20261015-5">
+<link rel="stylesheet" href="resultsPage.css?v=20261015-8">
+<link rel="stylesheet" href="brand.css?v=20261015-15">
+<link rel="stylesheet" href="runCard.css?v=20261015-17">
+<link rel="stylesheet" href="auth.css?v=20261015-14">
+<link rel="icon" type="image/svg+xml" href="qase-mark.svg">
 </head>
 <body class="cli-theme studio-workspace" data-has-run="false">
 
 <section class="auth-gate" id="auth-gate" hidden aria-labelledby="auth-title">
-  <div class="terminal-atmosphere" aria-hidden="true"><canvas id="entry-motion"></canvas><div class="terminal-grid"></div><div class="terminal-scanlines"></div></div>
-  <header class="terminal-masthead">
-    <a class="terminal-brand" href="/" aria-label="Qase home"><span class="terminal-brand-icon" aria-hidden="true">❯_</span><span>QASE<span class="terminal-brand-detail"> / AUTONOMOUS QA</span></span></a>
-    <div class="entry-display-controls">
+  <header class="auth-masthead">
+    <a class="auth-brand" href="/" aria-label="QASE home"><span class="auth-brand-symbol" aria-hidden="true"></span><span>QΛSE</span></a>
+    <div class="auth-appearance">
       <label class="theme-control" for="auth-theme-select"><span>Theme</span><select id="auth-theme-select" name="theme" data-theme-control><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
-      <button class="terminal-motion-toggle" id="entry-motion-toggle" type="button" aria-pressed="false"><span aria-hidden="true">Ⅱ</span> Pause motion</button>
     </div>
   </header>
   <div class="auth-story">
-    <div class="terminal-windowbar" aria-hidden="true"><span class="terminal-lights"><i></i><i></i><i></i></span><span>qase@drytis:~/workspace</span><span class="terminal-windowtype">zsh</span></div>
-    <div class="terminal-story-content">
-      <p class="terminal-command"><span aria-hidden="true">❯</span> ./qase <span>--initialize</span></p>
-      <h2 class="terminal-wordmark" aria-label="QASE"><span aria-hidden="true">QASE</span><i aria-hidden="true"></i></h2>
-      <p class="auth-drytis">CREATED FOR DRYTIS</p>
-      <p class="terminal-tagline"><span aria-hidden="true">//</span> Quality at the speed of light.</p>
-      <p class="auth-description">Real browsers. Clear evidence.<br>One workspace to test what matters.</p>
-      <div class="terminal-modules" aria-label="Available review modes"><span><i aria-hidden="true">01</i> QA</span><span><i aria-hidden="true">02</i> SQA</span><span><i aria-hidden="true">03</i> FOUNDER</span></div>
-      <div class="terminal-visual-caption" aria-hidden="true"><span>FIG. 01 / QUALITY CORE</span><span class="terminal-signal"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span>∞</span></div>
+    <p class="auth-kicker">AUTONOMOUS QUALITY ASSURANCE</p>
+    <h2>Confidence.<br><span>Built into every release.</span></h2>
+    <p class="auth-story-copy">From the first interaction to the final report.<br>Understand what works, uncover what doesn’t,<br class="auth-desktop-break"> and move forward with evidence.</p>
+    <div class="auth-method" aria-label="How QASE works">
+      <div><span class="auth-method-number">01</span><strong>Explore</strong><p>A real browser.<br>Your application.</p></div>
+      <div><span class="auth-method-number">02</span><strong>Verify</strong><p>Thoughtful checks.<br>Observable evidence.</p></div>
+      <div><span class="auth-method-number">03</span><strong>Improve</strong><p>Clear findings.<br>Actionable next steps.</p></div>
     </div>
+    <p class="auth-story-caption"><span aria-hidden="true"></span> One workspace. A clearer path to quality.</p>
   </div>
-  <div class="auth-panel"><div class="auth-card">
-    <div class="terminal-accessbar" aria-hidden="true"><span><i></i> ACCOUNT ACCESS</span><span>01 / AUTH</span></div>
-    <p class="auth-eyebrow"><span aria-hidden="true">❯</span> qase auth</p>
-    <h1 id="auth-title">Sign in to your workspace</h1>
-    <p class="auth-copy" id="auth-copy">Your runs, profile, and saved memory stay isolated to your account.</p>
+  <div class="auth-panel" id="signin-panel"><div class="auth-card">
+    <div class="auth-card-emblem" aria-hidden="true"><span></span></div>
+    <p class="auth-card-kicker">YOUR QUALITY WORKSPACE</p>
+    <h1 id="auth-title">Welcome back.</h1>
+    <p class="auth-copy" id="auth-copy">Sign in to pick up where you left off.</p>
     <form id="auth-form">
       <label for="auth-email">Email</label>
-      <input id="auth-email" name="email" type="email" autocomplete="email" required maxlength="254">
+      <input id="auth-email" name="email" type="email" autocomplete="email" placeholder="you@company.com" required maxlength="254" spellcheck="false" autocapitalize="none">
       <label for="auth-password">Password</label>
-      <input id="auth-password" name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="200">
+      <input id="auth-password" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required minlength="8" maxlength="200" aria-describedby="auth-password-hint">
       <label for="auth-display" id="auth-display-label" hidden>Display name</label>
       <input id="auth-display" name="displayName" type="text" autocomplete="name" maxlength="120" hidden>
       <label for="auth-invite" id="auth-invite-label" hidden>Invite code</label>
       <input id="auth-invite" name="inviteCode" type="text" autocomplete="off" maxlength="40" hidden>
-      <label class="auth-show"><input id="auth-show-password" type="checkbox"> Show password</label>
-      <p class="auth-hint" id="auth-password-hint">Use at least 8 characters when creating an account.</p>
+      <div class="auth-password-actions"><label class="auth-show"><input id="auth-show-password" type="checkbox"> Show password</label><button class="auth-recovery-link" id="auth-forgot-switch" type="button">Recover account</button></div>
+      <p class="auth-hint" id="auth-password-hint" hidden>Use at least 8 characters.</p>
       <p class="auth-error" id="auth-error" role="alert" hidden></p>
       <button class="btn btn-primary auth-submit" id="auth-submit" type="submit">Sign in</button>
     </form>
-    <button class="auth-switch" id="auth-switch" type="button">Create an account</button>
-    <button class="auth-switch" id="auth-forgot-switch" type="button" hidden>Forgot password?</button>
+    <div class="auth-account-switch"><span id="auth-switch-context">New to QASE?</span><button class="auth-switch" id="auth-switch" type="button">Create an account</button></div>
+    <p class="auth-account-note"><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><rect x="4" y="8" width="12" height="9" rx="2"/><path d="M6.5 8V5.5a3.5 3.5 0 0 1 7 0V8"/></svg>Your runs and saved context belong to your account.</p>
   </div></div>
   <div class="auth-panel" id="forgot-panel" hidden><div class="auth-card">
     <div class="terminal-accessbar" aria-hidden="true"><span><i></i> ACCOUNT ACCESS</span><span>01 / RESET</span></div>
     <p class="auth-eyebrow"><span aria-hidden="true">❯</span> qase auth --reset</p>
-    <h1>Reset your password</h1>
+    <h1 id="forgot-title">Reset your password</h1>
     <p class="auth-copy">Enter your account email and we'll send a 6-digit code. It expires in 5 minutes and works once.</p>
     <form id="forgot-form">
       <label for="forgot-email">Email</label>
@@ -79,7 +81,7 @@
   <div class="auth-panel" id="recover-panel" hidden><div class="auth-card">
     <div class="terminal-accessbar" aria-hidden="true"><span><i></i> ACCOUNT ACCESS</span><span>02 / RECOVERY</span></div>
     <p class="auth-eyebrow"><span aria-hidden="true">❯</span> qase auth --recover</p>
-    <h1>Recover with a recovery code</h1>
+    <h1 id="recover-title">Recover your account</h1>
     <p class="auth-copy">Enter your account email and one unused recovery code to set a new password. Each code works once.</p>
     <form id="recover-form">
       <label for="recover-email">Email</label>
@@ -96,7 +98,7 @@
   <div class="auth-panel" id="otp-panel" hidden><div class="auth-card">
     <div class="terminal-accessbar" aria-hidden="true"><span><i></i> ACCOUNT ACCESS</span><span>02 / CODE</span></div>
     <p class="auth-eyebrow"><span aria-hidden="true">❯</span> qase auth --verify</p>
-    <h1>Enter your code</h1>
+    <h1 id="otp-title">Enter your code</h1>
     <p class="auth-copy">We emailed a 6-digit code. It expires in 5 minutes and can be used once.</p>
     <form id="otp-form">
       <label for="otp-input">Verification code</label>
@@ -111,7 +113,7 @@
   <div class="auth-panel" id="reset-panel" hidden><div class="auth-card">
     <div class="terminal-accessbar" aria-hidden="true"><span><i></i> ACCOUNT ACCESS</span><span>03 / NEW PASSWORD</span></div>
     <p class="auth-eyebrow"><span aria-hidden="true">❯</span> qase auth --new-password</p>
-    <h1>Choose a new password</h1>
+    <h1 id="reset-title">Choose a new password</h1>
     <p class="auth-copy">Code verified. Pick a password of at least 8 characters.</p>
     <form id="reset-form">
       <label for="reset-password">New password</label>
@@ -125,7 +127,7 @@
     </form>
     <button class="auth-switch" id="reset-back" type="button">Back to sign in</button>
   </div></div>
-  <footer class="terminal-bottom"><span>QASE <span class="terminal-bottom-muted">/ PRIVATE WORKSPACE</span></span><span class="terminal-bottom-center">BUILT TO QUESTION. DESIGNED TO VERIFY.</span><span><i aria-hidden="true"></i> YOUR NEXT RELEASE STARTS HERE</span></footer>
+  <footer class="auth-bottom"><span>QASE <span aria-hidden="true">/</span> Autonomous quality assurance</span><span>Built to question. Designed to verify.</span></footer>
 </section>
 
 <a class="skip-link" href="#composer-input" inert aria-hidden="true">Skip to agent input</a>
@@ -213,7 +215,7 @@
       <div class="brand">
         <span class="brand-lockup">
           <span class="brand-glyph" aria-hidden="true">Q</span>
-          <span class="brand-mark">Qase</span>
+          <span class="brand-mark" aria-label="QASE">QΛSE</span>
         </span>
         <button class="sidebar-collapse-toggle" id="sidebar-collapse-toggle" type="button"
                 aria-controls="workspace-runs" aria-expanded="true"
@@ -230,16 +232,18 @@
       </button>
       <p class="run-explorer-label"><span class="sidebar-control-label">Recent tests</span></p>
     </header>
+    <label class="journey-run-search"><span class="sr-only">Find a test run</span><input id="journey-run-search" type="search" placeholder="Find a test run…" autocomplete="off"></label>
+    <p class="journey-no-matches" id="journey-no-matches" role="status" hidden>No matching runs. Try another website or title.</p>
     <div class="run-list" id="run-list" role="list" aria-label="Recent runs"></div>
     <footer class="sidebar-foot" aria-label="Account and workspace controls">
       <button class="sidebar-foot-btn" id="sidebar-open-settings" type="button" title="Settings">
-        <span class="sidebar-control-icon" aria-hidden="true">⚙</span><span class="sidebar-control-label">Settings</span>
+        <span class="sidebar-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m9 3-.7 3-2.8 1L3 9l1 3-1 3 2.5 2 2.8 1 .7 3h6l.7-3 2.8-1 2.5-2-1-3 1-3-2.5-2-2.8-1L15 3H9Z"/><circle cx="12" cy="12" r="3"/></svg></span><span class="sidebar-control-label">Settings</span>
       </button>
       <button class="sidebar-foot-btn" id="sidebar-open-profile" type="button" title="My account">
-        <span class="sidebar-control-icon" aria-hidden="true">◍</span><span class="sidebar-control-label">Account</span>
+        <span class="sidebar-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></span><span class="sidebar-control-label">Account</span>
       </button>
       <button class="sidebar-foot-btn sidebar-foot-btn--signout" id="sidebar-sign-out" type="button" title="Sign out">
-        <span class="sidebar-control-icon" aria-hidden="true">⏻</span><span class="sidebar-control-label">Sign out</span>
+        <span class="sidebar-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 4H4v16h5m6-12 4 4-4 4M9 12h10"/></svg></span><span class="sidebar-control-label">Sign out</span>
       </button>
     </footer>
   </aside>
@@ -252,8 +256,8 @@
   <main class="panel chat" id="workspace-agent" aria-label="Agent conversation">
     <header class="panel-head" data-path="~/qase/agent.log">
       <div class="chat-id">
-        <h1 id="chat-title" tabindex="-1">No run selected</h1>
-        <p class="subtle" id="chat-target">Start a run and send a URL to test</p>
+        <h1 id="chat-title" tabindex="-1">Test workspace</h1>
+        <p class="subtle" id="chat-target">Autonomous testing, evidence, and results</p>
       </div>
       <div class="head-actions">
         <span class="status-chip" id="status-chip" data-status="idle" role="status" aria-live="polite" aria-atomic="true">idle</span>
@@ -287,6 +291,7 @@
          Collapsible: toggle keeps the token row visible and swaps the detail for a
          compact one-line mirror (see #run-summary-mini). -->
     <section class="run-summary" id="run-summary" aria-label="Run summary" hidden>
+      <div class="journey-run-guide" id="journey-run-guide" hidden><div><strong id="journey-run-title"></strong><p id="journey-run-description"></p></div><button type="button" class="btn btn-ghost btn-sm" id="journey-run-action"></button></div>
       <div class="run-summary-mini" id="run-summary-mini" hidden>
         <span class="mini-tokens" id="mini-tokens"></span>
         <span class="mini-status" id="mini-status"></span>
@@ -350,8 +355,10 @@
     <div class="transcript" id="transcript" role="log" aria-label="Agent conversation" aria-live="polite" aria-relevant="additions">
       <div class="exec-target-host" id="execution-target-block" hidden></div>
       <div class="empty-state" id="chat-empty">
-        <h2>Test a website</h2>
-        <p>Enter a URL to create a plan, watch the browser, and review what needs attention.</p>
+        <span class="journey-eyebrow">YOUR QUALITY WORKSPACE</span>
+        <h2>Confidence before your next release.</h2>
+        <p>Give Qase a website. Follow the test live, answer when it needs you, and get findings with evidence.</p>
+        <ol class="welcome-steps"><li><span>1</span><div><strong>Choose your website</strong><small>Start with a URL and what matters to you.</small></div></li><li><span>2</span><div><strong>Watch Qase test</strong><small>See the browser, progress, and any questions.</small></div></li><li><span>3</span><div><strong>Review and act</strong><small>Open the report, inspect evidence, and share fixes.</small></div></li></ol>
         <div class="empty-actions">
           <button type="button" class="btn btn-primary btn-sm" id="empty-start">Start testing</button>
           <button type="button" class="btn btn-ghost btn-sm" id="empty-demo">Try the demo site</button>
@@ -392,19 +399,21 @@
   <!-- ── Right: live browser + activity ─────────────────────────── -->
   <aside class="panel viewer" id="workspace-viewer" aria-label="Live browser and test results">
     <header class="results-page-head" id="results-page-head">
+      <nav class="results-breadcrumb" aria-label="Breadcrumb"><span class="results-wordmark">Qase</span><span aria-hidden="true">/</span><button id="results-page-all" type="button">Test runs</button><span aria-hidden="true">/</span><span>Results</span></nav>
       <div class="results-page-identity">
-        <p>Test results</p>
+        <p>TEST REPORT</p>
         <h1 id="results-page-title" tabindex="-1">Results</h1>
         <div class="results-page-meta" aria-label="Result summary">
           <span id="results-page-status">Complete</span>
           <span id="results-page-findings">0 findings</span>
           <span id="results-page-target"></span>
+          <time id="results-page-date" hidden></time>
         </div>
       </div>
       <div class="results-page-actions">
-        <button class="btn btn-ghost btn-sm" id="results-page-all" type="button">All tests</button>
         <button class="btn btn-ghost btn-sm" id="results-page-back" type="button"><span aria-hidden="true">←</span> Run workspace</button>
-        <button class="btn btn-primary btn-sm" id="results-page-new" type="button">Start new test</button>
+        <button class="btn btn-primary btn-sm" id="results-page-export" type="button">Export PDF <span aria-hidden="true">↓</span></button>
+        <button class="btn btn-ghost btn-sm" id="results-page-new" type="button">New test</button>
       </div>
     </header>
     <header class="panel-head" data-path="~/qase/browser.preview">
@@ -520,22 +529,22 @@
       </label>
     </div>
     <button id="new-run" class="feature-action" type="button" aria-label="Start standard QA run" aria-describedby="feature-tip-qa" aria-keyshortcuts="Control+N Meta+N" data-feature="qa">
-      <span class="feature-icon" aria-hidden="true">✓</span>
+      <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="m8 12 3 3 5-6"/></svg></span>
       <span class="feature-label">Test</span>
       <span class="feature-tooltip" id="feature-tip-qa" role="tooltip">New QA run <kbd>⌘N</kbd></span>
     </button>
     <button id="new-sqa" class="feature-action" type="button" aria-label="Start quality review" aria-describedby="feature-tip-sqa" data-feature="sqa">
-      <span class="feature-icon" aria-hidden="true">◇</span>
+      <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 8 4v5c0 4-4 7-8 9-4-2-8-5-8-9V7l8-4Z"/><path d="m8 12 3 3 5-6"/></svg></span>
       <span class="feature-label">SQA</span>
       <span class="feature-tooltip" id="feature-tip-sqa" role="tooltip">Review quality and readiness</span>
     </button>
     <button id="new-founder" class="feature-action feature-action--founder" type="button" aria-label="Start Founder Mode review" aria-describedby="feature-tip-founder" data-feature="founder">
-      <span class="feature-icon" aria-hidden="true">◆</span>
+      <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 9 7-9 11L3 10l9-7Z"/><path d="m3 10 18 0M8 10l4 11 4-11M8 10l4-7 4 7"/></svg></span>
       <span class="feature-label">Founder</span>
       <span class="feature-tooltip" id="feature-tip-founder" role="tooltip">Founder Mode product review</span>
     </button>
     <button id="open-bugs" class="feature-action" type="button" aria-label="Open the bug tracker" aria-describedby="feature-tip-bugs" data-feature="bugs" aria-pressed="false">
-      <span class="feature-icon" aria-hidden="true">⬡</span>
+      <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="13" rx="5"/><path d="m9 7-2-3m8 3 2-3M3 10h4m10 0h4M3 15h4m10 0h4M5 21l3-3m8 0 3 3M12 10v7"/></svg></span>
       <span class="feature-label">Bugs</span>
       <span class="feature-tooltip" id="feature-tip-bugs" role="tooltip">Track every bug across runs</span>
     </button>
@@ -553,7 +562,7 @@
 <section class="bugs-view" id="bugs-view" hidden aria-labelledby="bugs-title">
   <header class="bugs-head">
     <div class="bugs-head-id">
-      <p class="bugs-eyebrow"><span aria-hidden="true">❯</span> qase bugs --all</p>
+      <p class="bugs-eyebrow"><span aria-hidden="true">❯</span> QASE / Findings</p>
       <h2 id="bugs-title" tabindex="-1">Bug tracker</h2>
       <p class="subtle" id="bugs-subtitle">Every finding from every run, one backlog</p>
     </div>
@@ -796,11 +805,12 @@
 <dialog class="modal" id="settings" aria-labelledby="settings-title" inert aria-hidden="true">
   <form method="dialog" class="modal-inner">
     <header class="modal-head" data-path="~/.qase/config.json">
-      <h2 id="settings-title">Model endpoint</h2>
+      <div><h2 id="settings-title">Models &amp; preferences</h2><p class="journey-settings-copy">Qase provides the models. Choose your model and testing preferences here.</p></div>
       <button class="btn btn-ghost btn-sm" value="cancel" formnovalidate>Close</button>
     </header>
 
     <div class="modal-body">
+      <div id="cfg-managed-connection" hidden>
       <label class="field">
         <span>Provider</span>
         <select id="cfg-provider"></select>
@@ -814,18 +824,19 @@
       </label>
 
       <label class="field" id="cfg-baseurl-field">
-        <span>Base URL</span>
+        <span>API endpoint URL</span>
         <input id="cfg-baseurl" autocomplete="off" spellcheck="false" placeholder="https://your-endpoint.example.com/v1">
         <small>The root the client appends <code>/chat/completions</code> to. Include <code>/v1</code> if your gateway expects it.</small>
       </label>
 
+      </div>
       <label class="field">
         <span>Model name</span>
         <select id="cfg-model" aria-describedby="cfg-model-note">
           <option value="">Loading available models…</option>
         </select>
         <input id="cfg-model-custom" autocomplete="off" spellcheck="false" placeholder="Enter the exact model ID" hidden>
-        <small id="cfg-model-note">Models are loaded from your endpoint. Choose Custom model ID if the model is not advertised.</small>
+        <small id="cfg-model-note">Models are provided and managed by Qase.</small>
       </label>
 
       <label class="field">
@@ -840,15 +851,15 @@
 
       <div class="field-row">
         <label class="field">
-          <span>Reasoning</span>
+          <span>Analysis depth</span>
           <select id="cfg-reasoning">
-            <option value="low">low</option>
-            <option value="medium">medium</option>
-            <option value="high">high</option>
+            <option value="low">Quick</option>
+            <option value="medium">Balanced</option>
+            <option value="high">Thorough</option>
           </select>
         </label>
         <label class="field">
-          <span>Max turns</span>
+          <span>Maximum agent steps</span>
           <input id="cfg-maxturns" type="number" min="10" max="500" step="10">
         </label>
       </div>
@@ -868,8 +879,8 @@
     </div>
 
     <footer class="modal-foot">
-      <button class="btn btn-ghost" type="button" id="cfg-test-btn">Test connection</button>
-      <button class="btn btn-primary" type="button" id="cfg-save">Save</button>
+      <button class="btn btn-ghost" type="button" id="cfg-test-btn">Check model availability</button>
+      <button class="btn btn-primary" type="button" id="cfg-save">Save &amp; return</button>
     </footer>
   </form>
 </dialog>
@@ -880,42 +891,54 @@
      device and landscape choices are explicit per run instead of implicit
      from the mode dock. -->
 <dialog class="modal qa-modal route-page" id="qa-start" data-route-page="new-run" aria-labelledby="qa-start-title" aria-describedby="qa-start-description">
-  <form class="modal-inner route-page-shell" id="qa-form">
+  <form class="modal-inner route-page-shell" id="qa-form" novalidate>
     <header class="modal-head" data-path="~/qase/qa/new">
       <div class="route-page-heading">
         <span class="route-page-mark" aria-hidden="true">Q</span>
         <div>
         <p class="route-page-context">New test run</p>
-        <h1 id="qa-start-title" tabindex="-1">Test your website</h1>
-        <p id="qa-start-description">Find broken flows and collect evidence in real browsers.</p>
+        <h1 id="qa-start-title" tabindex="-1">Let’s test your website.</h1>
+        <p id="qa-start-description">A little context. A clear plan. Results you can act on.</p>
         </div>
       </div>
       <button class="btn btn-ghost btn-sm route-page-back" type="button" id="qa-close"><span aria-hidden="true">←</span> Back to tests</button>
     </header>
     <div class="modal-body">
       <nav class="route-section-nav" aria-label="Test setup sections">
-        <p>Test setup</p>
-        <button type="button" data-page-jump="qa-target-url"><span>1</span> Website</button>
-        <button type="button" data-page-jump="qa-recommended-title"><span>2</span> Coverage</button>
-        <button type="button" data-page-jump="qa-customize"><span>3</span> Devices &amp; checks</button>
-        <small>Your recommended setup is ready. Customize only what this run needs.</small>
+        <p>NEW TEST RUN</p>
+        <button type="button" data-journey-step="0" aria-current="step"><span>1</span><div>Website<small>Where should we start?</small></div></button>
+        <button type="button" data-journey-step="1"><span>2</span><div>Coverage<small>Choose what to check</small></div></button>
+        <button type="button" data-journey-step="2"><span>3</span><div>Review &amp; launch<small>Know exactly what will run</small></div></button>
+        <div class="journey-nav-note"><span aria-hidden="true">✦</span><p>You’re in control.<small>Qase asks when it needs credentials or your input.</small></p></div>
       </nav>
       <div class="route-page-content" id="qa-page-content">
+      <section class="journey-step" data-journey-panel="0" aria-labelledby="journey-website-title">
+      <p class="journey-eyebrow">STEP 01 / THE STARTING POINT</p>
+      <h2 id="journey-website-title" tabindex="-1">What are we testing?</h2>
+      <p class="journey-lead">Your homepage, staging environment, or a specific feature. Qase explores from here.</p>
       <label class="field">
         <span>Website URL</span>
         <input id="qa-target-url" name="targetUrl" type="url" required maxlength="2048" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://example.com">
-        <small>Qase opens this URL immediately after the run is created.
+        <small>Paste a link, or enter a domain such as example.com.
           <button type="button" class="link-btn" id="qa-demo-fill">Try the demo site</button></small>
       </label>
+      <label class="field journey-goal"><span>Anything you’d like Qase to focus on? <small>Optional</small></span><textarea id="qa-goal" rows="3" maxlength="2000" placeholder="For example: check sign-in, project creation, and the mobile navigation."></textarea><small>Describe the workflow or concern. Provide sign-in credentials only when the agent asks.</small></label>
+      </section>
+      <section class="journey-step" data-journey-panel="1" aria-labelledby="journey-coverage-title" hidden>
+      <p class="journey-eyebrow">STEP 02 / YOUR TEST PLAN</p>
+      <h2 id="journey-coverage-title" tabindex="-1">Start with the essentials.</h2>
+      <p class="journey-lead">Recommended checks are ready. Adjust the selection if this run needs something specific.</p>
+      <div class="journey-presets" role="group" aria-label="Browser coverage size"><button type="button" id="journey-focused" aria-pressed="true"><strong>Focused check <span>Recommended</span></strong><small>One available browser. A manageable first run.</small></button><button type="button" id="journey-custom" aria-pressed="false"><strong>Custom coverage</strong><small>Choose browsers, devices, and versions.</small></button></div>
       <section class="qa-recommended" aria-labelledby="qa-recommended-title">
         <h3 id="qa-recommended-title">Recommended checks are selected</h3>
         <p>Check forms, navigation, layout and accessibility. Customize the coverage for your website below.</p>
         <p id="qa-selection-summary" role="status" aria-live="polite">Loading available checks…</p>
       </section>
+      <div class="journey-benefits"><span>Forms &amp; validation</span><span>Navigation &amp; links</span><span>Layout &amp; accessibility</span></div>
       <details class="qa-customize" id="qa-customize">
         <summary>Customize devices, browsers and checks</summary>
         <div class="qa-customize-body">
-      <fieldset class="qa-device-fieldset test-on-fieldset">
+      <fieldset class="qa-device-fieldset test-on-fieldset" hidden>
         <legend>Test on</legend>
         <div class="test-on-summary" id="qa-test-on" data-empty="true">
           <span class="test-on-prompt">Choose a device</span>
@@ -939,7 +962,8 @@
         <div class="qa-matrix-state" id="qa-matrix-state" role="status" aria-live="polite">Loading device &amp; browser catalog…</div>
         <div class="qa-matrix" id="qa-matrix-root" hidden>
           <div class="qa-matrix-filters">
-            <input class="qa-matrix-search" id="qa-matrix-search" type="search" placeholder="Search device, manufacturer, OS, browser…" autocomplete="off" aria-label="Search configurations">
+            <label for="qa-matrix-search" class="mp-search-label">Find a device</label>
+            <input class="qa-matrix-search" id="qa-matrix-search" type="search" placeholder="Search devices, operating systems or browser versions…" autocomplete="off" aria-label="Search devices and configurations">
           </div>
           <div class="qa-matrix-body">
             <div class="qa-matrix-browsers" id="qa-matrix-browsers"></div>
@@ -1048,12 +1072,24 @@
               </label>
             </details>
           </div>
+      </section>
+      <section class="journey-step" data-journey-panel="2" aria-labelledby="journey-review-title" hidden>
+        <p class="journey-eyebrow">STEP 03 / READY WHEN YOU ARE</p>
+        <h2 id="journey-review-title" tabindex="-1">Here’s your test run.</h2>
+        <p class="journey-lead">Check the details, then let Qase take it from here.</p>
+        <div class="journey-review-card"><div class="journey-review-target"><span class="journey-site-icon" aria-hidden="true">↗</span><div><small>Website</small><strong id="journey-review-url"></strong></div><button type="button" class="link-btn" data-journey-edit="0">Edit</button></div><dl><div><dt>Checks selected</dt><dd id="journey-review-checks">—</dd></div><div><dt>Browser configurations</dt><dd id="journey-review-devices">—</dd></div><div><dt>Qase-provided model</dt><dd id="journey-review-model">—</dd></div><div id="journey-review-goal-row" hidden><dt>Your focus</dt><dd id="journey-review-goal"></dd></div></dl><button type="button" class="link-btn" data-journey-edit="1">Edit coverage and devices</button></div>
+        <p class="journey-volume-note" id="journey-volume-note" hidden></p>
+        <div class="journey-next"><strong>What happens next</strong><ol><li>Qase opens your website in a real browser.</li><li>Follow progress live. Answer any sign-in or workflow questions.</li><li>Review findings, evidence, and the final report when the run finishes.</li></ol></div>
+      </section>
       <div class="test-result" id="qa-form-error" role="alert" aria-live="assertive"></div>
       </div>
     </div>
     <footer class="modal-foot">
       <button class="btn btn-ghost" type="button" id="qa-cancel">Cancel</button>
-      <button class="btn btn-primary" type="submit" id="qa-submit">Start testing</button>
+      <button class="btn btn-ghost" type="button" id="journey-back" hidden>← Back</button>
+      <p class="journey-footer-hint" id="journey-footer-hint" aria-live="polite"></p>
+      <button class="btn btn-primary" type="button" id="journey-next">Choose coverage →</button>
+      <button class="btn btn-primary" type="submit" id="qa-submit" hidden>Start testing</button>
     </footer>
   </form>
 </dialog>
@@ -1648,8 +1684,7 @@
     <footer class="account-status"><p id="profile-message" role="status" aria-live="polite"></p></footer>
   </div>
 </dialog>
-<script src="entry.js?v=20261014-7" type="module"></script>
-<script src="entry-motion.js?v=20261014-7" type="module"></script>
-<script src="app.js?v=20261014-7" type="module"></script>
+<script src="entry.js?v=20261014-6" type="module"></script>
+<script src="app.js?v=20261015-18" type="module"></script>
 </body>
 </html>

@@ -6,15 +6,29 @@
  * clear error (never fake success); orientation change is observable in the
  * recorded runtime facts.
  */
-import test from 'node:test';
+import test, { before, after } from 'node:test';
+import express from 'express';
+import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
+import { mountDefectFixtures } from './defectFixtures.js';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { createInteractionApi, INTERACTION_ACTIONS } from './interactionApi.js';
 import { generateEnvironments } from './environmentCatalog.js';
 import { environmentEmulationOptions } from './browserstackProvider.js';
 
-const BASE_URL = process.env.QASE_TEST_BASE_URL ?? 'http://127.0.0.1:5173';
-const FIXTURE_URL = `${BASE_URL}/demo/defects/device-interactions`;
+let FIXTURE_URL;
+let fixtureServer;
+before(async () => {
+	const app = express();
+	mountDefectFixtures(app);
+	fixtureServer = app.listen(0, '127.0.0.1');
+	await once(fixtureServer, 'listening');
+	FIXTURE_URL = `http://127.0.0.1:${fixtureServer.address().port}/demo/defects/device-interactions`;
+});
+after(async () => {
+	if (fixtureServer) await new Promise((resolve, reject) => fixtureServer.close(error => error ? reject(error) : resolve()));
+});
 
 const IPHONE = generateEnvironments().find((e) => e.envId === 'ENV-IOS-IP17PRO-26.0-SAF-26.0');
 const DESKTOP = generateEnvironments().find((e) => e.platform === 'windows' && e.deviceType === 'desktop' && e.browserCode === 'chrome');
@@ -166,7 +180,7 @@ test('non-touch rotate returns SKIPPED with a reason, not an error or fake appli
 
 test('upload assigns real files through the file input', { timeout: 60_000 }, async () => {
 	await withInteractionApi(IPHONE, async (api, page) => {
-		const result = await api.uploadFiles('#fixture-file-input', ['/etc/hostname']);
+		const result = await api.uploadFiles('#fixture-file-input', [fileURLToPath(import.meta.url)]);
 		assert.equal(result.success, true);
 		const files = await page.locator('#fixture-file-input').evaluate((el) => el.files.length);
 		assert.equal(files, 1);

@@ -271,12 +271,12 @@ test('R2: runs without an environment or observable facts keep the legacy behavi
 	assert.equal(published.verdict, 'blocked');
 });
 
-test('R2: report markdown carries the runtime-observed browser identity', () => {
+test('R2: report markdown carries the runtime-observed browser identity', async () => {
 	const observed = fixture({
 		environmentSnapshot: { envId: 'ENV-MAC-FIREFOX-141', platform: 'macos', browser: 'Firefox', browserCode: 'firefox', browserVersion: '141', os: 'macOS', osVersion: '15' },
 		runtimeFacts: { executionLevel: 'SIMULATED', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14.7; rv:141.0) Gecko/20100101 Firefox/141.0', capturedAt: new Date().toISOString() }
 	});
-	void observed.finish.run({ ...report, verdict: 'pass' });
+	await observed.finish.run({ ...report, verdict: 'pass' });
 	const markdown = buildReportMarkdown(observed.session);
 	assert.match(markdown, /Runtime browser \(observed\):\*\* firefox 141\.0, Gecko engine/);
 });

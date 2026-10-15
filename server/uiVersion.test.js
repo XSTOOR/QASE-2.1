@@ -11,27 +11,15 @@ test('uiAssetVersion extracts the newest ?v= stamp from index.html', () => {
 	assert.match(version, /^\d{8}-\d+$/, 'stamp shape YYYYMMDD-N');
 });
 
-test('uiAssetVersion picks the LATEST of distinct stamps', () => {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-uiver-'));
-	const probe = path.join(dir, 'probe.js');
-	fs.writeFileSync(probe, `
-		export function uiAssetVersion(files) {
-			const stamps = [];
-			for (const html of files) {
-				stamps.push(...[...html.matchAll(/[?&]v=(\\d{8}-\\d+)\\b/g)].map(m => m[1]));
-			}
-			return stamps.sort().at(-1) ?? null;
-		}
-	`);
-	// Sort semantics: string sort picks the newest dated stamp.
-	const stamps = ['20261014-9', '20261009-1', '20261014-10'];
-	assert.equal(stamps.sort().at(-1), '20261014-9', 'string sort picks newest dated stamp');
-	assert.deepEqual([...stamps].sort().at(-1) === '20261014-9', true);
-	fs.rmSync(dir, { recursive: true, force: true });
-	// The real export must behave the same on the real index.html: it has
-	// >= 9 stamps and no non-dated stamp (theme.js?v=3) may win.
-	const version = uiAssetVersion();
-	assert.notEqual(version, '3');
+test('uiAssetVersion picks the numerically newest revision, including two digits', () => {
+ const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+ const stamps = [...html.matchAll(/[?&]v=(\d{8}-\d+)\b/g)].map(match => match[1]);
+ const compare = (a, b) => a.localeCompare(b, 'en', { numeric: true });
+ assert.equal(['20261014-9', '20261009-1', '20261014-10'].sort(compare).at(-1), '20261014-10');
+ assert.equal(uiAssetVersion(), stamps.sort(compare).at(-1));
+ assert.equal(uiAssetVersion(), '20261015-18');
+ const client = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+ assert.ok(client.includes("stamps.sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))"));
 });
 
 test('uiAssetVersion returns null when index.html is unreadable', () => {

@@ -12,60 +12,34 @@ const [app, styles] = await Promise.all([
 	readFile(new URL('./styles.css', import.meta.url), 'utf8')
 ]);
 
-test('#15968: browsers render as one-click toggle cards, not checkboxes', () => {
-	assert.match(app, /dataset\.role = 'browser-card'/);
-	assert.match(app, /qa-matrix-browser-cards/);
-	assert.match(app, /qa-matrix-browser-card\$\{family\.available \? '' : ' is-unavailable'\}/);
-	// The old checkbox checklist markup is gone from the render path.
-	assert.doesNotMatch(app, /qa-matrix-family-label/);
-	assert.doesNotMatch(app, /dataset\.family = family\.code;\s*\n\s*const input = document\.createElement\('input'\)/);
-	assert.doesNotMatch(app, /qa-matrix-family-count/);
+const picker = await readFile(new URL('./matrixPicker.js', import.meta.url), 'utf8');
+test("browser chips expose explicit pressed state and a single family toggle", () => {
+	assert.ok(picker.includes("mp-browser"), "mp-browser");
+	assert.ok(picker.includes("aria-pressed"), "aria-pressed");
+	assert.ok(picker.includes("next.browserFamilies.delete(family.code)"), "next.browserFamilies.delete(family.code)");
+	assert.ok(picker.includes("next.browserFamilies.add(family.code)"), "next.browserFamilies.add(family.code)");
 });
 
-test('#15968: card click toggles the family exactly once through the explicit model', () => {
-	const cardIndex = app.indexOf("card.dataset.role = 'browser-card'");
-	assert.ok(cardIndex !== -1, 'browser card must exist');
-	const cardBlock = app.slice(cardIndex, app.indexOf("matrix.browsers.append(cardList);"));
-	// #16043: toggle intent is computed once as willSelect (also drives the
-	// per-browser active-family update); the model call itself is unchanged.
-	assert.match(cardBlock, /const willSelect = !selection\.browserFamilies\.has\(family\.code\);/);
-	assert.match(cardBlock, /toggleBrowserFamily\(next, qaMatrixState\.index, family\.code, willSelect\)/);
-	assert.match(cardBlock, /qaMatrixApplySelection\(next\)/);
-	// Cards expose pressed state for assistive tech.
-	assert.match(cardBlock, /aria-pressed/);
+test("unavailable browsers stay disabled and explain their reason", () => {
+	assert.ok(picker.includes("item.disabled = !family.available"), "item.disabled = !family.available");
+	assert.ok(picker.includes("family.reason"), "family.reason");
 });
 
-test('#15968: unavailable browsers render disabled with an honest reason', () => {
-	const cardIndex = app.indexOf("card.dataset.role = 'browser-card'");
-	const cardBlock = app.slice(cardIndex, app.indexOf("matrix.browsers.append(cardList);"));
-	assert.match(cardBlock, /card\.disabled = true/);
-	assert.match(cardBlock, /family\.reason \?\? 'Not available'/);
-	assert.match(cardBlock, /is-unavailable-badge/);
+test("bulk selection is explicitly scoped to shown devices", () => {
+	assert.ok(picker.includes("Select shown devices"), "Select shown devices");
+	assert.ok(picker.includes("visible.flatMap"), "visible.flatMap");
+	assert.ok(picker.includes("Clear shown devices"), "Clear shown devices");
 });
 
-test('#15968: bulk actions remain (Select all available / Clear)', () => {
-	assert.match(app, /select-all-browsers/);
-	assert.match(app, /deselect-all-browsers/);
-	assert.match(app, /textContent = 'Select all available'/);
-	assert.match(app, /textContent = 'Clear'/);
-	assert.match(app, /selectAllBrowsers\(qaMatrixState\.index, selection\)/);
+test("browser icons and exact version review are retained", () => {
+	assert.ok(picker.includes("brandIcon(family.code, 20)"), "brandIcon(family.code, 20)");
+	assert.ok(picker.includes("config.browserVersion"), "config.browserVersion");
+	assert.ok(picker.includes("Review exact configurations"), "Review exact configurations");
 });
 
-test('#15968: cards carry brand icon + version + device count', () => {
-	const cardIndex = app.indexOf("card.dataset.role = 'browser-card'");
-	const cardBlock = app.slice(cardIndex, app.indexOf("matrix.browsers.append(cardList);"));
-	assert.match(cardBlock, /brandIcon\(family\.code, 22\)/);
-	assert.match(cardBlock, /qa-matrix-browser-card-version/);
-	assert.match(cardBlock, /qa-matrix-browser-card-devices/);
-});
-
-test('#15968: styles define selected, unavailable and focus states', () => {
-	assert.match(styles, /\.qa-matrix-browser-cards/);
-	assert.match(styles, /\.qa-matrix-browser-card\.is-selected/);
-	assert.match(styles, /\.qa-matrix-browser-card\.is-unavailable/);
-	assert.match(styles, /\.qa-matrix-browser-card:focus-visible/);
-	// Narrow-width fallback: cards go full-width on phones.
-	assert.match(styles, /@media \(max-width: 560px\)[\s\S]*\.qa-matrix-browser-card \{ flex: 1 1 100%; \}/);
+test("keyboard focus is restored after selection changes", () => {
+	assert.ok(picker.includes("focusKey"), "focusKey");
+	assert.ok(picker.includes("focus({ preventScroll: true })"), "focus({ preventScroll: true })");
 });
 
 /* brandIcons module — DOM-shimmed unit tests (no browser needed). */

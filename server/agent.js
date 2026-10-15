@@ -8,6 +8,7 @@ import { createBrowserTools } from './browserTools.js';
 import { getConfig, getPublicConfig, envKeyDestinationProblem, validateModelUsability, defaultModelForProvider as defaultModelFor, getStoredModel, healStoredModel } from './config.js';
 import { buildQaContext } from './prompt.js';
 import { createQaTools } from './qaTools.js';
+import { captureRuntimeFacts } from './runtimeCapture.js';
 import { buildQaChatReport } from './report.js';
 import { buildFounderContext, buildFounderSynthesisContext } from './founderPrompt.js';
 import { createFounderTools, founderFinishReadiness } from './founderTools.js';
@@ -552,7 +553,11 @@ export async function ensureRuntime(session, runStore) {
 	const modeTools = session.mode === 'founder'
 		? createFounderTools(session, runStore)
 		: [
-			...createQaTools(session, runStore, { deviceRuntime: null }),
+			...createQaTools(session, runStore, {
+				deviceRuntime: null,
+				captureRuntimeFacts: () => captureRuntimeFacts(session, record.bridge, record),
+				isCancelled: () => Boolean(record.controller?.signal.aborted)
+			}),
 			...(session.mode === 'sqa' ? createSqaTools(session, runStore) : [])
 		];
 	const sessionTools = [...modeTools, ...createBrowserTools(() => record.bridge)]
@@ -1188,6 +1193,8 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		// Retain cancellation and the running lock through an automatic retry or
 		// phase handoff. Stop must remain effective while the model is backing off.
 		const continuing = !controller.signal.aborted && (continueIncompleteRun || retryAfterTimeout);
+		// Capture while the device session/attestation still belongs to this turn.
+		await captureRuntimeFacts(session, bridge, record);
 		if (!continuing) {
 			record.running = false;
 			record.controller = undefined;
@@ -1202,32 +1209,6 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 			}
 		}
 		session.secretNames = secretNames(session.id);
-		// Phase 20: capture runtime facts at turn END via the live page — the
-		// browser context is created lazily mid-turn, so reading at turn start
-		// would miss it. The record stores what the browser ACTUALLY sent
-		// (observed UA/viewport/DPR) with the honest execution level, never
-		// wishful catalog hints.
-		if (!session.runtimeFacts) {
-			const facts = (await bridge.readRuntimeFacts?.()) ?? null;
-			if (facts) {
-				session.runtimeFacts = {
-					...facts,
-					executionLevel: bridge.execution?.level ?? null,
-					provider: bridge.execution?.provider ?? null,
-					emulatedUserAgent: bridge.execution?.emulatedUserAgent ?? null,
-					// RT5 (#14757): the engine actually launched + branded
-					// binary truth — findings context proves the identity.
-					launchedEngineId: bridge.execution?.launchedEngineId ?? null,
-					brandedBinary: bridge.runtimeFacts?.brandedBinary ?? facts.brandedBinary ?? null,
-					// Phase D3: runtime session + attestation travel with the
-					// recorded facts — evidence must belong to a verifiable
-					// runtime session for PASS/FAIL to be reported.
-					runtimeSessionId: record.deviceSessionId ?? null,
-					attestation: record.deviceSession?.attestation ?? null,
-					capturedAt: new Date().toISOString()
-				};
-			}
-		}
 		// One last frame so the panel shows where the run actually finished.
 		void bridge.captureFrame();
 		bridge.stopFrames();

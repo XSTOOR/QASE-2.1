@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { chromium } from 'playwright';
 import {
 	probeLocalBrowsers,
 	lastLocalBrowserProbe,
@@ -12,7 +13,7 @@ import {
 
 test('registry probes brands: present binaries carry detected versions, absent ones carry install reasons', async () => {
 	invalidateLocalBrowserCache();
-	const probe = await probeLocalBrowsers({ force: true }); // version-only, no launches
+	const probe = await probeLocalBrowsers({ force: true, findBinary: paths => paths[0], versionFor: async () => '151.0.1' });
 	const codes = probe.brands.map((b) => b.code);
 	assert.deepEqual(codes, ['chrome', 'brave', 'opera', 'edge']);
 
@@ -42,6 +43,8 @@ test('launch probe verifies and records failures honestly', async () => {
 	invalidateLocalBrowserCache();
 	const probe = await probeLocalBrowsers({
 		force: true,
+		findBinary: paths => paths[0],
+		versionFor: async () => '151.0.1',
 		launchProbe: async (path) => path.includes('brave')
 			? { ok: false, error: 'sandbox denied' }
 			: { ok: true }
@@ -81,9 +84,9 @@ test('duckduckgo local resolution is static NOT_SUPPORTED with a truthful reason
 	assert.match(DUCKDUCKGO_LOCAL_RESOLUTION.reason, /no Linux desktop build/);
 });
 
-test('playwrightLaunchProbe really launches chrome headless (real binary, this host)', async () => {
+test('playwrightLaunchProbe really launches installed Chromium headless', async () => {
 	const probe = playwrightLaunchProbe();
-	const result = await probe('/usr/bin/google-chrome-stable');
+	const result = await probe(chromium.executablePath());
 	assert.equal(result.ok, true);
 }, { timeout: 30_000 });
 

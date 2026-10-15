@@ -7,25 +7,20 @@ const [app, styles] = await Promise.all([
 	readFile(new URL('./styles.css', import.meta.url), 'utf8')
 ]);
 
-/* #15969: the merged Phase-1 contract (selection checkbox + View scope
- * button) was superseded by the platform-tabs + one-click-row device
- * selector. Updated to pin the NEW single-action contract. */
-test('device rows use one explicit selection action', () => {
-	assert.match(app, /dataset\.role = 'device-row'/);
-	assert.match(app, /toggleDevice\(next, device\.key, !selection\.deviceKeys\.has\(device\.key\)\)/);
-	assert.doesNotMatch(app, /dataset\.role = 'device-view'/);
-	assert.doesNotMatch(app, /Inspect this device without changing your selection/);
+const picker = await readFile(new URL('./matrixPicker.js', import.meta.url), 'utf8');
+test("device selection writes exact pairs without routing", () => {
+	assert.ok(picker.includes("apply(changeMatrixPairs(index, selection, pairList, checked))"), "apply(changeMatrixPairs(index, selection, pairList, checked))");
+	assert.ok(picker.includes("apply(changeMatrixPairs(index, selection, [[device.key, family.code]], checked))"), "apply(changeMatrixPairs(index, selection, [[device.key, family.code]], checked))");
 });
 
-test('selection summary clearly separates devices, browsers, and runs', () => {
-	// #15970: primary line is browsers × devices → runs; the one-at-a-time
-	// honesty note remains a secondary segment.
-	assert.match(app, /browser\$\{dimensions\.families === 1 \? '' : 's'\} × /);
-	assert.match(app, /runs one browser at a time/);
+test("summary separates real runs from distinct devices and browsers", () => {
+	assert.ok(picker.includes("selected.size.toLocaleString()"), "selected.size.toLocaleString()");
+	assert.ok(picker.includes("selectedDevices.length"), "selectedDevices.length");
+	assert.ok(picker.includes("browserCode"), "browserCode");
 });
 
-test('device controls remain reachable at narrow widths', () => {
-	// #15969: device rows wrap and platform tabs scroll horizontally.
-	assert.match(styles, /@media \(max-width: 560px\)[\s\S]*\.qa-matrix-device-row \{ flex-wrap: wrap; \}/);
-	assert.match(styles, /\.qa-matrix-platform-tabs \{ overflow-x: auto; flex-wrap: nowrap; \}/);
+test("narrow screens keep the full compatibility grid accessible", () => {
+	assert.ok(picker.includes("mp-table-scroll"), "mp-table-scroll");
+	assert.ok(picker.includes("Scroll horizontally for more browsers."), "Scroll horizontally for more browsers.");
+	assert.ok(picker.includes("scroll.tabIndex = 0"), "scroll.tabIndex = 0");
 });

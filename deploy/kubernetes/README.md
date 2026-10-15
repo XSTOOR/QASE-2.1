@@ -16,7 +16,9 @@ Before applying anything:
 4. Add provider-specific ingress, TLS, egress policy, external secrets,
    monitoring and workload identity overlays. Permit the heartbeat workload to
    reach only the API metrics endpoint and control API.
-5. Apply `base/migrations.yaml` and wait for both Jobs to succeed. Then apply
+5. Provision the evidence PVC using `evidence-pvc.example.yaml` after replacing
+   its storage class and capacity for your cluster. Apply `base/migrations.yaml`
+   and wait for both Jobs to succeed. Then apply
    `base/qase.yaml`. Never let normal application startup run migrations.
 6. Verify all probes, perform a signed Drytis canary, and run the bounded smoke
    check before adding traffic.
@@ -36,6 +38,15 @@ are the only cell workload that receives the global control-plane write token;
 API and worker pods must not receive it.
 
 Required externally managed objects are:
+
+- `qase-evidence`: a PersistentVolumeClaim with `ReadWriteMany` access, backed
+  by durable shared storage. API and worker replicas mount it at `/app/evidence`
+  using `QASE_ARTIFACT_DIR`; it must support atomic rename and exclusive file
+  creation and be writable by UID/GID 1000. Provision it before starting pods,
+  enable backups and size/retention monitoring, and use a separate claim per
+  cell. Runtime scratch files remain on `emptyDir`. Evidence remains available
+  across worker restarts and API replicas. Existing evidence must be copied
+  from previous worker artifact directories before those pods are retired.
 
 - `qase-cell-runtime`: `database-url`, `redis-url`, `secrets-master-key`,
   `metrics-token`, `model-api-key`;

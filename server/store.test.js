@@ -323,6 +323,7 @@ test('pilot cohort is persisted on the session and survives a reload', async t =
 });
 
 test('session history is persisted with owner-only permissions', async t => {
+	if (process.platform === 'win32') { t.skip('POSIX permission bits are not enforced by Windows; Linux CI verifies mode 0600.'); return; }
 	const originalDirectory = process.cwd();	const isolatedDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'qase-session-mode-'));
 	t.after(async () => {
 		process.chdir(originalDirectory);

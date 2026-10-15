@@ -1,10 +1,23 @@
-import test from 'node:test';
+import test, { before, after } from 'node:test';
+import express from 'express';
+import { once } from 'node:events';
 import assert from 'node:assert/strict';
 import { generateEnvironments } from './environmentCatalog.js';
-import { getDefectFixture, listDefectFixtures, fixtureExpectation } from './defectFixtures.js';
+import { getDefectFixture, listDefectFixtures, fixtureExpectation, mountDefectFixtures } from './defectFixtures.js';
 import { verifyFixtureAgainstProfile } from './defectFixtureRunner.js';
 
-const BASE_URL = 'http://127.0.0.1:5173';
+let BASE_URL;
+let fixtureServer;
+before(async () => {
+	const app = express();
+	mountDefectFixtures(app);
+	fixtureServer = app.listen(0, '127.0.0.1');
+	await once(fixtureServer, 'listening');
+	BASE_URL = `http://127.0.0.1:${fixtureServer.address().port}`;
+});
+after(async () => {
+	if (fixtureServer) await new Promise((resolve, reject) => fixtureServer.close(error => error ? reject(error) : resolve()));
+});
 
 test('production wiring shape: stripped listing resolved back to full fixture executes (not NOT_VERIFIED)', { timeout: 120_000 }, async () => {
 	// app.js wires verifyFixtures: listDefectFixtures() (summary-only, no

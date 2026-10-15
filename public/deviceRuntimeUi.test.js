@@ -111,8 +111,9 @@ test('lastRunByEnv keeps the newest run per environment and reads honest level',
 test('formatWhen renders timestamps and falls back to em dash', () => {
 	assert.equal(formatWhen(null), '—');
 	assert.equal(formatWhen('not-a-date'), '—');
-	assert.ok(/^\w{3} \d/.test(formatWhen('2026-10-01T12:00:00Z')), 'renders a short date');
-	assert.ok(/^\w{3} \d/.test(formatWhen(1760000000000)), 'renders epoch ms');
+	for (const value of ['2026-10-01T12:00:00Z', 1760000000000]) {
+		assert.equal(formatWhen(value), new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }), 'respects the local date order');
+	}
 });
 
 test('fallbackOptionsFor: busy flag + busy session id surface for the DEVICE BUSY modal', () => {

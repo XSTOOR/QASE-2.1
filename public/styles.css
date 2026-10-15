@@ -4189,11 +4189,8 @@ padding: 8px 11px;
   background: var(--accent-softer);
 }
 
-.founder-submit {
-  border-color: rgba(47, 91, 234, 0.55) !important;
-  background: var(--accent) !important;
-  color: #fff !important;
-}
+/* Founder submit uses the shared primary-action palette. A mode-specific
+   !important white foreground made its white dark-theme button unreadable. */
 
 /* Founder result surface */
 

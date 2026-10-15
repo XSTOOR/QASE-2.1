@@ -19,9 +19,21 @@ export function runPresentationLabel(session) {
 	return status ? status.replaceAll('_', ' ') : 'Idle';
 }
 
+/** Blocker review must show the prerequisite, even when unrelated bugs exist. */
+export function preferredResultTab(session, { sqaVisible = false, founderVisible = false } = {}) {
+	if (runPresentationStatus(session) === 'blocked') return 'tab-report';
+	if (session?.mode === 'sqa' && sqaVisible) return 'tab-sqa';
+	if (session?.mode === 'founder' && founderVisible) return 'tab-founder';
+	return session?.findings?.length ? 'tab-findings' : 'tab-report';
+}
+
 export function blockedRunReason(session) {
 	if (runPresentationStatus(session) !== 'blocked') return '';
-	return session?.report?.notCovered?.find?.(item => String(item ?? '').trim())
+	const gaps = session?.report?.notCovered;
+	// Integrity failures are concrete global blockers. Optional skipped checks
+	// (e.g. credentials or absent search) must not hide the actual reason.
+	return gaps?.find?.(item => String(item ?? '').startsWith('Blocked:'))
+		?? gaps?.find?.(item => String(item ?? '').trim())
 		?? session?.report?.summary
 		?? 'Testing could not proceed. Review the report for the blocking requirement.';
 }

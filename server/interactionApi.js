@@ -45,7 +45,10 @@ export function createInteractionApi({ context, page, beforeAction }) {
 	const hasTouchCapability = () => {
 		touchCapability ??= context.newPage()
 			.then(async (probe) => {
-				const touch = await probe.evaluate(() => navigator.maxTouchPoints > 0).catch(() => false);
+				let touch = await probe.evaluate(() => navigator.maxTouchPoints > 0).catch(() => false);
+				// Hardware touch points can leak into non-touch Windows contexts.
+				// Verify driver injection on this blank page, never on the target UI.
+				if (touch) touch = await probe.touchscreen.tap(0, 0).then(() => true, () => false);
 				await probe.close().catch(() => {});
 				return Boolean(touch);
 			})

@@ -69,7 +69,7 @@ describe('createInviteService', () => {
 		const first = createInviteService({ file, now: () => NOW });
 		const { code } = await first.create({ note: 'persisted' });
 		const mode = statSync(file).mode & 0o777;
-		assert.equal(mode, 0o600);
+		if (process.platform !== 'win32') assert.equal(mode, 0o600);
 		const second = createInviteService({ file, now: () => NOW });
 		await assert.doesNotReject(second.consume(code));
 	});
@@ -96,5 +96,31 @@ describe('registration role assignment (auth.js contract)', () => {
 		assert.match(source, /role === 'pilot' \? 'pilot' : 'developer'/);
 		// Both backends honor the proposal.
 		assert.equal((source.match(/role === 'pilot' \? 'pilot' : 'developer'/g) ?? []).length, 2);
+	});
+});
+
+describe('invitation admission', () => {
+	it('only one concurrent registrant can create an account', async () => {
+		const { svc } = service();
+		const { code } = await svc.create({});
+		let accounts = 0;
+		const register = async () => { accounts++; return { user: accounts }; };
+		const results = await Promise.allSettled([
+			svc.redeem(code, 'one@example.com', register),
+			svc.redeem(code, 'two@example.com', register)
+		]);
+		assert.equal(accounts, 1);
+		assert.equal(results.filter(item => item.status === 'fulfilled').length, 1);
+	});
+	it('failed account validation releases the invitation for a later attempt', async () => {
+		const { svc } = service(); const { code } = await svc.create({});
+		await assert.rejects(svc.redeem(code, 'one@example.com', async () => { throw Object.assign(new Error('invalid password'), { code: 'weak_password' }); }));
+		await assert.doesNotReject(svc.redeem(code, 'one@example.com', async () => ({ user: 'one' })));
+		await assert.rejects(svc.validate(code), InviteError);
+	});
+	it('ambiguous storage failure leaves admission consumed', async () => {
+		const { svc } = service(); const { code } = await svc.create({});
+		await assert.rejects(svc.redeem(code, 'one@example.com', async () => { throw new Error('session write failed after account creation'); }));
+		await assert.rejects(svc.validate(code), InviteError);
 	});
 });

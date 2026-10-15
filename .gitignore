@@ -11,6 +11,7 @@ tmp/
 temp/
 *.log
 *.zip
+*.zip.sha256
 artifacts/
 
 # Private runtime state and credentials

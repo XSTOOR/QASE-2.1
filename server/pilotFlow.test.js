@@ -137,6 +137,18 @@ describe('controlled pilot registration (production, closed)', () => {
 		assert.equal(retry.status, 201);
 	});
 
+	it('concurrent registration with one invite admits exactly one account', async () => {
+		const h = harness({}); const isolatedBase = await listen(h.server);
+		try {
+			const { code } = await h.inviteService.create({});
+			const results = await Promise.all(['race-one', 'race-two'].map(name => register(isolatedBase, {
+				email: `${name}@example.com`, password: 'a-very-long-password-123', displayName: name, inviteCode: code
+			})));
+			assert.deepEqual(results.map(item => item.status).sort(), [201, 403]);
+			assert.equal(results.filter(item => item.setCookie.includes('qase_session=')).length, 1);
+		} finally { await new Promise(resolve => h.server.close(resolve)); rmSync(h.dir, { recursive: true, force: true }); }
+	});
+
 	it('pilot-status defaults to false; reports true when QASE_PILOT_MODE=true', async () => {
 		const response = await fetch(`${base}/api/pilot-status`);
 		assert.deepEqual(await response.json(), { pilot: false });

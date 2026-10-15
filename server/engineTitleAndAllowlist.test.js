@@ -14,13 +14,11 @@ const appJs = fs.readFileSync(path.join(here, '../public/app.js'), 'utf8');
 const styles = fs.readFileSync(path.join(here, '../public/styles.css'), 'utf8');
 const policyJs = fs.readFileSync(path.join(here, './browserPolicy.js'), 'utf8');
 
-test('run list title carries an engine chip for non-chromium runs', () => {
-	const runListTitle = appJs.slice(
-		appJs.indexOf('title.textContent = run.targetUrl ? hostOf(run.targetUrl) : run.title'),
-		appJs.indexOf('title.textContent = run.targetUrl ? hostOf(run.targetUrl) : run.title') + 600
-	);
-	assert.match(runListTitle, /run\.engine && run\.engine !== 'chromium'/, 'non-chromium gate');
-	assert.match(runListTitle, /run-engine-pill/, 'chip class reused');
+test('run list shows one consolidated browser and device summary', () => {
+	const card = appJs.slice(appJs.indexOf('function renderRun(run)'), appJs.indexOf('/* ── Session loading'));
+	assert.match(card, /runCardDetails\(run, deviceState.list\)/);
+	assert.match(card, /environment.textContent = details.environment/);
+	assert.doesNotMatch(card, /run-engine-pill/, 'browser identity belongs in context, not repeated chips');
 });
 
 test('chat header shows the engine tag for non-chromium runs', () => {
