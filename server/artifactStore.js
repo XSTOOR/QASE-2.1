@@ -19,7 +19,7 @@ import crypto from 'node:crypto';
  * level the user requested.
  */
 
-const ARTIFACT_ROOT = () => path.join(process.cwd(), '.qase', 'artifacts');
+const ARTIFACT_ROOT = () => path.resolve(process.env.QASE_ARTIFACT_DIR || path.join(process.cwd(), '.qase', 'artifacts'));
 
 const TYPE_BY_EXTENSION = {
 	png: 'image/png',
@@ -34,7 +34,7 @@ const TYPE_BY_EXTENSION = {
 
 function safeId(id) {
 	// Session ids are server-generated UUIDs; reject anything path-like.
-	return typeof id === 'string' && /^[A-Za-z0-9-_.]+$/.test(id) ? id : null;
+	return typeof id === 'string' && id !== '.' && id !== '..' && /^[A-Za-z0-9-_.]+$/.test(id) ? id : null;
 }
 
 /** Stamps honest execution metadata from the session's recorded state. */
@@ -64,14 +64,27 @@ export function createArtifactStore({ root = ARTIFACT_ROOT, now = () => Date.now
 	const resolvedRoot = typeof root === 'function' ? root() : root;
 	const directoryFor = (sessionId) => path.join(resolvedRoot, sessionId);
 	function writeSidecar(dir, meta) {
-		fs.writeFileSync(path.join(dir, `${meta.artifactId}.json`), JSON.stringify(meta, null, 2));
+		const file = path.join(dir, `${meta.artifactId}.json`);
+		const temporary = `${file}.${crypto.randomUUID()}.tmp`;
+		try {
+			fs.writeFileSync(temporary, JSON.stringify(meta, null, 2), { flag: 'wx', mode: 0o600 });
+			fs.renameSync(temporary, file);
+		} finally {
+			fs.rmSync(temporary, { force: true });
+		}
 	}
 
 	function readSidecar(dir, artifactId) {
 		const sidecarPath = path.join(dir, `${artifactId}.json`);
 		if (!fs.existsSync(sidecarPath)) return null;
 		try {
-			return JSON.parse(fs.readFileSync(sidecarPath, 'utf8'));
+			const meta = JSON.parse(fs.readFileSync(sidecarPath, 'utf8'));
+			if (meta?.artifactId !== artifactId || meta.sessionId !== path.basename(dir)
+				|| typeof meta.fileName !== 'string' || !meta.fileName
+				|| path.basename(meta.fileName) !== meta.fileName || /[\\/]/.test(meta.fileName)
+				|| ['.', '..'].includes(meta.fileName) || typeof meta.contentType !== 'string'
+				|| !Number.isFinite(meta.bytes) || typeof meta.capturedAt !== 'string') return null;
+			return meta;
 		} catch {
 			return null;
 		}
@@ -96,12 +109,15 @@ export function createArtifactStore({ root = ARTIFACT_ROOT, now = () => Date.now
 			const dir = directoryFor(sessionId);
 			fs.mkdirSync(dir, { recursive: true });
 
-			const artifactId = `ART-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+			let artifactId;
+			do { artifactId = `ART-${crypto.randomBytes(4).toString('hex').toUpperCase()}`; }
+			while (fs.existsSync(path.join(dir, `${artifactId}.json`)));
 			const safeName = path.basename(fileName ?? `artifact-${artifactId}`);
+			const storedName = `${artifactId}-${safeName}`;
 			const buffer = Buffer.isBuffer(bytes)
 				? bytes
 				: Buffer.from(String(bytes).replace(/^data:[^,]*,/, ''), 'base64');
-			fs.writeFileSync(path.join(dir, safeName), buffer);
+			fs.writeFileSync(path.join(dir, storedName), buffer, { flag: 'wx', mode: 0o600 });
 
 			const env = environment ?? session?.environmentSnapshot ?? null;
 			const execution = executionMetadataFor(session, bridgeExecution);
@@ -109,7 +125,8 @@ export function createArtifactStore({ root = ARTIFACT_ROOT, now = () => Date.now
 				artifactId,
 				type: type ?? 'screenshot',
 				label: label ?? null,
-				fileName: safeName,
+				fileName: storedName,
+				originalFileName: safeName,
 				bytes: buffer.length,
 				contentType: guessContentType(safeName),
 				capturedAt: new Date(now()).toISOString(),
@@ -162,7 +179,7 @@ export function createArtifactStore({ root = ARTIFACT_ROOT, now = () => Date.now
 			const dir = directoryFor(id);
 			if (!fs.existsSync(dir)) return [];
 			return fs.readdirSync(dir)
-				.filter(name => name.endsWith('.json'))
+				.filter(name => /^ART-[A-F0-9]{8}\.json$/.test(name))
 				.map(name => readSidecar(dir, name.slice(0, -5)))
 				.filter(Boolean)
 				.sort((a, b) => String(b.capturedAt).localeCompare(String(a.capturedAt)));

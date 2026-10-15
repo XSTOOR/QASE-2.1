@@ -33,8 +33,8 @@ test('running header and current activity use clear customer language', () => {
 
 test('completed QA selects Findings for issues and Report for a clean run', () => {
 	assert.match(app, /activateDetailTab\(\(session\.findings\?\.length \?\? 0\) > 0 \? \$\('tab-findings'\) : el\.reportTab\)/);
-	assert.match(app, /STAGE_COLLAPSE_STATUSES = new Set\(\['done', 'error', 'interrupted', 'idle'\]\)/);
-	assert.match(app, /state\.stageExpanded\.has\(state\.sessionId\)/);
+	assert.match(app, /const collapsed = previewCollapsed\(/);
+	assert.match(app, /state\.stageCollapsePreferences\.get\(state\.sessionId\)/);
 });
 
 test('finding and report hierarchy lead with user-facing evidence and action', () => {

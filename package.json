@@ -7,11 +7,12 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
+    "start:local": "node scripts/start-local.mjs",
     "dev": "node --watch server/index.js",
     "worker": "node server/worker.js",
     "control-plane": "node server/controlPlane/index.js",
     "cell-heartbeat": "node server/cellHeartbeatController.js",
-    "test": "node --test server/*.test.js server/postgres/*.test.js server/controlPlane/*.test.js public/*.test.js",
+    "test": "node --test --test-concurrency=2 server/*.test.js server/postgres/*.test.js server/controlPlane/*.test.js public/*.test.js",
     "validate:matrix": "node scripts/validate-matrix.mjs",
     "db:migrate": "node scripts/migrate.mjs",
     "control:db:migrate": "node scripts/migrate-control-plane.mjs",

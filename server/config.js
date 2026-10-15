@@ -20,7 +20,7 @@ export function uiAssetVersion() {
 			'utf8'
 		);
 		const stamps = [...html.matchAll(/[?&]v=(\d{8}-\d+)\b/g)].map(match => match[1]);
-		return stamps.sort().at(-1) ?? null;
+		return stamps.sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).at(-1) ?? null;
 	} catch {
 		return null;
 	}

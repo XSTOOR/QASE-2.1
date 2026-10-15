@@ -1,0 +1,21 @@
+name: Verify exact QASE source
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run verify
+      - name: Verify release content when using the delivered snapshot
+        run: node scripts/verify-release.mjs
+      - name: Validate production image
+        run: docker build --tag qase:verification .

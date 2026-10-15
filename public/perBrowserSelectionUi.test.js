@@ -7,67 +7,34 @@ const [app, styles] = await Promise.all([
 	readFile(new URL('./styles.css', import.meta.url), 'utf8')
 ]);
 
-/* #16043: per-browser selection UX contract — mode control, assignment
- * chips, active-family picker semantics, honest disabling, summary. */
-
-test('mode control offers both modes and switches through the model', () => {
-	assert.match(app, /dataset\.role = `mode-\$\{mode\}`/);
-	assert.match(app, /'All devices for every browser'/);
-	assert.match(app, /'One device per browser'/);
-	assert.match(app, /setSelectionMode\(qaMatrixState\.selection, qaMatrixState\.index, mode\)/);
-	// the active mode button is visually and semantically pressed
-	assert.match(app, /qa-matrix-mode-btn.*is-active/s);
-	assert.match(app, /button\.setAttribute\('aria-pressed'/);
+const picker = await readFile(new URL('./matrixPicker.js', import.meta.url), 'utf8');
+test("both modes are explicit and have accessible pressed state", () => {
+	assert.ok(picker.includes("Mix & match"), "Mix & match");
+	assert.ok(picker.includes("One device per browser"), "One device per browser");
+	assert.ok(picker.includes("onePerBrowserSelection(index, selection)"), "onePerBrowserSelection(index, selection)");
+	assert.ok(picker.includes("aria-pressed"), "aria-pressed");
 });
 
-test('per-browser mode renders an assignment chip per selected card', () => {
-	assert.match(app, /qa-matrix-assignment-chip/);
-	assert.match(app, /No device — pick one/);
-	assert.match(app, /`→ \$\{row\.deviceLabel\}`/);
+test("every selected browser has its own labeled device dropdown", () => {
+	assert.ok(picker.includes("for (const family of chosen)"), "for (const family of chosen)");
+	assert.ok(picker.includes("Device for ${family.label}"), "Device for ${family.label}");
+	assert.ok(picker.includes("mp-assignment"), "mp-assignment");
 });
 
-test('active browser card is unmistakable', () => {
-	assert.match(app, /card\.classList\.add\('is-active'\)/);
-	assert.match(app, /card\.setAttribute\('aria-current', 'true'\)/);
-	assert.match(app, /Picking a device for \$\{family\.label\}/);
-	assert.match(styles, /\.qa-matrix-browser-card\.is-active \{/);
+test("per-browser dropdowns contain only compatible devices and retain filtered assignments", () => {
+	assert.ok(picker.includes("device.key === assignedKey"), "device.key === assignedKey");
+	assert.ok(picker.includes("device.pairs.get(family.code)?.some(isSelectable)"), "device.pairs.get(family.code)?.some(isSelectable)");
+	assert.ok(picker.includes("Choose a compatible device"), "Choose a compatible device");
 });
 
-test('device row click assigns to the active family in per-browser mode', () => {
-	assert.match(app, /assignDevice\(qaMatrixState\.selection, qaMatrixState\.index, activeFamily, device\.key\)/);
-	assert.match(app, /unassignDevice\(qaMatrixState\.selection, activeFamily\)/);
-	// clicking a browser card makes that family the active picker target
-	assert.match(app, /if \(perBrowser && willSelect\) qaMatrixState\.activeFamily = family\.code;/);
+test("assignment changes use the validated model and support clearing", () => {
+	assert.ok(picker.includes("assignDevice(selection, index, family.code, select.value)"), "assignDevice(selection, index, family.code, select.value)");
+	assert.ok(picker.includes("unassignDevice(selection, family.code)"), "unassignDevice(selection, family.code)");
+	assert.ok(picker.includes("next.deselectedEnvIds.delete(config.envId)"), "next.deselectedEnvIds.delete(config.envId)");
 });
 
-test('impossible devices are honestly disabled for the active browser', () => {
-	assert.match(app, /No configurations for \$\{activeLabel\} on this device\./);
-	assert.match(app, /Select a browser first — the device list picks one device for each browser\./);
-});
-
-test('assigned rows carry the family brand icons', () => {
-	assert.match(app, /qa-matrix-assigned-family-icon/);
-	assert.match(app, /Device for \$\{families\.find\(\(family\) => family\.code === code\)\?\.label \?\? code\}/);
-});
-
-test('summary reads "N browsers × 1 device each" in per-browser mode', () => {
-	assert.match(app, /× 1 device each/);
-	assert.match(app, /browser\$\{unassignedFamilies === 1 \? '' : 's'\} need\$\{unassignedFamilies === 1 \? 's' : ''\} a device/);
-	assert.match(app, /browser × device pair configuration/);
-});
-
-test('bulk device actions hidden in per-browser mode; picker hint shown', () => {
-	assert.match(app, /if \(!perBrowser\) \{/);
-	assert.match(app, /Pick a device for \$\{activeLabel\} — one click assigns it\./);
-	assert.match(app, /Select a browser above, then pick its device here\./);
-});
-
-test('cross mode behavior unchanged: device toggle path still present', () => {
-	assert.match(app, /toggleDevice\(next, device\.key, !selection\.deviceKeys\.has\(device\.key\)\)/);
-	// the cross product summary line is intact
-	assert.match(app, /browser\$\{dimensions\.families === 1 \? '' : 's'\} × \$\{dimensions\.devices/);
-});
-
-test('#16043: all-selected-no-assignment state says "pick a device", not the generic empty message', () => {
-	assert.match(app, /selected — pick a device\$\{unassignedFamilies === 1 \? '' : ' for each'\}\./);
+test("mode changes preserve exact selection on returning to grid", () => {
+	assert.ok(picker.includes("exactMatrixSelection(index, selected, selection)"), "exactMatrixSelection(index, selected, selection)");
+	assert.ok(picker.includes("else if (perBrowser)"), "else if (perBrowser)");
+	assert.ok(picker.includes("const pairs = visible.flatMap"), "const pairs = visible.flatMap");
 });

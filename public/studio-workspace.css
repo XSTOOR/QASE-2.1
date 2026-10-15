@@ -228,13 +228,13 @@ body.studio-workspace[data-run-status="done"] .app {
 /* Collapsed rail: 56px icon column. Every text label is hidden, the brand
    collapses to its glyph, and each interactive element is a centered 40px
    tile so nothing can overlap in the narrow column. */
-html[data-qase-sidebar="collapsed"] body.studio-workspace .app {
+html[data-qase-sidebar="collapsed"] body.studio-workspace:not([data-page="results"]) .app {
   grid-template-columns: 64px var(--qase-agent-user-width, minmax(320px, .95fr)) minmax(360px, 1.15fr) 76px;
 }
-html[data-qase-sidebar="collapsed"] body.studio-workspace[data-run-status="running"] .app {
+html[data-qase-sidebar="collapsed"] body.studio-workspace[data-run-status="running"]:not([data-page="results"]) .app {
   grid-template-columns: 64px var(--qase-agent-user-width, minmax(280px, .7fr)) minmax(480px, 1.55fr) 76px;
 }
-html[data-qase-sidebar="collapsed"] body.studio-workspace[data-run-status="done"] .app {
+html[data-qase-sidebar="collapsed"] body.studio-workspace[data-run-status="done"]:not([data-page="results"]) .app {
   grid-template-columns: 64px var(--qase-agent-user-width, minmax(280px, 320px)) minmax(520px, 1fr) 76px;
 }
 html[data-qase-sidebar="collapsed"] body.studio-workspace .runs .panel-head {
@@ -1207,7 +1207,7 @@ body.studio-workspace .pane-resizer { display: none; }
   body.studio-workspace .feature-dock .feature-action { flex: 1 1 0; min-width: 0; min-height: 52px; }
   body.studio-workspace .tabs { display: flex; overflow-x: auto; }
   body.studio-workspace .tab { flex: 0 0 auto; padding-inline: 12px; }
-  html[data-qase-sidebar="collapsed"] body.studio-workspace .app {
+  html[data-qase-sidebar="collapsed"] body.studio-workspace:not([data-page="results"]) .app {
     grid-template-columns: 64px minmax(0, 1fr);
     grid-template-rows: minmax(540px, 70dvh) minmax(560px, 70dvh) 76px;
   }
@@ -1606,17 +1606,6 @@ body.studio-workspace[data-page="results"] .app {
   height: 100dvh;
   min-height: 0;
   background: var(--surface-2);
-}
-/* #16228: the results page is a single-column evidence view — the sidebar
-   collapse preference must NOT shrink it to the 64px rail. The collapsed
-   rules above (html[data-qase-sidebar="collapsed"] body.studio-workspace
-   .app, specificity 0-3-2) outweigh this page rule (0-3-1) in the cascade,
-   collapsing the viewer to 64px and clipping the results head to a ~95px
-   sliver. Mirror the same html[data-qase-sidebar] prefix here so the page
-   rule wins on equal-or-later source order, in every sidebar state. */
-html[data-qase-sidebar] body.studio-workspace[data-page="results"] .app {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
 }
 body.studio-workspace[data-page="results"] :is(
   .workspace-mobile-nav,

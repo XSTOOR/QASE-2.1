@@ -1,0 +1,5 @@
+qase.drytis.com {
+ reverse_proxy app:5173 {
+  flush_interval -1
+ }
+}

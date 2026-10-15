@@ -142,7 +142,7 @@ export async function probeLocalBrowsers(options = {}) {
 	}
 	const brands = [];
 	for (const brand of BRANDS) {
-		const executablePath = findBinary(brand.candidatePaths);
+		const executablePath = (options.findBinary ?? findBinary)(brand.candidatePaths);
 		if (!executablePath) {
 			brands.push({
 				code: brand.code,
@@ -156,7 +156,7 @@ export async function probeLocalBrowsers(options = {}) {
 			});
 			continue;
 		}
-		const version = await versionFor(executablePath);
+		const version = await (options.versionFor ?? versionFor)(executablePath);
 		let launchVerified = false;
 		let reason = null;
 		if (typeof options.launchProbe === 'function') {

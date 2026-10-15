@@ -21,7 +21,7 @@ test('customer navigation collapse works outside the Studio wrapper', () => {
 	assert.match(mode, /sidebarPreferenceKey = 'qase\.sidebar'/);
 	assert.match(mode, /document\.documentElement\.dataset\.qaseSidebar = sidebarPreference/);
 	assert.ok(mode.indexOf("dataset.qaseSidebar = sidebarPreference") < mode.indexOf('if (enabled) {'));
-	assert.match(workspaceStyles, /html\[data-qase-sidebar="collapsed"\] body\.studio-workspace \.app/);
+	assert.match(workspaceStyles, /html\[data-qase-sidebar="collapsed"\] body\.studio-workspace:not\(\[data-page="results"\]\) \.app/);
 });
 
 test('normal customer surfaces keep technical duplicates out of the permanent layout', () => {
@@ -33,7 +33,7 @@ test('normal customer surfaces keep technical duplicates out of the permanent la
 });
 
 test('default empty state is concise and has one desktop primary launcher', () => {
-	assert.match(markup, /<h2>Test a website<\/h2>/);
+	assert.match(markup, /<h2>Confidence before your next release\.<\/h2>/);
 	assert.doesNotMatch(markup, /class="empty-note"/);
 	assert.match(workspaceStyles, /\.empty-actions #empty-start \{ display: none/);
 	assert.match(workspaceStyles, /data-has-run="false"\] \.viewer :is\(#tabs, \.tab-body\)/);

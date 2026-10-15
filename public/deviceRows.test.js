@@ -12,54 +12,31 @@ const [app, styles, html] = await Promise.all([
 	readFile(new URL('./index.html', import.meta.url), 'utf8')
 ]);
 
-test('#15969: device rows are one-click toggles (role=option, aria-selected)', () => {
-	assert.match(app, /dataset\.role = 'device-row'/);
-	assert.match(app, /qa-matrix-device-row\$\{available \? '' : ' is-unavailable'\}/);
-	assert.match(app, /row\.setAttribute\('aria-selected', String\(isSelected\)\)/);
-	// Click on the row toggles the device exactly once through the model.
-	const rowIndex = app.indexOf("row.dataset.role = 'device-row'");
-	const rowBlock = app.slice(rowIndex, app.indexOf("rowList.append(row);"));
-	assert.match(rowBlock, /toggleDevice\(next, device\.key, !selection\.deviceKeys\.has\(device\.key\)\)/);
-	assert.match(rowBlock, /qaMatrixApplySelection\(next\)/);
+const picker = await readFile(new URL('./matrixPicker.js', import.meta.url), 'utf8');
+test("device rows and individual cells use native accessible checkboxes", () => {
+	assert.ok(picker.includes("input.type = 'checkbox'"), "input.type = 'checkbox'");
+	assert.ok(picker.includes("input.indeterminate"), "input.indeterminate");
+	assert.ok(picker.includes("All selected browsers on"), "All selected browsers on");
+	assert.ok(picker.includes("changeMatrixPairs(index, selection, [[device.key, family.code]], checked)"), "changeMatrixPairs(index, selection, [[device.key, family.code]], checked)");
 });
 
-test('#15969: the old clutter is gone — no checkbox, no View button, no version chips, no scope banner', () => {
-	assert.doesNotMatch(app, /dataset\.role = 'device-select'/);
-	assert.doesNotMatch(app, /dataset\.role = 'device-view'/);
-	assert.doesNotMatch(app, /qa-matrix-scope-banner/);
-	assert.doesNotMatch(app, /qa-matrix-version'\)/);
-	assert.doesNotMatch(app, /Back to all devices/);
-	// The three extra facet dropdowns are gone from the markup.
-	assert.doesNotMatch(html, /id="qa-matrix-filter-manufacturer"/);
-	assert.doesNotMatch(html, /id="qa-matrix-filter-os"/);
-	assert.doesNotMatch(html, /id="qa-matrix-filter-orientation"/);
-	assert.doesNotMatch(html, /id="qa-matrix-filter-platform"/);
-	// Search input remains.
-	assert.match(html, /id="qa-matrix-search"/);
+test("device compatibility appears in a semantic table with OS metadata", () => {
+	assert.ok(picker.includes("el('table', 'mp-table')"), "el('table', 'mp-table')");
+	assert.ok(picker.includes("deviceCell.scope = 'row'"), "deviceCell.scope = 'row'");
+	assert.ok(picker.includes("device.manufacturer"), "device.manufacturer");
+	assert.ok(picker.includes("Filter operating system"), "Filter operating system");
 });
 
-test('#15969: platform tabs render with counts and drive the platform filter', () => {
-	assert.match(app, /qa-matrix-platform-tabs/);
-	assert.match(app, /role', 'tablist'/);
-	assert.match(app, /makeTab\('all', 'All', allCount\)/);
-	const tabBlock = app.slice(app.indexOf('const makeTab'), app.indexOf('deviceHeader.append(tabGroup);'));
-	assert.match(tabBlock, /qaMatrixState\.filters\.platform = id === 'all' \? '' : id/);
-	assert.match(tabBlock, /qaMatrixLoadWindow\(0, qaMatrixState\.abort\?\.signal\)/);
+test("unavailable cells are disabled with the catalog explanation", () => {
+	assert.ok(picker.includes("input.disabled = available.length === 0"), "input.disabled = available.length === 0");
+	assert.ok(picker.includes("availabilityReason"), "availabilityReason");
+	assert.ok(picker.includes("This combination is unavailable."), "This combination is unavailable.");
 });
 
-test('#15969: unavailable devices are disabled with an honest reason', () => {
-	const rowIndex = app.indexOf("row.dataset.role = 'device-row'");
-	const rowBlock = app.slice(rowIndex, app.indexOf("rowList.append(row);"));
-	assert.match(rowBlock, /row\.disabled = true/);
-	assert.match(rowBlock, /device\.unavailableReason \?\? 'No available configurations for this device\.'/);
-});
-
-test('#15969: styles define tab + row selected/unavailable/focus states', () => {
-	assert.match(styles, /\.qa-matrix-platform-tab\.is-active/);
-	assert.match(styles, /\.qa-matrix-device-row\.is-selected/);
-	assert.match(styles, /\.qa-matrix-device-row\.is-unavailable/);
-	assert.match(styles, /\.qa-matrix-device-row:focus-visible/);
-	assert.match(styles, /\.qa-matrix-platform-tab:focus-visible/);
+test("large device catalogs are progressively disclosed without capping execution", () => {
+	assert.ok(picker.includes("filtered.slice(0, view.limit)"), "filtered.slice(0, view.limit)");
+	assert.ok(picker.includes("Show 10 more devices"), "Show 10 more devices");
+	assert.ok(picker.includes("computeExplicitSelection(index, selection)"), "computeExplicitSelection(index, selection)");
 });
 
 /* deviceListFromWindow — model unit tests (pure, no DOM). */

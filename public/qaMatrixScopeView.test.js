@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
  * user toggles (browser card clicks, device row clicks) do, through
  * qaMatrixApplySelection. */
 const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
+const picker = readFileSync(new URL('./matrixPicker.js', import.meta.url), 'utf8');
 
 function functionBody(source, name) {
 	const start = source.indexOf(`function ${name}(`);
@@ -31,12 +32,12 @@ function functionBody(source, name) {
 test('#15969: platform tab clicks are view-only — no selection mutation', () => {
 	// The tab handler sets the filter + reloads the window; it must not touch
 	// any selection set.
-	const tabBlock = app.slice(app.indexOf('const makeTab'), app.indexOf('deviceHeader.append(tabGroup);'));
+	const tabBlock = picker.slice(picker.indexOf("platform.addEventListener('change'"), picker.indexOf('const only ='));
 	assert.ok(tabBlock.length > 10, 'platform tab builder exists');
 	for (const forbidden of ['selection.deviceKeys', 'selection.browserFamilies', 'deselectedEnvIds', 'qaMatrixApplySelection']) {
 		assert.ok(!tabBlock.includes(forbidden), `tab handler must not touch ${forbidden}`);
 	}
-	assert.match(tabBlock, /qaMatrixState\.filters\.platform = id === 'all' \? '' : id/);
+	assert.match(tabBlock, /view\.platform = platform\.value/);
 });
 
 test('#15969: scope-view UI is fully retired', () => {
@@ -50,8 +51,9 @@ test('#15969: scope-view UI is fully retired', () => {
 
 test('#15969: summary still shows the GLOBAL selection count', () => {
 	const body = functionBody(app, 'qaMatrixRender');
-	assert.ok(body.includes('summary.total'), 'summary renders the global configuration count');
-	assert.ok(body.includes('summary.availableTotal'), 'summary renders the available total');
+	assert.ok(body.includes('renderMatrixPicker'), 'renderer delegates to the modular picker');
+	assert.match(picker, /new Set\(computeExplicitSelection\(index, selection\)\)/, 'count uses the entire catalog selection');
+	assert.match(picker, /selected\.size\.toLocaleString\(\)/, 'global count is rendered');
 	assert.ok(!body.includes('viewing:'), 'no scoped-view branch remains');
 });
 
@@ -73,10 +75,7 @@ test('Phase 1 (kept): bulk select-all actions clear stale granular opt-outs', ()
 	}
 });
 
-test('#15969: device row click IS the selection path (single action, no routing)', () => {
-	const index = app.indexOf("row.dataset.role = 'device-row'");
-	assert.ok(index !== -1);
-	const handler = app.slice(index, app.indexOf('rowList.append(row);'));
-	assert.match(handler, /toggleDevice\(next, device\.key, !selection\.deviceKeys\.has\(device\.key\)\)/);
-	assert.match(handler, /qaMatrixApplySelection\(next\)/);
+test('matrix cells directly apply exact pair changes without routing', () => {
+	assert.match(picker, /apply\(changeMatrixPairs\(index, selection, \[\[device\.key, family\.code\]\], checked\)\)/);
+	assert.doesNotMatch(picker, /pageRouter|navigate\(/);
 });

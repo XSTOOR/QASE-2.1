@@ -8,7 +8,7 @@ const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
 
 test('professional entry gates the private workspace through authentication', () => {
-  assert.match(html, /CREATED FOR DRYTIS/);
+  assert.match(html, /class="auth-brand"[^>]+aria-label="QASE home"/);
   assert.match(html, /id="auth-form"/);
   assert.match(app, /\/auth\/me/);
   assert.match(app, /X-CSRF-Token/);

@@ -14,6 +14,7 @@ import { verifyFixtureAgainstProfile } from './defectFixtureRunner.js';
 import { createOperationalControls } from './operations.js';
 import { runWithRequestActor } from './requestActor.js';
 import { authThrottleKey, createAuthThrottle } from './authThrottle.js';
+import { InviteError } from './invites.js';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
 import {
 	FOUNDER_CATEGORIES,
@@ -47,6 +48,7 @@ import { normalizeQaScopeSelection } from '../public/qaScopeCatalog.js';
 import { createConfiguredTelegramNotifier } from './telegramNotifier.js';
 import { resolveDisplayTimeZone, formatFeedbackTimestamp } from './displayTime.js';
 import { createSqaState, createSqaTodoPlan, publicSqaCatalog, recordReviewerSqaObservation } from './sqaService.js';
+import { preflightSqaRuntime } from './sqaRuntime.js';
 import { publicQaTestCatalog } from './qaTestCatalog.js';
 import { validateQaSelectedTests, validateSecurityAuthorization } from './appQaSelection.js';
 import { renderReportPdf } from './reportPdf.js';
@@ -386,8 +388,9 @@ export function createApplication(options = {}) {
 	});
 
 	function authFailure(response, error) {
-		const status = error instanceof AuthError ? error.status : 500;
-		response.status(status).json({ error: error instanceof AuthError ? error.message : 'Authentication is temporarily unavailable. Please try again.' });
+		const expected = error instanceof AuthError || error instanceof InviteError;
+		const status = expected ? error.status : 500;
+		response.status(status).json({ error: expected ? error.message : 'Authentication is temporarily unavailable. Please try again.' });
 	}
 
 	// Operator endpoints: pilot-role users (invite-admitted beta users) are
@@ -441,10 +444,9 @@ export function createApplication(options = {}) {
 			response.status(403).json({ error: 'Registration is invite-only on this instance. Enter an invite code.' });
 			return;
 		}
-		// Validate the code up front (so closed mode rejects invalid codes with
-		// a uniform 403 before any account work), but only CONSUME it after
-		// registration succeeds — a failed registration (weak password, dupe
-		// email, throttle) must not burn the operator's invite.
+		// Prevalidate for a uniform admission error. redeem rechecks under its
+		// lock and persists consumption before registering; known validation
+		// failures release the code, while uncertain storage failures fail closed.
 		if (inviteCode !== undefined && String(inviteCode).trim() !== '') {
 			try {
 				await inviteService.validate(inviteCode);
@@ -459,17 +461,13 @@ export function createApplication(options = {}) {
 			}
 		}
 		try {
-			const result = await authService.register({ ...(request.body ?? {}), ...(invited ? { role: 'pilot' } : {}) });
+			const register = () => authService.register({ ...(request.body ?? {}), ...(invited ? { role: 'pilot' } : {}) });
+			let result;
 			if (invited) {
-				// Only now is the admission final — mark the code used with the
-				// registrant's email. On a race (someone else consumed it in the
-				// validation window) we keep the account but log the anomaly.
-				try {
-					await inviteService.consume(inviteCode, String(request.body?.email ?? '').trim().toLowerCase());
-				} catch (error) {
-					options.logger?.error?.('invite consumption failed after registration', { error: error instanceof Error ? error.message : String(error) });
-				}
-			}
+				const email = String(request.body?.email ?? '').trim().toLowerCase();
+				if (typeof inviteService.redeem === 'function') result = await inviteService.redeem(inviteCode, email, register);
+				else { await inviteService.consume(inviteCode, email); result = await register(); }
+			} else result = await register();
 			setAuthCookies(response, result.token, result.csrf, { secure: safeCookies(request) });
 			response.status(201).json(result.user);
 		} catch (error) { authFailure(response, error); }
@@ -2036,8 +2034,9 @@ export function createApplication(options = {}) {
 			const deviceLandscape = request.body?.deviceLandscape === true;
 			const engine = isEngineId(request.body?.engine) ? request.body.engine : 'chromium';
 			const environment = await resolveEnvironmentForRun(services, request.body?.environmentId);
+			const executionEngine = await preflightSqaRuntime({ environment, engine });
 			session = await services.runs.create(`SQA — ${sqa.scope.target.name}`, {
-				device, deviceLandscape, engine, ownerUserId: request.auth?.userId,
+				device, deviceLandscape, engine: executionEngine, ownerUserId: request.auth?.userId,
 				cohort: cohortFor(request.auth?.role).cohort,
 				environmentId: environment?.envId, environmentSnapshot: environment
 			});
@@ -2290,7 +2289,7 @@ export function createApplication(options = {}) {
 			// report reader) that any TLS/connect failure for this host is
 			// the environment's, not the site's.
 			try {
-				const probe = await probeTargetReachability(url);
+				const probe = await (options.probeTargetReachability ?? probeTargetReachability)(url, { environment });
 				if (!probe.ok && probe.unreachable) {
 					await services.runs.addMessage(session, {
 						role: 'system',

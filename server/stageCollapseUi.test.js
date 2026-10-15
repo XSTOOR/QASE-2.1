@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
+import { previewCollapsed } from '../public/previewLayout.js';
 
 const app = await readFile('public/app.js', 'utf8');
 const html = await readFile('public/index.html', 'utf8');
@@ -12,24 +13,17 @@ test('post-run stage collapse block exists in the frontend source', () => {
 	assert.match(app, STAGE_BLOCK);
 });
 
-test('only terminal statuses collapse the browser view; live statuses keep it expanded', () => {
-	assert.match(app, /STAGE_COLLAPSE_STATUSES = new Set\(\['done', 'error', 'interrupted', 'idle'\]\)/);
-	// A run in progress (or paused for user input) restores the full live view and
-	// clears the manual expansion override for the session.
-	assert.match(
-		app,
-		/if \(status === 'running' \|\| status === 'awaiting_input'\) \{[\s\S]*?state\.stageExpanded\.delete\(state\.sessionId\);[\s\S]*?renderStageCollapse\(\);/
-	);
+test('terminal statuses default to compact preview while live runs stay expanded', () => {
+ for (const status of ['done', 'error', 'interrupted', 'idle', 'cancelled']) assert.equal(previewCollapsed({ available: true, status, hasSession: true }), true);
+ for (const status of ['running', 'awaiting_input']) assert.equal(previewCollapsed({ available: true, status, hasSession: true }), false);
+ assert.match(app, /const collapsed = previewCollapsed\(/);
 });
 
-test('manual expansion is respected — render only collapses when the session is not in the override set', () => {
-	// Results-first redesign: preview availability gates the collapse; an ended run
-	// collapses to the compact strip unless the user expanded it for this session.
-	assert.match(app, /const collapsed = previewAvailable[\s\S]*?\? ended && !state\.stageExpanded\.has\(state\.sessionId\)/);
-	// toggleStageCollapse adds/removes the session from the override set rather than
-	// toggling a global flag, so later status syncs of the same run cannot re-collapse
-	// a view the user expanded.
-	assert.match(app, /function toggleStageCollapse\(\) \{[\s\S]*?state\.stageExpanded\.add\(state\.sessionId\);[\s\S]*?state\.stageExpanded\.delete\(state\.sessionId\);[\s\S]*?\}/);
+test('explicit per-run expansion and minimization override lifecycle defaults', () => {
+ assert.equal(previewCollapsed({ available: true, status: 'done', hasSession: true, preference: false }), false);
+ assert.equal(previewCollapsed({ available: true, status: 'running', hasSession: true, preference: true }), true);
+ assert.match(app, /preference: state\.stageCollapsePreferences\.get\(state\.sessionId\)/);
+ assert.match(app, /state\.stageCollapsePreferences\.set\(state\.sessionId, !el\.viewer\.classList\.contains\('stage-collapsed'\)\)/);
 });
 
 test('expand/collapse control is a real button with accessible state', () => {

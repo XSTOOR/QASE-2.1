@@ -1,4 +1,10 @@
 import { describeSqaLifecycle, groupSqaUnresolvedResults } from './sqaPresentation.js';
+import { previewCollapsed } from './previewLayout.js';
+import { renderProbeIds, hasInteractiveSurface } from './renderHealth.js';
+import { renderMatrixPicker } from './matrixPicker.js';
+import { preferredResultTab } from './runPresentation.js';
+import { runCardDetails } from './runCard.js';
+import { renderResultsOverview, resultsOverviewModel } from './resultsOverview.js';
 import { isCredentialQuestion } from './questionPresentation.js';
 import { buildFindingFixPrompt, buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
 import { createFounderView } from './founderView.js';
@@ -7,36 +13,17 @@ import { createBugsView } from './bugsView.js';
 import { QA_SCOPE_OPTIONS, buildQaKickoffMessage } from './qaKickoff.js';
 import {
 	sanitizeSelection,
-	filterConfigurations,
-	deviceListFromWindow,
-	selectionDimensions,
-	familyRows,
 	isSelectable,
-	executionTypeLabel,
-	PLATFORM_GROUPS,
-	DEVICE_CATEGORIES,
-	buildSummary,
 	isValidTargetUrl,
 	MATRIX_BATCH_SIZE,
 	planBatches,
 	batchKeyFor,
 	fetchQaConfigurations,
 	fetchConfigurationIndex,
-	fetchConfigurationWindow,
 	deviceKeyOf,
 	createSelectionState,
 	computeExplicitSelection,
-	selectAllDevices,
-	deselectAllDevices,
-	selectAllBrowsers,
-	deselectAllBrowsers,
-	toggleDevice,
-	toggleBrowserFamily,
-	createSelectionStore,
-	setSelectionMode,
-	assignDevice,
-	unassignDevice,
-	perBrowserOverview
+	createSelectionStore
 } from './qaConfigMatrix.js';
 import { createDeviceMatrixView } from './deviceMatrixView.js';
 import { createTestCaseView } from './testCaseView.js';
@@ -67,6 +54,8 @@ import {
 import { formatTokens, hostOf, list, markdown, miniSummaryText, paragraph, relativeTime, section, tokenSummaryText, truncate } from './uiPrimitives.js';
 import { createPageRouter, routeHash } from './pageRouter.js';
 import { blockedRunReason, runPresentationLabel, runPresentationStatus } from './runPresentation.js';
+import { createQaJourney, normalizeWebsite } from './qaJourney.js';
+import { workflowStatus } from './workflowStatus.js';
 
 /**
  * Qase dashboard.
@@ -250,7 +239,7 @@ const state = {
 	thinking: { text: '', action: '' },
 	runTimer: { interval: undefined, startedAt: undefined, endedAt: undefined },
 	/** Per-session expand preference after the post-run auto-collapse. */
-	stageExpanded: new Set(),
+	stageCollapsePreferences: new Map(),
 	/** Run whose completed QA results were automatically revealed. */
 	shownQaResults: undefined,
 	/** Run whose live Plan was revealed once without overriding later tab choices. */
@@ -659,7 +648,22 @@ async function refreshRuns() {
 	// One request, matched client-side; failures just skip the badges.
 	void loadRunRatingBadges(runs);
 	el.runList.replaceChildren(...runs.map(renderRun));
+	filterRunHistory();
 }
+
+function filterRunHistory() {
+	const search = $('journey-run-search');
+	const term = search?.value.trim().toLowerCase() ?? '';
+	const rows = [...el.runList.querySelectorAll('.run-row')];
+	let matches = 0;
+	for (const row of rows) {
+		const button = row.querySelector('.run');
+		row.hidden = Boolean(term && !`${row.textContent} ${button?.getAttribute('aria-label') ?? ''}`.toLowerCase().includes(term));
+		if (!row.hidden) matches++;
+	}
+	$('journey-no-matches').hidden = !term || !rows.length || matches > 0;
+}
+$('journey-run-search')?.addEventListener('input', filterRunHistory);
 
 // Live token commits arrive up to once a second; refreshing the whole run
 // list for each is wasteful. Coalesce to at most one refetch per 5s.
@@ -699,6 +703,7 @@ async function loadRunRatingBadges(runs) {
 
 function renderRun(run) {
 	const displayStatus = runPresentationStatus(run);
+	const details = runCardDetails(run, deviceState.list);
 	const row = document.createElement('div');
 	row.className = 'run-row';
 	row.setAttribute('role', 'listitem');
@@ -713,19 +718,11 @@ function renderRun(run) {
 	const title = document.createElement('div');
 	title.className = 'run-title';
 	title.textContent = run.targetUrl ? hostOf(run.targetUrl) : run.title;
-	// Multi-engine fan-out creates parallel runs against the same URL —
-	// tag the title line so they stay distinguishable at a glance.
-	if (run.engine && run.engine !== 'chromium') {
-		const chip = document.createElement('span');
-		chip.className = 'run-engine-pill';
-		chip.textContent = run.engine;
-		chip.title = `Run executed on ${run.engine}`;
-		title.append(' ', chip);
-	}
 	const accessibleTitle = title.textContent || 'Untitled test';
 	const accessibleStatus = runPresentationLabel(run);
-	node.title = `${accessibleTitle} · ${accessibleStatus}`;
-	node.setAttribute('aria-label', `${accessibleTitle}, ${accessibleStatus}`);
+	const accessibleDetails = [accessibleTitle, accessibleStatus, details.mode, details.environment].filter(Boolean).join(' · ');
+	node.title = accessibleDetails;
+	node.setAttribute('aria-label', accessibleDetails);
 	node.dataset.status = displayStatus;
 
 	const meta = document.createElement('div');
@@ -736,7 +733,10 @@ function renderRun(run) {
 	const age = document.createElement('span');
 	age.className = 'run-age';
 	age.textContent = relativeTime(run.updatedAt);
-	meta.append(dot, age);
+	const status = document.createElement('span');
+	status.className = 'run-status-label';
+	status.textContent = accessibleStatus;
+	meta.append(dot, status);
 	// Per-run timer: live elapsed for running runs (frozen while paused),
 	// stored active duration for finished ones. Each row computes
 	// independently — never a shared clock.
@@ -749,7 +749,7 @@ function renderRun(run) {
 			const timer = document.createElement('span');
 			timer.className = `run-duration${run.status === 'running' && !pausedRow ? ' run-duration--live' : ''}${pausedRow ? ' run-duration--paused' : ''}`;
 			timer.dataset.runId = run.id;
-			timer.textContent = pausedRow ? `⏸ ${duration}` : `⏱ ${duration}`;
+			timer.textContent = duration;
 			timer.title = pausedRow
 				? `Paused at ${formatTimeOfDay(run.pausedAt)} — resumes from ${duration} on continue`
 				: run.status === 'running'
@@ -763,96 +763,45 @@ function renderRun(run) {
 			}
 		}
 	}
-	if (run.mode === 'sqa') {
-		const mode = document.createElement('span');
-		mode.className = 'run-mode-badge';
-		mode.textContent = 'Quality';
-		mode.title = 'Product quality review';
-		meta.append(mode);
+	const context = document.createElement('div');
+	context.className = 'run-context';
+	const mode = document.createElement('span');
+	mode.className = 'run-mode-badge';
+	mode.textContent = details.mode;
+	context.append(mode);
+	if (details.environment) {
+		const environment = document.createElement('span');
+		environment.className = 'run-device-pill';
+		environment.textContent = details.environment;
+		environment.title = details.environment;
+		context.append(environment);
 	}
-	if (run.mode === 'founder') {
-		const mode = document.createElement('span');
-		mode.className = 'run-mode-badge run-mode-badge--founder';
-		mode.textContent = 'Founder';
-		mode.title = 'Founder Mode product and growth review';
-		meta.append(mode);
+	const footer = document.createElement('div');
+	footer.className = 'run-footer';
+	footer.append(age);
+	if (details.findings) {
+		const findings = document.createElement('span');
+		findings.className = 'run-finding-count';
+		findings.textContent = `${details.findings} ${details.findings === 1 ? 'finding' : 'findings'}`;
+		footer.append(findings);
 	}
-	if (run.findingCount > 0) {
-		const badge = document.createElement('span');
-		badge.className = 'run-badge';
-		badge.textContent = `${run.findingCount}`;
-		meta.append(badge);
-	}
-	if (run.tokenUsage && Number.isFinite(run.tokenUsage.totalTokens) && run.tokenUsage.totalTokens > 0) {
-		const tokens = document.createElement('span');
-		tokens.className = 'run-badge run-badge--tokens';
-		tokens.textContent = `${formatTokens(run.tokenUsage.totalTokens) ?? run.tokenUsage.totalTokens} tok`;
-		tokens.title = `${(run.tokenUsage.inputTokens ?? 0).toLocaleString()} prompt / ${(run.tokenUsage.outputTokens ?? 0).toLocaleString()} completion tokens`
-			+ (run.tokenUsage.estimated === true ? ' (estimated)' : '');
-		meta.append(tokens);
-	}
-	if (run.device && run.device !== 'desktop') {
-		const profile = deviceState.list.find(p => p.id === run.device);
-		const pill = document.createElement('span');
-		pill.className = 'run-device-pill';
-		pill.dataset.deviceKind = profile?.kind ?? 'mobile';
-		const short = (profile?.label ?? run.device).replace(/\s*\(.*\)$/, '');
-		pill.textContent = short + (run.deviceLandscape ? ' – L' : '');
-		pill.title = (profile?.label ?? run.device) + (run.deviceLandscape ? ' (landscape)' : '');
-		meta.append(pill);
-	}
-	if (run.engine && run.engine !== 'chromium') {
-		const pill = document.createElement('span');
-		pill.className = 'run-engine-pill';
-		pill.textContent = run.engine;
-		pill.title = `Run executed on ${run.engine}`;
-		meta.append(pill);
-	}
-	if (run.environmentSnapshot) {
-		const snap = run.environmentSnapshot;
-		const pill = document.createElement('span');
-		pill.className = 'run-device-pill';
-		pill.dataset.deviceKind = snap.platform === 'macos' ? 'desktop' : 'mobile';
-		pill.textContent = `${snap.device} · ${snap.browser} ${snap.browserVersion}`;
-		pill.title = `${snap.envId} — ${snap.osVersion} · ${snap.executionProvider === 'browserstack' ? 'remote environment runtime' : 'local (simulated)'}`;
-		meta.append(pill);
-		// Phase 22: honest execution-level badge — recorded facts only.
-		const level = run.runtimeFacts?.executionLevel ?? run.executionLevel;
-		if (level) {
-			const badge = document.createElement('span');
-			badge.className = 'run-exec-level-badge';
-			badge.dataset.level = level.toLowerCase();
-			badge.textContent = level === 'REAL_DEVICE' ? 'REAL DEVICE' : level === 'VIRTUAL_DEVICE' ? 'VIRTUAL DEVICE' : level;
-			badge.title = `Execution level recorded for this run: ${level}`
-				+ (run.executionProviderActual ? ` (${run.executionProviderActual})` : '');
-			meta.append(badge);
-		}
-	}
-	if (run.engine && run.engine !== 'chromium') {
-		const pill = document.createElement('span');
-		pill.className = 'run-engine-pill';
-		pill.textContent = run.engine;
-		pill.title = `Run executed on ${run.engine}`;
-		meta.append(pill);
-	}
-
 	// Mini progress row: step count + slim bar, only when a plan exists.
 	let progress = null;
-	if (run.todoTotal > 0) {
+	if (details.total > 0) {
 		progress = document.createElement('div');
 		progress.className = 'run-progress';
 		const steps = document.createElement('span');
 		steps.className = 'run-progress-steps';
-		steps.textContent = `${run.todoCompleted}/${run.todoTotal}`;
+		steps.textContent = `${details.completed} of ${details.total} steps`;
 		const bar = document.createElement('span');
 		bar.className = 'run-progress-bar';
 		const fill = document.createElement('i');
-		fill.style.width = `${Math.round((run.todoCompleted / run.todoTotal) * 100)}%`;
+		fill.style.width = `${details.percent}%`;
 		bar.setAttribute('role', 'progressbar');
 		bar.setAttribute('aria-valuemin', '0');
 		bar.setAttribute('aria-valuemax', '100');
-		bar.setAttribute('aria-valuenow', String(Math.round((run.todoCompleted / run.todoTotal) * 100)));
-		bar.setAttribute('aria-label', `Plan progress ${run.todoCompleted} of ${run.todoTotal} steps`);
+		bar.setAttribute('aria-valuenow', String(details.percent));
+		bar.setAttribute('aria-label', `Plan progress ${details.completed} of ${details.total} steps`);
 		bar.append(fill);
 		progress.append(steps, bar);
 	}
@@ -883,8 +832,9 @@ function renderRun(run) {
 		await refreshRuns();
 	};
 
-	node.append(title, meta);
+	node.append(title, meta, context);
 	if (progress) node.append(progress);
+	node.append(footer);
 	row.append(node, remove);
 	return row;
 }
@@ -1143,6 +1093,7 @@ function renderLiveDeviceViewHeader(session, are = null) {
 	const exec = ldv.querySelector('#ldv-exec');
 	const live = ldv.querySelector('#ldv-live');
 	if (!dev || !exec || !live) return;
+	live.dataset.status = runPresentationStatus(session) || 'idle';
 	const completed = session?.status === 'done';
 	const hasSavedPreview = completed && Boolean(session?.frame);
 
@@ -1693,6 +1644,22 @@ function renderMiniSummary() {
 
 function renderHeader() {
 	const session = state.session;
+	const guide = $('journey-run-guide');
+	guide.hidden = !state.sessionId || Boolean(workflowStatus(session).hidden);
+	if (state.sessionId) {
+		const guidance = workflowStatus(session);
+		guide.dataset.tone = guidance.tone;
+		$('journey-run-title').textContent = guidance.title;
+		$('journey-run-description').textContent = guidance.description;
+		const action = $('journey-run-action');
+		action.textContent = guidance.action;
+		action.onclick = () => {
+			if (guidance.destination === 'results') void pageRouter.navigate({ name: 'results', runId: state.sessionId });
+			else if (guidance.destination === 'question') { setWorkspaceView('agent'); el.questionSlot.scrollIntoView({ block: 'nearest' }); el.questionSlot.querySelector('input, textarea, button')?.focus(); }
+			else if (guidance.destination === 'conversation') { setWorkspaceView('agent'); el.transcript.scrollTop = el.transcript.scrollHeight; el.composerInput.focus(); }
+			else el.composerInput.focus();
+		};
+	}
 	// Customer-facing progress stays simple. Model usage remains in Run details.
 	const hasRun = Boolean(state.sessionId && (session.targetUrl || session.title));
 	document.body.dataset.hasRun = String(hasRun);
@@ -1836,6 +1803,7 @@ function setStatus(status) {
 	el.composerHint.hidden = !running;
 	el.livePill.hidden = !running;
 	el.browserDot.className = `dot${running ? ' is-busy' : state.session?.targetUrl ? ' is-live' : ''}`;
+	el.browserDot.dataset.status = displayStatus;
 	syncRunTimer(status);
 	syncStageCollapse(status);
 	// A question raised while the tab is in the background should be noticeable.
@@ -1935,9 +1903,6 @@ function handleContextEvent(context) {
 
 /* ── Post-run layout: collapse the live browser, expand the findings ── */
 
-const STAGE_COLLAPSE_STATUSES = new Set(['done', 'error', 'interrupted', 'idle']);
-const STAGE_UNAVAILABLE_STATUSES = new Set(['done', 'error', 'interrupted']);
-
 function stageHasContent() {
 	return Boolean(state.session?.frame) || !el.stageInner.hidden;
 }
@@ -1945,12 +1910,10 @@ function stageHasContent() {
 function renderStageCollapse() {
 	const previewAvailable = stageHasContent();
 	const status = state.session?.status;
-	const ended = Boolean(state.session?.id) && STAGE_COLLAPSE_STATUSES.has(status);
-	// Ended runs always yield the main workspace to results. When no frame was
-	// captured, keep the compact strip but do not expose a fake preview action.
-	const collapsed = previewAvailable
-		? ended && !state.stageExpanded.has(state.sessionId)
-		: STAGE_UNAVAILABLE_STATUSES.has(status);
+	// Default ended runs to results, but honor explicit preview preferences.
+	// Without a frame, keep the compact strip without a fake preview action.
+	const collapsed = previewCollapsed({ available: previewAvailable, status,
+		hasSession: Boolean(state.session?.id), preference: state.stageCollapsePreferences.get(state.sessionId) });
 	el.viewer.classList.toggle('stage-collapsed', collapsed);
 	el.stageToggle.hidden = !previewAvailable;
 	const toggleLabel = collapsed ? 'Show live preview' : 'Minimize live preview';
@@ -1958,6 +1921,7 @@ function renderStageCollapse() {
 	el.stageToggle.title = toggleLabel;
 	el.stageToggle.setAttribute('aria-label', toggleLabel);
 	el.stageToggle.setAttribute('aria-expanded', String(!collapsed));
+	el.stageToggle.setAttribute('aria-controls', 'stage');
 	el.stageNote.hidden = !collapsed;
 	if (collapsed) {
 		if (previewAvailable) {
@@ -1967,10 +1931,12 @@ function renderStageCollapse() {
 				? `Run blocked · Review report · Open preview`
 				: state.session?.status === 'done'
 					? `Run complete · ${result} · Open preview`
-				: 'Run ended · Open saved preview';
+					: ['running', 'awaiting_input'].includes(status)
+						? 'Live preview minimized · Open preview'
+						: 'Run ended · Open saved preview';
 			el.stage.setAttribute('role', 'button');
 			el.stage.setAttribute('tabindex', '0');
-			el.stage.setAttribute('aria-label', 'Show saved live preview');
+			el.stage.setAttribute('aria-label', 'Show live preview');
 		} else {
 			el.stageNote.textContent = 'Preview unavailable · No saved browser image was captured for this run.';
 			el.stage.removeAttribute('role');
@@ -2002,10 +1968,7 @@ function showCompletedQaResults() {
 }
 
 function syncStageCollapse(status) {
-	if (status === 'running' || status === 'awaiting_input') {
-		// A fresh run always returns to the full live view.
-		state.stageExpanded.delete(state.sessionId);
-	}
+	// Status events must not undo an explicit user choice during a live run.
 	renderStageCollapse();
 }
 
@@ -2014,11 +1977,7 @@ function toggleStageCollapse() {
 		setWorkspaceView('browser');
 		return;
 	}
-	if (el.viewer.classList.contains('stage-collapsed')) {
-		state.stageExpanded.add(state.sessionId);
-	} else {
-		state.stageExpanded.delete(state.sessionId);
-	}
+	state.stageCollapsePreferences.set(state.sessionId, !el.viewer.classList.contains('stage-collapsed'));
 	renderStageCollapse();
 }
 
@@ -2161,7 +2120,7 @@ function startTimerInterval() {
 			for (const [runId, node] of state.timer.runLiveTimers) {
 				const run = runId === session?.id ? session : undefined;
 				if (run && run.status === 'running' && !Number.isFinite(run.pausedAt)) {
-					node.textContent = `⏱ ${formatDurationShort(elapsedSecondsOf(run))}`;
+					node.textContent = formatDurationShort(elapsedSecondsOf(run));
 				}
 			}
 		}
@@ -2193,13 +2152,6 @@ const FEEDBACK_CATEGORIES = [
 
 /** A run accepts feedback only once it has reached a terminal state. */
 const FEEDBACK_TERMINAL_STATUSES = new Set(['done', 'error']);
-
-/**
- * Runs the feedback modal has auto-opened for in THIS browser session.
- * Survives modal close but resets on reload — refreshed pages with
- * already-submitted feedback never re-prompt (the sync covers that).
- */
-const feedbackAutoPrompted = new Set();
 
 /** Spec rating semantics for the star tooltips. */
 const FEEDBACK_STAR_LABELS = {
@@ -2235,16 +2187,8 @@ async function syncFeedbackForSession(session) {
 	if (state.feedback.runId === runId) applyFeedbackSubmittedState();
 	// Report section (and View/Provide button) follow the synced record.
 	if (state.sessionId === runId) renderReport();
-	// Auto-prompt once per run per browser session — only for QA runs whose
-	// user has NOT already given feedback and no modal is already open.
-	if (feedbackEligible(session)
-		&& state.feedback.existing === null
-		&& state.sessionId === runId
-		&& !feedbackAutoPrompted.has(runId)
-		&& !el.feedbackModal?.open) {
-		feedbackAutoPrompted.add(runId);
-		openFeedbackModal();
-	}
+	// Feedback is an explicit report action. Background synchronization must
+	// never interrupt result review or cover a new-run/account destination.
 }
 
 /**
@@ -3570,6 +3514,11 @@ function renderReport() {
 		el.reportView.innerHTML = '<div class="feed-empty">No report available — it is published when a run finishes.</div>';
 		return;
 	}
+	el.reportView.append(renderResultsOverview(state.session, {
+		document,
+		onFindings: () => activateDetailTab($('tab-findings'), true),
+		onWorkspace: () => { void pageRouter.navigate({ name: 'run', runId: state.sessionId }); }
+	}));
 
 	/* Export report (UI Fix Phase 1): JSON download of the finished report —
 	 * presented once, inside the Report tab workspace. */
@@ -3613,7 +3562,7 @@ function renderReport() {
 	const stats = document.createElement('div');
 	stats.className = 'sev-grid';
 	for (const severity of SEVERITY_ORDER) {
-		const count = report.bySeverity?.[severity] ?? 0;
+		const count = resultsOverviewModel(state.session).severity[severity] ?? 0;
 		const stat = document.createElement('div');
 		stat.className = `sev-stat${count === 0 ? ' is-zero' : ''}`;
 		const value = document.createElement('b');
@@ -3623,8 +3572,14 @@ function renderReport() {
 		stat.append(value, name);
 		stats.append(stat);
 	}
-	el.reportView.append(section('Summary', paragraph(report.summary)));
-	if (report.recommendations?.length) el.reportView.append(section('Recommended next action', list(report.recommendations)));
+	const summarySection = section('Summary', paragraph(report.summary));
+	summarySection.classList.add('report-summary-detail');
+	el.reportView.append(summarySection);
+	if (report.recommendations?.length) {
+		const nextSection = section('Recommended next action', list(report.recommendations));
+		nextSection.classList.add('report-next-detail');
+		el.reportView.append(nextSection);
+	}
 	el.reportView.append(stats);
 	el.reportView.append(renderCoverageSelection(state.session));
 	if (report.covered?.length) el.reportView.append(section('Covered', list(report.covered)));
@@ -4994,6 +4949,31 @@ const qaUi = {
 	}
 };
 
+let qaJourney;
+let qaJourneySelectionMode = (() => {
+	try { return sessionStorage.getItem('qase.launcher.coverage') === 'custom' ? 'custom' : 'quick'; }
+	catch { return 'quick'; }
+})();
+let qaJourneyCustomSelection;
+
+function qaFocusedSelection() {
+	const available = qaMatrixState.index.filter(isSelectable);
+	const row = available.find(item => item.browserCode === 'chrome' && ['windows', 'macos', 'linux'].includes(item.platform))
+		?? available.find(item => item.browserCode === 'chrome') ?? available[0];
+	if (!row) return createSelectionState();
+	const deviceKey = deviceKeyOf(row);
+	return createSelectionState({
+		deviceKeys: [deviceKey], browserFamilies: [row.browserCode],
+		deselectedEnvIds: available.filter(item => deviceKeyOf(item) === deviceKey && item.browserCode === row.browserCode && item.envId !== row.envId).map(item => item.envId)
+	});
+}
+
+function syncJourneyPreset() {
+	try { sessionStorage.setItem('qase.launcher.coverage', qaJourneySelectionMode); } catch { /* private browsing can disable storage */ }
+	$('journey-focused')?.setAttribute('aria-pressed', String(qaJourneySelectionMode === 'quick'));
+	$('journey-custom')?.setAttribute('aria-pressed', String(qaJourneySelectionMode !== 'quick'));
+}
+
 function selectedQaScopeValues() {
 	if (!qaUi.scopeOptions) return undefined;
 	const values = [...qaUi.scopeOptions.querySelectorAll('.qa-scope')]
@@ -5037,17 +5017,6 @@ const qaMatrixState = {
 
 const qaSelectionStore = createSelectionStore(window.localStorage, () => qaMatrixState.index);
 
-function qaMatrixFiltered() {
-	// Facet filtering runs over the compact index (full catalog) — the tree
-	// itself renders the server-windowed rows (qaMatrixState.windowRows).
-	return filterConfigurations(qaMatrixState.index, {
-		search: qaMatrixState.filters.search,
-		platform: qaMatrixState.filters.platform || undefined,
-		manufacturer: qaMatrixState.filters.manufacturer || undefined,
-		osVersion: qaMatrixState.filters.osVersion || undefined,
-		orientation: qaMatrixState.filters.orientation || undefined
-	});
-}
 
 function qaMatrixSetState(fetchState, message) {
 	qaMatrixState.fetchState = fetchState;
@@ -5081,8 +5050,12 @@ async function loadQaMatrixCatalog() {
 		// Pipeline Phase 1: the explicit selection store initializes against
 		// the fresh index (first load migrates legacy deselections).
 		qaMatrixState.selection = qaSelectionStore.get();
+		if (qaJourneySelectionMode === 'quick') {
+			qaJourneyCustomSelection ??= qaFocusedSelection();
+			qaMatrixState.selection = qaFocusedSelection();
+		}
 		qaMatrixState.selectedEnvIds = qaMatrixEffectiveSelection();
-		await qaMatrixLoadWindow(0, controller.signal);
+		qaMatrixRender();
 		qaMatrixSetState(qaMatrixState.index.length === 0 ? 'empty' : 'ready', '');
 		if (qaMatrixState.index.length === 0) {
 			qaMatrixSetState('empty', 'No device or browser configurations are available. Connect an execution provider or check the catalog.');
@@ -5104,85 +5077,6 @@ async function loadQaMatrixCatalog() {
 	}
 }
 
-/** Fetch a window of heavy configuration rows for the visible device tree. */
-async function qaMatrixLoadWindow(offset, signal) {
-	const matrix = qaUi.matrix;
-	if (!matrix.devices) return;
-	if (offset === 0) {
-		qaMatrixState.windowRows = [];
-		qaMatrixState.windowDeviceOffset = 0;
-		qaMatrixState.windowDeviceTotal = 0;
-		matrix.devices.textContent = '';
-		const progress = document.createElement('p');
-		progress.className = 'qa-matrix-empty';
-		progress.dataset.role = 'window-loading';
-		progress.textContent = 'Loading device rows…';
-		matrix.devices.append(progress);
-	}
-	qaMatrixState.windowLoading = true;
-	try {
-			const page = await fetchConfigurationWindow(
-				{
-					search: qaMatrixState.filters.search,
-					platform: qaMatrixState.filters.platform || undefined,
-					manufacturer: qaMatrixState.filters.manufacturer || undefined,
-					osVersion: qaMatrixState.filters.osVersion || undefined,
-					orientation: qaMatrixState.filters.orientation || undefined,
-					// #16045: active category chip (mobile|tablet|desktop).
-					deviceType: qaMatrixState.filters.deviceType || undefined
-				},
-				{ signal, limit: 12, offset }
-			);
-		if (signal?.aborted) return;
-		qaMatrixState.windowRows = offset === 0
-			? page.configurations
-			: [...qaMatrixState.windowRows, ...page.configurations];
-		qaMatrixState.windowTotal = page.total;
-		// #15439: windows are DEVICE-GROUPED — track device offsets for
-		// load-more so one window spans every platform family.
-		qaMatrixState.windowDeviceTotal = page.deviceTotal ?? page.total;
-		qaMatrixState.windowDeviceOffset = (offset === 0 ? 0 : qaMatrixState.windowDeviceOffset) + (page.deviceCount ?? 0);
-		qaMatrixRender();
-		if (page.hasMore && matrix.devices) {
-			const more = document.createElement('button');
-			more.type = 'button';
-			more.className = 'qa-matrix-load-more';
-			more.dataset.role = 'load-more';
-			more.textContent = `Load more devices (${qaMatrixState.windowDeviceTotal - qaMatrixState.windowDeviceOffset} more)`;
-			more.addEventListener('click', () => {
-				more.remove();
-				void qaMatrixLoadWindow(qaMatrixState.windowDeviceOffset, qaMatrixState.abort?.signal);
-			});
-			matrix.devices.append(more);
-		}
-	} catch (error) {
-		// #15123: a failed window fetch (e.g. session expiry 401) previously
-		// left the "Loading device rows…" placeholder stuck forever — the
-		// outer catalog loader had already finished, so nothing retried or
-		// surfaced the error. Render an honest error row with retry.
-		if (signal?.aborted || error?.name === 'AbortError') return;
-		qaMatrixState.windowRows = [];
-		if (matrix.devices) {
-			matrix.devices.textContent = '';
-			const errorRow = document.createElement('div');
-			errorRow.className = 'qa-matrix-empty';
-			errorRow.dataset.role = 'window-error';
-			const message = document.createElement('p');
-			message.textContent = `Device rows could not be loaded (${error instanceof Error ? error.message : String(error)}).`;
-			const retry = document.createElement('button');
-			retry.type = 'button';
-			retry.className = 'qa-matrix-load-more';
-			retry.textContent = 'Retry';
-			retry.addEventListener('click', () => {
-				void qaMatrixLoadWindow(offset, qaMatrixState.abort?.signal);
-			});
-			errorRow.append(message, retry);
-			matrix.devices.append(errorRow);
-		}
-	} finally {
-		qaMatrixState.windowLoading = false;
-	}
-}
 
 /**
  * Pipeline Phase 1: effective selection = explicit device keys × explicit
@@ -5196,7 +5090,9 @@ function qaMatrixEffectiveSelection() {
 }
 
 /** Apply a selection-state change, re-derive, persist, re-render. */
-function qaMatrixApplySelection(nextState) {
+function qaMatrixApplySelection(nextState, fromPreset = false) {
+	if (!fromPreset) { qaJourneySelectionMode = 'custom'; qaJourneyCustomSelection = nextState; }
+	syncJourneyPreset();
 	qaMatrixState.selection = nextState;
 	qaSelectionStore.save(nextState);
 	qaMatrixState.selectedEnvIds = qaMatrixEffectiveSelection();
@@ -5211,641 +5107,11 @@ function qaMatrixApplySelection(nextState) {
 function qaMatrixRender() {
 	const matrix = qaUi.matrix;
 	if (!matrix.browsers || !matrix.devices || !matrix.summary) return;
-	const filtered = qaMatrixFiltered();
-	// #15969: the device-scope VIEW is retired — selection counts always
-	// reflect the filtered set. Scope state is inert legacy.
-	const selectionScope = filtered;
-	const selected = new Set(qaMatrixState.selectedEnvIds);
-	const selection = qaMatrixState.selection;
-
-	// Browser panel: one-click toggle cards (#15968). One card per family —
-	// brand icon, name, available version, availability badge. Click card =
-	// toggle that family in the EXPLICIT selection model. Unavailable
-	// families stay visible, disabled, with their honest reason.
-	matrix.browsers.textContent = '';
-
-	// #16043: mode segmented control — cross product vs one device per
-	// browser. Two labeled buttons; the active one is pressed. Switching
-	// mode goes through setSelectionMode (auto-assign keeps runs non-zero).
-	const perBrowser = selection.mode === 'perBrowser';
-	const modeBar = document.createElement('div');
-	modeBar.className = 'qa-matrix-mode';
-	modeBar.setAttribute('role', 'group');
-	modeBar.setAttribute('aria-label', 'Device selection mode');
-	const makeModeButton = (mode, label, hint) => {
-		const button = document.createElement('button');
-		button.type = 'button';
-		button.className = `qa-matrix-mode-btn${(perBrowser ? 'perBrowser' : 'cross') === mode ? ' is-active' : ''}`;
-		button.dataset.role = `mode-${mode}`;
-		button.setAttribute('aria-pressed', String((perBrowser ? 'perBrowser' : 'cross') === mode));
-		button.title = hint;
-		const text = document.createElement('span');
-		text.textContent = label;
-		button.append(text);
-		button.addEventListener('click', () => {
-			if ((qaMatrixState.selection.mode === 'perBrowser' ? 'perBrowser' : 'cross') === mode) return;
-			qaMatrixApplySelection(setSelectionMode(qaMatrixState.selection, qaMatrixState.index, mode));
-			// Entering perBrowser: focus the picker on the first selected family.
-			if (mode === 'perBrowser') {
-				qaMatrixState.activeFamily = [...qaMatrixState.selection.browserFamilies][0] ?? null;
-				qaMatrixRender();
-			}
-		});
-		return button;
-	};
-	modeBar.append(
-		makeModeButton('cross', 'All devices for every browser', 'Selected browsers run on every selected device'),
-		makeModeButton('perBrowser', 'One device per browser', 'Pick exactly one device for each selected browser')
-	);
-	matrix.browsers.append(modeBar);
-
-	// #16043: per-browser overview — assignment chips for the cards + the
-	// "K browsers need a device" summary segment.
-	const perBrowserRows = perBrowser ? perBrowserOverview(qaMatrixState.index, selection) : [];
-	const unassignedFamilies = perBrowserRows.filter((row) => row.deviceKey === null).length;
-
-	const browserBulk = document.createElement('div');
-	browserBulk.className = 'qa-matrix-bulk';
-	const selectAllBrowsersButton = document.createElement('button');
-	selectAllBrowsersButton.type = 'button';
-	selectAllBrowsersButton.className = 'qa-matrix-bulk-btn';
-	selectAllBrowsersButton.dataset.role = 'select-all-browsers';
-	selectAllBrowsersButton.textContent = 'Select all available';
-	selectAllBrowsersButton.addEventListener('click', () => {
-		qaMatrixApplySelection(selectAllBrowsers(qaMatrixState.index, selection));
-	});
-	const deselectAllBrowsersButton = document.createElement('button');
-	deselectAllBrowsersButton.type = 'button';
-	deselectAllBrowsersButton.className = 'qa-matrix-bulk-btn';
-	deselectAllBrowsersButton.dataset.role = 'deselect-all-browsers';
-	deselectAllBrowsersButton.textContent = 'Clear';
-	deselectAllBrowsersButton.addEventListener('click', () => {
-		qaMatrixApplySelection(deselectAllBrowsers(qaMatrixState.index, selection));
-	});
-	browserBulk.append(selectAllBrowsersButton, deselectAllBrowsersButton);
-	matrix.browsers.append(browserBulk);
-
-	// Engine-equivalence visibility: a family whose selectable rows execute
-	// on a substitute engine (e.g. Safari→WebKit) gets an honest note chip on
-	// its card — set when any selectable row for the family has a non-branded
-	// engine. The compact index rows don't carry browserSupport; probe the
-	// family's engine status from the assembled catalog payload's families
-	// note plus the full-row availability reasons already shown for
-	// unavailable families.
-	const engineEquivalentFamilies = new Set(
-		(qaMatrixState.browserFamilies ?? [])
-			.filter(family => family.note && /engine|webkit/i.test(String(family.note)))
-			.map(family => family.code)
-	);
-	const families = familyRows(qaMatrixState.index, qaMatrixState.browserFamilies);
-	// #16043: in perBrowser mode the ACTIVE family is the one the device
-	// list picks for. It must be a selected family; fall back to the first
-	// selected family when the remembered one is no longer selected.
-	if (perBrowser) {
-		if (qaMatrixState.activeFamily && !selection.browserFamilies.has(qaMatrixState.activeFamily)) {
-			qaMatrixState.activeFamily = null;
-		}
-		if (!qaMatrixState.activeFamily && selection.browserFamilies.size > 0) {
-			qaMatrixState.activeFamily = families.find((family) => selection.browserFamilies.has(family.code))?.code ?? null;
-		}
-	}
-	const activeFamily = perBrowser ? (qaMatrixState.activeFamily ?? null) : null;
-	if (families.length === 0) {
-		const empty = document.createElement('p');
-		empty.className = 'qa-matrix-empty';
-		empty.textContent = 'No browsers available — connect an execution provider.';
-		matrix.browsers.append(empty);
-	}
-	const cardList = document.createElement('div');
-	cardList.className = 'qa-matrix-browser-cards';
-	cardList.setAttribute('role', 'group');
-	cardList.setAttribute('aria-label', 'Browsers');
-	for (const family of families) {
-		const card = document.createElement('button');
-		card.type = 'button';
-		card.className = `qa-matrix-browser-card${family.available ? '' : ' is-unavailable'}`;
-		card.dataset.family = family.code;
-		card.dataset.role = 'browser-card';
-		const isSelected = family.available && selection.browserFamilies.has(family.code);
-		card.classList.toggle('is-selected', isSelected);
-		card.setAttribute('aria-pressed', String(isSelected));
-		const cardHead = document.createElement('span');
-		cardHead.className = 'qa-matrix-browser-card-head';
-		cardHead.append(brandIcon(family.code, 22));
-		const labelSpan = document.createElement('span');
-		labelSpan.className = 'qa-matrix-browser-card-label';
-		labelSpan.textContent = family.label;
-		cardHead.append(labelSpan);
-		if (family.available && isSelected) {
-			const check = document.createElement('span');
-			check.className = 'qa-matrix-browser-card-check';
-			check.setAttribute('aria-hidden', 'true');
-			check.textContent = '✓';
-			cardHead.append(check);
-		}
-		card.append(cardHead);
-		const cardMeta = document.createElement('span');
-		cardMeta.className = 'qa-matrix-browser-card-meta';
-		if (family.available) {
-			const versionText = document.createElement('span');
-			versionText.className = 'qa-matrix-browser-card-version';
-			versionText.textContent = family.versions.length > 0
-				? family.versions.slice(0, 2).join(', ') + (family.versions.length > 2 ? ` · +${family.versions.length - 2}` : '')
-				: family.label;
-			cardMeta.append(versionText);
-			const badge = document.createElement('span');
-			badge.className = 'qa-matrix-browser-card-badge';
-			badge.textContent = 'Available';
-			cardMeta.append(badge);
-			if (engineEquivalentFamilies.has(family.code)) {
-				const note = document.createElement('span');
-				note.className = 'qa-matrix-browser-card-note';
-				note.textContent = 'Runs on engine equivalent';
-				cardMeta.append(note);
-			}
-			if (perBrowser) {
-				// #16043: assignment chip replaces the cross-mode device count.
-				const row = perBrowserRows.find((entry) => entry.family === family.code);
-				const chip = document.createElement('span');
-				chip.className = 'qa-matrix-assignment-chip';
-				if (isSelected && row?.deviceKey) {
-					chip.textContent = `→ ${row.deviceLabel}`;
-					chip.dataset.role = 'assignment-chip';
-				} else if (isSelected) {
-					chip.textContent = 'No device — pick one';
-					chip.classList.add('is-missing');
-					chip.dataset.role = 'assignment-chip';
-				} else {
-					chip.textContent = '1 device';
-				}
-				cardMeta.append(chip);
-			} else {
-				const devicesCount = new Set(
-					selectionScope.filter(configuration =>
-						configuration.browserCode === family.code
-						&& selected.has(configuration.envId)
-					).map(configuration => deviceKeyOf(configuration))
-				).size;
-				if (devicesCount > 0) {
-					const devicesLabel = document.createElement('span');
-					devicesLabel.className = 'qa-matrix-browser-card-devices';
-					devicesLabel.textContent = `${devicesCount} device${devicesCount === 1 ? '' : 's'}`;
-					cardMeta.append(devicesLabel);
-				}
-			}
-			// #16043: the active per-browser family gets a distinct ring and
-			// an aria-current hint — the picker below acts on THIS browser.
-			if (perBrowser && isSelected && activeFamily === family.code) {
-				card.classList.add('is-active');
-				card.setAttribute('aria-current', 'true');
-				card.title = `Picking a device for ${family.label} — click a device row below`;
-			} else {
-				card.title = isSelected ? `Deselect ${family.label}` : `Select ${family.label}`;
-			}
-			card.addEventListener('click', () => {
-				// #15968: card toggle mutates the explicit selection state —
-				// one state write, one persist, one re-render (#15092 discipline).
-				const next = createSelectionState({
-					deviceKeys: selection.deviceKeys,
-					browserFamilies: selection.browserFamilies,
-					deselectedEnvIds: selection.deselectedEnvIds,
-					mode: selection.mode,
-					activeFamily: selection.activeFamily,
-					deviceAssignments: selection.deviceAssignments
-				});
-				const willSelect = !selection.browserFamilies.has(family.code);
-				toggleBrowserFamily(next, qaMatrixState.index, family.code, willSelect);
-				// #16043: clicking a card in perBrowser mode makes THAT
-				// family active (the device list then picks for it).
-				if (perBrowser && willSelect) qaMatrixState.activeFamily = family.code;
-				qaMatrixApplySelection(next);
-			});
-		} else {
-			card.disabled = true;
-			card.setAttribute('aria-disabled', 'true');
-			card.title = family.reason ?? 'Not available';
-			const reasonText = document.createElement('span');
-			reasonText.className = 'qa-matrix-browser-card-badge is-unavailable-badge';
-			reasonText.textContent = family.reason ?? 'Unavailable';
-			cardMeta.append(reasonText);
-		}
-		card.append(cardMeta);
-		cardList.append(card);
-	}
-	matrix.browsers.append(cardList);
-
-	// #15969 Device selector: platform tabs + one-click rows. The nested
-	// platform → device → OS → version-chip tree, the separate device
-	// checkbox, and the View/scope button are GONE — one click on a device
-	// row toggles that device in the explicit selection model.
-	const deviceHeader = document.createElement('div');
-	deviceHeader.className = 'qa-matrix-device-header';
-
-	// Platform tabs (tablist) — the tab is a FILTER over the windowed rows;
-	// 'All' shows the interleaved server order. Counts are selectable
-	// configurations per platform from the compact index (search-aware).
-	// #16045: tab counts now respect the ACTIVE CATEGORY; category chip
-	// counts respect the ACTIVE PLATFORM — both dimensions stay consistent.
-	const activeCategory = qaMatrixState.filters.deviceType || '';
-	const tabCounts = new Map();
-	let allCount = 0;
-	for (const configuration of filtered) {
-		if (!isSelectable(configuration)) continue;
-		if (activeCategory && configuration.deviceType !== activeCategory) continue;
-		allCount += 1;
-		tabCounts.set(configuration.platform, (tabCounts.get(configuration.platform) ?? 0) + 1);
-	}
-	// #16045: category chips ABOVE the platform tabs — the dimension users
-	// think in first (Phones/Tablets/Desktops). One click narrows the device
-	// list; composes with platform tabs and search. Applies in both modes.
-	const categoryCounts = new Map();
-	for (const configuration of filtered) {
-		if (!isSelectable(configuration)) continue;
-		if (qaMatrixState.filters.platform && configuration.platform !== qaMatrixState.filters.platform) continue;
-		categoryCounts.set(configuration.deviceType, (categoryCounts.get(configuration.deviceType) ?? 0) + 1);
-	}
-	const categoryRow = document.createElement('div');
-	categoryRow.className = 'qa-matrix-category-chips';
-	categoryRow.setAttribute('role', 'group');
-	categoryRow.setAttribute('aria-label', 'Device categories');
-	const makeCategoryChip = (id, label, count) => {
-		const chip = document.createElement('button');
-		chip.type = 'button';
-		chip.className = `qa-matrix-category-chip${activeCategory === id ? ' is-active' : ''}`;
-		chip.dataset.role = 'category-chip';
-		chip.dataset.deviceType = id;
-		chip.setAttribute('aria-pressed', String(activeCategory === id));
-		chip.textContent = `${label} (${count.toLocaleString()})`;
-		chip.title = id === '' ? 'Show phones, tablets and desktops' : `Show only ${label.toLowerCase()}`;
-		chip.addEventListener('click', () => {
-			if (activeCategory === id) return;
-			qaMatrixState.filters.deviceType = id;
-			qaMatrixRender();
-			void qaMatrixLoadWindow(0, qaMatrixState.abort?.signal);
-		});
-		return chip;
-	};
-	categoryRow.append(makeCategoryChip('', 'All', [...categoryCounts.values()].reduce((sum, value) => sum + value, 0)));
-	for (const category of DEVICE_CATEGORIES) {
-		if (categoryCounts.has(category.id)) {
-			categoryRow.append(makeCategoryChip(category.id, category.label, categoryCounts.get(category.id)));
-		}
-	}
-	deviceHeader.append(categoryRow);
-	const tabGroup = document.createElement('div');
-	tabGroup.className = 'qa-matrix-platform-tabs';
-	tabGroup.setAttribute('role', 'tablist');
-	tabGroup.setAttribute('aria-label', 'Device platforms');
-	const platforms = PLATFORM_GROUPS.map(group => group.id).filter(id => tabCounts.has(id));
-	const makeTab = (id, label, count) => {
-		const tab = document.createElement('button');
-		tab.type = 'button';
-		tab.className = `qa-matrix-platform-tab${qaMatrixState.filters.platform === id ? ' is-active' : ''}`;
-		tab.dataset.platform = id;
-		tab.setAttribute('role', 'tab');
-		tab.setAttribute('aria-selected', String(qaMatrixState.filters.platform === id));
-		tab.textContent = `${label}${Number.isInteger(count) ? ` (${count.toLocaleString()})` : ''}`;
-		tab.addEventListener('click', () => {
-			if (qaMatrixState.filters.platform === id) return;
-			qaMatrixState.filters.platform = id === 'all' ? '' : id;
-			qaMatrixState.activeTab = id;
-			qaMatrixRender();
-			void qaMatrixLoadWindow(0, qaMatrixState.abort?.signal);
-		});
-		return tab;
-	};
-	tabGroup.append(makeTab('all', 'All', allCount));
-	for (const group of PLATFORM_GROUPS) {
-		if (tabCounts.has(group.id)) tabGroup.append(makeTab(group.id, group.label, tabCounts.get(group.id)));
-	}
-	deviceHeader.append(tabGroup);
-
-	// Bulk device actions (kept from Phase 1 — they operate on the FULL catalog).
-	// #16043: hidden in perBrowser mode — devices are assigned per browser
-	// there, so "select all devices" has no meaning.
-	if (!perBrowser) {
-		const deviceBulk = document.createElement('div');
-		deviceBulk.className = 'qa-matrix-bulk';
-		const selectAllDevicesButton = document.createElement('button');
-		selectAllDevicesButton.type = 'button';
-		selectAllDevicesButton.className = 'qa-matrix-bulk-btn';
-		selectAllDevicesButton.dataset.role = 'select-all-devices';
-		selectAllDevicesButton.textContent = 'Select all devices';
-		selectAllDevicesButton.addEventListener('click', () => {
-			qaMatrixApplySelection(selectAllDevices(qaMatrixState.index, selection));
-		});
-		const deselectAllDevicesButton = document.createElement('button');
-		deselectAllDevicesButton.type = 'button';
-		deselectAllDevicesButton.className = 'qa-matrix-bulk-btn';
-		deselectAllDevicesButton.dataset.role = 'deselect-all-devices';
-		deselectAllDevicesButton.textContent = 'Clear devices';
-		deselectAllDevicesButton.addEventListener('click', () => {
-			qaMatrixApplySelection(deselectAllDevices(qaMatrixState.index, selection));
-		});
-		deviceBulk.append(selectAllDevicesButton, deselectAllDevicesButton);
-		deviceHeader.append(deviceBulk);
-	} else {
-		// #16043: the picker header tells the user WHAT the rows below do.
-		const activeLabel = families.find((family) => family.code === activeFamily)?.label ?? null;
-		const pickerHint = document.createElement('p');
-		pickerHint.className = 'qa-matrix-picker-hint';
-		pickerHint.dataset.role = 'picker-hint';
-		pickerHint.textContent = activeFamily && activeLabel
-			? `Pick a device for ${activeLabel} — one click assigns it.`
-			: 'Select a browser above, then pick its device here.';
-		deviceHeader.append(pickerHint);
-	}
-	matrix.devices.textContent = '';
-	matrix.devices.append(deviceHeader);
-
-	// One flat row per device (windowed rows deduped by device key).
-	// #16046: row construction extracted into qaMatrixDeviceRow so the
-	// grouped sections and the popular quick-picks reuse the EXACT same row
-	// markup and behavior.
-	const deviceList = deviceListFromWindow(qaMatrixState.windowRows);
-
-	/**
-	 * #16046: shared device-row builder. Identical markup/behavior to the
-	 * #15969/#16043 row: cross mode toggles the device; perBrowser mode
-	 * assigns/unassigns it for the ACTIVE family. Returns a <button>.
-	 */
-	const qaMatrixDeviceRow = (device) => {
-		const available = device.selectableCount > 0;
-		// #16043: in perBrowser mode the row acts on the ACTIVE family.
-		// A device is possible for it only when at least one of its rows
-		// for that family is selectable; impossible rows are disabled
-		// with an honest reason.
-		let perBrowserSupports = null;
-		if (perBrowser && activeFamily) {
-			perBrowserSupports = qaMatrixState.index.some(configuration =>
-				configuration.browserCode === activeFamily
-				&& isSelectable(configuration)
-				&& deviceKeyOf(configuration) === device.key);
-		}
-		const activeAssignment = perBrowser && activeFamily ? selection.deviceAssignments[activeFamily] : undefined;
-		const isAssignedHere = perBrowser && activeAssignment === device.key;
-		const isSelected = perBrowser ? isAssignedHere : selection.deviceKeys.has(device.key);
-		const row = document.createElement('button');
-		row.type = 'button';
-		row.className = `qa-matrix-device-row${available ? '' : ' is-unavailable'}${isSelected ? ' is-selected' : ''}${isAssignedHere ? ' is-assigned' : ''}`;
-		row.dataset.role = 'device-row';
-		row.dataset.deviceKey = device.key;
-		row.setAttribute('role', 'option');
-		row.setAttribute('aria-selected', String(isSelected));
-		if (!available) {
-			row.disabled = true;
-			row.setAttribute('aria-disabled', 'true');
-			row.title = device.unavailableReason ?? 'No available configurations for this device.';
-		} else if (perBrowser && !activeFamily) {
-			row.disabled = true;
-			row.setAttribute('aria-disabled', 'true');
-			row.title = 'Select a browser first — the device list picks one device for each browser.';
-		} else if (perBrowser && perBrowserSupports === false) {
-			row.disabled = true;
-			row.setAttribute('aria-disabled', 'true');
-			const activeLabel = families.find((family) => family.code === activeFamily)?.label ?? activeFamily;
-			row.title = `No configurations for ${activeLabel} on this device.`;
-		} else if (perBrowser) {
-			row.title = isAssignedHere
-				? `Remove ${device.device} as the device for this browser`
-				: `Use ${device.device} for this browser`;
-		}
-		const identity = document.createElement('span');
-		identity.className = 'qa-matrix-device-row-identity';
-		const name = document.createElement('span');
-		name.className = 'qa-matrix-device-row-name';
-		name.textContent = `${device.manufacturer ? `${device.manufacturer} ` : ''}${device.device}`;
-		identity.append(name);
-		const osSummary = document.createElement('span');
-		osSummary.className = 'qa-matrix-device-row-os';
-		osSummary.textContent = device.osVersions.length > 0
-			? `${device.osLabel ? `${device.osLabel} ` : ''}${device.osVersions.slice(0, 3).join(' · ')}${device.osVersions.length > 3 ? ' · …' : ''}`
-			: (device.osLabel ?? '');
-		identity.append(osSummary);
-		row.append(identity);
-		const badges = document.createElement('span');
-		badges.className = 'qa-matrix-badges';
-		badges.setAttribute('aria-label', 'Device capabilities');
-		for (const executionType of device.executionTypes) {
-			const badge = document.createElement('span');
-			badge.className = `qa-matrix-badge badge-${executionType}`;
-			badge.textContent = executionTypeLabel(executionType);
-			badges.append(badge);
-		}
-		// #16043: rows show WHICH browsers are assigned to this device in
-		// perBrowser mode — brand icons make the mapping glanceable.
-		if (perBrowser) {
-			const assignedFamilies = Object.entries(selection.deviceAssignments)
-				.filter(([, key]) => key === device.key)
-				.map(([code]) => code)
-				.filter((code) => selection.browserFamilies.has(code));
-			for (const code of assignedFamilies) {
-				const icon = brandIcon(code, 14);
-				icon.classList.add('qa-matrix-assigned-family-icon');
-				icon.title = `Device for ${families.find((family) => family.code === code)?.label ?? code}`;
-				badges.append(icon);
-			}
-		}
-		row.append(badges);
-		if (isSelected) {
-			const check = document.createElement('span');
-			check.className = 'qa-matrix-device-row-check';
-			check.setAttribute('aria-hidden', 'true');
-			check.textContent = '✓';
-			row.append(check);
-		}
-		row.addEventListener('click', () => {
-			if (perBrowser) {
-				// #16043: one click assigns the device to the active
-				// family; clicking the ASSIGNED row removes it.
-				if (!activeFamily || perBrowserSupports === false) return;
-				if (isAssignedHere) {
-					qaMatrixApplySelection(unassignDevice(qaMatrixState.selection, activeFamily));
-				} else {
-					try {
-						qaMatrixApplySelection(assignDevice(qaMatrixState.selection, qaMatrixState.index, activeFamily, device.key));
-					} catch {
-						setQaFormError('That device has no available configurations for this browser.');
-					}
-				}
-				return;
-			}
-			// #15969: ONE click toggles the device in the explicit
-			// selection model — no separate checkbox, no scope view.
-			const next = createSelectionState({
-				deviceKeys: selection.deviceKeys,
-				browserFamilies: selection.browserFamilies,
-				deselectedEnvIds: selection.deselectedEnvIds
-			});
-			toggleDevice(next, device.key, !selection.deviceKeys.has(device.key));
-			qaMatrixApplySelection(next);
-		});
-		return row;
-	};
-
-	// #16046: popular quick-picks — curated flagship devices matched against
-	// the compact index (exact device name, ≥1 selectable config). The
-	// curation list is ordered to guarantee CATEGORY DIVERSITY first
-	// (one phone, one tablet, one desktop…), then fills up with the remaining
-	// names — so the strip is never six phones. Hidden entirely when nothing
-	// matches. Ignores category/platform/search — it is the constant shortcut
-	// layer; the list below stays filterable.
-	const POPULAR_DEVICE_NAMES = ['iPhone 17', 'iPad (10th Gen)', 'MacBook Air (M1)', 'Galaxy S25', 'iPad Pro 13 (M4)', 'Surface Laptop 5', 'iPhone 16', 'Galaxy S24', 'Pixel 10', 'Pixel 9', 'iMac (24-inch M1)'];
-	const popularMatches = [];
-	for (const deviceName of POPULAR_DEVICE_NAMES) {
-		if (popularMatches.length >= 6) break;
-		const match = qaMatrixState.index.find(configuration =>
-			configuration.device === deviceName && isSelectable(configuration));
-		if (match && !popularMatches.some((entry) => entry.key === deviceKeyOf(match))) {
-			popularMatches.push({ name: deviceName, key: deviceKeyOf(match), platform: match.platform });
-		}
-	}
-	if (popularMatches.length > 0) {
-		const popular = document.createElement('div');
-		popular.className = 'qa-matrix-popular';
-		popular.dataset.role = 'popular-devices';
-		const popularLabel = document.createElement('span');
-		popularLabel.className = 'qa-matrix-popular-label';
-		popularLabel.textContent = 'Popular';
-		popular.append(popularLabel);
-		const platformLabels = new Map(PLATFORM_GROUPS.map((group) => [group.id, group.label]));
-		for (const entry of popularMatches) {
-			const chip = document.createElement('button');
-			chip.type = 'button';
-			chip.className = 'qa-matrix-popular-chip';
-			chip.dataset.role = 'popular-device';
-			chip.dataset.deviceKey = entry.key;
-			const isSelectedPopular = perBrowser
-				? (activeFamily ? selection.deviceAssignments[activeFamily] === entry.key : false)
-				: selection.deviceKeys.has(entry.key);
-			chip.classList.toggle('is-selected', isSelectedPopular);
-			chip.setAttribute('aria-pressed', String(isSelectedPopular));
-			chip.textContent = `${entry.name} · ${platformLabels.get(entry.platform) ?? entry.platform}`;
-			// The chip behaves EXACTLY like the device row for that key.
-			chip.addEventListener('click', () => {
-				const target = deviceList.find((device) => device.key === entry.key);
-				if (target) {
-					qaMatrixDeviceRow(target).click();
-					return;
-				}
-				// Device not in the current window (filtered out / not yet
-				// loaded): act directly on the model — same semantics.
-				if (perBrowser) {
-					if (!activeFamily) return;
-					if (selection.deviceAssignments[activeFamily] === entry.key) {
-						qaMatrixApplySelection(unassignDevice(qaMatrixState.selection, activeFamily));
-					} else {
-						try {
-							qaMatrixApplySelection(assignDevice(qaMatrixState.selection, qaMatrixState.index, activeFamily, entry.key));
-						} catch {
-							setQaFormError('That device has no available configurations for this browser.');
-						}
-					}
-					return;
-				}
-				const next = createSelectionState({
-					deviceKeys: selection.deviceKeys,
-					browserFamilies: selection.browserFamilies,
-					deselectedEnvIds: selection.deselectedEnvIds
-				});
-				toggleDevice(next, entry.key, !selection.deviceKeys.has(entry.key));
-				qaMatrixApplySelection(next);
-			});
-			popular.append(chip);
-		}
-		deviceHeader.append(popular);
-	}
-
-	if (deviceList.length === 0) {
-		const empty = document.createElement('p');
-		empty.className = 'qa-matrix-empty';
-		empty.textContent = 'No devices match your search or platform tab.';
-		matrix.devices.append(empty);
-	} else {
-		const rowList = document.createElement('div');
-		rowList.className = 'qa-matrix-device-rows';
-		rowList.setAttribute('role', 'listbox');
-		rowList.setAttribute('aria-label', 'Devices');
-		// #16046: with no category active, rows are grouped under sticky
-		// Phones/Tablets/Desktops headers so the full list reads in
-		// understandable sections; a category chip active → one section,
-		// no header (today's behavior). Rows themselves are unchanged.
-		const appendSection = (label, devices, count) => {
-			if (devices.length === 0) return;
-			if (label) {
-				const header = document.createElement('div');
-				header.className = 'qa-matrix-device-group-header';
-				header.dataset.role = 'device-group-header';
-				const headerLabel = document.createElement('span');
-				headerLabel.textContent = label;
-				const headerCount = document.createElement('span');
-				headerCount.className = 'qa-matrix-device-group-count';
-				headerCount.textContent = count != null ? `(${count.toLocaleString()})` : `(${devices.length})`;
-				header.append(headerLabel, headerCount);
-				rowList.append(header);
-			}
-			for (const device of devices) rowList.append(qaMatrixDeviceRow(device));
-		};
-		if (activeCategory) {
-			appendSection(null, deviceList);
-		} else {
-			const categoryIds = DEVICE_CATEGORIES.map((category) => category.id);
-			for (const category of DEVICE_CATEGORIES) {
-				const devices = deviceList.filter((device) => device.deviceType === category.id);
-				const count = categoryCounts.get(category.id) ?? devices.length;
-				appendSection(category.label, devices, count);
-			}
-			const others = deviceList.filter((device) => !categoryIds.includes(device.deviceType));
-			if (others.length > 0) appendSection('Other', others);
-		}
-		matrix.devices.append(rowList);
-	}
-
-
-	// Summary: TRUE planned total (never capped — Phase 1) + provider honesty.
-	// While scoped (a VIEW), still show the GLOBAL selection count first — the
-	// scope never changes what a run submits, and the summary must never imply
-	// otherwise (reviewer round-1: scope-only label hid the true count).
-	const summary = buildSummary(qaMatrixState.index, qaMatrixState.selectedEnvIds);
-	const dimensions = selectionDimensions(qaMatrixState.index, qaMatrixState.selectedEnvIds);
-	const providerNotes = (qaMatrixState.providers ?? [])
-		.filter(provider => !provider.connected)
-		.map(provider => `${provider.name}: not configured`);
-	// Pipeline Phase 2: selections over the batch size run as sequential
-	// idempotent batches under one parent run — the summary says so.
-	const overBatch = summary.total > MATRIX_BATCH_SIZE;
-	// #15970: the primary line is PLAIN LANGUAGE — browsers × devices → runs.
-	// #16043: perBrowser mode reads "N browsers × 1 device each" and flags
-	// families that still need a device. When nothing has an assignment yet
-	// but families ARE selected, say THAT — not the generic empty message.
-	let primary;
-	if (dimensions.runs === 0 && perBrowser && dimensions.families === 0 && summary.availableTotal === 0) {
-		primary = 'No browsers or devices available — connect an execution provider.';
-	} else if (dimensions.runs === 0 && perBrowser && unassignedFamilies > 0) {
-		primary = `${unassignedFamilies.toLocaleString()} browser${unassignedFamilies === 1 ? '' : 's'} selected — pick a device${unassignedFamilies === 1 ? '' : ' for each'}.`;
-	} else if (dimensions.runs === 0) {
-		primary = summary.availableTotal === 0
-			? 'No browsers or devices available — connect an execution provider.'
-			: 'No browsers or devices selected — pick at least one of each.';
-	} else if (perBrowser) {
-		primary = `${dimensions.families.toLocaleString()} browser${dimensions.families === 1 ? '' : 's'} × 1 device each → ${dimensions.runs.toLocaleString()} run${dimensions.runs === 1 ? '' : 's'}${unassignedFamilies > 0 ? ` · ${unassignedFamilies} browser${unassignedFamilies === 1 ? '' : 's'} need${unassignedFamilies === 1 ? 's' : ''} a device` : ''}`;
-	} else {
-		primary = `${dimensions.families.toLocaleString()} browser${dimensions.families === 1 ? '' : 's'} × ${dimensions.devices.toLocaleString()} device${dimensions.devices === 1 ? '' : 's'} → ${dimensions.runs.toLocaleString()} run${dimensions.runs === 1 ? '' : 's'}`;
-	}
-	const secondary = [
-		`${summary.total.toLocaleString()} of ${summary.availableTotal.toLocaleString()} available configurations`,
-		summary.unavailable > 0 ? `${summary.unavailable.toLocaleString()} unavailable` : null,
-		providerNotes.length > 0 ? providerNotes.join(', ') : null,
-		overBatch ? `will run as ${Math.ceil(summary.total / MATRIX_BATCH_SIZE)} batches` : null,
-		'runs one browser at a time'
-	].filter(Boolean);
-	matrix.summary.textContent = `${primary} · ${secondary.join(' · ')}`;
-	matrix.summary.title = Object.entries(summary.byFamily)
-		.filter(([, count]) => count > 0)
-		.map(([code, count]) => `${code}: ${count}`)
-		.join(', ');
-	// #15164: keep the TEST ON block in lockstep with the matrix selection —
-	// one configuration, never stale or divergent.
+	qaMatrixState.picker ??= { category: '', platform: '', selectedOnly: false, limit: 10, reviewOpen: false };
+	renderMatrixPicker({ document, hosts: matrix, index: qaMatrixState.index,
+		families: qaMatrixState.browserFamilies, selection: qaMatrixState.selection,
+		search: qaMatrixState.filters.search, view: qaMatrixState.picker,
+		apply: qaMatrixApplySelection, render: qaMatrixRender, brandIcon });
 	renderTestOn('qa-test-on');
 }
 
@@ -5858,8 +5124,8 @@ function qaMatrixWiring() {
 		window.clearTimeout(searchTimer);
 		searchTimer = window.setTimeout(() => {
 			qaMatrixState.filters.search = matrix.search.value;
+			if (qaMatrixState.picker) qaMatrixState.picker.limit = 10;
 			qaMatrixRender();
-			void qaMatrixLoadWindow(0, qaMatrixState.abort?.signal);
 		}, 150);
 	});
 	// #15969: the facet dropdowns are removed from the markup — platform
@@ -5928,6 +5194,10 @@ function syncQaSubmitState() {
 	}
 	syncQaCategoryToggles();
 	syncQaSelectionSummary();
+	if (qaJourney) {
+		qaUi.submit.disabled ||= !state.config?.ready;
+		qaJourney.sync();
+	}
 }
 
 /** Plain-language reason the primary action cannot run yet. This is also the
@@ -6204,8 +5474,24 @@ async function openQaStart() {
 
 function showQaStartPage() {
 	if (!qaUi.dialog) return;
+	qaJourney ??= createQaJourney({ document, changed: syncQaSubmitState, getState: () => ({
+		config: state.config,
+		checks: qaUi.selectedTests.size,
+		configurations: qaMatrixState.selectedEnvIds.length,
+		busy: qaUi.submit.dataset.busy === 'true',
+		blocked: qaLaunchBlockedReason(),
+		coverageBlocked: !state.qaTestCatalog ? 'Loading available checks…'
+			: !qaUi.selectedTests.size ? 'Choose at least one check to continue.'
+			: qaSecuritySelected() && !qaUi.securityAuthorized?.checked ? 'Confirm security testing authorization below.'
+			: qaMatrixState.fetchState === 'loading' ? 'Loading browsers and devices…'
+			: qaMatrixState.fetchState === 'error' ? 'The device catalog could not load. Open customization and retry.'
+			: !qaMatrixState.selectedEnvIds.length ? 'Choose at least one available browser and device.' : null
+	}) });
 	setQaFormError();
+	const draft = { url: qaUi.targetUrl.value, goal: $('qa-goal').value };
 	qaUi.form.reset();
+	if (draft.url) qaUi.targetUrl.value = draft.url;
+	if (draft.goal) $('qa-goal').value = draft.goal;
 	// Studio context prefill first, then the matrix top bar's target URL wins
 	// if set (M4 #14423): applied AFTER reset() so it survives it.
 	applyStudioTarget(qaUi.targetUrl);
@@ -6236,6 +5522,8 @@ function showQaStartPage() {
 		}
 	}
 	if (!qaUi.dialog.open) qaUi.dialog.showModal();
+	qaJourney.start();
+	syncJourneyPreset();
 	if (matchMedia('(pointer: fine)').matches) setTimeout(() => qaUi.targetUrl?.focus(), 0);
 	syncQaSubmitState();
 	// #15164: 'Change device' stays INSIDE the Start QA run modal — it scrolls
@@ -6307,6 +5595,18 @@ async function waitForFirstMatrixSession(createdRun, { timeoutMs = 15_000, pollM
 }
 
 if (qaUi.dialog) {
+	$('journey-focused')?.addEventListener('click', () => {
+		if (qaJourneySelectionMode !== 'quick') qaJourneyCustomSelection = qaMatrixState.selection;
+		qaJourneySelectionMode = 'quick';
+		qaMatrixApplySelection(qaFocusedSelection(), true);
+		$('qa-customize').open = false;
+	});
+	$('journey-custom')?.addEventListener('click', () => {
+		qaJourneySelectionMode = 'custom';
+		if (qaJourneyCustomSelection) qaMatrixApplySelection(qaJourneyCustomSelection, true);
+		syncJourneyPreset();
+		$('qa-customize').open = true;
+	});
 	for (const control of [qaUi.deviceSelect, qaUi.engineOptions, qaUi.scopeOptions]) {
 		control?.addEventListener('change', syncQaSelectionSummary);
 	}
@@ -6418,7 +5718,8 @@ if (qaUi.dialog) {
 			$('qa-customize').open = true;
 			return;
 		}
-		const kickoffText = scopeMessage ? `${targetUrl}\n${scopeMessage}` : targetUrl;
+		const goal = $('qa-goal')?.value.trim();
+		const kickoffText = [targetUrl, scopeMessage, goal ? `User focus for this run: ${goal}` : ''].filter(Boolean).join('\n');
 		// QA matrix (#15013): the run set is the selected device–OS–browser–version
 		// configurations. At least one configuration must be selected and validated.
 		if (qaMatrixState.selectedEnvIds.length === 0) {
@@ -6496,6 +5797,8 @@ if (qaUi.dialog) {
 				}
 				matrixRun = parent;
 			}
+			qaUi.targetUrl.value = '';
+			$('qa-goal').value = '';
 			closeQaStart({ updateRoute: false });
 			void markOnboarded();
 			// DEV merge (#15622): wait briefly for the first execution session so
@@ -7052,6 +6355,8 @@ function fillModelOptions(models = [], selected = '') {
 
 function paintConfig(config) {
 	state.config = config;
+	qaJourney?.sync();
+	if (qaJourney) syncQaSubmitState();
 	// #15643: the sidebar model badge was removed with the Advanced section;
 	// model status surfaces via Settings and the launcher gate instead.
 	// #16228 follow-up (rule from #15766 round 3): a tab that loaded older
@@ -7069,7 +6374,7 @@ function currentUiAssetVersion() {
 		const stamp = /[?&]v=(\d{8}-\d+)\b/.exec(node.getAttribute('src') ?? node.getAttribute('href') ?? '');
 		if (stamp) stamps.push(stamp[1]);
 	}
-	return stamps.sort().at(-1) ?? null;
+	return stamps.sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).at(-1) ?? null;
 }
 
 /**
@@ -7116,13 +6421,11 @@ function renderStaleUiBanner(serverVersion) {
 
 /**
  * Launcher gate: every run mode needs a working model endpoint. Returns true
- * when the model is configured; otherwise steers the user to Settings.
+ * when the platform model is configured; customers do not supply credentials.
  */
 function ensureModelConfigured(contextLabel) {
 	if (state.config?.ready) return true;
-	const problem = state.config?.problem ?? 'The model endpoint is not configured yet.';
-	toast(`${problem} Finish setup in Settings first.`, 'bad');
-	void openSettings();
+	toast('Qase’s model service is unavailable. Please try again later or contact support.', 'bad');
 	if (contextLabel) console.debug(`[qase] ${contextLabel} blocked: model not configured.`);
 	return false;
 }
@@ -7145,8 +6448,8 @@ function fillSettings(config) {
 	cfg.key.value = '';
 	cfg.key.placeholder = config.hasApiKey ? `${config.apiKeyHint} — leave blank to keep` : 'sk-…';
 	cfg.keyNote.textContent = config.hasApiKey
-		? (config.apiKeyFromEnv ? 'Currently coming from .env. Saving one here overrides it.' : 'Stored on this machine, in .qase/config.json.')
-		: 'Stored on this machine, in .qase/config.json. Sent only to your endpoint.';
+		? 'A key is already configured. Leave this blank to keep it, or enter a replacement.'
+		: 'Enter the API key for your chosen provider. It is used by the server to contact that provider.';
 
 	cfg.test.className = 'test-result';
 	cfg.test.textContent = '';
@@ -7159,13 +6462,13 @@ function syncProviderFields() {
 	cfg.baseUrlField.hidden = !required && !BASE_URL_OPTIONAL.has(provider);
 	// The custom gateway is provisioned by the server (key comes from env) —
 	// no API key entry needed unless the user wants to override with their own.
-	const managedKey = provider === 'custom';
-	cfg.keyField.hidden = managedKey;
-	cfg.keyNote.hidden = managedKey;
+	const managedKey = provider === 'custom' && state.config?.provider === 'custom' && state.config?.hasApiKey && state.config?.apiKeyFromEnv;
+	cfg.keyField.hidden = false;
+	cfg.keyNote.hidden = false;
 	cfg.providerNote.textContent = required
 		? (managedKey
-			? 'OpenAI-compatible endpoint managed by this server — key and base URL are preconfigured.'
-			: 'Any OpenAI-compatible API: key, base URL, model name.')
+			? 'A server-managed key is available. Keep it, or enter your own endpoint and key.'
+			: 'Use an OpenAI-compatible gateway. Enter its API key, endpoint URL, and model ID.')
 		: BASE_URL_OPTIONAL.has(provider)
 			? 'Base URL is optional — leave it blank to use the provider default.'
 			: 'This provider uses its own endpoint.';
@@ -7173,16 +6476,11 @@ function syncProviderFields() {
 
 function readSettings() {
 	const patch = {
-		provider: cfg.provider.value,
-		baseUrl: cfg.baseUrl.value.trim(),
 		model: selectedModelId(),
 		reasoning: cfg.reasoning.value,
 		maxTurns: Number(cfg.maxTurns.value),
 		headless: cfg.headless.checked
 	};
-	if (cfg.key.value.trim()) {
-		patch.apiKey = cfg.key.value.trim();
-	}
 	return patch;
 }
 
@@ -7192,7 +6490,7 @@ cfg.model.onchange = syncCustomModelField;
 async function probeModelEndpoint({ announce = true } = {}) {
 	if (announce) {
 		cfg.test.className = 'test-result busy';
-		cfg.test.textContent = 'Probing the endpoint…';
+		cfg.test.textContent = 'Checking model availability…';
 	}
 	const requestedModel = selectedModelId();
 	const result = await api('/config/test', {
@@ -7203,7 +6501,7 @@ async function probeModelEndpoint({ announce = true } = {}) {
 	if (!result.ok) {
 		if (announce) {
 			cfg.test.className = 'test-result bad';
-			cfg.test.textContent = result.error;
+			cfg.test.textContent = 'Qase’s model service could not be reached. Try again shortly or contact your workspace administrator.';
 		}
 		return result;
 	}
@@ -7262,11 +6560,24 @@ function renderResultsPageHeader() {
 	try { target = session.targetUrl ? new URL(session.targetUrl).host : ''; } catch { target = session.targetUrl ?? ''; }
 	$('results-page-target').textContent = target;
 	$('results-page-target').hidden = !target;
+	$('results-page-title').textContent = target || session.title || 'Test results';
+	$('results-page-title').title = session.title || 'Test results';
+	$('results-page-target').hidden = Boolean(target);
+	const finished = new Date(session.report?.ts || session.completedAt || session.updatedAt || NaN);
+	const date = $('results-page-date');
+	date.hidden = Number.isNaN(finished.getTime());
+	if (!date.hidden) {
+		date.dateTime = finished.toISOString();
+		date.textContent = finished.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+	}
+	const exported = $('results-page-export');
+	exported.hidden = !session.report;
 }
 
 async function applyPageRoute(route) {
 	if (!workspaceBooted || !el.authGate?.hidden) return;
 	document.body.dataset.page = route.name;
+	$('tab-report').textContent = route.name === 'results' ? 'Overview' : 'Report';
 	document.body.dataset.pageLoading = 'true';
 	document.querySelector('.app')?.setAttribute('aria-busy', 'true');
 	if (route.name !== 'new-run') closePageDialog(qaUi.dialog);
@@ -7299,14 +6610,11 @@ async function applyPageRoute(route) {
 			setPageRouteNotice(route.name === 'results' ? 'Loading test results…' : 'Loading test run…');
 			if (state.sessionId !== route.runId) await selectSession(route.runId, { updateRoute: false });
 			if (route.name === 'results') {
-				const hasFindings = Boolean(state.session?.findings?.length);
-				const resultTab = state.session?.mode === 'sqa' && !$('tab-sqa').hidden
-					? $('tab-sqa')
-					: state.session?.mode === 'founder' && !$('tab-founder').hidden
-						? $('tab-founder')
-						: hasFindings ? $('tab-findings') : $('tab-report');
+				const resultTab = $(preferredResultTab(state.session, {
+					sqaVisible: !$('tab-sqa').hidden, founderVisible: !$('tab-founder').hidden
+				}));
 				renderResultsPageHeader();
-				state.stageExpanded.delete(route.runId);
+				state.stageCollapsePreferences.delete(route.runId);
 				renderStageCollapse();
 				activateDetailTab(resultTab);
 				setWorkspaceView('results');
@@ -7369,10 +6677,14 @@ document.addEventListener('click', event => {
 function renderAuthMode() {
 	if (!el.authGate) return;
 	const register = authRegisterMode;
-	if (el.authTitle) el.authTitle.textContent = register ? 'Create your workspace' : 'Sign in to your workspace';
+	if (el.authTitle) el.authTitle.textContent = register ? 'Create your account.' : 'Welcome back.';
 	if (el.authCopy) el.authCopy.textContent = register
-		? 'Your runs, profile, and saved memory are isolated to this account.'
-		: 'Your runs, profile, and saved memory stay isolated to your account.';
+		? 'A dedicated space for your test runs, findings, and context.'
+		: 'Sign in to pick up where you left off.';
+	const passwordHint = $('auth-password-hint');
+	if (passwordHint) passwordHint.hidden = !register;
+	const switchContext = $('auth-switch-context');
+	if (switchContext) switchContext.textContent = register ? 'Already have an account?' : 'New to QASE?';
 	if (el.authDisplay) { el.authDisplay.hidden = !register; el.authDisplay.required = register; }
 	if (el.authDisplayLabel) el.authDisplayLabel.hidden = !register;
 	// Invite code field: only meaningful when this instance is in pilot
@@ -7380,9 +6692,14 @@ function renderAuthMode() {
 	if (el.authInvite) el.authInvite.hidden = !(register && state.pilotMode);
 	if (el.authInviteLabel) el.authInviteLabel.hidden = !(register && state.pilotMode);
 	if (el.authInvite && !state.pilotMode) { el.authInvite.required = false; }
-	if (el.authPassword) { el.authPassword.autocomplete = register ? 'new-password' : 'current-password'; el.authPassword.minLength = register ? 8 : 1; }
+	if (el.authPassword) {
+		el.authPassword.autocomplete = register ? 'new-password' : 'current-password';
+		el.authPassword.minLength = register ? 8 : 1;
+		if (register) el.authPassword.setAttribute('aria-describedby', 'auth-password-hint');
+		else el.authPassword.removeAttribute('aria-describedby');
+	}
 	if (el.authSubmit) el.authSubmit.textContent = register ? 'Create account' : 'Sign in';
-	if (el.authSwitch) el.authSwitch.textContent = register ? 'I already have an account' : 'Create an account';
+	if (el.authSwitch) el.authSwitch.textContent = register ? 'Sign in' : 'Create an account';
 	// Forgot-password entry point lives on the login card only.
 	if (el.authForgotSwitch) el.authForgotSwitch.hidden = register;
 }
@@ -7394,7 +6711,7 @@ function showAuthGate() {
 	document.querySelector('.app').setAttribute('aria-hidden', 'true');
 	// Restore the plain sign-in card (forgot/reset panels stay hidden).
 	showAuthCard('signin');
-	el.authEmail?.focus();
+	el.authEmail?.focus({ preventScroll: true });
 }
 
 function hideAuthGate() {
@@ -7414,7 +6731,9 @@ el.authForm?.addEventListener('submit', async event => {
 	if (!el.authEmail || !el.authPassword || !el.authSubmit) return;
 	if (el.authError) el.authError.hidden = true;
 	el.authSubmit.disabled = true;
+	el.authSubmit.textContent = authRegisterMode ? 'Creating account…' : 'Signing in…';
 	el.authSwitch.disabled = true;
+	if (el.authForgotSwitch) el.authForgotSwitch.disabled = true;
 	el.authForm.setAttribute('aria-busy', 'true');
 	try {
 		state.user = await api(authRegisterMode ? '/auth/register' : '/auth/login', {
@@ -7436,7 +6755,9 @@ el.authForm?.addEventListener('submit', async event => {
 		}
 	} finally {
 		el.authSubmit.disabled = false;
+		el.authSubmit.textContent = authRegisterMode ? 'Create account' : 'Sign in';
 		el.authSwitch.disabled = false;
+		if (el.authForgotSwitch) el.authForgotSwitch.disabled = false;
 		el.authForm.removeAttribute('aria-busy');
 	}
 });
@@ -7448,6 +6769,7 @@ let resetAuthorization; // short-lived single-use authorization from OTP verific
 let resetEmail;        // email the OTP was requested for (kept for resend)
 
 function showAuthCard(which) {
+	el.authGate?.setAttribute('aria-labelledby', ({ signin: 'auth-title', forgot: 'forgot-title', recover: 'recover-title', otp: 'otp-title', reset: 'reset-title' })[which] ?? 'auth-title');
 	if (el.forgotPanel) el.forgotPanel.hidden = which !== 'forgot';
 	if (el.otpPanel) el.otpPanel.hidden = which !== 'otp';
 	if (el.resetPanel) el.resetPanel.hidden = which !== 'reset';
@@ -8283,7 +7605,9 @@ const activeTestEnvStore = createActiveTestEnvironmentStore();
 function syncThemeControls({ preference, applied }) {
 	applyThemeToDocument(document, applied);
 	document.documentElement.style.colorScheme = applied;
-	document.querySelector('meta[name="theme-color"]').content = applied === 'dark' ? '#101012' : '#ffffff';
+	document.querySelector('meta[name="theme-color"]').content = applied === 'dark' ? '#000000' : '#ffffff';
+	const icon = document.querySelector('link[rel="icon"]');
+	if (icon) icon.href = applied === 'dark' ? 'qase-mark-white.svg' : 'qase-mark.svg';
 	for (const control of document.querySelectorAll('[data-theme-control]')) control.value = preference;
 	const themeToggle = $('theme-toggle');
 	if (themeToggle) {
@@ -8557,12 +7881,15 @@ cfg.testBtn.onclick = async () => {
 };
 
 cfg.saveBtn.onclick = async () => {
+	if (cfg.saveBtn.disabled) return;
+	cfg.saveBtn.disabled = true;
+	cfg.saveBtn.textContent = 'Saving…';
 	try {
 		const config = await api('/config', { method: 'PUT', body: JSON.stringify(readSettings()) });
 		paintConfig(config);
 		if (config.problem) {
 			cfg.test.className = 'test-result bad';
-			cfg.test.textContent = config.problem;
+			cfg.test.textContent = 'Preferences saved. Qase’s model service is not configured. Please contact your workspace administrator.';
 			return;
 		}
 		cfg.dialog.close();
@@ -8572,6 +7899,9 @@ cfg.saveBtn.onclick = async () => {
 	} catch (error) {
 		cfg.test.className = 'test-result bad';
 		cfg.test.textContent = error instanceof Error ? error.message : String(error);
+	} finally {
+		cfg.saveBtn.disabled = false;
+		cfg.saveBtn.textContent = 'Save & return';
 	}
 };
 
@@ -8584,7 +7914,9 @@ el.composer.onsubmit = async event => {
 	if (!state.sessionId) {
 		await openQaStart();
 		try {
-			const target = new URL(text);
+			const normalized = normalizeWebsite(text);
+			if (!normalized) throw new TypeError('A website URL is required');
+			const target = new URL(normalized);
 			if (!['http:', 'https:'].includes(target.protocol)) throw new TypeError('Unsupported target protocol');
 			qaUi.targetUrl.value = target.href;
 			syncQaSubmitState();
@@ -8593,11 +7925,7 @@ el.composer.onsubmit = async event => {
 		}
 		return;
 	}
-	if (!state.config?.ready) {
-		toast('Set up the model endpoint first.', 'bad');
-		void openSettings();
-		return;
-	}
+	if (!ensureModelConfigured('Run message')) return;
 	el.composerInput.value = '';
 	el.composerInput.style.height = 'auto';
 	el.composerInput.style.overflowY = 'hidden';
@@ -8675,6 +8003,14 @@ $('results-page-back')?.addEventListener('click', () => {
 });
 $('results-page-all')?.addEventListener('click', () => { void pageRouter.navigate({ name: 'runs' }); });
 $('results-page-new')?.addEventListener('click', openQaStart);
+$('results-page-export')?.addEventListener('click', async event => {
+	const button = event.currentTarget;
+	if (button.disabled) return;
+	button.disabled = true;
+	try { await downloadReportPdf('qase-report.pdf'); }
+	catch (error) { exportError(error, 'The PDF export failed.'); }
+	finally { button.disabled = false; }
+});
 el.newSqa.onclick = openSqaStart;
 el.newFounder.onclick = openFounderStart;
 el.stopRun.onclick = async () => {
@@ -8742,7 +8078,7 @@ function setWorkspaceView(view) {
 	const focusedPanel = document.activeElement?.closest('.panel');
 	document.body.dataset.workspaceView = view;
 	if (view === 'browser' && state.sessionId && matchMedia('(max-width: 720px)').matches) {
-		state.stageExpanded.add(state.sessionId);
+		state.stageCollapsePreferences.set(state.sessionId, false);
 		renderStageCollapse();
 	}
 	for (const button of nav.querySelectorAll('button')) {
@@ -8890,26 +8226,11 @@ function startRenderWatchdog() {
 			const gate = el.authGate;
 			const app = document.querySelector('.app');
 			if (!gate || gate.hidden !== true || !app) return;
-			// Route-appropriate paint probe: the results page hides the runs
-			// sidebar and chat by design (body[data-page="results"]), so
-			// probe the target the current page must paint — the runs
-			// sidebar elsewhere, the results header/viewer on the results
-			// page. checkVisibility() covers display, visibility, opacity
-			// and content-visibility; fall back to geometry where absent.
-			const page = document.body.dataset.page;
-			const resultsView = page === 'results';
-			const probe = resultsView ? $('results-page-head') : $('workspace-runs');
-			const interactiveVisible = node => {
-				if (typeof node.checkVisibility === 'function') return node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
-				return node.offsetParent !== null && node.getBoundingClientRect().width > 0;
-			};
-			if (probe && probe.getBoundingClientRect().width > 100
-				&& [...probe.querySelectorAll('button, a, input, textarea, [tabindex]')].some(interactiveVisible)) return;
-			// On the results page the tabs (Findings/Report) are interactive
-			// children of the viewer, not the header — probe the panel's
-			// visible interactive surface as a second pass before alarming.
-			const viewer = resultsView ? $('workspace-viewer') : null;
-			if (viewer && [...viewer.querySelectorAll('button, a, input, textarea, [tabindex]')].some(interactiveVisible)) return;
+			// Full-page destinations intentionally hide the workspace panels.
+			// Probe the current destination (or a legitimate open modal), and
+			// accept compact sidebar rails rather than requiring >100px.
+			if (renderProbeIds(document.body.dataset.page).some(id => hasInteractiveSurface($(id)))) return;
+			if ([...document.querySelectorAll('dialog[open]')].some(hasInteractiveSurface)) return;
 			const banner = document.createElement('div');
 			banner.id = 'render-watchdog-banner';
 			banner.setAttribute('role', 'alert');

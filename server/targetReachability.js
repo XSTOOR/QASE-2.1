@@ -1,6 +1,7 @@
 import { promises as dns } from 'node:dns';
 import net from 'node:net';
 import tls from 'node:tls';
+import { createBrowserPolicy } from './browserPolicy.js';
 
 const TLS_PROBE_TIMEOUT_MS = 10_000;
 const RECORD_FETCH_RETRIES = 3;
@@ -20,12 +21,8 @@ const RETRY_DELAY_MS = 120;
  * dependent "Secure Connection Failed" failures and a false CRITICAL
  * "site unreachable" finding.
  *
- * This pre-flight resolves the hostname twice — via the system resolver
- * and via Cloudflare/Google public DNS over the node:tls fallback path —
- * and, when the results disagree, records the split-horizon condition on
- * the run so the agent cannot report it as a site defect.
  */
-export async function probeTargetReachability(rawUrl) {
+export async function probeTargetReachability(rawUrl, options = {}) {
 	let target;
 	try {
 		target = new URL(rawUrl);
@@ -36,12 +33,27 @@ export async function probeTargetReachability(rawUrl) {
 		return { ok: false, unreachable: true, reason: 'invalid-url' };
 	}
 	const host = target.hostname;
-	const port = target.protocol === 'https:' ? 443 : Number(target.port || 80);
+	const port = Number(target.port || (target.protocol === 'https:' ? 443 : 80));
+	let addresses;
+	const resolveHost = async hostname => {
+		addresses ??= await (options.resolveHost ?? (name => dns.lookup(name, { all: true })))(hostname);
+		return addresses;
+	};
+	const policy = createBrowserPolicy({ getTargetUrl: () => rawUrl, environment: options.environment ?? process.env, resolveHost });
+	const decision = await policy.evaluateNavigation(rawUrl);
+	if (!decision.allowed) return { ok: false, unreachable: true, reason: decision.code === 'BROWSER_DNS_RESOLUTION_FAILED' ? 'dns-resolution-failed' : decision.code, detail: decision.message };
+	if (!addresses) {
+		const literal = host.replace(/^\[|\]$/g, '');
+		addresses = net.isIP(literal) ? [{ address: literal }] : await resolveHost(host);
+	}
+	// Connect to the validated address, never perform a second DNS lookup.
+	const systemIps = addresses.map(entry => typeof entry === 'string' ? entry : entry.address);
+	if (!systemIps.length) return { ok: false, unreachable: true, reason: 'dns-resolution-failed' };
 
 	if (target.protocol !== 'https:') {
 		// Plain HTTP never triggers certificate checks; a connect probe is
 		// enough signal for the report.
-		const reachable = await tcpProbe(host, port);
+		const reachable = await (options.tcpProbe ?? tcpProbe)(systemIps[0], port);
 		return reachable
 			? { ok: true }
 			: { ok: false, unreachable: true, reason: 'connection-refused-or-timeout' };
@@ -50,10 +62,6 @@ export async function probeTargetReachability(rawUrl) {
 	// HTTPS: resolve first so we can detect the split-horizon case before
 	// attempting the handshake, and use the resolved IPv4 for the handshake
 	// so the probe itself is not subject to browser-style CNAME chasing.
-	const systemIps = await resolveA(host);
-	if (!systemIps.length) {
-		return { ok: false, unreachable: true, reason: 'dns-resolution-failed' };
-	}
 
 	// Check whether any resolved address sits in private/reserved space.
 	let privateIps = systemIps.filter(isPrivateOrReserved);
@@ -90,7 +98,7 @@ export async function probeTargetReachability(rawUrl) {
 
 	// Public IP: verify the TLS handshake succeeds and the certificate is
 	// valid for the hostname. `ok:false` here IS a site defect.
-	const verified = await tlsVerify(systemIps[0], port, host);
+	const verified = await (options.tlsVerify ?? tlsVerify)(systemIps[0], port, host);
 	return verified
 		? { ok: true, resolvedIps: systemIps }
 		: {

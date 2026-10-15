@@ -113,7 +113,7 @@ export function attestationFor(session) {
 	};
 }
 
-export function createQaTools(session, runStore, { deviceRuntime } = {}) {
+export function createQaTools(session, runStore, { deviceRuntime, captureRuntimeFacts, isCancelled } = {}) {
 	const reportFinding = {
 		name: 'report_finding',
 		description: 'Files one confirmed defect found while testing the site. Call once per distinct defect, as soon as you have confirmed it. Never include credentials or other secrets in any field.',
@@ -289,6 +289,11 @@ const finishReport = {
 			const structuralOk = (session.todos ?? []).some(item => hasText(item?.text) && item.status === 'completed')
 				&& (session.activities ?? []).some(activity => activity.status === 'done' && String(activity.toolName ?? '').startsWith('browser_'))
 				&& (input.covered?.length ?? 0) > 0;
+			// The browser is lazy-created during the turn. Capture its live identity
+			// BEFORE verifying/publishing, not only in the agent's finally block.
+			if (isCancelled?.()) return { success: false, error: 'This execution was cancelled; no new report can be published.' };
+			try { await captureRuntimeFacts?.(); } catch { /* Missing evidence still fails closed below. */ }
+			if (isCancelled?.()) return { success: false, error: 'This execution was cancelled; no new report can be published.' };
 			const integrity = runtimeIntegrity(session);
 			let verdict = input.verdict;
 			if (verdict !== 'blocked' && structuralOk && !integrity.ok) {

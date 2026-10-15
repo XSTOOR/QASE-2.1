@@ -663,11 +663,11 @@ html[data-qase-layout="studio-mock"] body.studio-workspace[data-page="results"] 
 	html body.studio-workspace[data-page="results"][data-workspace-view="results"] .app > .viewer {
 		display: grid;
 		grid-row: 1;
-		grid-template-rows: auto auto 44px 43px minmax(0, 1fr);
+		grid-template-rows: auto 50px minmax(0, 1fr);
 	}
 	html body.studio-workspace[data-page="results"][data-workspace-view="results"] .viewer > .stage {
 		display: flex;
 	}
-	html body.studio-workspace[data-page="results"][data-workspace-view="results"] .viewer > .tabs { grid-row: 4; }
-	html body.studio-workspace[data-page="results"][data-workspace-view="results"] .viewer > .tab-body { grid-row: 5; }
+	html body.studio-workspace[data-page="results"][data-workspace-view="results"] .viewer > .tabs { grid-row: 2; }
+	html body.studio-workspace[data-page="results"][data-workspace-view="results"] .viewer > .tab-body { grid-row: 3; }
 }

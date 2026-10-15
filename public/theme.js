@@ -10,10 +10,13 @@
 		const theme = preference === 'system' ? (system.matches ? 'dark' : 'light') : preference;
 		document.documentElement.dataset.theme = theme;
 		document.documentElement.style.colorScheme = theme;
-		document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#101012' : '#ffffff';
+		document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#000000' : '#ffffff';
+		const icon = document.querySelector('link[rel="icon"]');
+		if (icon) icon.href = theme === 'dark' ? 'qase-mark-white.svg' : 'qase-mark.svg';
 		for (const control of document.querySelectorAll('[data-theme-control]')) control.value = preference;
 	}
 
 	apply();
+	document.addEventListener('DOMContentLoaded', apply, { once: true });
 	// app.js owns the live preference store and all controls after bootstrap.
 })();
