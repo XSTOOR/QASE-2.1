@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { pickerHarness } from './matrixPickerHarness.js';
 import { readFileSync } from 'node:fs';
 
 /* Pipeline Phase 1 → #15969 UPDATE: the scope-as-view contract was retired
@@ -29,15 +30,9 @@ function functionBody(source, name) {
 	assert.fail(`unbalanced braces in ${name}`);
 }
 
-test('#15969: platform tab clicks are view-only — no selection mutation', () => {
-	// The tab handler sets the filter + reloads the window; it must not touch
-	// any selection set.
-	const tabBlock = picker.slice(picker.indexOf("platform.addEventListener('change'"), picker.indexOf('const only ='));
-	assert.ok(tabBlock.length > 10, 'platform tab builder exists');
-	for (const forbidden of ['selection.deviceKeys', 'selection.browserFamilies', 'deselectedEnvIds', 'qaMatrixApplySelection']) {
-		assert.ok(!tabBlock.includes(forbidden), `tab handler must not touch ${forbidden}`);
-	}
-	assert.match(tabBlock, /view\.platform = platform\.value/);
+test('device filters are view-only and never apply a selection', () => {
+	const h = pickerHarness(); h.filter('platform', 'android'); h.filter('category', 'mobile');
+	assert.equal(h.applications(), 0); assert.deepEqual(h.ids(), ['desktop']);
 });
 
 test('#15969: scope-view UI is fully retired', () => {
@@ -49,12 +44,9 @@ test('#15969: scope-view UI is fully retired', () => {
 	assert.ok(!app.includes("dataset.role = 'device-view'"), 'View scope button deleted');
 });
 
-test('#15969: summary still shows the GLOBAL selection count', () => {
-	const body = functionBody(app, 'qaMatrixRender');
-	assert.ok(body.includes('renderMatrixPicker'), 'renderer delegates to the modular picker');
-	assert.match(picker, /new Set\(computeExplicitSelection\(index, selection\)\)/, 'count uses the entire catalog selection');
-	assert.match(picker, /selected\.size\.toLocaleString\(\)/, 'global count is rendered');
-	assert.ok(!body.includes('viewing:'), 'no scoped-view branch remains');
+test('selected pair remains in the summary outside the current device filter', () => {
+	const h = pickerHarness(); h.search('pixel');
+	assert.match(h.text(h.hosts.summary), /Desktop/); assert.deepEqual(h.ids(), ['desktop']);
 });
 
 test('Phase 1 (kept): filters write ONLY qaMatrixState.filters (render-only)', () => {
@@ -75,7 +67,7 @@ test('Phase 1 (kept): bulk select-all actions clear stale granular opt-outs', ()
 	}
 });
 
-test('matrix cells directly apply exact pair changes without routing', () => {
-	assert.match(picker, /apply\(changeMatrixPairs\(index, selection, \[\[device\.key, family\.code\]\], checked\)\)/);
-	assert.doesNotMatch(picker, /pageRouter|navigate\(/);
+test('one device button applies one exact environment without routing', () => {
+	const h = pickerHarness(); h.click('device-Google|android|Pixel 9');
+	assert.deepEqual(h.ids(), ['phone']); assert.doesNotMatch(picker, /pageRouter|navigate\(/);
 });

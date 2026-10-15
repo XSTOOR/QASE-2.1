@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { pickerHarness } from '../public/matrixPickerHarness.js';
 
 const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
@@ -59,26 +60,9 @@ test('QA submit is disabled with no selection and selection survives configurati
 	assert.match(app, /body: JSON\.stringify\(\{[\s\S]*?device,[\s\S]*?deviceLandscape,[\s\S]*?engine,[\s\S]*?selectedTests,[\s\S]*?\.\.\.\(securityAuthorization \? \{ securityAuthorization \} : \{\}\)[\s\S]*?\}\)/);
 });
 
-test('#15969: the device-scope VIEW is retired — selection is direct on rows', () => {
-	// #15969: qaMatrixSetDeviceScope and the scope banner were removed with
-	// the scoped-view UI. The surviving invariants: scope state never returns,
-	// and view operations (platform tabs, search) never mutate selection.
-	assert.doesNotMatch(app, /function qaMatrixSetDeviceScope/);
-	assert.doesNotMatch(app, /Back to all devices/);
-	assert.doesNotMatch(app, /deviceScope = scope/);
-
-	// Platform tab clicks are the only remaining view navigation — they set
-	// filters and reload the window, never selection sets.
-	const picker = readFileSync(new URL('../public/matrixPicker.js', import.meta.url), 'utf8');
-	const tabBlock = picker.slice(picker.indexOf("platform.addEventListener('change'"), picker.indexOf('const only ='));
-	assert.ok(tabBlock.length > 10, 'platform tab builder exists');
-	assert.doesNotMatch(tabBlock, /selection\.deviceKeys\s*=/);
-	assert.doesNotMatch(tabBlock, /selection\.browserFamilies\s*=/);
-	assert.doesNotMatch(tabBlock, /deselectedEnvIds\s*=\s*new Set/);
-
-	// Selection state is explicit and never capped: the matrix render reads
-	// selection.deviceKeys / browserFamilies directly, and bulk Select All
-	// operates on the full catalog index.
-	assert.match(picker, /const pairs = visible\.flatMap/);
-	assert.match(picker, /apply\(changeMatrixPairs\(index, selection, pairs, true\)\)/);
+test('device filters never mutate the single selected pair', () => {
+	assert.doesNotMatch(app, /function qaMatrixSetDeviceScope|Back to all devices|deviceScope = scope/);
+	const h = pickerHarness(); h.filter('platform', 'android'); h.search('pixel');
+	assert.equal(h.applications(), 0); assert.deepEqual(h.ids(), ['desktop']);
+	h.click('device-Google|android|Pixel 9'); assert.deepEqual(h.ids(), ['phone']);
 });

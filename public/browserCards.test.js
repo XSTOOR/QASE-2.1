@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { pickerHarness } from './matrixPickerHarness.js';
 
 /* #15968 Phase 1 — browser toggle cards. Source-assertion suite following
  * the project's qaUiSelection.test.js pattern (the launcher is a browser
@@ -13,33 +14,24 @@ const [app, styles] = await Promise.all([
 ]);
 
 const picker = await readFile(new URL('./matrixPicker.js', import.meta.url), 'utf8');
-test("browser chips expose explicit pressed state and a single family toggle", () => {
-	assert.ok(picker.includes("mp-browser"), "mp-browser");
-	assert.ok(picker.includes("aria-pressed"), "aria-pressed");
-	assert.ok(picker.includes("next.browserFamilies.delete(family.code)"), "next.browserFamilies.delete(family.code)");
-	assert.ok(picker.includes("next.browserFamilies.add(family.code)"), "next.browserFamilies.add(family.code)");
+test('browser buttons replace the family instead of toggling multiple browsers', () => {
+	const h = pickerHarness(); h.click('browser-firefox'); assert.deepEqual(h.ids(), ['ff']);
+	h.click('browser-chrome'); assert.deepEqual(h.ids(), ['desktop']);
+	assert.equal(h.get('browser-chrome').attributes['aria-pressed'], 'true');
+	assert.equal(h.get('browser-firefox').attributes['aria-pressed'], 'false');
 });
-
-test("unavailable browsers stay disabled and explain their reason", () => {
-	assert.ok(picker.includes("item.disabled = !family.available"), "item.disabled = !family.available");
-	assert.ok(picker.includes("family.reason"), "family.reason");
+test('unavailable browsers stay disabled and explain why', () => {
+	const h = pickerHarness(); assert.equal(h.get('browser-safari').disabled, true);
+	assert.match(h.get('browser-safari').title, /Browser not installed/);
 });
-
-test("bulk selection is explicitly scoped to shown devices", () => {
-	assert.ok(picker.includes("Select shown devices"), "Select shown devices");
-	assert.ok(picker.includes("visible.flatMap"), "visible.flatMap");
-	assert.ok(picker.includes("Clear shown devices"), "Clear shown devices");
+test('bulk and version selection are absent from the launcher', () => {
+	const h = pickerHarness(); assert.equal(h.get('select-shown'), undefined);
+	assert.doesNotMatch(h.text(h.hosts.root), /151|100|Review exact configurations|Select shown/);
 });
-
-test("browser icons and exact version review are retained", () => {
-	assert.ok(picker.includes("brandIcon(family.code, 20)"), "brandIcon(family.code, 20)");
-	assert.ok(picker.includes("config.browserVersion"), "config.browserVersion");
-	assert.ok(picker.includes("Review exact configurations"), "Review exact configurations");
-});
-
-test("keyboard focus is restored after selection changes", () => {
-	assert.ok(picker.includes("focusKey"), "focusKey");
-	assert.ok(picker.includes("focus({ preventScroll: true })"), "focus({ preventScroll: true })");
+test('browser icons and keyboard focus survive selection updates', () => {
+	const h = pickerHarness(); h.get('browser-firefox').focus(); h.click('browser-firefox');
+	assert.equal(h.document.activeElement.dataset.pickerFocus, 'browser-firefox');
+	assert.equal(h.get('browser-firefox').children[0].tagName, 'svg');
 });
 
 /* brandIcons module — DOM-shimmed unit tests (no browser needed). */

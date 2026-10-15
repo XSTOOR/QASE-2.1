@@ -14,7 +14,7 @@ async function get(route) {
 for (const route of ['/healthz', '/readyz']) await get(route);
 const release = await (await get('/release.json')).json();
 if (release.releaseId !== verified.releaseId) throw new Error('Wrong production release.');
-const assets = ['index.html', 'app.js', 'runCard.css', 'brand.css', 'auth.css', 'release.json', 'runStartup.css', 'runStartupView.js', 'matrixLaunch.js'];
+const assets = ['index.html', 'app.js', 'runCard.css', 'brand.css', 'auth.css', 'release.json', 'runStartup.css', 'runStartupView.js', 'matrixLaunch.js', 'matrixPicker.js', 'matrixPicker.css', 'singleRunSelection.js', 'qaJourney.js'];
 for (const file of assets) {
  const entry = manifest.files.find(item => item.path === `public/${file}`);
  if (!entry) throw new Error(`Asset absent from manifest: ${file}`);

@@ -2,6 +2,7 @@ import { describeSqaLifecycle, groupSqaUnresolvedResults } from './sqaPresentati
 import { previewCollapsed } from './previewLayout.js';
 import { renderProbeIds, hasInteractiveSurface } from './renderHealth.js';
 import { renderMatrixPicker } from './matrixPicker.js';
+import { normalizeSingleSelection, singleSelection, preferredConfiguration } from './singleRunSelection.js';
 import { preferredResultTab } from './runPresentation.js';
 import { runCardDetails } from './runCard.js';
 import { renderResultsOverview, resultsOverviewModel } from './resultsOverview.js';
@@ -15,12 +16,8 @@ import {
 	sanitizeSelection,
 	isSelectable,
 	isValidTargetUrl,
-	MATRIX_BATCH_SIZE,
-	planBatches,
-	batchKeyFor,
 	fetchQaConfigurations,
 	fetchConfigurationIndex,
-	deviceKeyOf,
 	createSelectionState,
 	computeExplicitSelection,
 	createSelectionStore
@@ -5023,15 +5020,8 @@ let qaJourneySelectionMode = (() => {
 let qaJourneyCustomSelection;
 
 function qaFocusedSelection() {
-	const available = qaMatrixState.index.filter(isSelectable);
-	const row = available.find(item => item.browserCode === 'chrome' && ['windows', 'macos', 'linux'].includes(item.platform))
-		?? available.find(item => item.browserCode === 'chrome') ?? available[0];
-	if (!row) return createSelectionState();
-	const deviceKey = deviceKeyOf(row);
-	return createSelectionState({
-		deviceKeys: [deviceKey], browserFamilies: [row.browserCode],
-		deselectedEnvIds: available.filter(item => deviceKeyOf(item) === deviceKey && item.browserCode === row.browserCode && item.envId !== row.envId).map(item => item.envId)
-	});
+	return singleSelection(qaMatrixState.index, preferredConfiguration(qaMatrixState.index.filter(item =>
+		isSelectable(item) && item.browserCode === 'chrome' && item.deviceType === 'desktop')));
 }
 
 function syncJourneyPreset() {
@@ -5115,7 +5105,7 @@ async function loadQaMatrixCatalog() {
 		qaMatrixState.index = index;
 		// Pipeline Phase 1: the explicit selection store initializes against
 		// the fresh index (first load migrates legacy deselections).
-		qaMatrixState.selection = qaSelectionStore.get();
+		qaMatrixState.selection = normalizeSingleSelection(index, qaSelectionStore.get());
 		if (qaJourneySelectionMode === 'quick') {
 			qaJourneyCustomSelection ??= qaFocusedSelection();
 			qaMatrixState.selection = qaFocusedSelection();
@@ -5152,11 +5142,12 @@ async function loadQaMatrixCatalog() {
  * does not participate: scoping narrows what is rendered, never what runs.
  */
 function qaMatrixEffectiveSelection() {
-	return computeExplicitSelection(qaMatrixState.index, qaMatrixState.selection);
+	return computeExplicitSelection(qaMatrixState.index, normalizeSingleSelection(qaMatrixState.index, qaMatrixState.selection));
 }
 
 /** Apply a selection-state change, re-derive, persist, re-render. */
 function qaMatrixApplySelection(nextState, fromPreset = false) {
+	nextState = normalizeSingleSelection(qaMatrixState.index, nextState);
 	if (!fromPreset) { qaJourneySelectionMode = 'custom'; qaJourneyCustomSelection = nextState; }
 	syncJourneyPreset();
 	qaMatrixState.selection = nextState;
@@ -5173,6 +5164,7 @@ function qaMatrixApplySelection(nextState, fromPreset = false) {
 function qaMatrixRender() {
 	const matrix = qaUi.matrix;
 	if (!matrix.browsers || !matrix.devices || !matrix.summary) return;
+	if (matrix.fieldset) matrix.fieldset.hidden = qaJourneySelectionMode === 'quick';
 	qaMatrixState.picker ??= { category: '', platform: '', selectedOnly: false, limit: 10, reviewOpen: false };
 	renderMatrixPicker({ document, hosts: matrix, index: qaMatrixState.index,
 		families: qaMatrixState.browserFamilies, selection: qaMatrixState.selection,
@@ -5246,7 +5238,7 @@ function syncQaSubmitState() {
 	// selection gate — any non-empty selection is startable (Phase 2 batches).
 	const urlValid = !qaUi.dialog?.open || isValidTargetUrl(qaUi.targetUrl?.value);
 	const selectedCount = qaMatrixState.selectedEnvIds.length;
-	const matrixReady = qaJourneySelectionMode === 'quick' || !qaUi.dialog?.open || selectedCount > 0;
+	const matrixReady = qaJourneySelectionMode === 'quick' || !qaUi.dialog?.open || selectedCount === 1;
 	// DEV merge: security tests require the explicit authorization checkbox
 	// before Start unlocks. withinCap is deliberately NOT part of the gate —
 	// Pipeline Phase 1: the 2,000 limit is a per-batch EXECUTION limit and
@@ -5282,10 +5274,8 @@ function qaLaunchBlockedReason() {
 	if (qaMatrixState.fetchState === 'loading') return 'Loading browsers and devices…';
 	if (qaMatrixState.fetchState === 'error') return 'Browsers and devices could not be loaded. Open Customize and retry.';
 	const configurations = qaMatrixState.selectedEnvIds.length;
-	if (configurations === 0) return 'Select at least one browser and one device.';
-	// Pipeline Phase 1/2: oversized selections are NOT blocked — they run as
-	// sequential idempotent batches under one parent run (MATRIX_BATCH_SIZE
-	// is a per-batch execution limit). No over-cap reason here.
+	if (configurations !== 1) return 'Choose one browser and one device.';
+	// One exact environment; versions never expand into additional runs.
 	return null;
 }
 
@@ -5300,22 +5290,14 @@ function syncQaSelectionSummary() {
 	}
 	const checks = qaUi.selectedTests.size;
 	if (qaJourneySelectionMode === 'quick') {
-		summary.textContent = `${checks} checks · Automatic browser selection. QASE checks browser availability when you start; no device setup needed.`;
+		summary.textContent = `${checks} checks · Chrome on the default desktop · One test run. No setup required.`;
 		return;
 	}
 	const configurations = qaMatrixState.selectedEnvIds.length;
 	const loading = qaMatrixState.fetchState === 'loading';
-	// Pipeline Phase 2: oversized selections batch on submit — the compact
-	// summary explains the batching instead of demanding a narrower selection.
+	const selected = qaMatrixState.index.find(row => qaMatrixState.selectedEnvIds.includes(row.envId));
 	const detail = loading ? 'Loading browsers and devices…'
-		: configurations === 0 ? 'Select at least one browser and one device.'
-		: qaMatrixState.selection.mode === 'perBrowser'
-			? configurations > MATRIX_BATCH_SIZE
-				? `${configurations.toLocaleString()} browser-device pair configuration${configurations === 1 ? '' : 's'} · will run as ${Math.ceil(configurations / MATRIX_BATCH_SIZE)} batches, one browser at a time`
-				: `${configurations.toLocaleString()} browser × device pair configuration${configurations === 1 ? '' : 's'} selected · runs one at a time`
-			: configurations > MATRIX_BATCH_SIZE
-				? `${configurations.toLocaleString()} configurations selected · will run as ${Math.ceil(configurations / MATRIX_BATCH_SIZE)} batches, one browser at a time`
-				: `${configurations.toLocaleString()} browser configuration${configurations === 1 ? '' : 's'} selected · runs one at a time`;
+		: selected ? `${selected.browser || selected.browserCode} · ${selected.device} · One test run` : 'Choose one browser and one device.';
 	summary.textContent = blockedReason
 		? `${checks} check${checks === 1 ? '' : 's'} selected · ${blockedReason}`
 		: `${checks} check${checks === 1 ? '' : 's'} selected · ${detail}`;
@@ -5552,6 +5534,7 @@ function showQaStartPage() {
 		checks: qaUi.selectedTests.size,
 		automatic: qaJourneySelectionMode === 'quick',
 		configurations: qaJourneySelectionMode === 'quick' ? 1 : qaMatrixState.selectedEnvIds.length,
+		environmentLabel: (() => { const row = qaMatrixState.index.find(r => qaMatrixState.selectedEnvIds.includes(r.envId)); return row ? `${row.browser || row.browserCode} · ${row.device} · 1 run` : null; })(),
 		busy: qaUi.submit.dataset.busy === 'true',
 		blocked: qaLaunchBlockedReason(),
 		coverageBlocked: !state.qaTestCatalog ? 'Loading available checks…'
@@ -5653,7 +5636,8 @@ if (qaUi.dialog) {
 		qaJourneySelectionMode = 'custom';
 		if (qaJourneyCustomSelection) qaMatrixApplySelection(qaJourneyCustomSelection, true);
 		syncJourneyPreset();
-		$('qa-customize').open = true;
+		qaMatrixRender();
+		$('qa-customize').open = false;
 	});
 	for (const control of [qaUi.deviceSelect, qaUi.engineOptions, qaUi.scopeOptions]) {
 		control?.addEventListener('change', syncQaSelectionSummary);
@@ -5757,8 +5741,6 @@ if (qaUi.dialog) {
 			qaUi.securityAuthorized?.focus();
 			return;
 		}
-		const device = activeTestEnvStore?.get?.()?.device || pendingDeviceId();
-		const deviceLandscape = (qaUi.deviceLandscape?.checked) === true;
 		const scopeValues = selectedQaScopeValues();
 		const scopeMessage = buildQaKickoffMessage(scopeValues);
 		if (scopeMessage === null && Array.isArray(scopeValues) && scopeValues.length === 0) {
@@ -5777,85 +5759,33 @@ if (qaUi.dialog) {
 			return;
 		}
 		const selectedEnvIds = automatic ? [] : sanitizeSelection(qaMatrixState.index, qaMatrixState.selectedEnvIds);
-		if (!automatic && selectedEnvIds.length === 0) {
+		if (!automatic && selectedEnvIds.length !== 1) {
 			setQaFormError('The selected configurations are no longer available. Reload the catalog and pick again.');
 			return;
 		}
-		// Pipeline Phase 2: selections larger than one batch (2,000) are
-		// submitted as a PARENT run + sequential idempotent BATCH POSTs —
-		// never one giant payload. Selections ≤ 2,000 take the single-run
-		// path unchanged. Batch creation is sequential with visible progress
-		// and a network failure mid-sequence leaves earlier batches intact;
-		// re-submitting reproduces the same batchKeys so the server returns
-		// the existing batches (idempotent — zero duplicate jobs).
+		// Exactly one request and one item. No parent runs, batches or version fan-out.
 		qaUi.submit.dataset.busy = 'true';
 		qaUi.submit.disabled = true;
 		qaUi.submit.textContent = 'Starting…';
 		try {
-			// Phase 3 (#14937): one matrix run carries EVERY selected
-			// configuration as an item — queued with controlled concurrency,
-			// progress/cancel/retry on the server. No silent reduction to a
-			// representative subset, no client-side per-engine fan-out.
-			const batches = planBatches(selectedEnvIds);
-			let matrixRun;
-			if (batches.length <= 1) {
-				matrixRun = await api('/qa-matrix-runs', {
-					method: 'POST',
-					body: JSON.stringify({
-						browserMode: automatic ? 'automatic' : 'custom',
-						targetUrl,
-						configurationEnvIds: selectedEnvIds,
-						kickoffText,
-						selectedTests,
-						securityAuthorization,
-						scopeSelection: scopeValues,
-						testCaseId: qaUi._testCaseId
-					})
-				});
-			} else {
-				// Parent first (plan metadata only, no configurations).
-				const parent = await api('/qa-matrix-runs', {
-					method: 'POST',
-					body: JSON.stringify({
-						kind: 'parent',
-						targetUrl,
-						kickoffText,
-						selectedTests,
-						securityAuthorization,
-						scopeSelection: scopeValues,
-						totalPlanned: selectedEnvIds.length
-					})
-				});
-				// Sequential batches, each with a stable idempotency key.
-				for (let index = 0; index < batches.length; index += 1) {
-					qaUi.submit.textContent = `Creating batch ${index + 1}/${batches.length}…`;
-					const key = await batchKeyFor(parent.id, batches[index]);
-					await api('/qa-matrix-runs', {
-						method: 'POST',
-						body: JSON.stringify({
-							parentId: parent.id,
-							batchKey: key,
-							batchIndex: index,
-							targetUrl,
-							configurationEnvIds: batches[index],
-							kickoffText,
-							selectedTests,
-							securityAuthorization,
-							scopeSelection: scopeValues
-						})
-					});
-				}
-				matrixRun = parent;
+			const matrixRun = await apiWithTimeout('/qa-matrix-runs', 20000, {
+				method: 'POST',
+				body: JSON.stringify({
+					browserMode: automatic ? 'automatic' : 'custom', targetUrl,
+					configurationEnvIds: selectedEnvIds, kickoffText, selectedTests,
+					securityAuthorization, scopeSelection: scopeValues, testCaseId: qaUi._testCaseId
+				})
+			});
+			if (!matrixRun.reused) {
+				qaUi.targetUrl.value = '';
+				$('qa-goal').value = '';
 			}
-			qaUi.targetUrl.value = '';
-			$('qa-goal').value = '';
 			closeQaStart({ updateRoute: false });
 			void markOnboarded();
-			// Creation succeeded. Persist the route immediately; a queued run is
-			// a real run, even before a browser/session has been allocated.
+			// Persist the accepted test immediately, before its session is allocated.
 			await pageRouter.navigate({ name: 'matrix-run', runId: matrixRun.id });
 			void refreshRuns();
-			toast('Test run saved. Its queue and startup status are shown here.');
+			toast(matrixRun.reused ? 'Opened your existing test. No additional run was created.' : 'Starting one test on your selected browser and device.');
 			// Optional follow-on flows: the QA run is already underway; each
 			// checked option opens the existing dialog prefilled with the same
 			// target for the user to confirm — nothing starts automatically.

@@ -52,7 +52,7 @@ test('every QA-matrix launcher identifier resolves to a definition in app.js', (
 		'qaMatrixEffectiveSelection', 'qaMatrixRender', 'qaMatrixWiring',
 		'createSelectionState', 'computeExplicitSelection',
 		'fetchQaConfigurations', 'fetchConfigurationIndex',
-		'isSelectable', 'deviceKeyOf', 'brandIcon', 'syncQaSubmitState'
+		'isSelectable', 'normalizeSingleSelection', 'singleSelection', 'preferredConfiguration', 'brandIcon', 'syncQaSubmitState'
 	];
 	const missing = required.filter(name => !defined.has(name) && !localDefined.has(name));
 	assert.deepEqual(missing, [], `missing definitions: ${missing.join(', ')}`);

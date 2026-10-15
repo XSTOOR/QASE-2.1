@@ -21,10 +21,11 @@ test('desktop preference rejects tablets and picks newer catalog browser/OS vers
 	] }, { health: async () => ({ verdict: 'READY' }) });
 	assert.equal(result.environment.envId, 'newer');
 });
-test('a broken preferred browser falls back to the next healthy engine', async () => {
-	const result = await chooseAutomaticBrowser(catalog, { health: async env => ({ verdict: env.browserCode === 'firefox' ? 'READY' : 'BLOCKED' }) });
-	assert.equal(result.selection.browserCode, 'firefox');
-	assert.ok(result.selection.attempts.some(a => a.verdict === 'BLOCKED'));
+test('a broken default Chrome fails without probing or launching another engine or device', async () => {
+	const probes = [];
+	await assert.rejects(chooseAutomaticBrowser(catalog, { health: async env => { probes.push(env); return { verdict: 'BLOCKED' }; } }), { code: 'AUTOMATIC_BROWSER_UNAVAILABLE' });
+	assert.equal(probes.length, 1);
+	assert.equal(probes[0].browserCode, 'chrome');
 });
 test('unavailable browsers fail clearly instead of creating a fake running session', async () => {
 	await assert.rejects(chooseAutomaticBrowser(catalog, { health: async () => ({ verdict: 'BLOCKED' }) }), { code: 'AUTOMATIC_BROWSER_UNAVAILABLE' });
