@@ -31,6 +31,8 @@ import { createBulkRunView } from './bulkRunView.js';
 import { createAnalyticsView } from './analyticsView.js';
 import { createDeviceDrawer, chipLabel, RUNTIME_PROFILES } from './deviceDrawer.js';
 import { createQaMatrixResultsView } from './qaMatrixResultsView.js';
+import { firstMatrixSessionId } from './matrixLaunch.js';
+import { createRunStartupView } from './runStartupView.js';
 import { createBugView } from './bugView.js';
 import { createActiveTestEnvironmentStore } from './activeTestEnvironment.js';
 import { createThemeStore, applyThemeToDocument } from './themePreference.js';
@@ -638,8 +640,15 @@ function renderRunsEmptyState() {
 }
 
 async function refreshRuns() {
-	const runs = await api('/sessions').catch(() => []);
-	if (runs.length === 0) {
+	const [runs, matrices] = await Promise.all([
+		api('/sessions').catch(() => []),
+		api('/matrix-runs').catch(() => ({ runs: [] }))
+	]);
+	// Keep accepted work discoverable before its first child session exists.
+	const queued = (matrices.runs ?? []).filter(run => ['pending', 'running'].includes(run.status)
+		&& (run.statusCounts?.QUEUED || run.statusCounts?.PENDING)
+		&& !runs.some(session => session.matrixRunId === run.id));
+	if (runs.length === 0 && queued.length === 0) {
 		renderRunsEmptyState();
 		state.timer.runLiveTimers.clear();
 		return;
@@ -647,8 +656,28 @@ async function refreshRuns() {
 	// Rating badges: the current user's own feedback for the visible runs.
 	// One request, matched client-side; failures just skip the badges.
 	void loadRunRatingBadges(runs);
-	el.runList.replaceChildren(...runs.map(renderRun));
+	el.runList.replaceChildren(...queued.map(renderQueuedRun), ...runs.map(renderRun));
 	filterRunHistory();
+}
+
+function renderQueuedRun(run) {
+	const row = document.createElement('div');
+	row.className = 'run-row';
+	row.setAttribute('role', 'listitem');
+	const button = document.createElement('button');
+	button.type = 'button';
+	button.className = 'run';
+	button.setAttribute('aria-label', `${run.targetUrl || run.title} · Queued`);
+	button.onclick = () => void pageRouter.navigate({ name: 'matrix-run', runId: run.id });
+	const title = document.createElement('div');
+	title.className = 'run-title';
+	title.textContent = run.targetUrl ? hostOf(run.targetUrl) : run.title;
+	const status = document.createElement('div');
+	status.className = 'run-meta';
+	status.textContent = 'Queued · Waiting for a browser';
+	button.append(title, status);
+	row.append(button);
+	return row;
 }
 
 function filterRunHistory() {
@@ -2152,6 +2181,7 @@ const FEEDBACK_CATEGORIES = [
 
 /** A run accepts feedback only once it has reached a terminal state. */
 const FEEDBACK_TERMINAL_STATUSES = new Set(['done', 'error']);
+let feedbackLoadGeneration = 0;
 
 /** Spec rating semantics for the star tooltips. */
 const FEEDBACK_STAR_LABELS = {
@@ -2177,13 +2207,16 @@ function feedbackEligible(session) {
 async function syncFeedbackForSession(session) {
 	if (!session?.id) return;
 	const runId = session.id;
-	state.feedback.existing = undefined;
-	state.feedback.existingLoadedFor = runId;
+	const generation = ++feedbackLoadGeneration;
+	let record;
 	try {
-		state.feedback.existing = await api(`/sessions/${runId}/feedback`);
+		record = await api(`/sessions/${runId}/feedback`);
 	} catch {
-		state.feedback.existing = null;
+		return; // An unavailable read is not proof that feedback does not exist.
 	}
+	if (generation !== feedbackLoadGeneration || state.sessionId !== runId) return;
+	state.feedback.existing = record;
+	state.feedback.existingLoadedFor = runId;
 	if (state.feedback.runId === runId) applyFeedbackSubmittedState();
 	// Report section (and View/Provide button) follow the synced record.
 	if (state.sessionId === runId) renderReport();
@@ -2199,20 +2232,27 @@ async function syncFeedbackForSession(session) {
 async function openFeedbackModal() {
 	const session = state.session;
 	if (!feedbackEligible(session)) return;
+	const generation = ++feedbackLoadGeneration;
 	state.feedback.runId = session.id;
 	state.feedback.rating = 0;
 	state.feedback.editing = false;
 	// Existing submission for THIS run (and user) is server-owned truth: it
 	// decides submitted-vs-blank mode. Cached while the modal stays on the
 	// same run, re-fetched whenever a new run opens the modal.
-	if (!state.feedback.existing && state.feedback.existingLoadedFor !== session.id) {
+	if (state.feedback.existingLoadedFor !== session.id) {
+		state.feedback.existing = undefined;
 		try {
-			state.feedback.existing = await api(`/sessions/${session.id}/feedback`);
+			const record = await api(`/sessions/${session.id}/feedback`);
+			if (generation !== feedbackLoadGeneration || state.sessionId !== session.id) return;
+			state.feedback.existing = record;
 		} catch {
-			state.feedback.existing = null;
+			state.feedback.existingLoadedFor = undefined;
+			toast('Could not load feedback for this run. Please try again.', 'bad');
+			return;
 		}
 		state.feedback.existingLoadedFor = session.id;
 	}
+	if (state.sessionId !== session.id) return;
 	el.feedbackError.textContent = '';
 	el.feedbackSuccess.textContent = '';
 	const failed = session.status === 'error';
@@ -2373,6 +2413,15 @@ function closeFeedbackModal() {
 async function submitFeedback(event) {
 	event.preventDefault();
 	if (state.feedback.submitting) return;
+	const feedbackRunId = state.feedback.runId;
+	if (feedbackRunId !== state.session?.id || !feedbackEligible(state.session)) {
+		el.feedbackError.textContent = 'Open feedback from the test you want to review. Your draft has not been submitted.';
+		return;
+	}
+	if (state.feedback.existing?.runId && state.feedback.existing.runId !== feedbackRunId) {
+		el.feedbackError.textContent = 'Reload feedback for the selected test before saving.';
+		return;
+	}
 	if (state.feedback.existing && !state.feedback.editing) return;
 	const rating = state.feedback.rating;
 	if (!rating) {
@@ -2392,6 +2441,9 @@ async function submitFeedback(event) {
 				method: 'PUT',
 				body: JSON.stringify({ rating, category, comments, improvement })
 			});
+			if (state.sessionId !== feedbackRunId || state.feedback.runId !== feedbackRunId) return;
+			feedbackLoadGeneration++;
+			state.feedback.existingLoadedFor = feedbackRunId;
 			state.feedback.existing = record;
 			state.feedback.editing = false;
 			applyFeedbackSubmittedState();
@@ -2401,8 +2453,11 @@ async function submitFeedback(event) {
 		} else {
 			const record = await api('/feedback', {
 				method: 'POST',
-				body: JSON.stringify({ runId: state.session.id, rating, category, comments, improvement })
+				body: JSON.stringify({ runId: feedbackRunId, rating, category, comments, improvement })
 			});
+			if (state.sessionId !== feedbackRunId || state.feedback.runId !== feedbackRunId) return;
+			feedbackLoadGeneration++;
+			state.feedback.existingLoadedFor = feedbackRunId;
 			state.feedback.existing = record;
 			state.feedback.editing = false;
 			// Truthful outcome line: the server now reports whether the
@@ -2434,6 +2489,17 @@ async function submitFeedback(event) {
 		// Retry keeps every entered field — only the button returns to idle.
 		el.feedbackError.textContent = `${error.message} Your feedback was kept — please try again.`;
 		el.feedbackSubmit.textContent = state.feedback.editing ? 'Retry save' : 'Retry submit';
+		if (error.status === 409 && !state.feedback.editing) {
+			try {
+				const existing = await api(`/sessions/${feedbackRunId}/feedback`);
+				if (existing && state.feedback.runId === feedbackRunId) {
+					state.feedback.existing = existing;
+					state.feedback.editing = true;
+					applyFeedbackSubmittedState();
+					el.feedbackError.textContent = 'Feedback was already saved. Your current draft is preserved; choose Save changes to update it.';
+				}
+			} catch { /* retain the draft and the original retry message */ }
+		}
 	} finally {
 		state.feedback.submitting = false;
 		updateFeedbackSubmitEnabled();
@@ -5180,7 +5246,7 @@ function syncQaSubmitState() {
 	// selection gate — any non-empty selection is startable (Phase 2 batches).
 	const urlValid = !qaUi.dialog?.open || isValidTargetUrl(qaUi.targetUrl?.value);
 	const selectedCount = qaMatrixState.selectedEnvIds.length;
-	const matrixReady = !qaUi.dialog?.open || selectedCount > 0;
+	const matrixReady = qaJourneySelectionMode === 'quick' || !qaUi.dialog?.open || selectedCount > 0;
 	// DEV merge: security tests require the explicit authorization checkbox
 	// before Start unlocks. withinCap is deliberately NOT part of the gate —
 	// Pipeline Phase 1: the 2,000 limit is a per-batch EXECUTION limit and
@@ -5212,6 +5278,7 @@ function qaLaunchBlockedReason() {
 	if (qaSecuritySelected() && !qaUi.securityAuthorized?.checked) {
 		return 'Confirm that you are authorized to test this site.';
 	}
+	if (qaJourneySelectionMode === 'quick') return null;
 	if (qaMatrixState.fetchState === 'loading') return 'Loading browsers and devices…';
 	if (qaMatrixState.fetchState === 'error') return 'Browsers and devices could not be loaded. Open Customize and retry.';
 	const configurations = qaMatrixState.selectedEnvIds.length;
@@ -5232,6 +5299,10 @@ function syncQaSelectionSummary() {
 		return;
 	}
 	const checks = qaUi.selectedTests.size;
+	if (qaJourneySelectionMode === 'quick') {
+		summary.textContent = `${checks} checks · Automatic browser selection. QASE checks browser availability when you start; no device setup needed.`;
+		return;
+	}
 	const configurations = qaMatrixState.selectedEnvIds.length;
 	const loading = qaMatrixState.fetchState === 'loading';
 	// Pipeline Phase 2: oversized selections batch on submit — the compact
@@ -5474,15 +5545,19 @@ async function openQaStart() {
 
 function showQaStartPage() {
 	if (!qaUi.dialog) return;
+	qaJourneySelectionMode = 'quick';
+	syncJourneyPreset();
 	qaJourney ??= createQaJourney({ document, changed: syncQaSubmitState, getState: () => ({
 		config: state.config,
 		checks: qaUi.selectedTests.size,
-		configurations: qaMatrixState.selectedEnvIds.length,
+		automatic: qaJourneySelectionMode === 'quick',
+		configurations: qaJourneySelectionMode === 'quick' ? 1 : qaMatrixState.selectedEnvIds.length,
 		busy: qaUi.submit.dataset.busy === 'true',
 		blocked: qaLaunchBlockedReason(),
 		coverageBlocked: !state.qaTestCatalog ? 'Loading available checks…'
 			: !qaUi.selectedTests.size ? 'Choose at least one check to continue.'
 			: qaSecuritySelected() && !qaUi.securityAuthorized?.checked ? 'Confirm security testing authorization below.'
+			: qaJourneySelectionMode === 'quick' ? null
 			: qaMatrixState.fetchState === 'loading' ? 'Loading browsers and devices…'
 			: qaMatrixState.fetchState === 'error' ? 'The device catalog could not load. Open customization and retry.'
 			: !qaMatrixState.selectedEnvIds.length ? 'Choose at least one available browser and device.' : null
@@ -5565,34 +5640,7 @@ function closeQaStart({ updateRoute = true } = {}) {
 	if (qaUi.dialog?.open) qaUi.dialog.close();
 }
 
-function firstMatrixSessionId(run) {
-	const items = Array.isArray(run?.items) ? run.items : [];
-	return items.find(item => item?.sessionId && item.status === 'RUNNING')?.sessionId
-		?? items.find(item => item?.sessionId)?.sessionId
-		?? null;
-}
 
-/** A matrix run is created before its first underlying QA session. Wait for
- * that real session so the product can select it and enter the shared running
- * workspace. A bounded fallback leaves slow/blocked matrices on their honest
- * status board instead of inventing a run. */
-async function waitForFirstMatrixSession(createdRun, { timeoutMs = 15_000, pollMs = 250 } = {}) {
-	let run = createdRun;
-	const deadline = Date.now() + timeoutMs;
-	for (;;) {
-		const sessionId = firstMatrixSessionId(run);
-		if (sessionId) return sessionId;
-		if (!run?.id || Date.now() >= deadline || ['done', 'error', 'cancelled'].includes(run?.status)) return null;
-		await new Promise(resolve => window.setTimeout(resolve, pollMs));
-		try {
-			const payload = await api(`/matrix-runs/${encodeURIComponent(run.id)}`);
-			run = payload?.run ?? payload;
-		} catch {
-			// Creation already succeeded. A transient status-read failure should
-			// not misreport the create request as failed or allow a duplicate.
-		}
-	}
-}
 
 if (qaUi.dialog) {
 	$('journey-focused')?.addEventListener('click', () => {
@@ -5722,13 +5770,14 @@ if (qaUi.dialog) {
 		const kickoffText = [targetUrl, scopeMessage, goal ? `User focus for this run: ${goal}` : ''].filter(Boolean).join('\n');
 		// QA matrix (#15013): the run set is the selected device–OS–browser–version
 		// configurations. At least one configuration must be selected and validated.
-		if (qaMatrixState.selectedEnvIds.length === 0) {
+		const automatic = qaJourneySelectionMode === 'quick';
+		if (!automatic && qaMatrixState.selectedEnvIds.length === 0) {
 			setQaFormError('Select at least one browser configuration.');
 			$('qa-customize').open = true;
 			return;
 		}
-		const selectedEnvIds = sanitizeSelection(qaMatrixState.index, qaMatrixState.selectedEnvIds);
-		if (selectedEnvIds.length === 0) {
+		const selectedEnvIds = automatic ? [] : sanitizeSelection(qaMatrixState.index, qaMatrixState.selectedEnvIds);
+		if (!automatic && selectedEnvIds.length === 0) {
 			setQaFormError('The selected configurations are no longer available. Reload the catalog and pick again.');
 			return;
 		}
@@ -5753,6 +5802,7 @@ if (qaUi.dialog) {
 				matrixRun = await api('/qa-matrix-runs', {
 					method: 'POST',
 					body: JSON.stringify({
+						browserMode: automatic ? 'automatic' : 'custom',
 						targetUrl,
 						configurationEnvIds: selectedEnvIds,
 						kickoffText,
@@ -5801,32 +5851,11 @@ if (qaUi.dialog) {
 			$('qa-goal').value = '';
 			closeQaStart({ updateRoute: false });
 			void markOnboarded();
-			// DEV merge (#15622): wait briefly for the first execution session so
-			// the customer lands on a live session when one appears promptly; the
-			// matrix run stays authoritative when no session shows up in time —
-			// honest status over a fabricated "running" view.
-			const createdSessionId = await waitForFirstMatrixSession(matrixRun);
-			if (createdSessionId) {
-				await selectSession(createdSessionId);
-				toast(`QA run started — ${selectedEnvIds.length.toLocaleString()} browser configuration${selectedEnvIds.length === 1 ? '' : 's'} queued to run one at a time${batches.length > 1 ? ` across ${batches.length} batches` : ''}.`);
-			} else {
-				// #16159: no session appeared inside the wait window — the run
-				// is queued behind other executions (one browser at a time).
-				// Don't leave the user staring at the previous run: tell them
-				// plainly where their run is and keep watching in the
-				// background; the moment the first session exists, open it.
-				toast(`QA run started — ${selectedEnvIds.length.toLocaleString()} configuration${selectedEnvIds.length === 1 ? '' : 's'} queued. Browsers execute as capacity frees up; this run opens automatically when its first browser starts.`);
-				void refreshRuns();
-				void (async () => {
-					const sessionId = await waitForFirstMatrixSession(matrixRun, { timeoutMs: 10 * 60_000, pollMs: 2_000 });
-					if (sessionId) await selectSession(sessionId).catch(() => undefined);
-				})();
-			}
-			// #16159: the queued-configurations popup no longer opens after
-			// launch. selectSession above already lands the user in the live
-			// run workspace; the results board stays reachable from the run
-			// list / Open-session flows. A modal covering the live view made
-			// every multi-config run LOOK stuck at "Queued".
+			// Creation succeeded. Persist the route immediately; a queued run is
+			// a real run, even before a browser/session has been allocated.
+			await pageRouter.navigate({ name: 'matrix-run', runId: matrixRun.id });
+			void refreshRuns();
+			toast('Test run saved. Its queue and startup status are shown here.');
 			// Optional follow-on flows: the QA run is already underway; each
 			// checked option opens the existing dialog prefilled with the same
 			// target for the user to confirm — nothing starts automatically.
@@ -6577,14 +6606,25 @@ function renderResultsPageHeader() {
 async function applyPageRoute(route) {
 	if (!workspaceBooted || !el.authGate?.hidden) return;
 	document.body.dataset.page = route.name;
+	const workspace = document.querySelector('.app');
+	if (route.name === 'matrix-run') { workspace?.setAttribute('inert', ''); workspace?.setAttribute('aria-hidden', 'true'); }
+	else { workspace?.removeAttribute('inert'); workspace?.removeAttribute('aria-hidden'); }
 	$('tab-report').textContent = route.name === 'results' ? 'Overview' : 'Report';
 	document.body.dataset.pageLoading = 'true';
 	document.querySelector('.app')?.setAttribute('aria-busy', 'true');
 	if (route.name !== 'new-run') closePageDialog(qaUi.dialog);
 	if (route.name !== 'account') closePageDialog(profileDialog);
+	if (route.name !== 'matrix-run') closeQaMatrixRunDialog({ updateRoute: false });
+	if (route.name !== 'matrix-run') runStartupView?.stop();
 	if (route.name !== 'bugs' && state.bugsViewOpen) setBugsViewOpen(false);
 
 	try {
+		if (route.name === 'matrix-run') {
+			setPageRouteNotice('Loading your queued test run…');
+			void runStartupView?.load(route.runId);
+			document.title = 'Starting your test — QASE';
+			return;
+		}
 		if (route.name === 'new-run') {
 			setPageRouteNotice('Preparing test setup…');
 			showQaStartPage();
@@ -7312,34 +7352,53 @@ const analyticsView = $('analytics') ? createAnalyticsView({
 
 /* ── QA matrix run results board (#14942 Phase 4) ──────────────────── */
 
+const runStartupView = $('run-startup-page') ? createRunStartupView({
+	container: $('run-startup-page'),
+	api: (path, options) => apiWithTimeout(path, 15000, options),
+	openSession: sessionId => void pageRouter.navigate({ name: 'run', runId: sessionId }, { replace: true }).catch(fail),
+	back: () => void pageRouter.navigate({ name: 'runs' }),
+	details: openQaMatrixRunDialog
+}) : null;
+
 const qaMatrixResultsView = $('qa-matrix-run-dialog') ? createQaMatrixResultsView({
 	container: $('qa-matrix-run-body'),
 	api,
 	selectSession: async (sessionId) => {
-		closeQaMatrixRunDialog();
+		closeQaMatrixRunDialog({ updateRoute: false });
 		await selectSession(sessionId).catch(fail);
 	},
 	toast,
-	onRunFinished: () => {}
+	onRunFinished: () => {},
+	onRunUpdated: run => {
+		const route = pageRouter.current();
+		if (route.name !== 'matrix-run' || route.runId !== run.id) return;
+		const sessionId = firstMatrixSessionId(run);
+		// The startup page owns automatic handoff. This is an explicit diagnostics view.
+	}
 }) : null;
 
 /** Open the results board for a QA matrix run (live updates until terminal). */
 function openQaMatrixRunDialog(matrixRunId) {
 	const dialog = $('qa-matrix-run-dialog');
 	if (!dialog || !qaMatrixResultsView || !matrixRunId) return;
-	dialog.showModal();
+	if (!dialog.open) dialog.showModal();
 	void qaMatrixResultsView.load(matrixRunId);
 }
 
-function closeQaMatrixRunDialog() {
+function closeQaMatrixRunDialog({ updateRoute = false } = {}) {
 	const dialog = $('qa-matrix-run-dialog');
 	if (dialog?.open) dialog.close();
 	qaMatrixResultsView?.stop();
+	if (updateRoute && pageRouter.current().name === 'matrix-run') void pageRouter.navigate({ name: 'runs' }, { replace: true });
 }
 
 if ($('qa-matrix-run-close')) {
 	$('qa-matrix-run-close').onclick = closeQaMatrixRunDialog;
 }
+$('qa-matrix-run-dialog')?.addEventListener('cancel', event => {
+	event.preventDefault();
+	closeQaMatrixRunDialog();
+});
 // The view renders its own Cancel-run button (it knows live run status).
 
 /* ── Phase 11: run-target dialog + quick actions + presets ────────── */

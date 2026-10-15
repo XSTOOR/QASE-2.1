@@ -19,6 +19,7 @@
 <link rel="stylesheet" href="brand.css?v=20261015-15">
 <link rel="stylesheet" href="runCard.css?v=20261015-17">
 <link rel="stylesheet" href="auth.css?v=20261015-14">
+<link rel="stylesheet" href="runStartup.css?v=20261016-1">
 <link rel="icon" type="image/svg+xml" href="qase-mark.svg">
 </head>
 <body class="cli-theme studio-workspace" data-has-run="false">
@@ -928,7 +929,7 @@
       <p class="journey-eyebrow">STEP 02 / YOUR TEST PLAN</p>
       <h2 id="journey-coverage-title" tabindex="-1">Start with the essentials.</h2>
       <p class="journey-lead">Recommended checks are ready. Adjust the selection if this run needs something specific.</p>
-      <div class="journey-presets" role="group" aria-label="Browser coverage size"><button type="button" id="journey-focused" aria-pressed="true"><strong>Focused check <span>Recommended</span></strong><small>One available browser. A manageable first run.</small></button><button type="button" id="journey-custom" aria-pressed="false"><strong>Custom coverage</strong><small>Choose browsers, devices, and versions.</small></button></div>
+      <div class="journey-presets" role="group" aria-label="Browser coverage size"><button type="button" id="journey-focused" aria-pressed="true"><strong>Let QASE choose <span>Recommended</span></strong><small>We check browser availability and select a desktop browser. No setup required.</small></button><button type="button" id="journey-custom" aria-pressed="false"><strong>Choose my own</strong><small>Optional. Test specific browsers and devices.</small></button></div>
       <section class="qa-recommended" aria-labelledby="qa-recommended-title">
         <h3 id="qa-recommended-title">Recommended checks are selected</h3>
         <p>Check forms, navigation, layout and accessibility. Customize the coverage for your website below.</p>
@@ -1462,6 +1463,7 @@
 
 <!-- QA matrix run results board (#14942 Phase 4): per-configuration results,
      evidence and totals for the launcher's matrix runs. -->
+<section id="run-startup-page" class="startup-page" aria-labelledby="startup-title" hidden></section>
 <dialog class="modal" id="qa-matrix-run-dialog" aria-labelledby="qa-matrix-run-title">
   <div class="modal-inner qmr-modal-inner">
     <header class="modal-head">
@@ -1685,6 +1687,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261015-18" type="module"></script>
+<script src="app.js?v=20261016-2" type="module"></script>
 </body>
 </html>

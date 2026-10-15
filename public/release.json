@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-10-15-run-cards-compact-r1",
-  "uiVersion": "20261015-18",
+  "releaseId": "qase-2026-10-16-automatic-startup-r3",
+  "uiVersion": "20261016-2",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Current qase-2.1 workspace; compact redesigned run cards included"
+  "source": "Automatic browser selection under scheduler admission, non-modal startup UX and run-bound feedback recovery"
 }

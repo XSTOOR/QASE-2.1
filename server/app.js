@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { chooseAutomaticBrowser } from './automaticBrowser.js';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -305,7 +306,7 @@ export function createApplication(options = {}) {
 		// The HTML shell must never be served from cache — a stale shell
 		// referencing pre-versioned asset URLs resurrects broken layouts.
 		response.set('Cache-Control', 'no-cache');
-		response.sendFile(path.join(publicDirectory, 'index.html'));
+		response.sendFile('index.html', { root: publicDirectory });
 	});
 	// Versioned assets (?v=…) are immutable per version — cache hard. Everything
 	// else (unversioned paths, index.html) revalidates every load.
@@ -1146,6 +1147,10 @@ export function createApplication(options = {}) {
 				// RT2 (#14704): pre-execution health gate — real engine/network/
 				// emulation probes; a FAIL blocks the item with the exact reason.
 				checkEnvironmentHealth,
+				selectAutomaticEnvironment: async run => chooseAutomaticBrowser(services.environments, {
+					...options.automaticBrowserOptions,
+					health: options.automaticBrowserOptions?.health ?? (env => checkEnvironmentHealth(env, { targetUrl: run.targetUrl }))
+				}),
 				// Start a real session for the item — the same path
 				// POST /api/sessions + message uses, so emulation, runtime gates,
 				// findings, and reports behave identically for matrix items.
@@ -1168,14 +1173,18 @@ export function createApplication(options = {}) {
 					);
 					return session;
 				},
-				sendTask: async (session, matrixRun) => {
+				sendTask: async (session, matrixRun, { signal } = {}) => {
+					signal?.throwIfAborted();
 					// #15043 (B1): QA-start runs carry their own kickoff text
 					// (target URL + coverage message); test-case runs send the
 					// raw target as before.
 					const text = matrixRun.kickoffText ?? matrixRun.targetUrl;
 					await services.runs.addMessage(session, { role: 'user', text });
 					session.targetUrl = matrixRun.targetUrl;
+					await services.runs.commit(session, 'session', { targetUrl: matrixRun.targetUrl });
+					signal?.throwIfAborted();
 					await services.agent.ensureRuntime(session);
+					if (signal?.aborted) throw new Error('Run startup was cancelled before the agent turn began.');
 					startTurn(session, { task: text });
 				},
 				// Pipeline Phase 3 (#15493): authorized auto-answer — resume a
@@ -1276,17 +1285,22 @@ export function createApplication(options = {}) {
 					response.status(400).json({ error: 'targetUrl must be an http(s) URL.' });
 					return;
 				}
-				const envIds = Array.isArray(body.configurationEnvIds)
+				let envIds = Array.isArray(body.configurationEnvIds)
 					? body.configurationEnvIds.map(String).filter(Boolean)
 					: [];
 				// Pipeline Phase 2: parent-run creation carries the plan
 				// metadata but no configurations; batches carry the configs.
 				const isParentRequest = body.kind === 'parent';
+				const automatic = body.browserMode === 'automatic';
+				if (automatic && (envIds.length || isParentRequest || body.parentId || body.batchKey)) {
+					response.status(422).json({ error: 'Automatic browser selection cannot be combined with custom configurations or batches.' });
+					return;
+				}
 				if (isParentRequest && envIds.length > 0) {
 					response.status(422).json({ error: 'A parent run carries no configurations — send them in batches.' });
 					return;
 				}
-				if (!isParentRequest && envIds.length === 0) {
+				if (!isParentRequest && !automatic && envIds.length === 0) {
 					response.status(400).json({ error: 'At least one configuration is required.' });
 					return;
 				}
@@ -1322,6 +1336,19 @@ export function createApplication(options = {}) {
 					}
 				}
 				// Unknown envIds are NOT rejected here — the matrix service
+				let browserSelection = null;
+				if (automatic) {
+					try {
+						// Browser processes may only launch after scheduler admission.
+						const chosen = await chooseAutomaticBrowser(services.environments, { ...options.automaticBrowserOptions, probe: false });
+						envIds = [chosen.environment.envId];
+						browserSelection = chosen.selection;
+					} catch (error) {
+						if (error.code !== 'AUTOMATIC_BROWSER_UNAVAILABLE') throw error;
+						response.status(503).json({ error: error.message });
+						return;
+					}
+				}
 				// records them as honest BLOCKED items ("no longer in the
 				// catalog") so every selected configuration gets a result.
 				if (isParentRequest) {
@@ -1363,6 +1390,7 @@ export function createApplication(options = {}) {
 					return;
 				}
 				const record = await services.matrix.create({
+					browserSelection,
 					title: String(body.title ?? `QA run — ${targetUrl}`).slice(0, 120),
 					targetUrl,
 					testCaseId: body.testCaseId,

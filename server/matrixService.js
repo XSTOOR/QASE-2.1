@@ -444,6 +444,7 @@ export function createMatrixService(backend, { environments, runs, testCases } =
 			defaultsSnapshot,
 			requestedProfiles: profileRequests,
 			requestedBrowsers: selectedBrowsers,
+			browserSelection: input?.browserSelection ?? null,
 			itemCount: items.length,
 			items,
 			ownerUserId: input?.ownerUserId ?? ownerUserId ?? null,

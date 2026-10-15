@@ -65,6 +65,30 @@ globalThis.Option = Option;
 
 const { createQaMatrixResultsView } = await import('./qaMatrixResultsView.js');
 
+test('accepted run without a session explains the queue and publishes updates', async t => {
+	const run = { id: 'matrix-queued', status: 'running', items: [{ id: 'queued', status: 'QUEUED' }] };
+	const container = new Element('div');
+	const updates = [];
+	const view = createQaMatrixResultsView({ container, api: async () => ({ run }), onRunUpdated: r => updates.push(r) });
+	t.after(() => view.stop());
+	await view.load(run.id);
+	assert.match(container.queryAll(n => n.className === 'qmr-admission')[0].textContent, /saved and queued for a shared browser slot/);
+	assert.equal(updates[0], run);
+});
+
+test('stopping during a status request prevents stale navigation and polling', async () => {
+	let resolve;
+	let updates = 0;
+	const container = new Element('div');
+	const view = createQaMatrixResultsView({ container, api: () => new Promise(done => { resolve = done; }), onRunUpdated: () => updates++ });
+	const pending = view.load('matrix-stale');
+	view.stop();
+	resolve({ run: { id: 'matrix-stale', status: 'running', items: [] } });
+	await pending;
+	assert.equal(updates, 0);
+	assert.equal(container.queryAll(n => n.className === 'qmr-admission')[0].textContent, '');
+});
+
 function fixtureRun() {
 	return {
 		id: 'matrix-test-1',
