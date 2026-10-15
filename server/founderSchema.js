@@ -28,6 +28,11 @@ export const FOUNDER_CATEGORIES = Object.freeze([
 export const FOUNDER_CATEGORY_IDS = Object.freeze(FOUNDER_CATEGORIES.map(category => category.id));
 export const FOUNDER_OBSERVATION_TYPES = Object.freeze(['strength', 'friction', 'opportunity', 'risk']);
 export const FOUNDER_LEVELS = Object.freeze(['low', 'medium', 'high']);
+/** Recommendation effort uses sizing language (small/medium/large). Legacy
+ *  low/medium/high reports are upgraded transparently on load. */
+export const FOUNDER_EFFORT_LEVELS = Object.freeze(['small', 'medium', 'large']);
+export const FOUNDER_RECOMMENDATION_SET_VERSION = 1;
+const MIN_RECOMMENDATIONS = 3;
 export const FOUNDER_CAVEAT = 'Founder Mode provides evidence-informed product and go-to-market guidance, not legal, financial, investment, security, or regulatory advice. Recommendations are hypotheses to validate with customers and market data; they do not guarantee revenue, growth, funding, product-market fit, or any other business outcome.';
 
 const categoryIds = new Set(FOUNDER_CATEGORY_IDS);
@@ -65,6 +70,26 @@ export function founderLevel(value, label, fallback) {
 	return level;
 }
 
+/** Effort accepts small/medium/large and upgrades legacy low/high sizing. */
+export function founderEffort(value, label, fallback = 'medium') {
+	const raw = value === undefined ? fallback : boundedText(String(value).toLowerCase(), label, 20, { required: true });
+	const mapped = { small: 'small', medium: 'medium', large: 'large', low: 'small', high: 'large' }[raw];
+	if (!mapped) throw new TypeError(`${label} must be small, medium, or large.`);
+	return mapped;
+}
+
+/**
+ * Business outcomes must not carry unsupported numerical promises. Percentages,
+ * multipliers, currency amounts, and doubling/tripling claims are rejected.
+ */
+const NUMERIC_PROMISE = /(\d+(\.\d+)?\s*(%|percent|x|×|fold))|(\$\s?\d)|(\b\d+(\.\d+)?\s*(million|billion|k)\b)|(\b(doubl|tripl|quadrupl)e\b)/i;
+export function assertNoNumericPromise(value, label) {
+	if (typeof value === 'string' && NUMERIC_PROMISE.test(value)) {
+		throw new TypeError(`${label} must describe the intended business outcome without unsupported numerical promises.`);
+	}
+	return value;
+}
+
 export function assertPlainObject(value, label) {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) {
 		throw new TypeError(`${label} must be an object.`);
@@ -97,6 +122,42 @@ function countAssumptions(value) {
 	return Object.entries(value).reduce((total, [key, item]) => (
 		total + (key === 'assumptions' && Array.isArray(item) ? item.length : countAssumptions(item))
 	), 0);
+}
+
+/**
+ * Upgrade a legacy (pre-set-version) saved report in place so old finalized
+ * reviews still render and hand off: missing structured fields get explicit
+ * placeholders and the set version is flagged. Validation errors are never
+ * raised here — this runs on data already accepted at generation time.
+ */
+export function upgradeLegacyRecommendation(recommendation, index) {
+	return {
+		priority: index + 1,
+		proposedFeature: 'Not recorded in this report version.',
+		whyItMatters: recommendation.rationale ?? 'Not recorded in this report version.',
+		intendedOutcome: 'Not recorded in this report version.',
+		priorityReason: 'Not recorded in this report version.',
+		implementationScope: (recommendation.actions ?? []).join(' ') || 'Not recorded in this report version.',
+		acceptanceCriteria: [],
+		dependencies: [],
+		...recommendation,
+		effort: { small: 'small', medium: 'medium', large: 'large', low: 'small', high: 'large' }[recommendation.effort] ?? recommendation.effort,
+		opportunity: recommendation.opportunity ?? recommendation.rationale
+	};
+}
+
+export function upgradeLegacyReport(report) {
+	if (!report || report.recommendationSet?.setVersion) return report;
+	return {
+		...report,
+		recommendations: (report.recommendations ?? []).map(upgradeLegacyRecommendation),
+		recommendationSet: {
+			setVersion: 0,
+			generatedAt: report.generatedAt,
+			recommendationIds: (report.recommendations ?? []).map(item => item.id),
+			legacy: true
+		}
+	};
 }
 
 /**
@@ -149,8 +210,8 @@ export function normalizeFounderReport(input, { observations, target, generatedA
 		assumptions: monetizationAssumptions
 	};
 
-	if (!Array.isArray(input.recommendations) || input.recommendations.length < 6 || input.recommendations.length > 50) {
-		throw new TypeError('Founder recommendations must contain 6-50 items.');
+	if (!Array.isArray(input.recommendations) || input.recommendations.length < MIN_RECOMMENDATIONS || input.recommendations.length > 50) {
+		throw new TypeError(`Founder recommendations must contain ${MIN_RECOMMENDATIONS}-50 items supported by the available evidence.`);
 	}
 	const recommendationIds = new Set();
 	const recommendations = input.recommendations.map((item, index) => {
@@ -164,19 +225,44 @@ export function normalizeFounderReport(input, { observations, target, generatedA
 		);
 		const assumptions = normalizeAssumptions(item.assumptions, `Founder recommendation ${id} assumptions`);
 		validateEvidenceOrAssumptions(evidenceObservationIds, assumptions, `Founder recommendation ${id}`);
+		const rawOpportunity = boundedText(item.opportunity ?? item.opportunity ?? item.rationale, `Founder recommendation ${id} opportunity`, 4_000, { required: true });
+		assertNoNumericPromise(boundedText(item.intended_outcome ?? item.intendedOutcome ?? '', `Founder recommendation ${id} intended outcome`, 2_000) ?? '', `Founder recommendation ${id} intended outcome`);
 		return {
 			id,
 			category: founderCategory(item.category, `Founder recommendation ${id} category`),
 			title: boundedText(item.title, `Founder recommendation ${id} title`, 500, { required: true }),
-			rationale: boundedText(item.rationale, `Founder recommendation ${id} rationale`, 4_000, { required: true }),
+			// opportunity: the specific problem/opportunity. Backward-compatible
+			// reads of legacy reports map legacy rationale here when opportunity
+			// is absent (normalizeFounderReport call sites pass new shape).
+			opportunity: rawOpportunity,
+			rationale: rawOpportunity,
+			proposedFeature: boundedText(item.proposed_feature ?? item.proposedFeature, `Founder recommendation ${id} proposed feature or integration`, 2_000, { required: true }),
+			whyItMatters: boundedText(item.why_it_matters ?? item.whyItMatters, `Founder recommendation ${id} why it matters`, 2_000, { required: true }),
+			intendedOutcome: boundedText(item.intended_outcome ?? item.intendedOutcome, `Founder recommendation ${id} intended business outcome`, 2_000, { required: true }),
+			priority: index + 1,
+			priorityReason: boundedText(item.priority_reason ?? item.priorityReason, `Founder recommendation ${id} priority reason`, 1_000, { required: true }),
 			actions: boundedStrings(item.actions, `Founder recommendation ${id} actions`, { minimum: 1, maximum: 15 }),
+			implementationScope: boundedText(item.implementation_scope ?? item.implementationScope, `Founder recommendation ${id} implementation scope`, 4_000, { required: true }),
+			acceptanceCriteria: boundedStrings(item.acceptance_criteria ?? item.acceptanceCriteria, `Founder recommendation ${id} acceptance criteria`, { minimum: 2, maximum: 15, itemMaximum: 1_000 }),
+			dependencies: boundedStrings(item.dependencies ?? [], `Founder recommendation ${id} dependencies`, { maximum: 20, itemMaximum: 500 }),
 			impact: founderLevel(item.impact, `Founder recommendation ${id} impact`),
-			effort: founderLevel(item.effort, `Founder recommendation ${id} effort`),
+			effort: founderEffort(item.effort, `Founder recommendation ${id} effort`),
 			confidence: founderLevel(item.confidence, `Founder recommendation ${id} confidence`),
 			evidenceObservationIds,
 			assumptions
 		};
 	});
+	// Deduplicate near-identical recommendations: same category AND the same
+	// normalized title means one recommendation restated — reject, the model
+	// must merge them instead of padding the list.
+	const seenTitles = new Map();
+	for (const recommendation of recommendations) {
+		const key = `${recommendation.category}\u0000${recommendation.title.toLowerCase()}`;
+		if (seenTitles.has(key)) {
+			throw new TypeError(`Founder recommendations contain a duplicate: "${recommendation.title}" (${recommendation.category}) appears more than once.`);
+		}
+		seenTitles.set(key, recommendation);
+	}
 
 	const rawMarketing = assertPlainObject(input.marketing, 'Founder marketing plan');
 	const channels = (rawMarketing.channels ?? []).map((item, index) => {
@@ -249,8 +335,7 @@ export function normalizeFounderReport(input, { observations, target, generatedA
 		};
 	});
 
-	const quickWins = normalizeReferenceIds(input.quick_wins ?? input.quickWins, 'Founder quick wins', recommendationIds, { minimum: 1, maximum: 12 });
-	const rawPlan = assertPlainObject(input.plan, 'Founder 30/60/90 plan');
+	const quickWins = normalizeReferenceIds(input.quick_wins ?? input.quickWins, 'Founder quick wins', recommendationIds, { minimum: 1, maximum: 12 });	const rawPlan = assertPlainObject(input.plan, 'Founder 30/60/90 plan');
 	const plan = {
 		days30: boundedStrings(rawPlan.days_30 ?? rawPlan.days30, 'Founder 30-day plan', { minimum: 1 }),
 		days60: boundedStrings(rawPlan.days_60 ?? rawPlan.days60, 'Founder 60-day plan', { minimum: 1 }),
@@ -333,6 +418,11 @@ export function normalizeFounderReport(input, { observations, target, generatedA
 		schemaVersion: FOUNDER_SCHEMA_VERSION,
 		generatedAt,
 		target,
+		recommendationSet: {
+			setVersion: FOUNDER_RECOMMENDATION_SET_VERSION,
+			generatedAt,
+			recommendationIds: [...recommendationIds]
+		},
 		coverage: {
 			categoriesReviewed: FOUNDER_CATEGORY_IDS.filter(id => reviewed.has(id)),
 			totalCategories: FOUNDER_CATEGORY_IDS.length,

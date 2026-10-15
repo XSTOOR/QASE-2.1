@@ -121,7 +121,11 @@ const tests = filesUnder(path.join(root, 'server'), new Set(['.js']))
 	.filter(filePath => filePath.endsWith('.test.js'))
 	.sort();
 
-const testRun = spawnSync(process.execPath, ['--test', ...tests], {
+const publicTests = filesUnder(path.join(root, 'public'), new Set(['.js']))
+	.filter(filePath => filePath.endsWith('.test.js'))
+	.sort();
+
+const testRun = spawnSync(process.execPath, ['--test', '--test-concurrency=2', ...tests, ...publicTests], {
 	cwd: root,
 	stdio: 'inherit'
 });

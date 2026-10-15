@@ -1,4 +1,5 @@
 import express from 'express';
+import { mountSecurityFixtures } from './demoSecurityFixtures.js';
 
 /**
  * A deliberately broken practice site, mounted at /demo.
@@ -35,6 +36,7 @@ const nav = `<header><b>Acme Widgets</b><nav>
 	<a href="/demo/app/search">Search</a>
 	<a href="/demo/app/settings">Settings</a>
 	<a href="/demo/app/help">Help</a>
+	<a href="/demo/vuln">Security sandbox</a>
 	<a href="/demo/logout">Sign out</a>
 </nav></header>`;
 
@@ -116,14 +118,20 @@ export function mountDemoSite(app) {
 			response.status(500).send(shell('Error', '<main><h1>500 — Internal Server Error</h1><pre>RangeError: query too long</pre></main>'));
 			return;
 		}
+		// The demo shares an origin with the dashboard: the query must be
+		// escaped everywhere it lands in HTML, not only in the value attribute.
+		const escapeHtml = value => String(value ?? '')
+			.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+		const escapedQuery = escapeHtml(query);
 		const results = query
-			? `<p class="muted">${query.trim() === '' ? 'Showing all 340 products' : `2 results for “${query}”`}</p>
+			? `<p class="muted">${query.trim() === '' ? 'Showing all 340 products' : `2 results for “${escapedQuery}”`}</p>
 			   <div class="card">Widget A</div><div class="card">Widget B</div>`
 			: '';
 		response.send(shell('Search — Acme Widgets', `${nav}<main>
 			<h1>Search</h1>
 			<form method="get" action="/demo/app/search">
-				<label><span>Query</span><input name="q" value="${(query ?? '').replace(/"/g, '&quot;')}"></label>
+				<label><span>Query</span><input name="q" value="${escapedQuery}"></label>
 				<button type="submit">Search</button>
 			</form>${results}
 		</main>`));
@@ -154,6 +162,69 @@ export function mountDemoSite(app) {
 	demo.get('/app/reports', (_request, response) => {
 		response.status(404).send(shell('Not found', `${nav}<main><h1>404 — Not found</h1></main>`));
 	});
+
+	// Security-check fixtures (safe + intentionally vulnerable variants) mount
+	// before the 404 catch-all so their routes resolve.
+	mountSecurityFixtures(demo);
+
+	// --- Deliberately vulnerable endpoints for the security suite demos ---
+	// These exist ONLY as positive cases for Qase's own security_check tool
+	// and its tests. The nav links to them so a run can discover them, but
+	// every defect below is intentional and labeled.
+
+	demo.get('/vuln', (_request, response) => {
+		response.send(shell('Security sandbox — Acme Widgets', `${nav}<main>
+			<h1>Security sandbox</h1>
+			<p class="muted">Deliberately vulnerable pages used to demonstrate security testing. Nothing here is real.</p>
+			<p><a href="/demo/vuln/search">Guestbook search (XSS sandbox)</a></p>
+			<p><a href="/demo/vuln/notes">Notes lookup (SQL sandbox)</a></p>
+			<p><a href="/demo/security">Security fixtures (safe vs vulnerable)</a></p>
+		</main>`));
+	});
+
+	demo.get('/vuln/search', (request, response) => {
+		// VULN (high): the query is reflected UNESCAPED into the page — the
+		// positive case for the reflected-XSS check.
+		const query = String(request.query.q ?? '');
+		const results = query
+			? `<p class="muted">Showing results for ${query} — ${results_count(query)} results</p><div class="card">First match</div>`
+			: '';
+		response.send(shell('Guestbook search — Acme Widgets', `${nav}<main>
+			<h1>Guestbook search</h1>
+			<form method="get" action="/demo/vuln/search">
+				<label><span>Query</span><input name="q" value="${query}"></label>
+				<button type="submit">Search</button>
+			</form>
+			${results}
+		</main>`));
+	});
+
+	demo.get('/vuln/notes', (request, response) => {
+		// VULN (high): a "database" lookup that echoes a driver error verbatim
+		// when the note id contains a quote — the positive case for the
+		// SQL-error-signature check. No real SQL anywhere; in-memory strings.
+		const id = String(request.query.id ?? '');
+		const form = `<form method="get" action="/demo/vuln/notes">
+			<label><span>Note id</span><input name="id" placeholder="note-1"></label>
+			<button type="submit">Look up</button>
+		</form>`;
+		if (!id) {
+			response.send(shell('Notes — Acme Widgets', `${nav}<main><h1>Notes</h1>${form}</main>`));
+			return;
+		}
+		if (id.includes("'")) {
+			// The fake driver "crashes" and the raw error is rendered.
+			response.status(500).send(shell('Error', `${nav}<main><h1>Lookup failed</h1>
+				<pre>sqlite3.OperationalError: near "qase": syntax error in: SELECT * FROM notes WHERE id = '${id.replace(/</g, '&lt;')}'</pre>
+			</main>`));
+			return;
+		}
+		response.send(shell('Notes — Acme Widgets', `${nav}<main><h1>Notes</h1>${form}
+			<div class="card">No note with that id.</div>
+		</main>`));
+	});
+
+	function results_count(_query) { return 2; }
 
 	demo.use((_request, response) => {
 		response.status(404).send(shell('Not found', '<main><h1>404 — Not found</h1></main>'));

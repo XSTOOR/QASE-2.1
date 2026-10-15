@@ -54,14 +54,26 @@ function reportSchema() {
 				}, required: ['model', 'value_metric', 'packages', 'pricing_presentation', 'next_tests', 'evidence_observation_ids', 'assumptions']
 			},
 			recommendations: {
-				type: 'array', minItems: 6, maxItems: 50, items: {
+				type: 'array', minItems: 3, maxItems: 50, items: {
 					type: 'object', properties: {
 						id: { type: 'string' }, category: { type: 'string', enum: FOUNDER_CATEGORY_IDS }, title: { type: 'string' },
-						rationale: { type: 'string' }, actions: strings('Concrete next actions.', 15), impact: { type: 'string', enum: FOUNDER_LEVELS },
-						effort: { type: 'string', enum: FOUNDER_LEVELS }, confidence: { type: 'string', enum: FOUNDER_LEVELS },
+						opportunity: { type: 'string', description: 'The specific opportunity or problem, grounded in this product\'s evidence.' },
+						proposed_feature: { type: 'string', description: 'The feature or integration to build. Prefer an existing third-party integration when it fits better than an internal build.' },
+						why_it_matters: { type: 'string', description: 'Why it matters for THIS product specifically.' },
+						intended_outcome: { type: 'string', description: 'Intended business outcome. No numerical promises (no %, x, $, doubling claims).' },
+						priority_reason: { type: 'string', description: 'Why this sits at its rank in implementation order.' },
+						actions: strings('Concrete next actions.', 15),
+						implementation_scope: { type: 'string', description: 'Concrete implementation scope the receiving agent can build from.' },
+						acceptance_criteria: { type: 'array', minItems: 2, maxItems: 15, items: { type: 'string' }, description: 'Testable acceptance criteria (at least two).' },
+						dependencies: strings('Dependencies or prerequisites (recommendation ids or external prerequisites). May be empty.', 20),
+						impact: { type: 'string', enum: FOUNDER_LEVELS },
+						effort: { type: 'string', enum: ['small', 'medium', 'large'] },
+						confidence: { type: 'string', enum: FOUNDER_LEVELS },
 						evidence_observation_ids: evidenceIds, assumptions
-					}, required: ['id', 'category', 'title', 'rationale', 'actions', 'impact', 'effort', 'confidence', 'evidence_observation_ids', 'assumptions']
-				}
+					},
+					required: ['id', 'category', 'title', 'opportunity', 'proposed_feature', 'why_it_matters', 'intended_outcome', 'priority_reason', 'actions', 'implementation_scope', 'acceptance_criteria', 'dependencies', 'impact', 'effort', 'confidence', 'evidence_observation_ids', 'assumptions']
+				},
+				description: 'Ranked in sensible implementation order (position = priority). Generate only as many as the available evidence supports; 3-8 focused items is typical. No duplicates or contradictions.'
 			},
 			marketing: {
 				type: 'object', properties: {
@@ -192,7 +204,7 @@ export function createFounderTools(session, runStore) {
 
 	const finish = {
 		name: 'finish_founder_review',
-		description: 'Validates and publishes the complete evidence-informed Founder review. Call only after the route inventory, representative workflow, diagnostics, every category, and every plan item are complete.',
+		description: 'Validates and publishes the complete evidence-informed Founder review. Call only after the route inventory, representative workflow, diagnostics, every category, and every plan item are complete. Recommendations must be ranked in implementation order, deduplicated, non-contradictory, each with opportunity, proposed feature/integration, why it matters, intended outcome (no numerical promises), priority reason, implementation scope, at least two acceptance criteria, and dependencies. Prefer an existing third-party integration over building an internal replacement when it fits; use an encouraging practical tone and make no promises of success.',
 		category: 'founder',
 		parametersSchema: reportSchema(),
 		async run(input) {

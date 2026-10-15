@@ -7,15 +7,18 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
+    "start:local": "node scripts/start-local.mjs",
     "dev": "node --watch server/index.js",
     "worker": "node server/worker.js",
     "control-plane": "node server/controlPlane/index.js",
     "cell-heartbeat": "node server/cellHeartbeatController.js",
-    "test": "node --test server/*.test.js server/postgres/*.test.js server/controlPlane/*.test.js",
+    "test": "node --test --test-concurrency=2 server/*.test.js server/postgres/*.test.js server/controlPlane/*.test.js public/*.test.js",
+    "validate:matrix": "node scripts/validate-matrix.mjs",
     "db:migrate": "node scripts/migrate.mjs",
     "control:db:migrate": "node scripts/migrate-control-plane.mjs",
     "db:import": "node scripts/import-sessions.mjs",
     "data:governance": "node scripts/data-governance.mjs",
+    "prune:local": "node scripts/prune-local.mjs",
     "deployment:smoke": "node scripts/smoke-deployment.mjs",
     "deployment:load": "node scripts/load-placement.mjs",
     "deployment:release-gate": "node scripts/release-gate.mjs",
@@ -23,18 +26,24 @@
     "verify": "node scripts/verify.mjs",
     "test:browser": "node scripts/test-browser.mjs",
     "test:dashboard": "node scripts/qualify-dashboard.mjs",
+    "test:studio-demo": "node scripts/qualify-studio-demo.mjs",
     "qualify:agent": "node scripts/qualify-agent.mjs",
-    "install-browser": "playwright install chromium",
+    "install-browser": "playwright install chromium firefox webkit",
     "package": "node scripts/package.mjs",
-    "test:auth": "node scripts/test-auth-browser.mjs"
+    "test:auth": "node scripts/test-auth-browser.mjs",
+    "test:reset": "node scripts/test-reset-browser.mjs",
+    "test:ui": "node scripts/test-ui-responsive.mjs",
+    "test:acceptance": "node scripts/test-acceptance.mjs"
   },
   "engines": {
     "node": ">=22 <25"
   },
   "dependencies": {
     "@cleanslate/sdk": "^0.1.0",
+    "compression": "^1.8.2",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "nodemailer": "^10.0.16",
     "pg": "^8.22.0",
     "playwright": "1.62.0",
     "redis": "6.2.0"

@@ -486,6 +486,15 @@ export function buildDrytisReviewResult(session, { publicOrigin, running = false
 			correlationId: state.delivery.correlationId,
 			error: state.delivery.error
 		} } : {}),
+		...(plainObject(state.tickets) ? { tickets: {
+			status: state.tickets.status,
+			ticketCount: state.tickets.ticketCount,
+			deliveredAt: state.tickets.deliveredAt,
+			failedAt: state.tickets.failedAt,
+			upstreamStatus: state.tickets.upstreamStatus,
+			correlationId: state.tickets.correlationId,
+			error: state.tickets.error
+		} } : {}),
 		createdAt: state.createdAt,
 		updatedAt: latestIsoTimestamp(state.updatedAt, session.updatedAt) ?? state.updatedAt
 	};
@@ -535,6 +544,7 @@ export function createDrytisIntegrationApi({
 	logger,
 	deliveryClient,
 	deliveryTarget,
+	ticketsTarget,
 	now = Date.now,
 	createId = randomUUID
 } = {}) {
@@ -554,6 +564,13 @@ export function createDrytisIntegrationApi({
 	if (logger !== undefined && typeof logger?.error !== 'function') throw new TypeError('Drytis integration logger is invalid.');
 	if ((deliveryClient === undefined) !== (deliveryTarget === undefined)) {
 		throw new TypeError('Drytis deliveryClient and fixed deliveryTarget must be configured together.');
+	}
+	if (deliveryClient !== undefined && ticketsTarget === undefined) {
+		// The factory derives a default tickets path; direct construction must too.
+		ticketsTarget = `${deliveryTarget.replace(/\/$/, '')}/tickets`;
+	}
+	if (ticketsTarget !== undefined && (typeof ticketsTarget !== 'string' || !ticketsTarget)) {
+		throw new TypeError('Drytis tickets target is invalid.');
 	}
 	if (deliveryClient !== undefined && (typeof deliveryClient?.deliver !== 'function'
 		|| typeof deliveryTarget !== 'string' || !deliveryTarget)) {
@@ -624,7 +641,7 @@ export function createDrytisIntegrationApi({
 			});
 		}
 		if (isRunning(session)) return { started: false, alreadyRunning: true };
-		try { services.agent.ensureRuntime(session); }
+		try { await services.agent.ensureRuntime(session); }
 		catch (error) {
 			await persistStartFailure(session, error);
 			return { started: false, failed: true };
@@ -725,7 +742,7 @@ export function createDrytisIntegrationApi({
 				fields: ['description', 'applicationType', 'primaryLanguage', 'frameworks', 'environment', 'defaultBranch'],
 				untrustedLabelsOnly: true
 			},
-			controls: { start: true, stop: true, deliver: Boolean(deliveryClient) },
+			controls: { start: true, stop: true, deliver: Boolean(deliveryClient), pushTickets: Boolean(deliveryClient) },
 			launch: { pathTemplate: '/?run={externalReviewId}' }
 		};
 	}
@@ -1080,6 +1097,123 @@ export function createDrytisIntegrationApi({
 					await services.runs.commit(session, 'drytis.delivery.failed', {
 						code: state.delivery.error.code,
 						retryable: state.delivery.error.retryable,
+						correlationId: verified.correlationId
+					});
+					throw error;
+				}
+				response.set({ 'Cache-Control': 'no-store', 'X-Correlation-Id': verified.correlationId });
+				response.json(resultFor(session));
+			}));
+
+			router.post('/reviews/:id/push-tickets', handler(async (request, response) => {
+				if (!deliveryClient) {
+					throw new DrytisIntegrationError('Push delivery is not configured for this Qase cell.', {
+						code: 'delivery_not_configured', status: 409
+					});
+				}
+				const body = parseJsonBody(request);
+				if (!plainObject(body)) {
+					throw new DrytisIntegrationError('The push-tickets request must be a JSON object.', { code: 'invalid_request', status: 400 });
+				}
+				exactKeys(body, ['acceptedFindingIds'], 'Push-tickets request');
+				if (!Array.isArray(body.acceptedFindingIds)
+					|| body.acceptedFindingIds.some(id => typeof id !== 'string' || id.length > 200 || id.length === 0)) {
+					throw new DrytisIntegrationError('acceptedFindingIds must be an array of finding id strings.', { code: 'invalid_request', status: 400 });
+				}
+				const verified = request.drytisVerified;
+				const session = await loadReview(request.params.id);
+				const state = session.drytisIntegration;
+				const priorRequest = matchingIdempotency(state, 'push-tickets', verified);
+				if (priorRequest && (priorRequest.status ?? 'completed') !== 'pending') {
+					response.set({
+						'Cache-Control': 'no-store',
+						'X-Correlation-Id': verified.correlationId,
+						'Idempotent-Replay': 'true'
+					});
+					response.json(resultFor(session));
+					return;
+				}
+
+				const requestedAt = isoNow(now);
+				const requestRecord = priorRequest ?? appendIdempotency(state, 'push-tickets', verified, requestedAt);
+				// Acceptance set: the ids the caller marked accepted, mapped to the
+				// current findings. Unknown ids are ignored (findings can be deleted).
+				const acceptedSet = new Set(body.acceptedFindingIds);
+				const tickets = (session.findings ?? [])
+					.filter(finding => acceptedSet.has(finding.id))
+					.map(finding => ({
+						id: finding.id,
+						title: finding.title,
+						body: [
+							finding.actual ? `**Actual:** ${finding.actual}` : null,
+							finding.expected ? `**Expected:** ${finding.expected}` : null,
+							finding.steps?.length ? `**Steps:**\n${finding.steps.map((step, index) => `${index + 1}. ${step}`).join('\n')}` : null,
+							finding.evidence ? `**Evidence:** ${finding.evidence}` : null
+						].filter(Boolean).join('\n\n'),
+						severity: finding.severity,
+						...(finding.engine ? { engine: finding.engine } : {}),
+						...(finding.url ? { url: finding.url } : {}),
+						...(finding.category ? { category: finding.category } : {})
+					}));
+				const payload = {
+					schemaVersion: 1,
+					reviewId: state.externalReviewId,
+					project: state.project,
+					pushedAt: requestedAt,
+					tickets
+				};
+				state.tickets = {
+					acceptedFindingIds: [...acceptedSet],
+					status: 'delivering',
+					correlationId: verified.correlationId,
+					requestedAt
+				};
+				state.updatedAt = requestedAt;
+				if (!priorRequest) {
+					await services.runs.commit(session, 'drytis.tickets.requested', {
+						correlationId: verified.correlationId,
+						accepted: tickets.length,
+						idempotencyKeyHash: idempotencyKeyHash(verified.idempotencyKey)
+					});
+				}
+				try {
+					const receipt = await deliveryClient.deliver(ticketsTarget, payload, {
+						idempotencyKey: verified.idempotencyKey,
+						correlationId: verified.correlationId
+					});
+					const deliveredAt = isoNow(now);
+					state.tickets = {
+						acceptedFindingIds: [...acceptedSet],
+						status: 'delivered',
+						deliveredAt,
+						ticketCount: tickets.length,
+						correlationId: verified.correlationId,
+						...(Number.isInteger(receipt?.status) ? { upstreamStatus: receipt.status } : {})
+					};
+					state.updatedAt = deliveredAt;
+					finishIdempotency(requestRecord, 'completed', deliveredAt);
+					await services.runs.commit(session, 'drytis.tickets.completed', {
+						ticketCount: tickets.length,
+						correlationId: verified.correlationId
+					});
+				} catch (error) {
+					const failedAt = isoNow(now);
+					state.tickets = {
+						acceptedFindingIds: [...acceptedSet],
+						status: 'failed',
+						failedAt,
+						correlationId: verified.correlationId,
+						error: {
+							code: typeof error?.code === 'string' ? error.code : 'ticket_push_failed',
+							message: sanitizeErrorDetail(error),
+							retryable: error?.retryable === true
+						}
+					};
+					state.updatedAt = failedAt;
+					finishIdempotency(requestRecord, 'failed', failedAt);
+					await services.runs.commit(session, 'drytis.tickets.failed', {
+						code: state.tickets.error.code,
+						retryable: state.tickets.error.retryable,
 						correlationId: verified.correlationId
 					});
 					throw error;

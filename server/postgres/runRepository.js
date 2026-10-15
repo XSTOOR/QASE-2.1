@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { MAX_FOUNDER_STATE_BYTES, normalizeFounderState } from '../founderService.js';
 import { normalizePendingSqaState } from '../sqaService.js';
 import { currentRequestActor } from '../requestActor.js';
+import { normalizeQaScopeSelection } from '../../public/qaScopeCatalog.js';
 
 /**
  * PostgreSQL persistence for the current Qase run aggregate.
@@ -44,9 +45,11 @@ const EVENT_CHILD_GROUPS = new Map([
 	['activity', Object.freeze(['activities'])],
 	['todos', Object.freeze(['planItems'])],
 	['finding', Object.freeze(['findings'])],
+	['finding_status', Object.freeze(['findings'])],
 	['report', Object.freeze(['reports'])],
 	['browser', Object.freeze([])],
 	['context', Object.freeze([])],
+	['usage', Object.freeze([])],
 	['question', Object.freeze([])],
 	['run.recovered', Object.freeze([])],
 	['run.stop_requested', Object.freeze([])],
@@ -231,6 +234,117 @@ function runMode(session) {
 	return session.mode === 'sqa' || session.mode === 'founder' ? session.mode : 'qa';
 }
 
+/**
+ * Engine normalization for persistence. Defense in depth: unknown values
+ * (including rows written before migration 014 existed, or by other
+ * writers) fall back to the historical default rather than poisoning the
+ * session handed to the agent.
+ *
+ * NOTE: this allowlist intentionally duplicates ENGINE_IDS from
+ * browserEngines.js rather than importing it, keeping the persistence
+ * layer transport/launcher-free. When a new engine id is added to
+ * ENGINE_IDS, add it here too — otherwise Postgres persistence will
+ * silently coerce it to chromium while the local store keeps it (the
+ * exact parity class this migration fixed).
+ */
+function runEngine(session) {
+	return session?.engine === 'firefox' || session?.engine === 'webkit' ? session.engine : 'chromium';
+}
+
+function runDevice(session) {
+	return typeof session?.device === 'string' && session.device ? session.device : 'desktop';
+}
+
+/** Analytics cohort ('pilot' or NULL) — read by the run_started/run_finished hooks. */
+function runCohort(session) {
+	return session?.cohort === 'pilot' ? 'pilot' : null;
+}
+
+/** Persisted QA coverage selection (whitelisted array) or NULL for legacy runs. */
+function scopeSelectionJson(session) {
+	const normalized = normalizeQaScopeSelection(session?.scopeSelection);
+	return Array.isArray(normalized) ? JSON.stringify(normalized) : null;
+}
+
+/** Server-authoritative timing columns, hydrated into the run aggregate. */
+const TIMING_COLUMNS = `started_at, completed_at, queued_at, setup_started_at, setup_ended_at,
+	report_started_at, report_ended_at, cancelled_at, paused_at, paused_seconds, failure_reason`;
+
+function optionalDate(target, key, value) {
+	optional(target, key, value === null || value === undefined ? undefined : epoch(value));
+	return target;
+}
+
+/** Attach timing fields (epoch ms) from a qa_runs row to a hydrated session. */
+function hydrateTiming(target, row) {
+	optionalDate(target, 'startedAt', row.started_at);
+	optionalDate(target, 'completedAt', row.completed_at);
+	optionalDate(target, 'queuedAt', row.queued_at);
+	optionalDate(target, 'setupStartedAt', row.setup_started_at);
+	optionalDate(target, 'setupEndedAt', row.setup_ended_at);
+	optionalDate(target, 'reportStartedAt', row.report_started_at);
+	optionalDate(target, 'reportEndedAt', row.report_ended_at);
+	optionalDate(target, 'cancelledAt', row.cancelled_at);
+	optionalDate(target, 'pausedAt', row.paused_at);
+	optional(target, 'pausedSeconds', row.paused_seconds === null || row.paused_seconds === undefined
+		? undefined
+		: Number(row.paused_seconds));
+	optional(target, 'failureReason', row.failure_reason ?? undefined);
+	return target;
+}
+
+/**
+ * Column expressions for phase durations (seconds, server-computed).
+ * `queue` is only meaningful between enqueue and start; total duration needs
+ * both endpoints, otherwise the run is still in flight.
+ */
+function timingSelect(alias = '') {
+	const a = alias;
+	// duration_seconds is active execution time: total span minus accumulated
+	// paused intervals. A currently-paused run (paused_at set, no completion)
+	// is measured up to the pause point.
+	return `CASE
+			WHEN ${a}completed_at IS NOT NULL AND ${a}started_at IS NOT NULL
+				THEN GREATEST(0, EXTRACT(EPOCH FROM (${a}completed_at - ${a}started_at)) - COALESCE(${a}paused_seconds, 0))
+			WHEN ${a}paused_at IS NOT NULL AND ${a}started_at IS NOT NULL
+				THEN GREATEST(0, EXTRACT(EPOCH FROM (${a}paused_at - ${a}started_at)) - COALESCE(${a}paused_seconds, 0))
+		END AS duration_seconds,
+		COALESCE(${a}paused_seconds, 0) AS paused_seconds,
+		CASE WHEN ${a}started_at IS NOT NULL AND ${a}queued_at IS NOT NULL
+			THEN EXTRACT(EPOCH FROM (${a}started_at - ${a}queued_at)) END AS queue_duration_seconds,
+		CASE WHEN ${a}setup_started_at IS NOT NULL AND ${a}setup_ended_at IS NOT NULL
+			THEN EXTRACT(EPOCH FROM (${a}setup_ended_at - ${a}setup_started_at)) END AS setup_duration_seconds,
+		CASE WHEN ${a}report_started_at IS NOT NULL AND ${a}report_ended_at IS NOT NULL
+			THEN EXTRACT(EPOCH FROM (${a}report_ended_at - ${a}report_started_at)) END AS report_duration_seconds`;
+}
+
+function readTiming(row) {
+	const read = value => (value === null || value === undefined ? undefined : Number(value));
+	const pausedSeconds = row.paused_seconds === null || row.paused_seconds === undefined ? 0 : Number(row.paused_seconds);
+	// Active duration excludes paused intervals; a currently-paused run is
+	// frozen at its pause point.
+	const rawEnd = row.completed_at
+		?? row.paused_at
+		?? null;
+	const active = rawEnd && row.started_at
+		? Math.max(0, (epoch(rawEnd) - epoch(row.started_at)) / 1000 - pausedSeconds)
+		: undefined;
+	return {
+		durationSeconds: active,
+		pausedSeconds,
+		queueDurationSeconds: read(row.queue_duration_seconds),
+		setupDurationSeconds: read(row.setup_duration_seconds),
+		reportDurationSeconds: read(row.report_duration_seconds),
+		// The rest of the elapsed time between setup end and report start is
+		// the actual test execution phase.
+		executionDurationSeconds: row.setup_ended_at && row.report_started_at
+			? Math.max(0, (epoch(row.report_started_at) - epoch(row.setup_ended_at)) / 1000)
+				: row.setup_ended_at && rawEnd
+					? Math.max(0, (epoch(rawEnd) - epoch(row.setup_ended_at)) / 1000)
+					: undefined
+	};
+}
+
 function sqaProfiles(session) {
 	if (runMode(session) !== 'sqa') return [];
 	return [...new Set(session.sqa.scope.profiles.map(profile => profile.trim()))];
@@ -238,6 +352,15 @@ function sqaProfiles(session) {
 
 function asDate(value, fallback) {
 	if (value === undefined || value === null) return new Date(fallback);
+	const result = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+	if (Number.isNaN(result.getTime())) {
+		throw new TypeError('Run timestamps must be valid dates or epoch values.');
+	}
+	return result;
+}
+
+function asNullableDate(value) {
+	if (value === undefined || value === null) return null;
 	const result = value instanceof Date ? new Date(value.getTime()) : new Date(value);
 	if (Number.isNaN(result.getTime())) {
 		throw new TypeError('Run timestamps must be valid dates or epoch values.');
@@ -353,6 +476,13 @@ function hydrateFinding(row) {
 	};
 	optional(finding, 'url', row.page_url);
 	optional(finding, 'evidence', row.evidence);
+	// Lifecycle tracking columns (migration 015); rows written before it read
+	// back as the default `open` state.
+	finding.status = row.status ?? 'open';
+	finding.statusTs = row.status_at !== null && row.status_at !== undefined && Number.isFinite(Number(row.status_at))
+		? Number(row.status_at)
+		: finding.ts;
+	finding.statusNote = row.status_note ?? '';
 	return finding;
 }
 
@@ -380,6 +510,11 @@ function hydrateRun(row, children) {
 		status: row.status,
 		mode: row.run_mode === 'sqa' || row.run_mode === 'founder' ? row.run_mode : 'qa',
 		targetUrl: row.target_url ?? undefined,
+		engine: runEngine({ engine: row.engine }),
+		device: runDevice({ device: row.device }),
+		deviceLandscape: row.device_landscape === true,
+		cohort: row.cohort === 'pilot' ? 'pilot' : undefined,
+		scopeSelection: normalizeQaScopeSelection(row.scope_selection) ?? undefined,
 		messages: (children.messages.get(row.id) ?? []).map(hydrateMessage),
 		activities: (children.activities.get(row.id) ?? []).map(hydrateActivity),
 		findings: (children.findings.get(row.id) ?? []).map(hydrateFinding),
@@ -387,7 +522,20 @@ function hydrateRun(row, children) {
 		report: hydrateReport(children.reports.get(row.id)?.[0]),
 		pendingQuestion: row.pending_question ?? undefined,
 		contextUsage: row.context_usage ?? undefined,
+		feedback: row.feedback ?? undefined,
+		runStartedAt: epoch(row.started_at) || undefined,
+		runCompletedAt: epoch(row.completed_at) || undefined,
+		tokenUsage: row.token_usage ?? undefined,
+		environmentId: row.environment_id ?? undefined,
+		environmentSnapshot: row.environment_snapshot ?? undefined,
+		executionLevel: row.execution_level_actual ?? undefined,
+		executionProviderActual: row.execution_provider_actual ?? undefined,
+		runtimeFacts: row.runtime_facts ?? undefined,
+		testCaseId: row.test_case_id ?? undefined,
+		matrixRunId: row.matrix_run_id ?? undefined,
 		secretNames: names(row.secret_names),
+		selectedTests: row.selected_tests?.length ? [...row.selected_tests] : undefined,
+		securityAuthorization: row.security_authorization ?? undefined,
 		ownerUserId: row.created_by_user_id ?? undefined
 	};
 	if (session.mode === 'sqa') {
@@ -401,6 +549,8 @@ function hydrateRun(row, children) {
 	if (row.drytis_integration !== undefined && row.drytis_integration !== null) {
 		session.drytisIntegration = row.drytis_integration;
 	}
+	hydrateTiming(session, row);
+	Object.assign(session, readTiming(row));
 	return { session, version: Number(row.lock_version) };
 }
 
@@ -425,7 +575,8 @@ async function hydrateRows(client, tenant, runRows) {
 			 WHERE organization_id = $1 AND project_id = $2 AND run_id = ANY($3::uuid[])
 			 ORDER BY run_id, position`, childScope),
 		client.query(
-			`SELECT run_id, id, title, severity, category, page_url, steps, expected, actual, evidence, created_at
+			`SELECT run_id, id, title, severity, category, page_url, steps, expected, actual, evidence,
+				status, status_note, status_at, created_at
 			 FROM qa_findings
 			 WHERE organization_id = $1 AND project_id = $2 AND run_id = ANY($3::uuid[])
 			 ORDER BY run_id, ordinal`, childScope),
@@ -510,14 +661,19 @@ async function replaceChildren(client, tenant, session, fallbackDate, groups = A
 		await client.query(
 			`INSERT INTO qa_findings (
 				organization_id, project_id, run_id, id, ordinal, title, severity,
-				category, page_url, steps, expected, actual, evidence, created_at
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+				category, page_url, steps, expected, actual, evidence,
+				status, status_note, status_at, created_at
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 			[
 				...scope, finding.id, ordinal, String(finding.title ?? ''),
 				finding.severity ?? 'medium', finding.category ?? 'general',
 				finding.url ?? null, Array.isArray(finding.steps) ? finding.steps.map(String) : [],
 				String(finding.expected ?? ''), String(finding.actual ?? ''),
-				finding.evidence ?? null, asDate(finding.ts, fallbackDate)
+				finding.evidence ?? null,
+				finding.status ?? 'open',
+				typeof finding.statusNote === 'string' && finding.statusNote.trim() ? finding.statusNote.trim().slice(0, 500) : null,
+				Number.isFinite(finding.statusTs) ? finding.statusTs : null,
+				asDate(finding.ts, fallbackDate)
 			]
 		);
 	}
@@ -557,7 +713,7 @@ async function appendEvent(client, tenant, runId, sequence, event, createdAt) {
 	);
 }
 
-async function insertAggregate(client, tenant, session, event, nowValue) {
+	async function insertAggregate(client, tenant, session, event, nowValue) {
 	const updatedAt = asDate(session.updatedAt, nowValue);
 	const createdAt = asDate(session.createdAt, updatedAt);
 	const nextEventSequence = event.type ? 2 : 1;
@@ -565,20 +721,39 @@ async function insertAggregate(client, tenant, session, event, nowValue) {
 		`INSERT INTO qa_runs (
 			id, organization_id, project_id, created_by_user_id, title, target_url,
 			status, status_detail, run_mode, sqa_profiles, sqa_assessment, founder_assessment,
-			drytis_integration, pending_question, context_usage, secret_names,
+			drytis_integration, pending_question, context_usage, token_usage, secret_names,
 			message_count, finding_count, lock_version, next_event_sequence,
-			created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,0,$18,$19,$20)
-		 RETURNING lock_version, updated_at`,
+			engine, device, device_landscape, cohort, scope_selection,
+			created_at, updated_at, queued_at, paused_at, selected_tests, security_authorization,
+			environment_id, environment_snapshot, test_case_id,
+			execution_level_actual, execution_provider_actual, runtime_facts, matrix_run_id
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,0,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
+			RETURNING lock_version, updated_at`,
 		[
 			session.id, tenant.organizationId, tenant.projectId, session.ownerUserId ?? event.actorUserId ?? tenant.actorUserId,
 			String(session.title ?? 'New test run'), session.targetUrl ?? null,
 			session.status ?? 'idle', runMode(session), sqaProfiles(session),
 			runMode(session) === 'sqa' ? json(session.sqa) : null,
 			runMode(session) === 'founder' ? json(session.founder) : null,
-			json(session.drytisIntegration), json(session.pendingQuestion), json(session.contextUsage), names(session.secretNames),
+			json(session.drytisIntegration), json(session.pendingQuestion), json(session.contextUsage),
+			json(session.tokenUsage), names(session.secretNames),
 			session.messages?.length ?? 0, session.findings?.length ?? 0,
-			nextEventSequence, createdAt, updatedAt
+			nextEventSequence,
+			runEngine(session), runDevice(session), session.deviceLandscape === true,
+			runCohort(session),
+			scopeSelectionJson(session),
+			createdAt, updatedAt,
+			asNullableDate(session.queuedAt),
+			asNullableDate(session.pausedAt),
+			session.selectedTests?.length ? [...session.selectedTests] : null,
+			session.securityAuthorization ? json(session.securityAuthorization) : null,
+			session.environmentId ?? null,
+			json(session.environmentSnapshot),
+			session.testCaseId ?? null,
+			session.executionLevel ?? session.executionLevelActual ?? null,
+			session.executionProviderActual ?? null,
+			json(session.runtimeFacts ?? null),
+			session.matrixRunId ?? null
 		]
 	);
 	await replaceChildren(client, tenant, session, updatedAt);
@@ -692,7 +867,8 @@ export function createPostgresRunRepository({
 			const scope = [tenant.organizationId, tenant.projectId];
 			const runs = await client.query(
 				`SELECT id, created_by_user_id, title, target_url, status, run_mode, sqa_profiles, sqa_assessment, founder_assessment, drytis_integration,
-					pending_question, context_usage, secret_names, created_at, updated_at, lock_version
+					pending_question, context_usage, token_usage, secret_names, engine, device, device_landscape, cohort, selected_tests, security_authorization, scope_selection, created_at, updated_at, lock_version,
+					environment_id, environment_snapshot, test_case_id, execution_level_actual, execution_provider_actual, runtime_facts, matrix_run_id, ${TIMING_COLUMNS}
 				 FROM qa_runs
 				 WHERE organization_id = $1 AND project_id = $2 AND deleted_at IS NULL
 				 ORDER BY updated_at DESC, id ASC`,
@@ -709,7 +885,8 @@ export function createPostgresRunRepository({
 		return transaction(async client => {
 			const result = await client.query(
 				`SELECT id, created_by_user_id, title, target_url, status, run_mode, sqa_profiles, sqa_assessment, founder_assessment, drytis_integration,
-					pending_question, context_usage, secret_names, created_at, updated_at, lock_version
+					pending_question, context_usage, token_usage, secret_names, engine, device, device_landscape, cohort, selected_tests, security_authorization, scope_selection, created_at, updated_at, lock_version,
+					environment_id, environment_snapshot, test_case_id, execution_level_actual, execution_provider_actual, runtime_facts, matrix_run_id, ${TIMING_COLUMNS}
 				 FROM qa_runs
 				 WHERE organization_id = $1 AND project_id = $2 AND id = $3
 					AND deleted_at IS NULL
@@ -725,8 +902,16 @@ export function createPostgresRunRepository({
 		const limit = boundedInteger(options.limit, 100, 1, 100, 'limit');
 		return transaction(async client => {
 			const result = await client.query(
-				`SELECT id, title, status, run_mode, target_url, created_at, updated_at,
-					message_count, finding_count
+				`SELECT id, title, status, run_mode, target_url, engine, device, device_landscape, cohort, scope_selection, created_at, updated_at,
+					message_count, finding_count, token_usage, environment_id, environment_snapshot, test_case_id, execution_level_actual, execution_provider_actual, runtime_facts, matrix_run_id, ${TIMING_COLUMNS}, ${timingSelect()},
+					(SELECT verdict FROM qa_reports
+						WHERE organization_id = $1 AND project_id = $2 AND run_id = qa_runs.id AND is_current = true
+						LIMIT 1) AS report_verdict,
+					(SELECT COUNT(*)::int FROM qa_plan_items
+						WHERE organization_id = $1 AND project_id = $2 AND run_id = id) AS todo_total,
+					(SELECT COUNT(*)::int FROM qa_plan_items
+						WHERE organization_id = $1 AND project_id = $2 AND run_id = id
+					AND status = 'completed') AS todo_completed
 					FROM qa_runs
 					WHERE organization_id = $1 AND project_id = $2 AND deleted_at IS NULL
 					AND ($4::uuid IS NULL OR created_by_user_id = $4)
@@ -740,10 +925,25 @@ export function createPostgresRunRepository({
 				status: row.status,
 				mode: row.run_mode === 'sqa' || row.run_mode === 'founder' ? row.run_mode : 'qa',
 				targetUrl: row.target_url ?? undefined,
+				engine: runEngine({ engine: row.engine }),
+				device: runDevice({ device: row.device }),
+				deviceLandscape: row.device_landscape === true,
 				createdAt: epoch(row.created_at),
 				updatedAt: epoch(row.updated_at),
+				startedAt: row.started_at ? epoch(row.started_at) : undefined,
+				completedAt: row.completed_at ? epoch(row.completed_at) : undefined,
+				pausedAt: row.paused_at ? epoch(row.paused_at) : undefined,
+				...readTiming(row),
 				findingCount: Number(row.finding_count ?? 0),
-				messageCount: Number(row.message_count ?? 0)
+				messageCount: Number(row.message_count ?? 0),
+				...(row.report_verdict ? { reportVerdict: row.report_verdict } : {}),
+				// Plan progress for the sidebar card — derived from the child table.
+				todoTotal: Number(row.todo_total ?? 0),
+				todoCompleted: Number(row.todo_completed ?? 0),
+				tokenUsage: row.token_usage ?? undefined,
+				executionLevel: row.execution_level_actual ?? undefined,
+				executionProviderActual: row.execution_provider_actual ?? undefined,
+				runtimeFacts: row.runtime_facts ?? undefined
 			}));
 		});
 	}
@@ -841,25 +1041,62 @@ export function createPostgresRunRepository({
 				`UPDATE qa_runs SET
 					title = $4, target_url = $5, status = $6, run_mode = $7,
 					sqa_profiles = $8, sqa_assessment = $9, founder_assessment = $10,
-					drytis_integration = $11, pending_question = $12, context_usage = $13, secret_names = $14,
-					message_count = $15, finding_count = $16, updated_at = $17,
+					drytis_integration = $11, pending_question = $12, context_usage = $13, token_usage = $14, secret_names = $15,
+					message_count = $16, finding_count = $17, updated_at = $18,
+					feedback = $19,
 					lock_version = lock_version + 1,
-					next_event_sequence = next_event_sequence + $18
+					next_event_sequence = next_event_sequence + $20,
+					started_at = COALESCE(started_at, $22), completed_at = COALESCE(completed_at, $23),
+					queued_at = COALESCE(queued_at, $24),
+					setup_started_at = COALESCE(setup_started_at, $25),
+					setup_ended_at = COALESCE(setup_ended_at, $26),
+					report_started_at = COALESCE(report_started_at, $27),
+					report_ended_at = COALESCE(report_ended_at, $28),
+					cancelled_at = COALESCE(cancelled_at, $29),
+					paused_at = $31,
+					paused_seconds = CASE
+						WHEN $31 IS NULL THEN COALESCE(paused_seconds, 0) + $32
+						ELSE COALESCE(paused_seconds, 0)
+					END,
+					failure_reason = CASE WHEN $30 IS NOT NULL THEN $30 ELSE failure_reason END,
+					engine = $33, device = $34, device_landscape = $35,
+					cohort = $36,
+					scope_selection = $38
 					WHERE organization_id = $1 AND project_id = $2 AND id = $3
-					AND lock_version = $20 AND deleted_at IS NULL
-					AND ($19::uuid IS NULL OR created_by_user_id = $19)
+					AND lock_version = $37 AND deleted_at IS NULL
+					AND ($21::uuid IS NULL OR created_by_user_id = $21)
 					RETURNING lock_version, updated_at, next_event_sequence`,
 				[
-					tenant.organizationId, tenant.projectId, session.id,
-					String(session.title ?? 'New test run'), session.targetUrl ?? null,
-					session.status ?? 'idle', runMode(session), sqaProfiles(session),
-					runMode(session) === 'sqa' ? json(session.sqa) : null,
-					runMode(session) === 'founder' ? json(session.founder) : null,
-					json(session.drytisIntegration), json(session.pendingQuestion), json(session.contextUsage), names(session.secretNames),
-					session.messages?.length ?? 0, session.findings?.length ?? 0,
-					updatedAt, eventIncrement,
-					currentRequestActor()?.actorUserId ?? null,
-					expectedVersion
+					tenant.organizationId, tenant.projectId, session.id,      // $1-$3
+					String(session.title ?? 'New test run'), session.targetUrl ?? null, // $4 $5
+					session.status ?? 'idle', runMode(session), sqaProfiles(session),  // $6-$8
+					runMode(session) === 'sqa' ? json(session.sqa) : null,   // $9
+					runMode(session) === 'founder' ? json(session.founder) : null, // $10
+					json(session.drytisIntegration), json(session.pendingQuestion), json(session.contextUsage), // $11-$13
+					json(session.tokenUsage), names(session.secretNames),    // $14 $15
+					session.messages?.length ?? 0, session.findings?.length ?? 0, // $16 $17
+					updatedAt,                                               // $18
+					json(session.feedback),                                   // $19
+					eventIncrement,                                          // $20
+					currentRequestActor()?.actorUserId ?? null,              // $21
+					// Write-once timing columns: existing values always win, so a
+					// retried or replayed save can never reset the timer.
+					asNullableDate(session.startedAt), asNullableDate(session.completedAt), // $22 $23
+					asNullableDate(session.queuedAt),                        // $24
+					asNullableDate(session.setupStartedAt),                  // $25
+					asNullableDate(session.setupEndedAt),                    // $26
+					asNullableDate(session.reportStartedAt),                 // $27
+					asNullableDate(session.reportEndedAt),                   // $28
+					asNullableDate(session.cancelledAt),                     // $29
+					session.failureReason ?? null,                            // $30
+					// Pause bookkeeping: $31 pausedAt (null = resume), $32 the
+					// just-closed interval to accumulate on resume.
+					asNullableDate(session.pausedAt),                        // $31
+					session.resumedPauseSeconds ?? 0,                        // $32
+					runEngine(session), runDevice(session), session.deviceLandscape === true, // $33-$35
+					runCohort(session),                                       // $36
+					expectedVersion,                                         // $37
+					scopeSelectionJson(session)                              // $38
 				]
 			);
 			if (!result.rows?.length) {
@@ -1167,9 +1404,125 @@ export function createPostgresRunRepository({
 		});
 	}
 
+	/**
+	 * Duration aggregates for the Performance panel: min/max/avg/median over
+	 * completed runs, plus optional per-target filtering for comparison.
+	 */
+	async function durationAnalytics({ targetUrl, limit = 100 } = {}) {
+		const boundedLimit = boundedInteger(limit, 100, 1, 100, 'limit');
+		return transaction(async client => {
+			const parameters = [tenant.organizationId, tenant.projectId, boundedLimit];
+			let targetFilter = '';
+			if (targetUrl !== undefined && targetUrl !== null && targetUrl !== '') {
+				targetFilter = ' AND target_url = $3';
+				parameters.push(String(targetUrl));
+			}
+			const result = await client.query(
+				`WITH completed AS (
+					SELECT target_url, started_at, completed_at,
+						GREATEST(0, EXTRACT(EPOCH FROM (completed_at - started_at)) - COALESCE(paused_seconds, 0)) AS duration_seconds,
+						message_count, finding_count
+					FROM qa_runs
+					WHERE organization_id = $1 AND project_id = $2 AND deleted_at IS NULL
+						AND status IN ('done', 'error', 'interrupted')
+						AND started_at IS NOT NULL AND completed_at IS NOT NULL
+						${targetFilter}
+					ORDER BY completed_at DESC
+					LIMIT $3
+				)
+				SELECT
+					COUNT(*)::int AS run_count,
+					MIN(duration_seconds) AS min_duration_seconds,
+					MAX(duration_seconds) AS max_duration_seconds,
+					AVG(duration_seconds) AS avg_duration_seconds,
+					PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_seconds) AS median_duration_seconds,
+					AVG(CASE WHEN message_count + finding_count > 0
+						THEN duration_seconds / (message_count + finding_count) END) AS avg_seconds_per_item
+					FROM completed`,
+				parameters
+			);
+			const row = result.rows?.[0] ?? {};
+			const perTarget = await client.query(
+				`SELECT target_url, COUNT(*)::int AS run_count,
+					AVG(GREATEST(0, EXTRACT(EPOCH FROM (completed_at - started_at)) - COALESCE(paused_seconds, 0))) AS avg_duration_seconds
+				 FROM qa_runs
+				 WHERE organization_id = $1 AND project_id = $2 AND deleted_at IS NULL
+					AND started_at IS NOT NULL AND completed_at IS NOT NULL
+				 GROUP BY target_url ORDER BY MAX(completed_at) DESC LIMIT 20`,
+				[tenant.organizationId, tenant.projectId]
+			);
+			const read = value => (value === null || value === undefined ? undefined : Number(value));
+			return {
+				runCount: read(row.run_count) ?? 0,
+				minDurationSeconds: read(row.min_duration_seconds),
+				maxDurationSeconds: read(row.max_duration_seconds),
+				avgDurationSeconds: read(row.avg_duration_seconds),
+				medianDurationSeconds: read(row.median_duration_seconds),
+				avgSecondsPerItem: read(row.avg_seconds_per_item),
+				byTarget: (perTarget.rows ?? []).map(entry => ({
+					targetUrl: entry.target_url ?? undefined,
+					runCount: Number(entry.run_count ?? 0),
+					avgDurationSeconds: read(entry.avg_duration_seconds)
+				}))
+			};
+		});
+	}
+
+	/**
+	 * Chronological durations for one target, for run-over-run trend
+	 * comparison ("is testing this site getting faster or slower?").
+	 */
+	async function targetDurationHistory(targetUrl, { limit = 20 } = {}) {
+		if (typeof targetUrl !== 'string' || targetUrl.trim() === '') {
+			throw new TypeError('targetUrl must be a non-empty string.');
+		}
+		const boundedLimit = boundedInteger(limit, 20, 1, 100, 'limit');
+		return transaction(async client => {
+			const result = await client.query(
+				`SELECT id, status, started_at, completed_at, ${timingSelect()}
+				 FROM qa_runs
+				 WHERE organization_id = $1 AND project_id = $2 AND deleted_at IS NULL
+					AND target_url = $3 AND started_at IS NOT NULL AND completed_at IS NOT NULL
+				 ORDER BY started_at ASC LIMIT $4`,
+				[tenant.organizationId, tenant.projectId, targetUrl.trim(), boundedLimit]
+			);
+			return (result.rows ?? []).map(row => ({
+				id: row.id,
+				status: row.status,
+				startedAt: epoch(row.started_at),
+				completedAt: epoch(row.completed_at),
+				...readTiming(row)
+			}));
+		});
+	}
+
 	function close() {
 		closePromise ??= Promise.resolve().then(() => pool.end());
 		return closePromise;
+	}
+
+	async function getFounderProjectState() {
+		return transaction(async client => {
+			const result = await client.query(
+				`SELECT state FROM founder_project_state
+				 WHERE organization_id = $1 AND project_id = $2`,
+				[tenant.organizationId, tenant.projectId]
+			);
+			return result.rows?.[0]?.state ?? undefined;
+		});
+	}
+
+	async function saveFounderProjectState(state) {
+		return transaction(async client => {
+			await client.query(
+				`INSERT INTO founder_project_state (organization_id, project_id, state, updated_at)
+				 VALUES ($1, $2, $3::jsonb, $4)
+				 ON CONFLICT (organization_id, project_id) DO UPDATE SET
+					state = EXCLUDED.state, updated_at = EXCLUDED.updated_at`,
+				[tenant.organizationId, tenant.projectId, JSON.stringify(state), asDate(now(), Date.now())]
+			);
+			return true;
+		});
 	}
 
 	return {
@@ -1182,7 +1535,15 @@ export function createPostgresRunRepository({
 		save,
 		delete: deleteRun,
 		recordCleanup,
+		durationAnalytics,
+		targetDurationHistory,
 		check,
-		close
+		close,
+		getFounderProjectState,
+		saveFounderProjectState,
+		get pool() {
+			return pool;
+		}
 	};
 }
+

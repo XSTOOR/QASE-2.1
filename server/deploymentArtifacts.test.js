@@ -22,6 +22,8 @@ test('deployment baseline keeps secrets external and applies container hardening
 	assert.match(manifest, /QASE_DRYTIS_EMBED_ORIGIN:\s+https:\/\/studio\.drytis\.example\.invalid/);
 	assert.match(manifest, /QASE_BOOTSTRAP_USER_ID:/);
 	assert.match(manifest, /QASE_BOOTSTRAP_USER_EMAIL:/);
+	assert.match(manifest, /QASE_ARTIFACT_DIR: \/app\/evidence/);
+	assert.equal((manifest.match(/claimName: qase-evidence/g) ?? []).length, 2);
 	assert.match(manifest, /name:\s+QASE_API_KEY[\s\S]+secretKeyRef/);
 	assert.match(migrations, /qase-cell-migrator/);
 	assert.match(migrations, /qase-control-migrator/);

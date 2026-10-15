@@ -64,7 +64,7 @@ function reportInput(session) {
 		icp: { primary: 'Operations leaders at scaling SaaS companies', users: ['Operations teams'], buyers: ['Operations leaders'], jobs: ['Find and resolve quality risk'], pains: ['Slow manual review'], evidence_observation_ids: evidence('customer_discovery'), assumptions: [] },
 		positioning: { category: 'Product quality platform', one_liner: 'Review product quality with an autonomous browser agent.', value_proposition: 'Reduce the time from release candidate to evidence-backed decision.', differentiators: ['Integrated browser evidence'], alternatives: ['Manual review'], evidence_observation_ids: evidence('positioning'), assumptions: [] },
 		monetization: { model: 'Subscription SaaS', value_metric: 'Completed product reviews', packages: ['Team', 'Business'], pricing_presentation: 'Connect each tier to review volume and governance needs.', next_tests: ['Interview five target buyers about the value metric.'], evidence_observation_ids: evidence('monetization_pricing'), assumptions: [] },
-		recommendations: FOUNDER_CATEGORY_IDS.slice(0, 6).map((category, index) => ({ id: `rec-${index + 1}`, category, title: `Improve ${category}`, rationale: 'The sampled flow exposes a focused opportunity.', actions: ['Prototype and test the change.'], impact: 'high', effort: index % 2 ? 'medium' : 'low', confidence: 'medium', evidence_observation_ids: evidence(category), assumptions: [] })),
+		recommendations: FOUNDER_CATEGORY_IDS.slice(0, 6).map((category, index) => ({ id: `rec-${index + 1}`, category, title: `Improve ${category}`, opportunity: 'The sampled flow exposes a focused opportunity.', proposed_feature: 'A targeted improvement matching the observed friction.', why_it_matters: 'This barrier blocks the core workflow for this product specifically.', intended_outcome: 'Clearer activation path for first-time visitors.', priority_reason: 'Earliest user-facing win with bounded effort.', actions: ['Prototype and test the change.'], implementation_scope: 'Adjust the observed flow: copy, one CTA, and validation feedback.', acceptance_criteria: ['A visitor can complete the core flow unaided.', 'The revised flow renders without console errors.'], dependencies: [], impact: 'high', effort: index % 2 ? 'medium' : 'small', confidence: 'medium', evidence_observation_ids: evidence(category), assumptions: [] })),
 		marketing: { channels: [{ channel: 'Founder-led content', rationale: 'The product has demonstrable workflows.', first_test: 'Publish three workflow teardown posts.', confidence: 'medium', evidence_observation_ids: evidence('marketing_growth'), assumptions: [] }], content_angles: ['Evidence-backed release confidence'], launch_motions: ['Design-partner launch'], growth_loops: ['Shareable review summaries'], assumptions: [] },
 		sales: { motion: 'Founder-led discovery followed by a scoped pilot.', qualification_questions: ['How are releases approved today?'], objection_responses: [{ objection: 'We already test manually.', response: 'Use the product to standardize evidence and surface blind spots.' }], sales_assets: ['Annotated sample review'], evidence_observation_ids: evidence('go_to_market_sales'), assumptions: [] },
 		risks: [{ title: 'Unvalidated willingness to pay', likelihood: 'medium', impact: 'high', mitigation: 'Run buyer interviews and paid pilots.', evidence_observation_ids: [], assumptions: ['No customer or revenue evidence was available in this browser review.'] }],
@@ -287,10 +287,52 @@ test('Founder report rejects unsupported references, unlabeled strategic claims,
 	const huge = reportInput(oversized);
 	huge.recommendations = Array.from({ length: 50 }, (_, index) => ({
 		id: `huge-${index}`, category: FOUNDER_CATEGORY_IDS[index % FOUNDER_CATEGORY_IDS.length], title: `Recommendation ${index}`,
-		rationale: 'r'.repeat(4_000), actions: Array.from({ length: 15 }, () => 'a'.repeat(2_000)),
-		impact: 'high', effort: 'high', confidence: 'low', evidence_observation_ids: [], assumptions: ['A'.repeat(1_000)]
+		opportunity: 'r'.repeat(4_000), proposed_feature: 'f'.repeat(2_000), why_it_matters: 'w'.repeat(2_000),
+		intended_outcome: 'o'.repeat(2_000), priority_reason: 'p'.repeat(1_000),
+		actions: Array.from({ length: 15 }, () => 'a'.repeat(2_000)),
+		implementation_scope: 's'.repeat(4_000),
+		acceptance_criteria: Array.from({ length: 15 }, () => 'c'.repeat(1_000)),
+		dependencies: Array.from({ length: 20 }, () => 'd'.repeat(500)),
+		impact: 'high', effort: 'large', confidence: 'low', evidence_observation_ids: [], assumptions: ['A'.repeat(1_000)]
 	}));
 	huge.quick_wins = ['huge-0'];
 	await assert.rejects(finishFounderReview(oversized, huge, runStore(), fixedNow), /smaller than 1,000,000 serialized bytes/);
 	assert.equal(oversized.founder.finalizedAt, undefined);
+});
+
+test('Founder recommendations require full structured fields, reject numeric promises, duplicates, and padding', async () => {
+	const session = founderSession();
+	populateObservations(session);
+
+	// Missing structured fields (no proposed_feature / acceptance_criteria).
+	const incomplete = reportInput(session);
+	delete incomplete.recommendations[0].proposed_feature;
+	delete incomplete.recommendations[0].acceptance_criteria;
+	await assert.rejects(finishFounderReview(session, incomplete, runStore(), fixedNow), /proposed feature/);
+	assert.equal(session.founder.report, undefined);
+
+	// Numerical promise in intended outcome.
+	const promised = reportInput(session);
+	promised.recommendations[1].intended_outcome = 'This will lift conversion by 30%.';
+	await assert.rejects(finishFounderReview(session, promised, runStore(), fixedNow), /numerical promises/);
+
+	// Duplicate recommendation (same category + title).
+	const duplicated = reportInput(session);
+	duplicated.recommendations[2] = { ...duplicated.recommendations[1], id: 'rec-2-copy' };
+	await assert.rejects(finishFounderReview(session, duplicated, runStore(), fixedNow), /duplicate/);
+
+	// Below the evidence-supported minimum of 3.
+	const tooFew = reportInput(session);
+	tooFew.recommendations = tooFew.recommendations.slice(0, 2);
+	tooFew.quick_wins = ['rec-1'];
+	await assert.rejects(finishFounderReview(session, tooFew, runStore(), fixedNow), /3-50 items/);
+
+	// Legacy effort values are upgraded; the full set stamps priority order.
+	const store = runStore();
+	const report = await finishFounderReview(session, reportInput(session), store, fixedNow);
+	assert.deepEqual(report.recommendations.map(item => item.priority), [1, 2, 3, 4, 5, 6]);
+	assert.deepEqual(report.recommendationSet.recommendationIds, ['rec-1', 'rec-2', 'rec-3', 'rec-4', 'rec-5', 'rec-6']);
+	assert.equal(report.recommendationSet.setVersion, 1);
+	assert.ok(report.recommendations.every(item => ['small', 'medium', 'large'].includes(item.effort)));
+	assert.ok(report.recommendations.every(item => item.acceptanceCriteria.length >= 2));
 });

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { evaluateSqaAssessment } from './sqaAssessment.js';
 import { SQA_CATALOG, getSqaControl, resolveSqaScope } from './sqaCatalog.js';
 import { redact } from './secrets.js';
+import { PublicInputError, publicInput } from './publicErrors.js';
 
 const AGENT_EVIDENCE_TYPES = new Set([
 	'assessment_record', 'configuration_record', 'security_report', 'test_result', 'wcag_report'
@@ -433,9 +434,9 @@ export async function finishSqaAssessment(session, runStore, now = () => Date.no
  */
 export async function recordReviewerSqaObservation(session, observation, reviewer, runStore, now = () => Date.now()) {
 	if (session?.mode !== 'sqa' || !session.sqa) {
-		throw new TypeError('This run is not an SQA assessment.');
+		throw new PublicInputError('This run is not an SQA assessment.');
 	}
-	if (!reviewer || typeof reviewer !== 'object') throw new TypeError('A trusted reviewer is required.');
+	if (!reviewer || typeof reviewer !== 'object') throw new PublicInputError('A trusted reviewer is required.');
 	const reviewedAt = new Date(now()).toISOString();
 	let workingSqa = session.sqa;
 	if (workingSqa.scope?.catalogVersion !== SQA_CATALOG.catalogVersion) {
@@ -451,16 +452,16 @@ export async function recordReviewerSqaObservation(session, observation, reviewe
 	// already held in the run vault. Scrub the complete structured observation
 	// before validation, hashing, persistence, and publication.
 	const safeObservation = redact(session.id, observation);
-	const controlId = text(safeObservation?.controlId, 'SQA control ID', 32, true);
+	const controlId = publicInput(() => text(safeObservation?.controlId, 'SQA control ID', 32, true));
 	const index = candidate.findIndex(item => item.controlId === controlId);
 	if (index >= 0) candidate[index] = safeObservation;
 	else candidate.push(safeObservation);
-	const assessment = evaluateSqaAssessment({
+	const assessment = publicInput(() => evaluateSqaAssessment({
 		...assessmentInput(workingSqa, reviewedAt),
 		observations: candidate
-	});
+	}));
 	const normalized = assessment.results.find(result => result.controlId === controlId);
-	if (!normalized) throw new TypeError(`SQA control ${controlId} is outside this assessment scope.`);
+	if (!normalized) throw new PublicInputError(`SQA control ${controlId} is outside this assessment scope.`);
 	// Preserve the evaluator-normalized input representation, not arbitrary body fields.
 	const accepted = {
 		controlId,

@@ -114,6 +114,11 @@ export function createRedisEventTransport(options = {}) {
 	}
 
 	return Object.freeze({
+		/** Observes every event from every run in this tenant (metrics, keepalive). */
+		subscribeGlobal(listener) {
+			bus.on('*', listener);
+			return () => bus.off('*', listener);
+		},
 		async load() {
 			if (loaded) return;
 			publisher.on?.('error', error => { lastError = error; });

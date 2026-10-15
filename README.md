@@ -1,5 +1,13 @@
 # Qase
 
+## Deploy this release
+
+For the current production handoff, read [DEPLOYMENT_PROMPT.md](DEPLOYMENT_PROMPT.md)
+and [RELEASE_NOTES.md](RELEASE_NOTES.md). The ZIP includes a generated
+`SOURCE_MANIFEST.json`; run `node scripts/verify-release.mjs` before building.
+Production deployment targets `https://qase.drytis.com`. Never deploy the
+parent workspace or copy developer `.qase` state into production.
+
 An autonomous QA agent that tests live websites through a policy-gated browser
 automation runtime.
 
@@ -20,18 +28,25 @@ Then start it:
 npm start
 ```
 
-Open http://127.0.0.1:5173, select **Begin transmission**, then click
-**Settings** and fill in three fields:
+The operator supplies `QASE_PROVIDER`, `QASE_API_KEY`, `QASE_BASE_URL`, and
+`QASE_MODEL` through the server environment (or the deployment's `.env`).
+Customers do not need to connect a provider or enter a key. Open
+http://127.0.0.1:5173 and use **Settings → Models & preferences** to select a
+provided model and testing preferences. **Check model availability** verifies
+the server connection and refreshes the model list.
 
-| Field | What it is |
-| --- | --- |
-| API key | Your key |
-| Base URL | The root your client appends `/chat/completions` to. Include `/v1` if your gateway expects it. |
-| Model name | Exactly the id your endpoint expects |
+For local use with an existing platform environment file:
 
-Pick **custom** as the provider for any OpenAI-compatible endpoint. **Test
-connection** probes it and loads the model list before you commit. Settings are
-saved to `.qase/config.json`; `.env` works too, and the file wins over `.env`.
+```bash
+npm run start:local -- --env-file ../../.env
+```
+
+The path is explicit and relative to this package. This imports only model
+configuration; it does not copy secrets or import legacy ports/database settings.
+Legacy `CUSTOM_API_KEY`, `CUSTOM_BASE_URL`, and `CUSTOM_MODEL` names are supported.
+Explicit process environment values take precedence. This local command defaults
+to loopback port 5173; production deployments should continue using `npm start`
+with their provisioned environment and secrets.
 
 The server needs outbound HTTPS access to the configured model gateway and
 network access to the websites being tested. A server launched inside a
@@ -44,6 +59,38 @@ under the same OS account that runs Qase.
 Nothing to test against yet? Outside production, the server hosts a deliberately
 broken practice site at http://localhost:5173/demo — sign in with
 `demo@qase.dev` / `demo1234`. Production mode always disables this route.
+
+## Selecting browsers and devices
+
+In **Coverage → Custom coverage**, start with a small Desktop, Mobile, or
+balanced preset, or toggle browser chips and check individual cells in the
+device × browser grid. Each cell includes the available OS/browser versions;
+a partially checked cell means only some configurations are selected.
+
+Search, device-category, OS, and selected-only filters never change what will
+run. Bulk actions affect only the shown devices. The footer always shows the
+global run count. Expand **Review exact configurations** to inspect OS, browser
+version, orientation, and execution type, or remove an individual configuration.
+Large selections show a cost/volume warning and retain the existing batching
+behavior. **One device per browser** provides a separate compatible-device
+dropdown for each browser and reuses an already selected device when possible.
+
+The picker lives in `public/matrixPicker.js`, with pure selection operations in
+`public/matrixPickerModel.js`. Execution still uses the existing persisted
+`qaConfigMatrix` selection contract; no combinations or availability are invented.
+
+## Runtime integrity and historical reports
+
+QA finalization captures observed browser identity before checking the result
+and before releasing the runtime. Missing or mismatched identity remains blocked.
+A cancelled execution cannot publish a late final report.
+
+For the older late-capture race, an operator can dry-run
+`node scripts/reconcile-runtime-report.mjs --run-id <uuid>`. Only a proven
+capture within five seconds of finalization, a stored non-blocked agent verdict,
+completed work, and a passing current integrity check qualify. Stop the local
+server before adding `--apply`. The correction retains the complete original
+report for audit and does not clear any parent matrix timeout or alter findings.
 
 ## Repository map
 
@@ -238,7 +285,9 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 | `QASE_BROWSER_IDLE_MS` | `0` | Close a session's browser after this long idle. `0` keeps it open for the whole session. Cookies and the current page are restored either way. |
 | `QASE_BROWSER_ALLOWED_ORIGINS` | unset | Comma-separated trusted HTTP(S) origins (or `https://*.example.com`) that may receive top-level navigation outside the declared target origin |
 | `QASE_BROWSER_ALLOWED_PRIVATE_HOSTS` | unset | Explicit private-network host exceptions for reviewed internal production targets; exact hosts or `*.example.com` only |
+| `QASE_ALLOW_PRIVATE_NETWORK` | unset | Development-only explicit opt-out from private-network guards for local browser targets and model probes; ignored outside `NODE_ENV=development` |
 | `QASE_MAX_TURNS` | `120` | Hard ceiling on agent turns per run |
+| `QASE_SQA_BROWSER_TOOL_BUDGET` | `120` | Hard ceiling on completed browser tools in one SQA assessment; remaining unsupported controls are blocked and finalized |
 
 ## Microphone and meeting checks
 

@@ -63,8 +63,23 @@ export function createOperationalControls(options = {}) {
 	const startedAt = options.startedAt ?? Date.now();
 	const requests = new Map();
 	const durations = new Map();
+	const modelTokens = new Map();
 	let mutationInFlight = 0;
 	let overloads = 0;
+
+	const TOKEN_KINDS = new Set(['input', 'output', 'total']);
+	const TOKEN_MODES = new Set(['qa', 'sqa', 'founder']);
+
+	/** Counts model tokens per run at finalization: kind=input|output|total, mode, value. */
+	function observeTokens(observation) {
+		if (!observation || typeof observation !== 'object') return;
+		const { kind, mode, value } = observation;
+		if (!TOKEN_KINDS.has(kind) || !TOKEN_MODES.has(mode)) return;
+		const tokens = finite(value);
+		if (tokens === 0 && !Number.isFinite(Number(value))) return;
+		const key = JSON.stringify([kind, mode]);
+		modelTokens.set(key, (modelTokens.get(key) ?? 0) + tokens);
+	}
 
 	function observe(method, route, statusCode, seconds) {
 		const statusClass = `${Math.floor(statusCode / 100)}xx`;
@@ -140,6 +155,14 @@ export function createOperationalControls(options = {}) {
 			lines.push(`qase_http_requests_total${labels({ method, route, status_class: statusClass })} ${count}`);
 		}
 		lines.push(
+			'# HELP qase_model_tokens_total Model tokens consumed by runs, from provider reports or estimates.',
+			'# TYPE qase_model_tokens_total counter'
+		);
+		for (const [key, count] of [...modelTokens.entries()].sort()) {
+			const [kind, mode] = JSON.parse(key);
+			lines.push(`qase_model_tokens_total${labels({ kind, mode })} ${count}`);
+		}
+		lines.push(
 			'# HELP qase_http_request_duration_seconds HTTP request duration by normalized route.',
 			'# TYPE qase_http_request_duration_seconds histogram'
 		);
@@ -192,5 +215,5 @@ export function createOperationalControls(options = {}) {
 		});
 	}
 
-	return Object.freeze({ middleware, mount, render, mutationLimit, metricsEnabled: Boolean(token) });
+	return Object.freeze({ middleware, mount, render, observeTokens, mutationLimit, metricsEnabled: Boolean(token) });
 }

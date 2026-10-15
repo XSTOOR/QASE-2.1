@@ -9,7 +9,10 @@ test('Drytis toolbar launch selects only a canonical visible run and removes the
 	assert.match(boot, /new URLSearchParams\(window\.location\.search\)/);
 	assert.match(boot, /launchParameters\.get\('run'\)/);
 	assert.match(boot, /RUN_ID_PATTERN\.test\(requestedRunId\)/);
-	assert.match(boot, /await selectSession\(requestedRunId\.toLowerCase\(\)\)/);
+	// pageRouter-aware launch (merged): selectSession receives the canonical
+	// lowercase id with updateRoute:false — the route itself is written via
+	// history.replaceState below so no double navigation fires.
+	assert.match(boot, /const runId = requestedRunId\.toLowerCase\(\);\s*\n\s*await selectSession\(runId, \{ updateRoute: false \}\)/);
 	assert.match(boot, /launchParameters\.delete\('run'\)/);
 	assert.match(boot, /window\.history\.replaceState/);
 	assert.match(boot, /stale or cross-project launch handle cannot select a run/);

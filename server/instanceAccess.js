@@ -4,13 +4,28 @@ function requestOrigin(request) {
 	return `${request.protocol}://${request.get('host')}`;
 }
 
+function requestHost(request) {
+	// Only honour the forwarded host behind a trusted proxy. Proxies append to
+	// this list, so the last entry is the value supplied by our trusted edge;
+	// leading entries can be attacker-controlled.
+	if (request.app?.get('trust proxy') && request.get('x-forwarded-host')) {
+		const forwarded = request.get('x-forwarded-host').split(',');
+		return forwarded[forwarded.length - 1].trim();
+	}
+	return request.get('host');
+}
+
 function isSameOrigin(request) {
 	if (request.get('sec-fetch-site') === 'cross-site') return false;
 	if (SAFE_METHODS.has(request.method)) return true;
 	const origin = request.get('origin');
 	if (!origin) return true;
 	try {
-		return new URL(origin).origin === requestOrigin(request);
+		// Behind a TLS-terminating edge proxy the forwarded protocol header can
+		// be absent or ambiguous, so scheme comparison is unreliable. Host is
+		// authoritative: only the legitimate site can be served from this host,
+		// and cross-site requests are already rejected above via sec-fetch-site.
+		return new URL(origin).host === requestHost(request);
 	} catch {
 		return false;
 	}

@@ -1,5 +1,5 @@
 import { promisify } from 'node:util';
-import { randomBytes, randomUUID, createHash, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomUUID, randomInt, createHash, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { accountSettingsCodec } from './accountSettings.js';
@@ -7,10 +7,19 @@ import { createAuthThrottle } from './authThrottle.js';
 
 const scrypt = promisify(scryptCallback);
 const AUTH_FILE = path.join(process.cwd(), '.qase', 'auth.json');
-const PASSWORD_MIN_LENGTH = 12;
+const PASSWORD_MIN_LENGTH = 8;
 const DUMMY_PASSWORD_HASH = 'scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const PASSWORD_MAX_LENGTH = 200;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** Email-OTP password reset (#15673): 6-digit code, 5-minute expiry. */
+const PASSWORD_RESET_OTP_TTL_MS = 5 * 60 * 1000;
+/** Max wrong OTP entries before the pending OTP is invalidated. */
+const PASSWORD_RESET_OTP_MAX_ATTEMPTS = 5;
+/** Short-lived, single-use authorization after a verified OTP. */
+const PASSWORD_RESET_AUTH_TTL_MS = 10 * 60 * 1000;
+/** Recovery codes (#15725): wrong-code attempts before lockout. */
+const RECOVERY_ATTEMPTS_MAX = 5;
+const RECOVERY_LOCKOUT_MS = 15 * 60 * 1000;
 const MEMORY_KEY = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/;
 const SENSITIVE_MEMORY = /(password|secret|token|api[._-]?key|credential|private[._-]?key)/i;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -61,7 +70,7 @@ function safeUser(user) {
 		userId: user.id,
 		email: user.email,
 		displayName: user.displayName,
-		role: user.role ?? 'owner',
+		role: user.role ?? 'developer',
 		createdAt: user.createdAt,
 		profile: user.profile ? structuredClone(user.profile) : undefined
 	}) : undefined;
@@ -115,6 +124,24 @@ function tokenHash(token) {
 
 function newToken() {
 	return randomBytes(32).toString('base64url');
+}
+
+// Recovery codes (#15725) — format XXXX-XXXX-XXXX over a 32-character
+// unambiguous alphabet (~60 bits of entropy per code). Only SHA-256 hashes
+// are ever persisted or compared.
+const RECOVERY_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const RECOVERY_CODE_COUNT = 10;
+
+function newRecoveryCode() {
+	let body = '';
+	for (let index = 0; index < 12; index += 1) body += RECOVERY_CODE_ALPHABET[randomInt(RECOVERY_CODE_ALPHABET.length)];
+	return `${body.slice(0, 4)}-${body.slice(4, 8)}-${body.slice(8, 12)}`;
+}
+
+export function normalizeRecoveryCode(value) {
+	const compact = String(value ?? '').trim().toUpperCase().replace(/[\s-]+/g, '');
+	if (!/^[A-Z0-9]{12}$/.test(compact)) throw new AuthError('This recovery code is invalid or has expired.', 'invalid_or_expired_code', 400);
+	return `${compact.slice(0, 4)}-${compact.slice(4, 8)}-${compact.slice(8, 12)}`;
 }
 
 function parseCookieHeader(header) {
@@ -201,7 +228,7 @@ function userFromRow(row, profile) {
 		id: row.id ?? row.user_id,
 		email: row.email,
 		displayName: row.display_name,
-		role: row.role ?? 'owner',
+		role: row.role ?? 'developer',
 		createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
 		profile: profile ?? defaultProfile()
 	};
@@ -239,7 +266,7 @@ function createLocalDataStore({ tenantContext, now = () => Date.now(), file = AU
 				state.data = parsed;
 				for (const user of state.data.users) {
 					user.status ??= 'active';
-					user.role ??= 'owner';
+					user.role ??= 'developer';
 					user.profile ??= defaultProfile();
 				}
 			}
@@ -249,12 +276,15 @@ function createLocalDataStore({ tenantContext, now = () => Date.now(), file = AU
 		state.loaded = true;
 	}
 function findUser(id) { return state.data.users.find(user => user.id === id); }
-	async function createAccount({ email, password, displayName }) {
+	async function createAccount({ email, password, displayName, role }) {
 		await load();
 		return withLock(state, async () => {
 			const normalized = normalizeEmail(email);
 			if (state.data.users.some(user => user.email === normalized)) throw new AuthError('An account with that email already exists.', 'email_taken', 409);
-			const user = { id: randomUUID(), email: normalized, displayName: normalizeDisplayName(displayName || normalized.split('@')[0]), passwordHash: await passwordRecord(password), status: 'active', role: 'developer', createdAt: now(), updatedAt: now(), profile: defaultProfile() };
+			// Only the register route may propose 'pilot' (invite-admitted users);
+			// every other caller lands on the historical developer default.
+			const assignedRole = role === 'pilot' ? 'pilot' : 'developer';
+			const user = { id: randomUUID(), email: normalized, displayName: normalizeDisplayName(displayName || normalized.split('@')[0]), passwordHash: await passwordRecord(password), status: 'active', role: assignedRole, createdAt: now(), updatedAt: now(), profile: defaultProfile() };
 			state.data.users.push(user);
 			await persist();
 			return user;
@@ -293,6 +323,138 @@ function findUser(id) { return state.data.users.find(user => user.id === id); }
 		async saveSettings(userId, settings) { await load(); return withLock(state, async () => { const user = findUser(userId); if (!user) throw new AuthError('Account not found.', 'not_found', 404); user.settings = await settingsCodec.seal(userId, settings); await persist(); }); },
 		async changePassword(userId, input) { await load(); return withLock(state, async () => { const user = findUser(userId); if (!user || !(await verifyPassword(input?.currentPassword, user.passwordHash))) throw new AuthError('Current password is incorrect.', 'invalid_credentials', 401); const passwordHash = await passwordRecord(input?.password); user.passwordHash = passwordHash; state.data.sessions = state.data.sessions.filter(session => session.userId !== userId); await persist(); }); },
 		async logout(token) { await load(); return withLock(state, async () => { state.data.sessions = state.data.sessions.filter(session => session.tokenHash !== tokenHash(String(token ?? ''))); await persist(); }); },
+		// Password reset via email OTP (#15673). Only verifiers (hashes) are
+		// persisted — never the raw OTP or raw authorization token. A new
+		// request replaces any pending OTP. The authorization issued after a
+		// verified OTP is short-lived, single-use, and revoked on use.
+		async requestPasswordReset(email) {
+			await load();
+			return withLock(state, async () => {
+				const user = state.data.users.find(candidate => candidate.email === normalizeEmail(email));
+				if (!user || user.status !== 'active') return undefined;
+				// 6-digit code from the CSPRNG — cryptographically uniform.
+				const otp = String(100000 + randomInt(900000));
+				user.passwordReset = {
+					otpHash: tokenHash(otp),
+					expiresAt: now() + PASSWORD_RESET_OTP_TTL_MS,
+					attempts: 0,
+					// Resend limit: 3 codes per rolling 15 minutes.
+					requests: [...(user.passwordReset?.requests ?? []), now()].filter(t => t > now() - 15 * 60 * 1000)
+				};
+				if (user.passwordReset.requests.length > 3) throw new AuthError('Too many reset requests. Try again in a few minutes.', 'reset_rate_limited', 429);
+				await persist();
+				return { otp, user: actor(user, tenantContext) };
+			});
+		},
+		async verifyResetOtp(input) {
+			await load();
+			const outcome = await withLock(state, async () => {
+				// Located by email (known to the client) so wrong attempts can be
+				// counted against the pending OTP — responses stay neutral.
+				const user = state.data.users.find(candidate => candidate.email === normalizeEmail(input?.email));
+				const reset = user?.passwordReset;
+				const invalid = new AuthError('This code is invalid or has expired. Request a new one.', 'invalid_or_expired_code', 400);
+				if (!user || !reset?.otpHash) throw invalid;
+				if ((reset.attempts ?? 0) >= PASSWORD_RESET_OTP_MAX_ATTEMPTS) throw new AuthError('Too many incorrect attempts. Request a new code.', 'too_many_attempts', 429);
+				if (reset.expiresAt <= now()) throw invalid;
+				if (reset.otpHash !== tokenHash(String(input?.otp ?? ''))) {
+					reset.attempts = (reset.attempts ?? 0) + 1;
+					await persist();
+					// Not thrown inside withLock — the lock restores the pre-call
+					// snapshot on throw, and the attempt count must survive the
+					// rejected verification.
+					return { error: invalid };
+				}
+				// Verified: consume the OTP and issue a short-lived single-use
+				// reset authorization.
+				const authorization = newToken();
+				user.passwordReset = {
+					authorizationHash: tokenHash(authorization),
+					expiresAt: now() + PASSWORD_RESET_AUTH_TTL_MS,
+					attempts: 0
+				};
+				await persist();
+				return { authorization, user: actor(user, tenantContext) };
+			});
+			if (outcome?.error) throw outcome.error;
+			return outcome;
+		},
+		async resetPassword(input) {
+			await load();
+			return withLock(state, async () => {
+				const submitted = tokenHash(String(input?.token ?? ''));
+				const user = state.data.users.find(candidate => candidate?.passwordReset?.authorizationHash === submitted);
+				const reset = user?.passwordReset;
+				const invalid = new AuthError('This reset session is invalid or has expired. Start again.', 'invalid_or_expired_token', 400);
+				if (!user || !reset?.authorizationHash) throw invalid;
+				if (reset.usedAt !== undefined || reset.expiresAt <= now()) throw invalid;
+				const passwordHash = await passwordRecord(input?.password);
+				user.passwordHash = passwordHash;
+				user.passwordReset = { ...reset, usedAt: now() };
+				// Revoke every existing session for this account.
+				state.data.sessions = state.data.sessions.filter(session => session.userId !== user.id);
+				await persist();
+				return actor(user, tenantContext);
+			});
+		},
+		// Recovery codes (#15725). Generation requires the current password and
+		// returns the 10 plaintext codes exactly once — only SHA-256 hashes are
+		// persisted. Each generation replaces the whole set, invalidating every
+		// previous code. Recovery is neutral (no account-existence oracle) and
+		// rate-limited per account.
+		async generateRecoveryCodes(userId, input) {
+			await load();
+			return withLock(state, async () => {
+				const user = findUser(userId);
+				if (!user || user.status !== 'active') throw new AuthError('Account not found.', 'not_found', 404);
+				if (!(await verifyPassword(input?.currentPassword, user.passwordHash))) throw new AuthError('Current password is incorrect.', 'invalid_credentials', 401);
+				const codes = Array.from({ length: RECOVERY_CODE_COUNT }, newRecoveryCode);
+				user.recoveryCodes = codes.map(code => ({ codeHash: tokenHash(code) }));
+				user.recoveryAttempts = 0;
+				user.recoveryAttemptsAt = 0;
+				await persist();
+				return { codes, generatedAt: new Date(now()).toISOString() };
+			});
+		},
+		async recoveryCodeStatus(userId) {
+			await load();
+			const user = findUser(userId);
+			if (!user) return { total: 0, unused: 0 };
+			const total = user.recoveryCodes?.length ?? 0;
+			return { total, unused: (user.recoveryCodes ?? []).filter(code => code.usedAt === undefined).length };
+		},
+		async recoverWithCode(input) {
+			await load();
+			const outcome = await withLock(state, async () => {
+				const user = state.data.users.find(candidate => candidate.email === normalizeEmail(input?.email));
+				const invalid = new AuthError('This recovery code is invalid or has expired.', 'invalid_or_expired_code', 400);
+				if (!user || user.status !== 'active' || !Array.isArray(user.recoveryCodes) || user.recoveryCodes.length === 0) return { error: invalid };
+				const locked = (user.recoveryAttempts ?? 0) >= RECOVERY_ATTEMPTS_MAX
+					&& typeof user.recoveryAttemptsAt === 'number'
+					&& user.recoveryAttemptsAt + RECOVERY_LOCKOUT_MS > now();
+				if (locked) return { error: new AuthError('Too many incorrect attempts. Try again in a few minutes.', 'too_many_attempts', 429) };
+				const hash = tokenHash(normalizeRecoveryCode(input?.code));
+				const code = user.recoveryCodes.find(candidate => candidate.codeHash === hash);
+				if (!code || code.usedAt !== undefined) {
+					user.recoveryAttempts = (user.recoveryAttempts ?? 0) + 1;
+					user.recoveryAttemptsAt = now();
+					await persist();
+					return { error: invalid };
+				}
+				// Matched an unused code: consume it atomically (same lock as the
+				// attempt counter) and issue the short-lived single-use reset
+				// authorization — consumed by the existing resetPassword().
+				code.usedAt = now();
+				user.recoveryAttempts = 0;
+				user.recoveryAttemptsAt = 0;
+				const authorization = newToken();
+				user.passwordReset = { authorizationHash: tokenHash(authorization), expiresAt: now() + PASSWORD_RESET_AUTH_TTL_MS, attempts: 0 };
+				await persist();
+				return { authorization, user: actor(user, tenantContext) };
+			});
+			if (outcome?.error) throw outcome.error;
+			return outcome;
+		},
 		async profile(userId) { await load(); const user = findUser(userId); return user ? { ...safeUser(user), profile: structuredClone(user.profile ?? defaultProfile()) } : undefined; },
 		async updateProfile(userId, input) { await load(); return withLock(state, async () => { const user = findUser(userId); if (!user) throw new AuthError('Profile not found.', 'not_found', 404); const name = input?.displayName === undefined ? user.displayName : normalizeDisplayName(input.displayName); const patch = cleanProfilePatch(input); user.displayName = name; user.profile = { ...defaultProfile(), ...user.profile, ...patch }; user.updatedAt = now(); await persist(); return { ...safeUser(user), profile: structuredClone(user.profile) }; }); },
 		async listMemory(userId) { await load(); return (state.data.memory ?? []).filter(entry => entry.userId === userId).sort((a, b) => b.updatedAt - a.updatedAt).map(publicMemory); },
@@ -350,12 +512,15 @@ export function createPostgresAuthService({ pool, tenantContext, now = () => Dat
 		async changePassword(userId, input) { return transaction(async client => { if (!await selectUser(client, userId)) throw new AuthError('Account not found.', 'not_found', 404); const result = await client.query('SELECT password_hash FROM users WHERE id = $1 FOR UPDATE', [userId]); if (!await verifyPassword(input?.currentPassword, result.rows[0]?.password_hash)) throw new AuthError('Current password is incorrect.', 'invalid_credentials', 401); const hash = await passwordRecord(input?.password); await client.query('UPDATE users SET password_hash = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1', [userId, hash]); await client.query('UPDATE qase_auth_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND revoked_at IS NULL', [userId]); }); },
 		async register(input) {
 			const email = normalizeEmail(input?.email); const displayName = normalizeDisplayName(input?.displayName || email.split('@')[0]); const passwordHash = await passwordRecord(input?.password);
+			// Only the register route may propose 'pilot' (invite-admitted
+			// users); every other caller lands on the historical developer default.
+			const assignedRole = input?.role === 'pilot' ? 'pilot' : 'developer';
 			return transaction(async client => {
 				const existing = await client.query('SELECT id FROM users WHERE normalized_email = $1', [email]);
 				if (existing.rows.length) throw new AuthError('An account with that email already exists.', 'email_taken', 409);
 				const id = randomUUID();
 				await client.query(`INSERT INTO users (id,email,normalized_email,display_name,password_hash,status) VALUES ($1,$2,$2,$3,$4,'active')`, [id, email, displayName, passwordHash]);
-				await client.query(`INSERT INTO organization_memberships (organization_id,user_id,role,status,created_by_user_id) VALUES ($1,$2,'developer','active',$2)`, [tenant.organizationId, id]);
+				await client.query(`INSERT INTO organization_memberships (organization_id,user_id,role,status,created_by_user_id) VALUES ($1,$2,$3,'active',$2)`, [tenant.organizationId, id, assignedRole]);
 				await client.query(`INSERT INTO qase_user_profiles (user_id,organization_id,project_id) VALUES ($1,$2,$3)`, [id, tenant.organizationId, tenant.projectId]);
 				const user = await selectUser(client, id); return issueSession(client, user);
 			});
@@ -385,11 +550,168 @@ export function createPostgresAuthService({ pool, tenantContext, now = () => Dat
 				return actor(await selectUser(client, result.rows[0].user_id), tenant);
 			});
 		},
-		async logout(token) { if (!token) return; await transaction(client => client.query('UPDATE qase_auth_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE token_hash = $1 AND revoked_at IS NULL', [tokenHash(token)])); },
+		async logout(token) { if (!token) return; await transaction(client => client.query('UPDATE qase_auth_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE token_hash = $1 AND revoked_at IS NULL', [tokenHash(String(token ?? ''))])); },
+		// Password reset via email OTP (#15673) — verifier hashes only in DB.
+		async requestPasswordReset(email) {
+			const normalized = normalizeEmail(email);
+			return transaction(async client => {
+				const result = await client.query(`SELECT users.id, users.email, users.display_name, users.created_at, membership.role
+					FROM users JOIN organization_memberships membership ON membership.user_id = users.id
+					WHERE users.normalized_email = $1 AND membership.organization_id = $2 AND membership.status = 'active' AND users.status = 'active'`, [normalized, tenant.organizationId]);
+				const row = result.rows[0];
+				if (!row) return undefined;
+				// Resend limit: 3 codes per rolling 15 minutes per user.
+				const recent = await client.query(`SELECT COUNT(*)::int AS count FROM qase_auth_password_resets
+					WHERE user_id = $1 AND used_at IS NULL AND created_at > CURRENT_TIMESTAMP - INTERVAL '15 minutes'`, [row.id]);
+				if (Number(recent.rows[0]?.count ?? 0) >= 3) throw new AuthError('Too many reset requests. Try again in a few minutes.', 'reset_rate_limited', 429);
+				const otp = String(100000 + randomInt(900000));
+				// Latest request wins: supersede any pending OTP first.
+				await client.query('UPDATE qase_auth_password_resets SET used_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND used_at IS NULL', [row.id]);
+				await client.query(`INSERT INTO qase_auth_password_resets (id, organization_id, project_id, user_id, token_hash, kind, attempts, expires_at)
+					VALUES ($1,$2,$3,$4,$5,'otp',0,CURRENT_TIMESTAMP + INTERVAL '5 minutes')`,
+					[randomUUID(), tenant.organizationId, tenant.projectId, row.id, tokenHash(otp)]);
+				return { otp, user: actor(row, tenant) };
+			});
+		},
+		async verifyResetOtp(input) {
+			return transaction(async client => {
+				// Located by email so wrong attempts are counted against the
+				// user's pending OTP — responses stay neutral.
+				const userResult = await client.query(`SELECT u.id FROM users u
+					JOIN organization_memberships m ON m.user_id = u.id
+					WHERE u.normalized_email = $1 AND m.organization_id = $2 AND m.status = 'active' AND u.status = 'active'
+					FOR UPDATE OF u`, [normalizeEmail(input?.email), tenant.organizationId]);
+				const userId = userResult.rows[0]?.id;
+				const invalid = new AuthError('This code is invalid or has expired. Request a new one.', 'invalid_or_expired_code', 400);
+				if (!userId) throw invalid;
+				const pending = await client.query(`SELECT id, attempts, expires_at FROM qase_auth_password_resets
+					WHERE user_id = $1 AND kind = 'otp' AND used_at IS NULL
+					ORDER BY created_at DESC LIMIT 1 FOR UPDATE`, [userId]);
+				const reset = pending.rows[0];
+				if (!reset) throw invalid;
+				if (Number(reset.attempts) >= PASSWORD_RESET_OTP_MAX_ATTEMPTS) throw new AuthError('Too many incorrect attempts. Request a new code.', 'too_many_attempts', 429);
+				if (pgDate(reset.expires_at).getTime() <= Date.now()) throw invalid;
+				if (String(reset.token_hash) !== tokenHash(String(input?.otp ?? ''))) {
+					await client.query('UPDATE qase_auth_password_resets SET attempts = attempts + 1 WHERE id = $1', [reset.id]);
+					throw invalid;
+				}
+				// Verified: consume the OTP, issue a short-lived single-use authorization.
+				const authorization = newToken();
+				await client.query('UPDATE qase_auth_password_resets SET used_at = CURRENT_TIMESTAMP WHERE id = $1', [reset.id]);
+				await client.query(`INSERT INTO qase_auth_password_resets (id, organization_id, project_id, user_id, token_hash, kind, attempts, expires_at)
+					VALUES ($1,$2,$3,$4,$5,'authorization',0,CURRENT_TIMESTAMP + INTERVAL '10 minutes')`,
+					[randomUUID(), tenant.organizationId, tenant.projectId, userId, tokenHash(authorization)]);
+				const user = await selectUser(client, userId);
+				return { authorization, user: actor(user, tenant) };
+			});
+		},
+		async resetPassword(input) {
+			return transaction(async client => {
+				const submitted = tokenHash(String(input?.token ?? ''));
+				const result = await client.query(`SELECT id, user_id FROM qase_auth_password_resets
+					WHERE token_hash = $1 AND kind = 'authorization' AND used_at IS NULL FOR UPDATE`, [submitted]);
+				const reset = result.rows[0];
+				const invalid = new AuthError('This reset session is invalid or has expired. Start again.', 'invalid_or_expired_token', 400);
+				if (!reset) throw invalid;
+				const state = await client.query('SELECT used_at, expires_at FROM qase_auth_password_resets WHERE id = $1', [reset.id]);
+				const row = state.rows[0];
+				if (row.used_at !== null || pgDate(row.expires_at).getTime() <= Date.now()) throw invalid;
+				const passwordHash = await passwordRecord(input?.password);
+				await client.query('UPDATE users SET password_hash = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1', [reset.user_id, passwordHash]);
+				await client.query('UPDATE qase_auth_password_resets SET used_at = CURRENT_TIMESTAMP WHERE id = $1', [reset.id]);
+				await client.query('UPDATE qase_auth_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND revoked_at IS NULL', [reset.user_id]);
+				const user = await selectUser(client, reset.user_id);
+				return actor(user, tenant);
+			});
+		},
+		// Recovery codes (#15725) — mirrors the local store: current-password
+		// gated generation, hashes only in DB, regeneration replaces the batch.
+		async generateRecoveryCodes(userId, input) {
+			return transaction(async client => {
+				if (!await selectUser(client, userId)) throw new AuthError('Account not found.', 'not_found', 404);
+				const result = await client.query('SELECT password_hash FROM users WHERE id = $1 FOR UPDATE', [userId]);
+				if (!await verifyPassword(input?.currentPassword, result.rows[0]?.password_hash)) throw new AuthError('Current password is incorrect.', 'invalid_credentials', 401);
+				// New batch invalidates every previous code for this user.
+				await client.query("UPDATE qase_auth_recovery_codes SET used_at = CURRENT_TIMESTAMP, used_for = 'superseded' WHERE user_id = $1 AND used_at IS NULL", [userId]);
+				const batch = await client.query('SELECT COALESCE(MAX(generation), 0) + 1 AS generation FROM qase_auth_recovery_codes WHERE user_id = $1', [userId]);
+				const generation = Number(batch.rows[0].generation);
+				const codes = Array.from({ length: RECOVERY_CODE_COUNT }, newRecoveryCode);
+				for (const code of codes) {
+					await client.query(`INSERT INTO qase_auth_recovery_codes (id, organization_id, project_id, user_id, code_hash, generation)
+						VALUES ($1,$2,$3,$4,$5,$6)`,
+						[randomUUID(), tenant.organizationId, tenant.projectId, userId, tokenHash(code), generation]);
+				}
+				await client.query(`DELETE FROM qase_auth_attempts WHERE organization_id = $1 AND project_id = $2 AND key = $3`,
+					[tenant.organizationId, tenant.projectId, `recovery:${userId}`]);
+				return { codes, generatedAt: new Date().toISOString() };
+			});
+		},
+		async recoveryCodeStatus(userId) {
+			return transaction(async client => {
+				const total = await client.query('SELECT COUNT(*)::int AS count FROM qase_auth_recovery_codes WHERE user_id = $1', [userId]);
+				const unused = await client.query("SELECT COUNT(*)::int AS count FROM qase_auth_recovery_codes WHERE user_id = $1 AND used_at IS NULL", [userId]);
+				return { total: Number(total.rows[0].count), unused: Number(unused.rows[0].count) };
+			});
+		},
+		async recoverWithCode(input) {
+			const email = normalizeEmail(input?.email);
+			const codeHash = tokenHash(normalizeRecoveryCode(input?.code));
+			let deferred = null;
+			const outcome = await transaction(async client => {
+				const userResult = await client.query(`SELECT u.id FROM users u
+					JOIN organization_memberships m ON m.user_id = u.id
+					WHERE u.normalized_email = $1 AND m.organization_id = $2 AND m.status = 'active' AND u.status = 'active'
+					FOR UPDATE OF u`, [email, tenant.organizationId]);
+				const userId = userResult.rows[0]?.id;
+				const invalid = new AuthError('This recovery code is invalid or has expired.', 'invalid_or_expired_code', 400);
+				if (!userId) throw invalid;
+				const key = `recovery:${userId}`;
+				const existing = await client.query(`SELECT COUNT(*)::int AS count FROM qase_auth_recovery_codes
+					WHERE user_id = $1 AND used_at IS NULL`, [userId]);
+				if (Number(existing.rows[0].count) === 0) throw invalid;
+				// Wrong-code attempts are counted against the account (5/15 min).
+				await client.query('DELETE FROM qase_auth_attempts WHERE expires_at < CURRENT_TIMESTAMP');
+				const attempt = await client.query(`SELECT attempts FROM qase_auth_attempts
+					WHERE organization_id = $1 AND project_id = $2 AND key = $3`, [tenant.organizationId, tenant.projectId, key]);
+				if (Number(attempt.rows[0]?.attempts ?? 0) >= RECOVERY_ATTEMPTS_MAX) throw new AuthError('Too many incorrect attempts. Try again in a few minutes.', 'too_many_attempts', 429);
+				const match = await client.query(`SELECT id FROM qase_auth_recovery_codes
+					WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL FOR UPDATE`, [userId, codeHash]);
+				if (!match.rows[0]) {
+					// Incremented here and committed via the deferred throw below —
+					// throwing inside the transaction would roll the counter back.
+					await client.query(`INSERT INTO qase_auth_attempts (organization_id, project_id, key, attempts, expires_at)
+						VALUES ($1,$2,$3,1,CURRENT_TIMESTAMP + INTERVAL '15 minutes')
+						ON CONFLICT (organization_id,project_id,key) DO UPDATE SET attempts = qase_auth_attempts.attempts + 1`,
+						[tenant.organizationId, tenant.projectId, key]);
+					deferred = invalid;
+					return undefined;
+				}
+				// Consume the code and issue the short-lived single-use reset
+				// authorization consumed by the existing resetPassword().
+				await client.query("UPDATE qase_auth_recovery_codes SET used_at = CURRENT_TIMESTAMP, used_for = 'password_reset' WHERE id = $1", [match.rows[0].id]);
+				await client.query(`DELETE FROM qase_auth_attempts WHERE organization_id = $1 AND project_id = $2 AND key = $3`,
+					[tenant.organizationId, tenant.projectId, key]);
+				// Supersede any pending OTP/authorization verifiers first.
+				await client.query('UPDATE qase_auth_password_resets SET used_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND used_at IS NULL', [userId]);
+				const authorization = newToken();
+				await client.query(`INSERT INTO qase_auth_password_resets (id, organization_id, project_id, user_id, token_hash, kind, attempts, expires_at)
+					VALUES ($1,$2,$3,$4,$5,'authorization',0,CURRENT_TIMESTAMP + INTERVAL '10 minutes')`,
+					[randomUUID(), tenant.organizationId, tenant.projectId, userId, tokenHash(authorization)]);
+				const user = await selectUser(client, userId);
+				return { authorization, user: actor(user, tenant) };
+			});
+			if (deferred) throw deferred;
+			return outcome;
+		},
 		async profile(userId) { return transaction(async client => { const user = await selectUser(client, userId); return user ? { ...safeUser(user), profile: user.profile } : undefined; }); },
 		async updateProfile(userId, input) { return transaction(async client => { const user = await selectUser(client, userId); if (!user) throw new AuthError('Profile not found.', 'not_found', 404); const name = input?.displayName === undefined ? user.displayName : normalizeDisplayName(input.displayName); const profile = { ...defaultProfile(), ...user.profile, ...cleanProfilePatch(input) }; await client.query('UPDATE users SET display_name = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1', [userId, name]); await client.query(`INSERT INTO qase_user_profiles (user_id,organization_id,project_id,timezone,locale,preferences,onboarding_complete) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (user_id) DO UPDATE SET timezone=EXCLUDED.timezone,locale=EXCLUDED.locale,preferences=EXCLUDED.preferences,onboarding_complete=EXCLUDED.onboarding_complete,updated_at=CURRENT_TIMESTAMP`, [userId, tenant.organizationId, tenant.projectId, profile.timezone, profile.locale, profile.preferences, profile.onboardingComplete]); return { ...safeUser({ ...user, displayName: name }), profile }; }); },
 		async listMemory(userId) { return transaction(async client => { const result = await client.query('SELECT id,key,value,scope,kind,created_at,updated_at FROM qase_memory_entries WHERE user_id = $1 ORDER BY updated_at DESC', [userId]); return result.rows.map(row => publicMemory({ id: row.id, key: row.key, value: row.value, scope: row.scope, kind: row.kind, createdAt: pgDate(row.created_at).toISOString(), updatedAt: pgDate(row.updated_at).toISOString() })); }); },
-		async putMemory(userId, input) { const clean = cleanMemoryInput(input); return transaction(async client => { const existing = await client.query('SELECT id FROM qase_memory_entries WHERE user_id = $1 AND scope = $2 AND key = $3', [userId, clean.scope, clean.key]); if (!existing.rows.length) { const count = await client.query('SELECT COUNT(*)::int AS count FROM qase_memory_entries WHERE user_id = $1', [userId]); if (Number(count.rows[0]?.count ?? 0) >= 100) throw new AuthError('Memory is limited to 100 entries per account.', 'memory_limit', 400); } const result = await client.query(`INSERT INTO qase_memory_entries (id,user_id,organization_id,project_id,key,value,scope,kind) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (user_id,scope,key) DO UPDATE SET value=EXCLUDED.value,kind=EXCLUDED.kind,updated_at=CURRENT_TIMESTAMP RETURNING id,key,value,scope,kind,created_at,updated_at`, [randomUUID(), userId, tenant.organizationId, tenant.projectId, clean.key, clean.value, clean.scope, clean.kind]); const row = result.rows[0]; return publicMemory({ id: row.id, key: row.key, value: row.value, scope: row.scope, kind: row.kind, createdAt: pgDate(row.created_at).toISOString(), updatedAt: pgDate(row.updated_at).toISOString() }); }); },
+		async putMemory(userId, input) { const clean = cleanMemoryInput(input); return transaction(async client => {
+			const account = await client.query(`SELECT user_id FROM qase_user_profiles
+				WHERE user_id = $1 AND organization_id = $2 AND project_id = $3 FOR UPDATE`,
+				[userId, tenant.organizationId, tenant.projectId]);
+			if (!account.rows.length) throw new AuthError('Account not found.', 'not_found', 404);
+			const existing = await client.query('SELECT id FROM qase_memory_entries WHERE user_id = $1 AND scope = $2 AND key = $3', [userId, clean.scope, clean.key]); if (!existing.rows.length) { const count = await client.query('SELECT COUNT(*)::int AS count FROM qase_memory_entries WHERE user_id = $1', [userId]); if (Number(count.rows[0]?.count ?? 0) >= 100) throw new AuthError('Memory is limited to 100 entries per account.', 'memory_limit', 400); } const result = await client.query(`INSERT INTO qase_memory_entries (id,user_id,organization_id,project_id,key,value,scope,kind) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (user_id,scope,key) DO UPDATE SET value=EXCLUDED.value,kind=EXCLUDED.kind,updated_at=CURRENT_TIMESTAMP RETURNING id,key,value,scope,kind,created_at,updated_at`, [randomUUID(), userId, tenant.organizationId, tenant.projectId, clean.key, clean.value, clean.scope, clean.kind]); const row = result.rows[0]; return publicMemory({ id: row.id, key: row.key, value: row.value, scope: row.scope, kind: row.kind, createdAt: pgDate(row.created_at).toISOString(), updatedAt: pgDate(row.updated_at).toISOString() }); }); },
 		async deleteMemory(userId, id) { if (!USER_ID.test(String(id))) throw new AuthError('Memory entry not found.', 'not_found', 404); return transaction(async client => (await client.query('DELETE FROM qase_memory_entries WHERE id = $1 AND user_id = $2', [id, userId])).rowCount === 1); },
 		async check() { return transaction(async client => { await client.query('SELECT 1'); return { ready: true, backend: 'postgres' }; }); },
 		async close() {}

@@ -8,9 +8,8 @@ const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
 
 test('professional entry gates the private workspace through authentication', () => {
-  assert.match(html, /CREATED FOR DRYTIS/);
+  assert.match(html, /class="auth-brand"[^>]+aria-label="QASE home"/);
   assert.match(html, /id="auth-form"/);
-  assert.match(html, /id="open-profile"/);
   assert.match(app, /\/auth\/me/);
   assert.match(app, /X-CSRF-Token/);
   assert.match(styles, /\.auth-gate/);
@@ -37,17 +36,18 @@ test('final workspace polish keeps all functional surfaces and prevents compact 
 		'new-run',
 		'new-sqa',
 		'new-founder',
-		'device-select',
+		'device-chip',
+		'device-chip-change',
 		'settings'
 	]) assert.equal((html.match(new RegExp(`id="${id}"`, 'g')) ?? []).length, 1, `${id} should remain unique`);
 
 	assert.match(styles, /Final workspace fit and finish/);
-	assert.match(styles, /\.cli-theme \.panel-foot \{[\s\S]*?grid-template-columns:\s*auto minmax\(0, 1fr\) auto auto;/);
-	assert.match(styles, /\.cli-theme \.panel-foot \.foot-btn \{[\s\S]*?grid-column:\s*auto/);
 	assert.match(styles, /@media \(max-width: 1100px\) \{[\s\S]*?\.feature-device \{[\s\S]*?flex-direction:\s*row/);
-	assert.match(styles, /@media \(max-width: 1100px\) \{[\s\S]*?\.cli-theme \.toasts \{[\s\S]*?bottom:\s*calc\(82px \+ env\(safe-area-inset-bottom\)\)/);
+	assert.match(styles, /@media \(max-width: 1100px\) \{[\s\S]*?\.toasts \{[\s\S]*?bottom:\s*calc\(82px \+ env\(safe-area-inset-bottom\)\)/);
+	assert.match(styles, /@media \(max-width: 1023px\) \{[\s\S]*?\.feature-device \{[\s\S]*?flex-direction:\s*row/);
+	assert.match(styles, /@media \(max-width: 1023px\) \{[\s\S]*?\.cli-theme \.toasts \{[\s\S]*?bottom:\s*calc\(82px \+ env\(safe-area-inset-bottom\)\)/);
 	assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*?\.feature-dock \{[\s\S]*?position:\s*static[\s\S]*?grid-row:\s*2/);
-	assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*?\.cli-theme \.chat \{\s*grid-row:\s*3/);
-	assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*?\.cli-theme \.viewer \{\s*grid-row:\s*4/);
+	assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*?\.chat \{\s*grid-row:\s*3/);
+	assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*?\.viewer \{\s*grid-row:\s*4/);
 	assert.match(styles, /@media \(max-width: 520px\) \{[\s\S]*?\.feature-tooltip \{\s*display:\s*none/);
 });

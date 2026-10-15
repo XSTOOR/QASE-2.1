@@ -1,0 +1,103 @@
+/* Guided product workflow. Uses the workspace's light/dark theme tokens. */
+#cfg-managed-connection[hidden] { display: none !important; }
+body.studio-workspace .journey-run-guide { display: flex; align-items: center; gap: 12px; padding: 14px 16px; margin: 0 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+body.studio-workspace .journey-run-guide[hidden] { display: none; }
+body.studio-workspace .journey-run-guide > div { flex: 1; min-width: 0; }
+body.studio-workspace .journey-run-guide strong { font-size: 12px; color: var(--text); }
+body.studio-workspace .journey-run-guide p { font-size: 11px; line-height: 1.6; margin: 4px 0 0; color: var(--text-muted); }
+body.studio-workspace .journey-run-guide[data-tone="attention"] { border-left: 3px solid #d99b36; }
+body.studio-workspace .journey-run-guide[data-tone="complete"] { border-left: 3px solid #29a376; }
+body.studio-workspace .journey-settings-copy { font-size: 12px; color: var(--text-muted); margin: 6px 0 0; line-height: 1.6; }
+body.studio-workspace .journey-run-search { display: block; flex: 0 0 auto; padding: 10px 12px 0; }
+body.studio-workspace .journey-run-search input { box-sizing: border-box; width: 100%; min-height: 36px; padding: 8px 10px; color: var(--text); background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; font: 400 12px var(--font-ui); }
+body.studio-workspace .journey-no-matches { padding: 10px 14px; font-size: 12px; line-height: 1.6; color: var(--text-muted); }
+body.studio-workspace .run-row[hidden] { display: none !important; }
+html[data-qase-sidebar="collapsed"] .journey-run-search { display: none; }
+body.studio-workspace #settings .modal-inner { border-radius: 16px; }
+body.studio-workspace #settings .modal-body { padding: 24px; }
+body.studio-workspace #settings .field { margin-bottom: 20px; }
+body.studio-workspace #settings :is(input, select) { min-height: 42px; border-radius: 8px; }
+body.studio-workspace #settings .modal-foot { gap: 12px; }
+body.studio-workspace #qa-start { --journey-soft: color-mix(in srgb, var(--accent) 7%, var(--surface-1)); }
+body.studio-workspace #qa-start .route-page-shell { width: min(1200px, 100%); border: 0; }
+body.studio-workspace #qa-start .modal-head { padding: 26px 40px; gap: 16px; }
+body.studio-workspace #qa-start .modal-body { grid-template-columns: 212px minmax(0, 650px); gap: 44px; padding: 36px 40px; background: var(--surface-1); }
+body.studio-workspace #qa-start .route-section-nav { gap: 10px; }
+body.studio-workspace #qa-start .route-section-nav > p { font-size: 10px; letter-spacing: .13em; color: var(--text-muted); margin-bottom: 8px; }
+body.studio-workspace #qa-start .route-section-nav > button { display: flex; text-align: left; align-items: center; gap: 12px; border: 1px solid transparent; border-radius: 12px; padding: 14px 12px; min-height: 66px; background: transparent; color: var(--text-secondary); font-size: 13px; }
+body.studio-workspace #qa-start .route-section-nav > button > span { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 28px; border: 1px solid var(--border-strong); border-radius: 50%; background: var(--surface-1); font-size: 12px; }
+body.studio-workspace #qa-start .route-section-nav button small { display: block; margin-top: 5px; font-size: 11px; font-weight: 400; color: var(--text-muted); }
+body.studio-workspace #qa-start .route-section-nav button[aria-current="step"] { background: var(--journey-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 20%, var(--border)); font-weight: 650; }
+body.studio-workspace #qa-start .route-section-nav button[aria-current="step"] > span { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+body.studio-workspace #qa-start .route-section-nav button[data-complete="true"] > span { border-color: var(--accent); color: var(--accent); }
+body.studio-workspace #qa-start .journey-nav-note { display: flex; align-items: flex-start; gap: 9px; padding: 18px 10px; margin-top: 24px; border-top: 1px solid var(--border); color: var(--text-muted); }
+body.studio-workspace #qa-start .journey-nav-note p { font-size: 12px; margin: 0; }
+body.studio-workspace #qa-start .journey-nav-note small { display: block; margin-top: 6px; font-size: 11px; line-height: 1.7; }
+body.studio-workspace #qa-start .journey-step { display: grid; min-width: 0; align-content: start; gap: 20px; }
+body.studio-workspace #qa-start [hidden] { display: none !important; }
+body.studio-workspace .journey-eyebrow { font: 650 10px/1.5 var(--font-ui); letter-spacing: .14em; color: var(--accent); margin: 0; }
+body.studio-workspace #qa-start .journey-step > h2 { font: 650 clamp(24px, 3vw, 32px)/1.2 var(--font-ui); letter-spacing: -.04em; margin: -8px 0 0; color: var(--text); }
+body.studio-workspace #qa-start .journey-lead { margin: -8px 0 6px; font-size: 13px; line-height: 1.75; color: var(--text-muted); max-width: 530px; }
+body.studio-workspace #qa-start .field { margin: 0; gap: 9px; }
+body.studio-workspace #qa-start .field > span { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; font-weight: 600; }
+body.studio-workspace #qa-start .field > span small { font-weight: 400; color: var(--text-muted); }
+body.studio-workspace #qa-start .field > :is(input, textarea) { box-sizing: border-box; width: 100%; border: 1px solid var(--border-strong); background: var(--surface-1); border-radius: 10px; color: var(--text); padding: 13px 15px; font: 400 14px/1.6 var(--font-ui); min-height: 48px; }
+body.studio-workspace #qa-start textarea { resize: vertical; }
+body.studio-workspace #qa-start .field small { font-size: 11.5px; line-height: 1.65; color: var(--text-muted); }
+body.studio-workspace #qa-start :is(input, textarea, button):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+body.studio-workspace #qa-start .journey-connection { display: flex; align-items: center; gap: 12px; margin-top: 8px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+body.studio-workspace #qa-start .journey-connection > div { flex: 1; min-width: 0; }
+body.studio-workspace #qa-start .journey-connection strong { font-size: 12px; color: var(--text); }
+body.studio-workspace #qa-start .journey-connection p { font-size: 11px; line-height: 1.6; margin: 4px 0 0; color: var(--text-muted); }
+body.studio-workspace #qa-start .journey-status-dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: #d99b36; }
+body.studio-workspace #qa-start .journey-connection[data-ready="true"] .journey-status-dot { background: #29a376; }
+body.studio-workspace #qa-start .qa-recommended { border: 1px solid var(--border); padding: 20px; border-radius: 12px; background: var(--journey-soft); }
+body.studio-workspace #qa-start .qa-recommended h3 { font-size: 15px; }
+body.studio-workspace #qa-start .qa-recommended p { font-size: 12px; line-height: 1.75; }
+body.studio-workspace #qa-start .journey-benefits { display: flex; flex-wrap: wrap; gap: 8px; }
+body.studio-workspace #qa-start .journey-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+body.studio-workspace #qa-start .journey-presets button { border: 1px solid var(--border); border-radius: 12px; background: var(--surface-1); text-align: left; padding: 16px; color: var(--text); cursor: pointer; }
+body.studio-workspace #qa-start .journey-presets button[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); background: var(--journey-soft); }
+body.studio-workspace #qa-start .journey-presets strong { display: block; font-size: 12px; line-height: 1.8; }
+body.studio-workspace #qa-start .journey-presets strong span { display: inline-block; margin-left: 5px; color: var(--accent); font-size: 9px; font-weight: 500; }
+body.studio-workspace #qa-start .journey-presets small { display: block; font-size: 11px; line-height: 1.6; color: var(--text-muted); margin-top: 6px; }
+body.studio-workspace #qa-start .journey-benefits span { font-size: 11px; padding: 6px 9px; border-radius: 6px; background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border); }
+body.studio-workspace #qa-start .qa-customize { border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+body.studio-workspace #qa-start .qa-customize > summary { font-size: 13px; color: var(--text); cursor: pointer; }
+body.studio-workspace #qa-start .journey-review-card { border: 1px solid var(--border); border-radius: 14px; padding: 22px; background: var(--surface-1); }
+body.studio-workspace #qa-start .journey-review-target { display: flex; gap: 12px; align-items: center; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+body.studio-workspace #qa-start .journey-review-target > div { min-width: 0; flex: 1; }
+body.studio-workspace #qa-start .journey-site-icon { display: grid; width: 40px; height: 40px; place-items: center; background: var(--journey-soft); color: var(--accent); border-radius: 10px; }
+body.studio-workspace #qa-start .journey-review-target small { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 5px; }
+body.studio-workspace #qa-start .journey-review-target strong { display: block; font-size: 14px; overflow-wrap: anywhere; color: var(--text); }
+body.studio-workspace #qa-start .journey-review-card dl { margin: 8px 0 16px; }
+body.studio-workspace #qa-start .journey-review-card dl > div { display: flex; justify-content: space-between; align-items: baseline; gap: 20px; padding: 12px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+body.studio-workspace #qa-start .journey-review-card dt { color: var(--text-muted); }
+body.studio-workspace #qa-start .journey-review-card dd { margin: 0; max-width: 65%; text-align: right; color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap; }
+body.studio-workspace #qa-start .journey-next { padding: 20px; background: var(--surface-2); border-radius: 12px; font-size: 12px; color: var(--text-secondary); }
+body.studio-workspace #qa-start .journey-next strong { color: var(--text); }
+body.studio-workspace #qa-start .journey-next ol { padding-left: 18px; margin: 12px 0 0; line-height: 1.8; }
+body.studio-workspace #qa-start .journey-volume-note { padding: 14px; margin: 0; color: var(--text-secondary); background: var(--journey-soft); border: 1px solid var(--border); border-radius: 10px; font-size: 12px; line-height: 1.7; }
+body.studio-workspace #qa-start .modal-foot { display: flex; align-items: center; gap: 14px; padding: 18px 40px; border-top: 1px solid var(--border); background: var(--surface-1); }
+body.studio-workspace #qa-start .journey-footer-hint { flex: 1; font-size: 11px; line-height: 1.5; margin: 0; color: var(--text-muted); }
+body.studio-workspace #qa-start .modal-foot .btn { min-height: 42px; padding-inline: 20px; white-space: nowrap; }
+body.studio-workspace .welcome-steps { display: grid; gap: 18px; list-style: none; text-align: left; padding: 18px 0; margin: 0 auto; max-width: 330px; }
+body.studio-workspace .welcome-steps li { display: flex; align-items: flex-start; gap: 12px; }
+body.studio-workspace .welcome-steps li > span { display: grid; flex: 0 0 26px; height: 26px; place-items: center; border: 1px solid var(--border); border-radius: 8px; font-size: 11px; color: var(--accent); }
+body.studio-workspace .welcome-steps strong { display: block; font-size: 12px; color: var(--text); }
+body.studio-workspace .welcome-steps small { display: block; font-size: 11px; color: var(--text-muted); line-height: 1.6; margin-top: 3px; }
+@media (max-width: 760px) {
+  body.studio-workspace #qa-start .modal-head { padding: 18px 20px; }
+  body.studio-workspace #qa-start .modal-body { grid-template-columns: minmax(0, 1fr); gap: 22px; padding: 20px; }
+  body.studio-workspace #qa-start .route-section-nav { position: static; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  body.studio-workspace #qa-start .route-section-nav > p, body.studio-workspace #qa-start .journey-nav-note { display: none; }
+  body.studio-workspace #qa-start .route-section-nav > button { flex-direction: column; gap: 6px; padding: 9px 4px; min-height: 64px; text-align: center; font-size: 11px; }
+  body.studio-workspace #qa-start .route-section-nav button small { display: none; }
+  body.studio-workspace #qa-start .modal-foot { flex-wrap: wrap; padding: 12px 20px; gap: 10px; }
+  body.studio-workspace #qa-start .journey-footer-hint { order: -1; flex-basis: 100%; }
+  body.studio-workspace #qa-start .modal-foot > .btn-primary { flex: 1; }
+  body.studio-workspace #qa-start .journey-connection { flex-wrap: wrap; }
+  body.studio-workspace #qa-start .route-page-mark { display: none; }
+  body.studio-workspace #qa-start .route-page-back { font-size: 11px; padding-inline: 8px; }
+}
+@media (prefers-reduced-motion: reduce) { body.studio-workspace #qa-start * { scroll-behavior: auto !important; transition: none !important; } }

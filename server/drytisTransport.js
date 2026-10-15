@@ -325,7 +325,7 @@ function jsonBytes(payload, maximum) {
 /** Create a fail-closed, signed JSON delivery client for Qase -> Drytis events/results. */
 export function createDrytisDeliveryClient({
 	config, fetchImpl = fetch, now = Date.now,
-	createNonce = () => randomBytes(24).toString('base64url'),
+	createNonce = () => randomBytes(24).toString('hex'),
 	createTimeoutSignal = timeoutMs => AbortSignal.timeout(timeoutMs)
 } = {}) {
 	if (!config?.signingKey || !Array.isArray(config.allowedOrigins)

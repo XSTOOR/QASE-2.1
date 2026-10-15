@@ -263,18 +263,36 @@ export function createBrowserPolicy({
 	now = () => Date.now(),
 	confirmationTtlMs = DEFAULT_CONFIRMATION_TTL_MS
 } = {}) {
-	const production = String(environment.NODE_ENV ?? '').toLowerCase() === 'production';
+	const nodeEnvironment = String(environment.NODE_ENV ?? '').toLowerCase();
+	const production = nodeEnvironment === 'production';
+	const privateNetworkDisabled = nodeEnvironment === 'development'
+		&& String(environment.QASE_ALLOW_PRIVATE_NETWORK ?? '') === 'true';
 	const allowedOrigins = splitCsv(environment.QASE_BROWSER_ALLOWED_ORIGINS)
 		.map(parseOriginRule).filter(Boolean);
 	const allowedPrivateHosts = splitCsv(environment.QASE_BROWSER_ALLOWED_PRIVATE_HOSTS);
+	// The instance's own public origin is always reachable: it is the
+	// operator's own service (the dashboard and its demo site), never an
+	// attacker-controlled target. This keeps internal E2E runs and
+	// self-testing working even when the origin resolves to reserved space.
+	const ownOriginHost = (() => {
+		const origin = String(environment.QASE_PUBLIC_URL ?? '').trim();
+		if (!origin) return undefined;
+		try {
+			return new URL(origin).hostname;
+		} catch {
+			return undefined;
+		}
+	})();
 	let pendingConfirmation;
 	let grant;
 	const observedMeetingLinks = new Set();
 
-	const privateHostAllowed = hostname => allowedPrivateHosts.some(rule => hostRuleMatches(hostname, rule));
+	const privateHostAllowed = hostname =>
+		(ownOriginHost !== undefined && cleanHost(hostname) === ownOriginHost)
+		|| allowedPrivateHosts.some(rule => hostRuleMatches(hostname, rule));
 
 	async function validatePublicDestination(url) {
-		if (!production || privateHostAllowed(url.hostname)) {
+		if (privateNetworkDisabled || privateHostAllowed(url.hostname)) {
 			return success(url);
 		}
 		const hostname = cleanHost(url.hostname);
@@ -341,6 +359,15 @@ export function createBrowserPolicy({
 		if (!parsedTarget.allowed) return parsedTarget;
 		const target = parsedTarget.url;
 		if (url.origin === target.origin) return success(url);
+		// Studio meeting links hand off to the meeting app through buttons and
+		// redirects. Treat only that exact declared room as a target alias;
+		// never grant the entire meeting origin or another room.
+		if (target.origin === 'https://studio.drytis.ai' &&
+			url.origin === 'https://meeting.drytis.dev' &&
+			/^\/meeting\/mtg-[A-Za-z0-9_-]+$/.test(target.pathname) &&
+			url.pathname === target.pathname) {
+			return success(url);
+		}
 		// A same-host HTTP to HTTPS redirect is a common, strictly safer upgrade.
 		if (target.protocol === 'http:' && url.protocol === 'https:' &&
 			cleanHost(target.hostname) === cleanHost(url.hostname) &&

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qase-evidence
+  namespace: qase
+spec:
+  accessModes:
+    - ReadWriteMany
+  # Replace with the cluster's durable shared-filesystem storage class.
+  storageClassName: replace-with-rwx-storage-class
+  resources:
+    requests:
+      storage: 50Gi

@@ -3,6 +3,10 @@ import { EventEmitter } from 'node:events';
 import { createRuntimeApplicationServices } from './localServices.js';
 import { currentRequestActor } from './requestActor.js';
 import { DEFAULT_DEVICE_ID, isDeviceId } from './deviceProfiles.js';
+import { isEngineId } from './browserEngines.js';
+import { aggregateSessionFindings, applyStatusTiming, setFindingStatus, timingForEvent, markReportPhase, markExecutionStarted } from './store.js';
+import { createPostgresFeedbackRepository } from './postgres/feedbackRepository.js';
+import { normalizeQaScopeSelection } from '../public/qaScopeCatalog.js';
 
 function clone(value) {
 	return structuredClone(value);
@@ -23,8 +27,10 @@ function createSession(title, now, options = {}) {
 		status: 'idle',
 		mode: 'qa',
 		targetUrl: options.targetUrl,
+		engine: isEngineId(options.engine) ? options.engine : 'chromium',
 		device: isDeviceId(options.device) ? options.device : DEFAULT_DEVICE_ID,
 		deviceLandscape: options.deviceLandscape === true,
+		cohort: options.cohort === 'pilot' ? 'pilot' : undefined,
 		messages: [],
 		activities: [],
 		findings: structuredClone(options.findings ?? []),
@@ -32,7 +38,21 @@ function createSession(title, now, options = {}) {
 		report: undefined,
 		pendingQuestion: undefined,
 		contextUsage: undefined,
+		tokenUsage: undefined,
 		secretNames: [],
+		/** Selected standard QA test ids; undefined = full coverage. */
+		selectedTests: options.selectedTests ? [...options.selectedTests] : undefined,
+		/** Security testing authorization for runs with security checks. */
+		securityAuthorization: options.securityAuthorization
+			? structuredClone(options.securityAuthorization)
+			: undefined,
+		/** Compatibility environment this run executes in (frozen snapshot). */
+		environmentId: options.environmentId,
+		environmentSnapshot: options.environmentSnapshot ? structuredClone(options.environmentSnapshot) : undefined,
+		/** Test case this run executes (frozen snapshot). */
+		testCaseId: options.testCaseId,
+		/** #14633 (NI02 Phase 1): matrix run that spawned this session, if any. */
+		matrixRunId: options.matrixRunId,
 		ownerUserId: options.ownerUserId ?? currentRequestActor()?.actorUserId ?? options.tenantContext?.actorUserId
 	};
 	if (options.drytisIntegration !== undefined) {
@@ -48,13 +68,32 @@ function summary(session) {
 		status: session.status,
 		mode: session.mode === 'sqa' || session.mode === 'founder' ? session.mode : 'qa',
 		targetUrl: session.targetUrl,
+		engine: isEngineId(session.engine) ? session.engine : 'chromium',
 		device: isDeviceId(session.device) ? session.device : DEFAULT_DEVICE_ID,
 		deviceLandscape: session.deviceLandscape === true,
 		createdAt: session.createdAt,
 		updatedAt: session.updatedAt,
+		startedAt: session.startedAt,
+		completedAt: session.completedAt,
+		pausedAt: session.pausedAt,
+		pausedSeconds: session.pausedSeconds ?? 0,
+		durationSeconds: liveDurationSeconds(session),
 		findingCount: session.findings.length,
-		messageCount: session.messages.length
+		messageCount: session.messages.length,
+		...(session.report?.verdict ? { reportVerdict: session.report.verdict } : {}),
+		tokenUsage: session.tokenUsage
 	};
+}
+
+/** Live active-execution seconds (paused time excluded), from server stamps. */
+export function liveDurationSeconds(session, now = Date.now()) {
+	if (session.startedAt === undefined) return undefined;
+	const pausedSeconds = session.pausedSeconds ?? 0;
+	if (session.pausedAt !== undefined) {
+		return Math.max(0, Math.floor((session.pausedAt - session.startedAt) / 1000 - pausedSeconds));
+	}
+	const end = session.completedAt ?? now;
+	return Math.max(0, Math.floor((end - session.startedAt) / 1000 - pausedSeconds));
 }
 
 function eventActor(type, payload, tenantContext) {
@@ -85,11 +124,13 @@ function eventActor(type, payload, tenantContext) {
 export function createPostgresApplicationServices({
 	repository,
 	tenantContext,
+	deviceRuntime,
 	eventTransport,
 	auth,
 	hydrateAll = true,
 	now = () => Date.now(),
-	recoverActiveRuns = true
+	recoverActiveRuns = true,
+	feedbackRepository
 }) {
 	if (!repository || typeof repository !== 'object') {
 		throw new TypeError('A PostgreSQL run repository is required.');
@@ -198,6 +239,10 @@ export function createPostgresApplicationServices({
 	}
 
 	const runStore = {
+		// #14649: raw event-bus emitter for non-session event sources (matrix
+		// orchestrator progress keyed by matrix-run id); SSE subscribes via
+		// subscribe() which prefers the transport when configured.
+		bus,
 		async load() {
 			await eventTransport?.load();
 			await repository.bootstrapTenant();
@@ -214,16 +259,31 @@ export function createPostgresApplicationServices({
 			// its browser/model handles, so preserve the established interrupted
 			// recovery behavior and clear vault names whose values no longer exist.
 			for (const session of recoverActiveRuns ? sessions.values() : []) {
-				const wasActive = session.status === 'running' || session.status === 'awaiting_input';
+				const wasRunning = session.status === 'running';
+				const wasWaiting = session.status === 'awaiting_input';
+				const wasActive = wasRunning || wasWaiting;
 				const hadSecretNames = (session.secretNames?.length ?? 0) > 0;
 				if (!wasActive && !hadSecretNames) continue;
 				if (wasActive) {
-					session.status = 'interrupted';
-					session.pendingQuestion = undefined;
+					session.interruptedFromRun = wasRunning;
+					if (wasRunning) {
+						session.status = 'interrupted';
+						session.pendingQuestion = undefined;
+					}
+					// A tool executing when the process died can never return; left
+					// "running" it would veto report publication forever after the
+					// run is resumed.
+					for (const activity of Array.isArray(session.activities) ? session.activities : []) {
+						if (activity && activity.status === 'running') {
+							activity.status = 'failed';
+							activity.error = 'Interrupted by a server restart before this tool returned.';
+						}
+					}
 				}
 				session.secretNames = [];
 				await commit(session, 'run.recovered', {
-					interrupted: wasActive,
+					interrupted: wasRunning,
+					waitingPreserved: wasWaiting,
 					clearedSecretNames: hadSecretNames
 				});
 			}
@@ -275,6 +335,35 @@ export function createPostgresApplicationServices({
 				.slice(0, Math.min(100, Math.max(1, Number(options?.limit) || 100)))
 				.map(summary);
 		},
+		/**
+		 * Unscoped accessors, two consumers:
+		 * - Operator feedback-review endpoint (app.js /api/analytics/feedback):
+		 *   request-scoped get/list filter by the current actor, which would
+		 *   hide pilot users' sessions from the operator. The caller re-applies
+		 *   its own role gate before use.
+		 * - Coverage aggregation (Phase 7): the matrix needs every
+		 *   case×environment pair's latest run. PostgreSQL is authoritative:
+		 *   repository.loadAll() hydrates full records for the tenant.
+		 */
+		async listAll(options) {
+			if (typeof repository.listAll === 'function') return repository.listAll(options);
+			if (typeof repository.loadAll === 'function') {
+				const records = await repository.loadAll();
+				return records.map(record => record.session).filter(Boolean);
+			}
+			return [...sessions.values()]
+				.sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+				.slice(0, Math.min(100, Math.max(1, Number(options?.limit) || 100)))
+				.map(summary);
+		},
+		async getAny(id) {
+			// Same lookup as get(), minus the owner filter.
+			if (queues.has(id) && sessions.has(id)) return sessions.get(id);
+			const record = typeof repository.get === 'function'
+				? await repository.get(id)
+				: (await repository.loadAll()).find(candidate => candidate.session.id === id);
+			return record ? installRecord(record) : sessions.get(id);
+		},
 		async delete(id) {
 			const session = sessions.get(id);
 			if (!session) return false;
@@ -304,6 +393,29 @@ export function createPostgresApplicationServices({
 			}
 			return repository.recordCleanup(id, options);
 		},
+		async durationAnalytics(options = {}) {
+			if (typeof repository.durationAnalytics !== 'function') {
+				return { runCount: 0, byTarget: [] };
+			}
+			return repository.durationAnalytics(options);
+		},
+		async targetDurationHistory(targetUrl, options = {}) {
+			if (typeof repository.targetDurationHistory !== 'function') {
+				return [];
+			}
+			return repository.targetDurationHistory(targetUrl, options);
+		},
+		/** Project-level Founder Mode state (Phase 3), tenant-scoped. */
+		async getFounderProjectState() {
+			if (typeof repository.getFounderProjectState !== 'function') return undefined;
+			return repository.getFounderProjectState();
+		},
+		async saveFounderProjectState(state) {
+			if (typeof repository.saveFounderProjectState !== 'function') {
+				throw new TypeError('Founder project state persistence is not supported by this repository.');
+			}
+			return repository.saveFounderProjectState(state);
+		},
 		commit,
 		async addMessage(session, message) {
 			const entry = { id: randomUUID(), ts: now(), ...message };
@@ -327,10 +439,63 @@ export function createPostgresApplicationServices({
 			await commit(session, 'activity', { activity: entry });
 			return entry;
 		},
-		async setStatus(session, status, detail) {
-			session.status = status;
-			await commit(session, 'status', { status, detail });
-		},
+	async setStatus(session, status, detail) {
+		const before = { pausedAt: session.pausedAt, pausedSeconds: session.pausedSeconds ?? 0 };
+		applyStatusTiming(session, status);
+		session.status = status;
+		// On resume (pausedAt cleared), tell the repository how much pause time
+		// to accumulate into the persisted paused_seconds column.
+		if (before.pausedAt !== undefined && session.pausedAt === undefined) {
+			session.resumedPauseSeconds = Math.max(0, (Date.now() - before.pausedAt) / 1000);
+		} else {
+			session.resumedPauseSeconds = 0;
+		}
+		if (status === 'error' && detail && session.failureReason === undefined) {
+			session.failureReason = String(detail);
+		}
+		await commit(session, 'status', { status, detail, timing: timingForEvent(session) });
+	},
+	async setFindingStatus(session, findingId, patch) {
+		// Mutate the in-memory aggregate first (validation happens there),
+		// then persist durably through the queued event log exactly like every
+		// other run mutation. On version conflict the failed save restores the
+		// last committed snapshot, so the optimistic lock stays sound.
+		const finding = setFindingStatus(session, findingId, patch ?? {});
+		await commit(session, 'finding_status', { finding });
+		return finding;
+	},
+	async aggregateFindings(options) {
+		// Aggregates over the loaded in-memory run aggregates, mirroring the
+		// local store's semantics including owner scoping.
+		return aggregateSessionFindings(sessions.values(), {
+			...options,
+			ownerUserId: options?.ownerUserId ?? currentRequestActor()?.actorUserId ?? tenantContext?.actorUserId
+		});
+	},
+	markReportPhase(session, phase) {
+		markReportPhase(session, phase);
+	},
+	markExecutionStarted(session) {
+		markExecutionStarted(session);
+	},
+	/** Persist execution-level facts on a run by mutating session + committing. */
+	async persistExecutionFacts(runId, { executionLevel, executionProviderActual, runtimeFacts } = {}) {
+		const session = sessions.get(runId);
+		if (!session) return null;
+		if (executionLevel !== undefined) session.executionLevel = executionLevel;
+		if (executionProviderActual !== undefined) session.executionProviderActual = executionProviderActual;
+		if (runtimeFacts !== undefined) session.runtimeFacts = runtimeFacts;
+		try {
+			await commit(session, 'execution_facts', {
+				executionLevel: session.executionLevel,
+				executionProviderActual: session.executionProviderActual,
+				runtimeFacts: session.runtimeFacts
+			});
+		} catch (error) {
+			console.warn('[qase] failed to persist execution facts:', error?.message ?? error);
+		}
+		return session;
+	},
 		publish,
 		subscribe(sessionId, listener) {
 			if (eventTransport) return eventTransport.subscribe(sessionId, listener);
@@ -375,7 +540,15 @@ export function createPostgresApplicationServices({
 		}
 	};
 
-	const services = createRuntimeApplicationServices(runStore, { auth });
+	const services = createRuntimeApplicationServices(runStore, {
+		auth,
+		deviceRuntime,
+		feedbackStore: feedbackRepository ?? createPostgresFeedbackRepository({ pool: repository.pool ?? repository, tenantContext })
+	});
+	// In PostgreSQL mode the Redis transport is the global event fan-out.
+	if (eventTransport && typeof eventTransport.subscribeGlobal === 'function') {
+		services.events.subscribeGlobal = eventTransport.subscribeGlobal.bind(eventTransport);
+	}
 	services.tenantContext = tenantContext;
 	services.realtime = eventTransport;
 	return services;

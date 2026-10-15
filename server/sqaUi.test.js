@@ -6,20 +6,21 @@ const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf
 const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
 
-test('SQA launcher exposes an accessible, authorization-gated scope dialog and result tab', () => {
-	assert.match(html, /id="new-sqa"[^>]+aria-label="Start SQA assessment"[^>]+data-feature="sqa"/);
+test('Quality launcher exposes an accessible recommended review with optional advanced scope', () => {
+	assert.match(html, /id="new-sqa"[^>]+aria-label="Start quality review"[^>]+data-feature="sqa"/);
 	assert.match(html, /class="feature-label">SQA<\/span>/);
 	assert.match(html, /<dialog[^>]+id="sqa-start"[^>]+aria-labelledby="sqa-start-title"/);
 	assert.match(html, /id="sqa-authorization"[^>]+type="checkbox"[^>]+required/);
-	for (const id of ['sqa-target-name', 'sqa-target-url', 'sqa-target-release', 'sqa-target-environment']) {
-		assert.match(html, new RegExp(`id="${id}"[^>]+required`));
+	assert.match(html, /id="sqa-target-url"[^>]+type="url"[^>]+required/);
+	assert.match(html, /id="sqa-customize"/);
+	assert.match(html, /id="sqa-selection-summary"[^>]+aria-live="polite"/);
+	for (const id of ['sqa-target-name', 'sqa-target-release', 'sqa-target-environment']) {
+		assert.doesNotMatch(html, new RegExp(`id="${id}"[^>]+required`));
 	}
-	assert.match(html, /id="sqa-target-url"[^>]+type="url"/);
 	assert.match(html, /id="tab-sqa"[^>]+role="tab"[^>]+aria-controls="pane-sqa"/);
 	assert.match(html, /id="pane-sqa"[^>]+role="tabpanel"[^>]+aria-labelledby="tab-sqa"/);
 	assert.match(html, /id="sqa-scope-guidance"[^>]+role="note"/);
-	assert.match(html, /Sector profiles and broad or all-attribute selections also require external artifacts/);
-	assert.match(html, /Authenticated workflows may require test credentials/);
+	assert.match(html, /Some standards require documents, approvals, security reports, or independent review/);
 });
 
 test('SQA frontend uses the authenticated API contract and safe DOM construction', () => {
@@ -31,7 +32,7 @@ test('SQA frontend uses the authenticated API contract and safe DOM construction
 	assert.match(app, /case 'sqa':/);
 	assert.match(app, /if \(event\.final\) session\.sqa\.finalizedAt/);
 	assert.match(app, /else delete session\.sqa\.finalizedAt/);
-	assert.match(app, /if \(event\.final\) toast\('SQA assessment published\.'/);
+	assert.match(app, /if \(event\.final\) toast\('Quality review published\.'/);
 	const renderer = app.slice(app.indexOf('function renderSqa()'), app.indexOf('function connect(id)'));
 	assert.ok(renderer.length > 1_000, 'SQA renderer block should be discoverable');
 	assert.doesNotMatch(renderer, /\b(?:innerHTML|outerHTML|insertAdjacentHTML)\b/);
@@ -45,18 +46,20 @@ test('SQA frontend uses the authenticated API contract and safe DOM construction
 	assert.match(app, /'Mixed evidence incomplete'/);
 	assert.match(app, /'Automated check blocked \/ not run'/);
 	assert.match(app, /Deterministic verdict: Blocked\. No control failures were recorded/);
+	assert.match(app, /encrypted locally for this run and deleted when the run ends/i);
+	assert.doesNotMatch(app, /Held in this server's memory only/);
 	assert.match(styles, /\.sqa-technical-summary/);
 	assert.match(styles, /\.sqa-unresolved-group/);
 });
 
 test('finalized SQA assessments expose professional report export actions', () => {
-	assert.match(app, /if \(lifecycle\.finalized && assessment\) el\.sqaView\.append\(renderSqaReportActions\(\)\)/);
+	assert.match(app, /if \(lifecycle\.finalized\) el\.sqaView\.append\(renderSqaReportActions\(\)\)/);
 	assert.match(app, /function renderSqaReportActions\(\)/);
-	assert.match(app, /aria-label', 'SQA assessment report actions'/);
+	assert.match(app, /aria-label', 'Quality review report actions'/);
 	assert.match(app, /apiText\(`\/sessions\/\$\{state\.sessionId\}\/report\.md`\)/);
 	assert.match(app, /qase-sqa-assessment\.md/);
 	assert.match(app, /downloadReportPdf\('qase-sqa-assessment\.pdf'\)/);
-	assert.match(app, /SQA assessment copied to the clipboard/);
+	assert.match(app, /Quality review copied to the clipboard/);
 });
 
 test('the generic Report tab renders finalized SQA assessments instead of checking the QA report field', () => {

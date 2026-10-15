@@ -14,6 +14,7 @@ data:
   NODE_ENV: production
   QASE_RUN_STORE: postgres
   QASE_EXECUTION_MODE: distributed
+  QASE_ARTIFACT_DIR: /app/evidence
   QASE_DATABASE_SSL: require
   QASE_DATABASE_POOL_MIN: "0"
   QASE_DATABASE_POOL_MAX: "10"
@@ -150,9 +151,12 @@ spec:
             capabilities: { drop: ["ALL"] }
           volumeMounts:
             - { name: runtime, mountPath: /app/.qase }
+            - { name: evidence, mountPath: /app/evidence }
             - { name: temp, mountPath: /tmp }
       volumes:
         - { name: runtime, emptyDir: {} }
+        - name: evidence
+          persistentVolumeClaim: { claimName: qase-evidence }
         - { name: temp, emptyDir: {} }
 ---
 apiVersion: v1
@@ -241,11 +245,14 @@ spec:
             capabilities: { drop: ["ALL"] }
           volumeMounts:
             - { name: runtime, mountPath: /app/.qase }
+            - { name: evidence, mountPath: /app/evidence }
             - { name: temp, mountPath: /tmp }
             - { name: shm, mountPath: /dev/shm }
             - { name: cache, mountPath: /home/node/.cache }
       volumes:
         - { name: runtime, emptyDir: {} }
+        - name: evidence
+          persistentVolumeClaim: { claimName: qase-evidence }
         - { name: temp, emptyDir: {} }
         - { name: cache, emptyDir: {} }
         - name: shm

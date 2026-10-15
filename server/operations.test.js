@@ -54,6 +54,28 @@ test('mutation concurrency rejects excess work without limiting reads', async t 
 	assert.equal((await first).status, 200);
 	assert.match(await controls.render(), /qase_http_overload_rejections_total 1/);
 });
+test('token usage counters accumulate by kind and mode', async () => {
+	const controls = createOperationalControls({ environment: {} });
+	controls.observeTokens({ kind: 'input', mode: 'qa', value: 1500 });
+	controls.observeTokens({ kind: 'output', mode: 'qa', value: 350 });
+	controls.observeTokens({ kind: 'total', mode: 'qa', value: 1850 });
+	controls.observeTokens({ kind: 'input', mode: 'sqa', value: 100 });
+	controls.observeTokens({ kind: 'input', mode: 'qa', value: 500 });
+	// Invalid observations are ignored, never crash, and never emit garbage.
+	controls.observeTokens({ kind: 'bogus', mode: 'qa', value: 10 });
+	controls.observeTokens({ kind: 'input', mode: 'qa', value: Number.NaN });
+	controls.observeTokens(undefined);
+
+	const metrics = await controls.render();
+	assert.match(metrics, /# HELP qase_model_tokens_total Model tokens consumed by runs, from provider reports or estimates/);
+	assert.match(metrics, /# TYPE qase_model_tokens_total counter/);
+	assert.match(metrics, /qase_model_tokens_total\{kind="input",mode="qa"\} 2000/);
+	assert.match(metrics, /qase_model_tokens_total\{kind="input",mode="sqa"\} 100/);
+	assert.match(metrics, /qase_model_tokens_total\{kind="output",mode="qa"\} 350/);
+	assert.match(metrics, /qase_model_tokens_total\{kind="total",mode="qa"\} 1850/);
+	assert.doesNotMatch(metrics, /bogus/);
+	assert.doesNotMatch(metrics, /NaN/);
+});
 
 test('Drytis source-review mutations share the bounded API concurrency guard', async t => {
 	let release;

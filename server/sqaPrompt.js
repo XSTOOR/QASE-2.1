@@ -2,6 +2,7 @@ import { describeDeviceForPrompt } from './deviceProfiles.js';
 import { BROWSER_WORKFLOW_GUIDANCE } from './browserWorkflowPrompt.js';
 import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { AGENT_EVIDENCE_TYPES } from './sqaService.js';
+import { countSqaBrowserActivities, SQA_BROWSER_TOOL_BUDGET } from './sqaBrowserBudget.js';
 
 /** Build the bounded, standards-informed operating brief for a CleanSlate SQA run. */
 export function buildSqaContext(session, liveUrl) {
@@ -37,8 +38,11 @@ export function buildSqaContext(session, liveUrl) {
 	const assuranceIds = scope.applicableControlIds.filter(id => !browserFirstIds.includes(id));
 	const pendingIds = scope.applicableControlIds.filter(id => !observations.has(id) || observations.get(id)?.status === 'not_assessed');
 	const recorded = scope.applicableControlIds.length - pendingIds.length;
+	const browserToolsUsed = countSqaBrowserActivities(session);
+	const browserToolsRemaining = Math.max(0, SQA_BROWSER_TOOL_BUDGET - browserToolsUsed);
 	const progress = `Recorded controls: ${recorded}/${scope.applicableControlIds.length}.
 Pending control IDs: ${pendingIds.join(', ') || 'none'}.
+Browser tool budget: ${browserToolsUsed}/${SQA_BROWSER_TOOL_BUDGET} used; ${browserToolsRemaining} remaining.
 Do not repeat recorded controls unless correcting a rejected or incomplete result.`;
 
 	return `# Role
@@ -96,10 +100,15 @@ ${scope.scopeNotes ? `Scope notes: ${scope.scopeNotes}` : ''}
    the browser-first technical controls below before reviewer-only assurance
    controls, grouped by workflow to avoid repetition.
 3. Prefer roles, labels, text, placeholders, and test ids. Re-snapshot after
-   state changes. Confirm apparent defects twice and rule out overlays.
+   state changes. Confirm apparent defects twice and rule out overlays. Try at
+   most two verified locator strategies for one target; if neither works,
+   record the precise blocker or defect and continue the plan. Do not guess
+   coordinates after semantic locators fail.
 4. Exercise positive, negative, boundary, state-transition, keyboard,
    responsive, recovery, console/network, security-header, privacy-facing, and
    localization checks only where the declared scope and oracle support them.
+   Use at most 12 observed Tab/Shift+Tab steps per workflow; that is enough to
+   detect a focus trap or reachability gap without cycling through the page.
 5. Record each pending applicable control. Use record_sqa_control for technical
    pass/fail and for blockers with useful partial browser evidence. The tool
    accepts either one result or a controls batch of up to 12 results; batch only
@@ -114,6 +123,10 @@ ${scope.scopeNotes ? `Scope notes: ${scope.scopeNotes}` : ''}
    incomplete pass evidence, and unresolved authentication scope. The host—not
    you—computes the final verdict. PASS can occur only when every mandatory
    applicable control has sufficient evidence and no gate is open.
+7. Treat the browser-tool budget in Progress as a hard ceiling. When it reaches
+   zero, stop browser work immediately, record remaining browser-dependent
+   controls as blocked from the evidence already collected, batch the
+   reviewer-only blockers, complete the plan, and call finish_sqa_assessment.
 
 ${BROWSER_WORKFLOW_GUIDANCE}
 

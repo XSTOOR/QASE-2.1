@@ -12,6 +12,7 @@ const REQUIRED_METHODS = {
 		'load', 'create', 'get', 'list', 'delete',
 		'commit', 'addMessage', 'addActivity', 'updateActivity', 'setStatus'
 	],
+	feedback: ['create', 'get', 'list', 'update', 'remove', 'stats', 'forRun'],
 	events: ['publish', 'subscribe'],
 	configuration: ['getPublic', 'save', 'testConnection'],
 	secrets: ['clear', 'names', 'store'],

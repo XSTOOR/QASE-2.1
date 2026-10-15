@@ -4,6 +4,7 @@ import { test } from 'node:test';
 
 const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+const serverApp = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
 const founderView = readFileSync(new URL('../public/founderView.js', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
 
@@ -11,7 +12,7 @@ test('feature dock exposes one accessible launcher per mode outside the working 
 	assert.match(html, /<nav class="feature-dock" aria-label="Qase features">/);
 	for (const [id, label, feature, tip] of [
 		['new-run', 'Start standard QA run', 'qa', 'feature-tip-qa'],
-		['new-sqa', 'Start SQA assessment', 'sqa', 'feature-tip-sqa'],
+		['new-sqa', 'Start quality review', 'sqa', 'feature-tip-sqa'],
 		['new-founder', 'Start Founder Mode review', 'founder', 'feature-tip-founder']
 	]) {
 		assert.equal((html.match(new RegExp(`id="${id}"`, 'g')) ?? []).length, 1);
@@ -29,16 +30,13 @@ test('Founder launcher matches the authenticated API input contract and limits',
 		['founder-target-release', 200],
 		['founder-target-environment', 100],
 		['founder-target-url', 8192],
-		['founder-stage', 200],
-		['founder-business-model', 500],
-		['founder-target-customer', 1000],
 		['founder-primary-goal', 1000],
 		['founder-constraints', 2000]
 	]) assert.match(html, new RegExp(`id="${id}"[^>]+maxlength="${maximum}"`));
-	assert.match(html, /id="founder-target-name"[^>]+required/);
 	assert.match(html, /id="founder-target-url"[^>]+type="url"[^>]+required/);
 	assert.match(html, /id="founder-authorization"[^>]+type="checkbox"[^>]+required/);
-	assert.match(html, /id="founder-competitors"[^>]+aria-describedby="founder-competitors-note"/);
+	// Business context the model can infer from the URL is no longer asked for.
+	assert.doesNotMatch(html, /id="founder-(?:stage|business-model|target-customer|competitors)"/);
 	assert.match(html, /id="founder-catalog-meta"[^>]+aria-live="polite"/);
 	assert.match(html, /id="tab-founder"[^>]+role="tab"[^>]+aria-controls="pane-founder"[^>]+hidden/);
 	assert.match(html, /id="pane-founder"[^>]+role="tabpanel"[^>]+aria-labelledby="tab-founder"/);
@@ -48,7 +46,7 @@ test('Founder frontend creates an idle scope, then starts through the existing m
 	assert.match(app, /api\('\/founder\/catalog'\)/);
 	assert.match(app, /api\('\/founder\/sessions',\s*\{\s*method:\s*'POST'/);
 	assert.match(app, /authorizationConfirmed:\s*true/);
-	assert.match(app, /target,\s*device:[^,]+,\s*deviceLandscape:[^,]+,\s*\.\.\.\(Object\.keys\(productContext\)\.length/);
+	assert.match(app, /target,\s*device:[^,]+,\s*deviceLandscape:[^,]+,\s*environmentId:[^,]+,\s*\.\.\.\(Object\.keys\(productContext\)\.length/);
 	assert.match(app, /api\(`\/sessions\/\$\{session\.id\}\/message`,\s*\{/);
 	assert.match(app, /JSON\.stringify\(\{ text: `Review \$\{targetUrl\}` \}\)/);
 	assert.match(app, /case 'founder\.created':/);
@@ -65,13 +63,13 @@ test('Founder result rendering is safe, mode-scoped, and covers the full decisio
 	assert.match(renderer, /session\?\.mode !== 'founder'/);
 	for (const heading of [
 		'Executive thesis',
-		'UI, UX & product findings',
+		'What to improve',
 		'ICP & positioning',
 		'Sales & GTM',
 		'Marketing & growth',
 		'Monetization & pricing',
-		'Prioritized opportunities',
-		'Quick wins',
+		'What to build next',
+		'What to do first',
 		'30 \/ 60 \/ 90 roadmap',
 		'Risks & assumptions',
 		'Metrics & experiments',
@@ -102,11 +100,59 @@ test('the generic Report tab renders the finalized Founder brief and live finali
 });
 
 test('feature dock reserves a fourth desktop column and becomes a bottom dock responsively', () => {
-	assert.match(styles, /@media \(min-width: 1281px\)[\s\S]*?\.cli-theme \.app\s*\{[\s\S]*?grid-template-columns:[^;]+58px;/);
-	assert.match(styles, /@media \(max-width: 1280px\) and \(min-width: 1101px\)[\s\S]*?\.cli-theme \.app\s*\{[\s\S]*?grid-template-columns:[^;]+56px;/);
+	assert.match(styles, /@media \(min-width: 1281px\)[\s\S]*?\.app\s*\{[\s\S]*?grid-template-columns:[^;]+58px;/);
+	assert.match(styles, /@media \(max-width: 1280px\) and \(min-width: 1101px\)[\s\S]*?\.app\s*\{[\s\S]*?grid-template-columns:[^;]+56px;/);
+	assert.match(styles, /@media \(min-width: 1281px\)[\s\S]*?\.cli-theme \.app\s*\{[\s\S]*?grid-template-columns:[^;]+76px;/);
+	assert.match(styles, /@media \(max-width: 1280px\) and \(min-width: 1101px\)[\s\S]*?\.cli-theme \.app\s*\{[\s\S]*?grid-template-columns:[^;]+76px;/);
 	assert.match(styles, /@media \(max-width: 1100px\)[\s\S]*?\.feature-dock\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?bottom:\s*9px;/);
+	assert.match(styles, /@media \(min-width: 1281px\)[\s\S]*?\.cli-theme \.app\s*\{[\s\S]*?grid-template-columns:[^;]+58px;/);
+	assert.match(styles, /@media \(max-width: 1280px\) and \(min-width: 1024px\)[\s\S]*?\.cli-theme \.app\s*\{[\s\S]*?grid-template-columns:[^;]+52px;/);
+	assert.match(styles, /@media \(max-width: 1023px\)[\s\S]*?\.feature-dock\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?bottom:\s*9px;/);
 	assert.match(styles, /\.feature-action:focus-visible \.feature-tooltip/);
 	assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.feature-tooltip/);
 	assert.match(styles, /\.founder-evidence-grid/);
 	assert.match(styles, /\.founder-boundary/);
+});
+
+test('Phase 4 — selection controls gate an explicit send; selection alone never delivers', () => {
+	assert.match(founderView, /send\.dataset\.role = 'send-to-studio'/);
+	assert.match(founderView, /send\.disabled = selections\.size === 0 \|\| pending/);
+	assert.match(founderView, /const pending = handoff\?\.status === 'pending'/);
+	assert.match(founderView, /send\.onclick = \(\) => onSendToStudio\?\.\(\[\.\.\.selections\]\)/);
+	// checkbox toggle only persists selections — no send on change
+	assert.match(founderView, /box\.onchange = \(\) => onToggleSelection\?\.\(item\.id, box\.checked\)/);
+	assert.match(app, /onToggleSelection: founderToggleSelection/);
+	assert.match(app, /onSendToStudio: founderSendToStudio/);
+	assert.match(app, /body: JSON\.stringify\(\{ selectedRecommendationIds: ids \}\)/);
+	assert.match(app, /if \(state\.founderProjectState\?\.handoff\?\.status === 'pending'\) return;/);
+});
+
+test('Phase 4 — honest handoff states: pending, succeeded with reference, failed keeps selections, unavailable fallback', () => {
+	assert.match(founderView, /function renderHandoffStatus\(\)/);
+	assert.match(founderView, /founder-handoff-\$\{handoff\.status\}/);
+	assert.match(founderView, /handoff\.status === 'pending'/);
+	assert.match(founderView, /handoff\.status === 'succeeded'/);
+	assert.match(founderView, /handoff\.status === 'failed'/);
+	assert.match(founderView, /handoff\.status === 'unavailable'/);
+	assert.match(founderView, /Reference: \$\{handoff\.reference\}/);
+	assert.match(founderView, /'Copy handoff payload'/);
+	assert.match(founderView, /'Download payload'/);
+	assert.match(app, /onExportHandoff: founderExportHandoff/);
+	assert.match(app, /No build was started/);
+});
+
+test('Phase 5 — no supported recommendations renders a distinct actionable empty state', () => {
+	assert.match(founderView, /No supported recommendations yet/);
+	assert.match(founderView, /only recommends what the observed evidence supports/);
+	assert.match(founderView, /Re-run the review with more product surface covered/);
+	// It must NOT read as an error.
+	assert.doesNotMatch(founderView, /No prioritized recommendations were returned/);
+});
+
+test('Phase 4 — handoff payload is built server-side and scrubbed of secret-looking keys', () => {
+	assert.match(serverApp, /app\.locals\.qaseFounderHandoff/);
+	assert.match(serverApp, /FounderHandoffError/);
+	assert.match(serverApp, /app\.post\('\/api\/founder\/handoff'/);
+	// QA ticket push route untouched
+	assert.match(serverApp, /app\.post\('\/api\/sessions\/:id\/drytis\/push'/);
 });

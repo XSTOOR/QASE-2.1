@@ -15,6 +15,10 @@ test('SQA context makes progress explicit and orders technical smoke checks befo
 			target: { name: 'Example', release: '1', environment: 'test' }
 		}, () => Date.parse('2026-08-17T00:00:00.000Z'))
 	};
+	session.activities = [
+		{ toolName: 'browser_open', status: 'done' },
+		{ toolName: 'browser_snapshot', status: 'done' }
+	];
 	session.sqa.observations.push({
 		controlId: 'SQA-GOV-001', status: 'blocked', rationale: 'No reviewed risk register.', evidence: []
 	});
@@ -29,4 +33,7 @@ test('SQA context makes progress explicit and orders technical smoke checks befo
 	assert.ok(context.indexOf('- SQA-WEB-001 [') < context.indexOf('- SQA-GOV-001 ['));
 	assert.ok(context.indexOf('- SQA-QUA-001 [') < context.indexOf('# Reviewer-only assurance controls'));
 	assert.match(context, /controls batch of up to 12/);
+	assert.match(context, /Browser tool budget: 2\/120 used; 118 remaining/);
+	assert.match(context, /at most 12 observed Tab\/Shift\+Tab steps per workflow/i);
+	assert.match(context, /two verified locator strategies/);
 });

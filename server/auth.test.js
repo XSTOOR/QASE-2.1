@@ -75,6 +75,18 @@ test('local authentication hashes passwords and isolates profiles and memory', a
 		await auth.updateProfile(alice.user.userId, { displayName: 'Alice QA', profile: { timezone: 'Asia/Kolkata' } });
 		assert.equal((await auth.profile(alice.user.userId)).displayName, 'Alice QA');
 		assert.equal((await auth.profile(alice.user.userId)).profile.timezone, 'Asia/Kolkata');
+		// Onboarding flag: defaults false, set once by the welcome checklist,
+		// idempotent on repeat calls, and per-user.
+		assert.equal((await auth.profile(alice.user.userId)).profile.onboardingComplete, false);
+		await auth.updateProfile(alice.user.userId, { profile: { onboardingComplete: true } });
+		assert.equal((await auth.profile(alice.user.userId)).profile.onboardingComplete, true);
+		await auth.updateProfile(alice.user.userId, { profile: { onboardingComplete: true } });
+		assert.equal((await auth.profile(alice.user.userId)).profile.onboardingComplete, true, 'repeat call stays true');
+		assert.equal((await auth.profile(bob.user.userId)).profile.onboardingComplete, false, 'flag is per-user');
+		await assert.rejects(
+			() => auth.updateProfile(alice.user.userId, { profile: { onboardingComplete: 'yes' } }),
+			error => error instanceof AuthError && error.code === 'invalid_profile'
+		);
 		await assert.rejects(() => auth.login({ email: 'alice@example.com', password: 'wrong password' }), error => error instanceof AuthError && error.status === 401);
 	} finally {
 		await auth.close();
@@ -93,4 +105,50 @@ test('memory rejects credential-shaped content and expires/revokes sessions', as
 		await auth.close();
 		await fs.rm(directory, { recursive: true, force: true });
 	}
+});
+
+test('password minimum length is 8 characters across register and change password', async () => {
+	const { auth, directory } = await service();
+	try {
+		await assert.rejects(
+			() => auth.register({ email: 'short@example.com', password: 'seven7c' }),
+			error => error instanceof AuthError && error.code === 'weak_password' && error.status === 400 && /8/.test(error.message)
+		);
+		const user = await auth.register({ email: 'eight@example.com', password: 'eight8ch' });
+		assert.ok(user.token);
+		await assert.rejects(
+			() => auth.changePassword(user.user.userId, { currentPassword: 'eight8ch', password: 'seven7c' }),
+			error => error instanceof AuthError && error.code === 'weak_password' && error.status === 400 && /8/.test(error.message)
+		);
+		await auth.changePassword(user.user.userId, { currentPassword: 'eight8ch', password: 'new8char' });
+		assert.ok((await auth.login({ email: 'eight@example.com', password: 'new8char' })).token);
+		// Existing long passwords remain valid.
+		const long = await auth.register({ email: 'long@example.com', password: 'correct horse battery staple' });
+		assert.ok(long.token);
+	} finally {
+		await auth.close();
+		await fs.rm(directory, { recursive: true, force: true });
+	}
+});
+
+test('throttle map evicts oldest windows instead of refusing new keys', () => {
+	const consume = createAuthThrottle({ now: () => 0 });
+	for (let i = 0; i < 10_000; i++) consume(`attacker-${i}`, 40);
+	assert.equal(consume('ip:legitimate-visitor', 40), true);
+	assert.equal(consume('ip:legitimate-visitor', 40), true);
+	assert.equal(consume('attacker-0', 40), true);
+});
+
+test('users without a stored role are never elevated to owner', async () => {
+	const { auth, directory } = await service();
+	try {
+		const alice = await auth.register({ email: 'norole@example.com', password: 'correct horse battery staple' });
+		const file = path.join(directory, 'auth.json');
+		const state = JSON.parse(await fs.readFile(file, 'utf-8'));
+		delete state.users.find(user => user.email === 'norole@example.com').role;
+		await fs.writeFile(file, JSON.stringify(state));
+		const reloaded = createLocalAuthService({ tenantContext: DEFAULT_TENANT_CONTEXT, file });
+		await reloaded.load();
+		assert.equal((await reloaded.authenticate(alice.token)).role, 'developer');
+	} finally { await fs.rm(directory, { recursive: true, force: true }); }
 });

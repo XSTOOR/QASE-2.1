@@ -12,9 +12,10 @@ const TENANT = Object.freeze({
 	actorRole: 'viewer'
 });
 
-async function fixture() {
+async function fixture({ trustProxy = false } = {}) {
 	const access = createInstanceAccess({ tenantContext: TENANT });
 	const app = express();
+	if (trustProxy) app.set('trust proxy', 1);
 	app.use(express.json());
 	access.mount(app);
 	app.all('/api/probe', (request, response) => response.json(request.auth));
@@ -48,6 +49,19 @@ test('embedded access attributes every API call to the trusted process owner', a
 		role: 'owner'
 	});
 	assert.equal(response.headers.get('cache-control'), 'no-store');
+});
+
+test('forwarded host honours the trusted last proxy hop', async t => {
+	const target = await fixture({ trustProxy: true });
+	t.after(target.close);
+	const response = await fetch(`${target.origin}/api/probe`, {
+		method: 'POST',
+		headers: {
+			origin: 'https://trusted.example',
+			'x-forwarded-host': 'attacker.example, trusted.example'
+		}
+	});
+	assert.equal(response.status, 200);
 });
 
 test('embedded access permits same-origin mutations and rejects cross-origin browser requests', async t => {

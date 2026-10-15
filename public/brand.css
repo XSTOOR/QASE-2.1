@@ -1,0 +1,441 @@
+/* QASE identity: one shared visual system for the workspace and its destinations.
+   Keep interaction/layout mechanics in their owning sheets. The gradient belongs
+   to the mark; interface surfaces stay neutral and functional. */
+body.studio-workspace {
+  --bg: #f6f8fc;
+  --panel-sidebar: #f0f3f9;
+  --panel-chat: #ffffff;
+  --panel-viewer: #f8faff;
+  --surface-1: #ffffff;
+  --surface-2: #f6f8fc;
+  --surface-3: #edf1f8;
+  --surface-hover: #e8edf7;
+  --canvas: #eaf0f8;
+  --border: #e0e6ef;
+  --border-strong: #c5cfde;
+  --text: #142035;
+  --text-secondary: #43516a;
+  --text-muted: #617089;
+  --text-faint: #6b7890;
+  --accent: #315de7;
+  --accent-hover: #244ac4;
+  --accent-soft: #edf1ff;
+  --brand-primary: #315de7;
+  --brand-on-primary: #ffffff;
+  --brand-primary-hover: #2954d6;
+  --brand-mark-image: url("qase-mark.svg");
+  --brand-shadow: 0 16px 56px #0b17351a;
+  --font-ui: "Geist", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+}
+html[data-theme="dark"] body.studio-workspace {
+  --bg: #141414;
+  --panel-sidebar: #111111;
+  --panel-chat: #181818;
+  --panel-viewer: #141414;
+  --surface-1: #202020;
+  --surface-2: #181818;
+  --surface-3: #2a2a2a;
+  --surface-hover: #333333;
+  --canvas: #111111;
+  --border: #343434;
+  --border-strong: #555555;
+  --text: #ffffff;
+  --text-secondary: #d4d4d4;
+  --text-muted: #aaaaaa;
+  --text-faint: #999999;
+  --accent: #ffffff;
+  --accent-hover: #d4d4d4;
+  --accent-soft: #2a2a2a;
+  --accent-softer: #222222;
+  --border-accent: #737373;
+  --accent-glow: none;
+  --success: #e5e5e5;
+  --warning: #e5e5e5;
+  --danger: #ffffff;
+  --critical: #ffffff;
+  --info: #d4d4d4;
+  --success-soft: #2a2a2a;
+  --warning-soft: #2a2a2a;
+  --danger-soft: #2a2a2a;
+  --critical-soft: #2a2a2a;
+  --info-soft: #2a2a2a;
+  --brand-primary: #ffffff;
+  --brand-on-primary: #000000;
+  --brand-primary-hover: #d4d4d4;
+  --brand-mark-image: url("qase-mark-white.svg");
+  --brand-shadow: 0 20px 64px #0005;
+}
+body.studio-workspace :is(button, input, select, textarea) { font-family: var(--font-ui); }
+body.studio-workspace :is(button, a, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+body.studio-workspace ::selection { background: var(--accent-soft); color: var(--text); }
+body.studio-workspace :is(.btn, .sidebar-foot-btn, .feature-action) {
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+body.studio-workspace .btn {
+  min-height: 38px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  box-shadow: none;
+}
+body.studio-workspace .btn-primary {
+  background: var(--brand-primary);
+  border: 1px solid var(--brand-primary);
+  color: var(--brand-on-primary);
+}
+body.studio-workspace .btn-primary:not(:disabled):hover {
+  background: var(--brand-primary-hover);
+  border-color: var(--brand-primary-hover);
+  color: var(--brand-on-primary);
+}
+body.studio-workspace .btn:disabled { opacity: .45; cursor: not-allowed; }
+body.studio-workspace .btn-ghost { background: var(--surface-1); border-color: var(--border); color: var(--text-secondary); }
+body.studio-workspace .btn-ghost:not(:disabled):hover { background: var(--surface-hover); border-color: var(--border-strong); color: var(--text); }
+body.studio-workspace :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+  border-color: var(--border-strong);
+  border-radius: 7px;
+  background-color: var(--surface-1);
+  color: var(--text);
+  box-shadow: none;
+}
+body.studio-workspace input::placeholder, body.studio-workspace textarea::placeholder { color: var(--text-faint); opacity: 1; }
+body.studio-workspace :is(input[type="checkbox"], input[type="radio"]) { accent-color: var(--brand-primary); }
+
+/* Shared vector mark, including the favicon. No flattened moodboard imagery. */
+body.studio-workspace :is(.brand-glyph, .route-page-mark, .studio-tool-glyph, .terminal-brand-icon) {
+  background: var(--brand-mark-image) center / contain no-repeat !important;
+  border: 0 !important;
+  border-radius: 0;
+  color: transparent !important;
+  box-shadow: none !important;
+  font-size: 0 !important;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+body.studio-workspace .brand-lockup { display: inline-flex; align-items: center; gap: 10px; }
+body.studio-workspace .brand-mark {
+  font: 650 21px/1 var(--font-ui);
+  letter-spacing: .14em;
+  color: var(--text);
+}
+body.studio-workspace .brand { gap: 8px; }
+body.studio-workspace .runs { background: var(--panel-sidebar); }
+body.studio-workspace .runs .panel-head { padding: 24px 16px 10px; gap: 24px; border-bottom: 0; }
+body.studio-workspace .sidebar-start { justify-content: flex-start; padding-left: 14px; min-height: 42px; }
+html[data-qase-sidebar="collapsed"] body.studio-workspace .sidebar-start { justify-content: center; padding-inline: 0; }
+body.studio-workspace .run-explorer-label { margin: 0 2px; color: var(--text-muted); font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+body.studio-workspace .journey-run-search { padding: 8px 14px 2px; }
+body.studio-workspace .journey-run-search input { border-color: var(--border); font-size: 12px; min-height: 34px; background: transparent; }
+body.studio-workspace .run-list { padding: 8px; }
+body.studio-workspace .run {
+  margin-bottom: 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 12px 10px;
+  background: transparent;
+  box-shadow: none;
+}
+body.studio-workspace .run:hover { background: var(--surface-hover); border-color: transparent; }
+body.studio-workspace .run.is-active { background: var(--surface-1); border-color: var(--border); box-shadow: inset 3px 0 var(--brand-primary); }
+body.studio-workspace .run-title { font-weight: 600; line-height: 1.5; }
+body.studio-workspace .run-meta { font-size: 10px; line-height: 1.5; gap: 6px; margin-top: 6px; }
+body.studio-workspace .sidebar-foot { padding: 12px 10px 16px; gap: 4px; }
+body.studio-workspace .sidebar-foot-btn { min-height: 38px; border-radius: 6px; font-size: 12px; color: var(--text-secondary); gap: 10px; }
+body.studio-workspace .sidebar-foot-btn:hover { background: var(--surface-hover); }
+body.studio-workspace .sidebar-foot-btn--signout { color: var(--text-muted); }
+body.studio-workspace .sidebar-control-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+body.studio-workspace .feature-dock { gap: 8px; padding-top: 20px; background: var(--panel-sidebar); }
+body.studio-workspace .feature-action { min-height: 66px; border: 1px solid transparent; border-radius: 8px; gap: 7px; }
+body.studio-workspace .feature-action .feature-icon { color: var(--text-muted); display: grid; place-items: center; font-size: 20px; }
+body.studio-workspace .feature-icon svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+body.studio-workspace .feature-action .feature-label { font-size: 10px; font-weight: 550; }
+body.studio-workspace .feature-action:is(.is-active, [aria-pressed="true"]) { background: var(--accent-soft); border-color: var(--border); color: var(--accent); }
+body.studio-workspace .feature-action:is(.is-active, [aria-pressed="true"]) .feature-icon { color: var(--accent); }
+
+/* Execution workspace: clear hierarchy without competing outlined pills. */
+body.studio-workspace .chat > .panel-head { padding: 22px 22px 18px; }
+body.studio-workspace #chat-title { font-size: 19px; letter-spacing: -.025em; line-height: 1.35; font-weight: 650; }
+body.studio-workspace #chat-target { font-size: 12px; color: var(--text-muted); margin-top: 5px; }
+body.studio-workspace .head-actions { gap: 8px; margin-top: 14px; }
+body.studio-workspace :is(.status-chip, .meta-chip, .theme-toggle) { min-height: 30px; border-radius: 6px; font-size: 11px; background: transparent; border-color: var(--border); }
+body.studio-workspace .journey-run-guide { margin: 16px 20px; padding: 16px; background: var(--surface-1); border-radius: 8px; }
+body.studio-workspace .journey-run-guide strong { font-size: 13px; }
+body.studio-workspace .journey-run-guide p { font-size: 12px; }
+body.studio-workspace .bubble { border-radius: 8px; box-shadow: none; font-size: 13px; line-height: 1.75; }
+body.studio-workspace #composer { border-radius: 9px; border-color: var(--border-strong); box-shadow: none; }
+body.studio-workspace .tabs { background: var(--panel-viewer); gap: 8px; }
+body.studio-workspace .tabs .tab { font-size: 12px; font-weight: 550; }
+body.studio-workspace .urlbar { background: var(--surface-2); border-radius: 6px; }
+body.studio-workspace .stage { background: var(--canvas); }
+body.studio-workspace .finding { border-radius: 8px; background: var(--surface-1); border-color: var(--border); box-shadow: none; }
+
+/* All launchers, preferences, account, and catalog dialogs share the same shell. */
+body.studio-workspace :is(.modal, .account-dialog) { border-color: var(--border); background: var(--surface-1); color: var(--text); border-radius: 14px; box-shadow: var(--brand-shadow); }
+body.studio-workspace dialog::backdrop { background: #050d1b99; backdrop-filter: blur(4px); }
+body.studio-workspace .modal-head { background: var(--surface-1); padding: 24px 28px; border-color: var(--border); }
+body.studio-workspace .modal-head h2 { font-size: 21px; line-height: 1.35; letter-spacing: -.025em; font-weight: 650; }
+body.studio-workspace .modal-head p { color: var(--text-muted); line-height: 1.7; font-size: 12px; max-width: 65ch; margin-top: 7px; }
+body.studio-workspace .modal-inner { background: var(--surface-1); }
+body.studio-workspace .modal-body { padding: 24px 28px; gap: 22px; }
+body.studio-workspace .modal-foot { background: var(--surface-2); border-color: var(--border); padding: 18px 28px; }
+body.studio-workspace .field > span { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+body.studio-workspace .field small { color: var(--text-muted); line-height: 1.6; }
+body.studio-workspace .check { border-color: var(--border); border-radius: 8px; background: var(--surface-2); padding: 15px; }
+body.studio-workspace .route-page { border-radius: 0; box-shadow: none; }
+body.studio-workspace .route-page :is(.modal-head, .account-head) { background: var(--surface-1); }
+body.studio-workspace .route-page :is(.modal-head, .account-head) h1 { font-weight: 650; letter-spacing: -.035em; }
+body.studio-workspace .route-section-nav > p { letter-spacing: .1em; font-size: 10px; }
+body.studio-workspace .route-section-nav > button { border-radius: 8px; font-size: 13px; }
+body.studio-workspace #qa-start .modal-body { background: var(--surface-2); }
+body.studio-workspace #qa-start .route-page-mark { width: 44px; height: 44px; flex-basis: 44px; }
+body.studio-workspace #qa-start .journey-step { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 28px; }
+body.studio-workspace #qa-start .journey-step[hidden] { display: none; }
+body.studio-workspace #qa-start .journey-step h2 { letter-spacing: -.025em; font-weight: 650; }
+body.studio-workspace #qa-start .journey-step-intro { line-height: 1.7; }
+body.studio-workspace #qa-start .journey-review-card { border-radius: 8px; }
+body.studio-workspace #qa-start .journey-next { border: 1px solid var(--border); border-radius: 8px; }
+body.studio-workspace #qa-start .journey-connection { border-radius: 8px; background: var(--surface-2); }
+body.studio-workspace #qa-start .modal-foot { background: var(--surface-1); }
+body.studio-workspace .account-body { background: var(--surface-2); }
+body.studio-workspace .account-section { padding: 24px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); }
+body.studio-workspace .account-section h3 { letter-spacing: -.02em; }
+body.studio-workspace .account-content { display: grid; gap: 20px; }
+body.studio-workspace .account-avatar { background: var(--accent-soft); color: var(--accent); border-color: var(--border); border-radius: 12px; }
+body.studio-workspace :is(.sqa-option, .founder-option, .sqa-option-card) { border-radius: 8px; box-shadow: none; }
+
+/* Focused reports and cross-run backlog use a restrained editorial layout. */
+body.studio-workspace .results-wordmark { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; color: var(--text); }
+body.studio-workspace .results-wordmark::before { content: ""; width: 24px; height: 24px; background: var(--brand-mark-image) center / contain no-repeat; }
+body.studio-workspace[data-page="results"] .results-page-head { background: var(--surface-1); }
+body.studio-workspace[data-page="results"] .ro-metrics dd { color: var(--text); }
+body.studio-workspace .bugs-view { background: var(--surface-2); padding: 32px clamp(20px, 5vw, 80px); gap: 24px; }
+body.studio-workspace .bugs-head { padding-bottom: 24px; border-bottom: 1px solid var(--border); align-items: center; }
+body.studio-workspace .bugs-head-id h2 { font-size: 28px; letter-spacing: -.035em; font-weight: 650; }
+body.studio-workspace .bugs-eyebrow { display: flex; align-items: center; gap: 8px; font: 600 11px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; }
+body.studio-workspace .bugs-eyebrow::before { content: ""; width: 22px; height: 22px; background: var(--brand-mark-image) center / contain no-repeat; }
+body.studio-workspace .bugs-eyebrow span { display: none; }
+body.studio-workspace :is(.bugs-toolbar, .bugs-stats) { border: 1px solid var(--border); border-radius: 9px; background: var(--surface-1); padding: 14px; }
+body.studio-workspace .bugs-chip { border-radius: 6px; font-family: var(--font-ui); }
+body.studio-workspace .bugs-chip.is-active { background: var(--accent-soft); color: var(--accent); border-color: var(--border); }
+
+/* Entry is a product sign-in, not a terminal simulation. Keep form IDs intact. */
+body.studio-workspace #auth-gate { font-family: var(--font-ui); background: var(--bg); }
+body.studio-workspace #auth-gate :is(.terminal-atmosphere, .terminal-windowbar, .terminal-command, .terminal-visual-caption, .terminal-accessbar, .auth-eyebrow, .terminal-motion-toggle) { display: none; }
+body.studio-workspace #auth-gate .terminal-masthead { border-color: var(--border); }
+body.studio-workspace #auth-gate .terminal-brand { font-family: var(--font-ui); font-size: 17px; letter-spacing: .14em; }
+body.studio-workspace #auth-gate .terminal-brand-detail { display: none; }
+body.studio-workspace #auth-gate .auth-story { border: 0; background: transparent; box-shadow: none; transform: none; animation: none; }
+body.studio-workspace #auth-gate .auth-story::before, body.studio-workspace #auth-gate .auth-story::after { display: none; }
+body.studio-workspace #auth-gate .terminal-wordmark { font: 600 clamp(48px, 7vw, 88px)/1.1 var(--font-ui); letter-spacing: .12em; color: var(--text); text-shadow: none; }
+body.studio-workspace #auth-gate .terminal-wordmark i { display: none; }
+body.studio-workspace #auth-gate .terminal-tagline { font: 600 clamp(22px, 3vw, 36px)/1.3 var(--font-ui); color: var(--text); letter-spacing: -.03em; }
+body.studio-workspace #auth-gate .terminal-tagline > span { display: none; }
+body.studio-workspace #auth-gate .auth-description { font: 400 16px/1.8 var(--font-ui); color: var(--text-muted); }
+body.studio-workspace #auth-gate .auth-card { border: 1px solid var(--border); border-radius: 14px; background: var(--surface-1); padding: 36px; box-shadow: 0 8px 28px #0a183308; }
+body.studio-workspace #auth-gate .auth-card h1 { font-family: var(--font-ui); font-size: 24px; letter-spacing: -.03em; }
+body.studio-workspace #auth-gate .terminal-modules { gap: 12px; font-family: var(--font-ui); }
+body.studio-workspace #auth-gate .terminal-modules span { border-radius: 6px; border-color: var(--border); color: var(--text-secondary); }
+body.studio-workspace #auth-gate .terminal-bottom { border-color: var(--border); font-family: var(--font-ui); }
+/* Neutral dark chrome. Status and severity retain their text/icon semantics;
+   only their presentation changes. Never filter the browser under test or its
+   evidence images: those must remain faithful to the tested application. */
+html[data-theme="dark"] body.studio-workspace dialog::backdrop { background: #0009; }
+html[data-theme="dark"] body.studio-workspace :is(.status-chip, .sev, .severity, .badge, .verdict, .run-badge, .qmr-chip-value, [class*="qmr-st-"], .qmr-gaps-title) {
+  color: var(--text-secondary) !important;
+  border-color: var(--border-strong) !important;
+  background-color: var(--surface-3) !important;
+}
+html[data-theme="dark"] body.studio-workspace :is(.status-chip, .run-status, .live-pill)::before { background: currentColor !important; box-shadow: none !important; }
+html[data-theme="dark"] body.studio-workspace :is(.journey-run-guide, .mp-warning, .finding) { border-color: var(--border) !important; }
+html[data-theme="dark"] body.studio-workspace :is(.journey-status-dot, .ro-severity-dot, .run-dot, .status-dot) { background: var(--text-secondary) !important; box-shadow: none !important; }
+html[data-theme="dark"] body.studio-workspace .theme-toggle-icon { color: var(--text-secondary); background: var(--surface-3); }
+html[data-theme="dark"] body.studio-workspace .chat-empty p { color: var(--text-muted); }
+html[data-theme="dark"] body.studio-workspace .dot { background: var(--text-muted) !important; box-shadow: none !important; }
+html[data-theme="dark"] body.studio-workspace[data-page="results"] :is(#results-page-status, .ro-outcome-icon) {
+  color: var(--text) !important;
+  background: var(--surface-3) !important;
+  border-color: var(--border-strong) !important;
+}
+html[data-theme="dark"] body.studio-workspace :is(.theme-toggle-icon, .run-timer-icon, .feedback-star, .star-label, .bugs-empty-glyph) { filter: grayscale(1); }
+html[data-theme="dark"] body.studio-workspace .tab.is-active { border-bottom-color: var(--text); }
+html[data-theme="dark"] body.studio-workspace .tab.is-active .count { color: var(--text); background: var(--surface-3); }
+html[data-theme="dark"] body.studio-workspace :is(.follow-ups-list, .run-feedback) { border-color: var(--border); }
+html[data-theme="dark"] body.studio-workspace :is(.sqa-option, .founder-option, .scope-controls) { border-color: var(--border) !important; }
+html[data-theme="dark"] body.studio-workspace :is(.sqa-option:has(input:checked), .founder-option:has(input:checked)) { border-color: var(--text-muted) !important; }
+html[data-theme="dark"] body.studio-workspace :is(.test-result, .auth-error, .error-message) { color: var(--text-secondary) !important; }
+html[data-theme="dark"] body.studio-workspace #auth-gate {
+  --terminal-green: #ffffff;
+  --terminal-line: #343434;
+  --terminal-muted: #aaaaaa;
+}
+html[data-theme="dark"] body.studio-workspace #auth-gate .auth-card { box-shadow: 0 8px 28px #0003; }
+html[data-theme="dark"] body.studio-workspace :is(.studio-demo-shell, .studio-tool-workspace) {
+  --studio-host-canvas: #141414;
+  --studio-host-surface: #111111;
+  --studio-host-workspace: #181818;
+  --studio-host-text: #ffffff;
+  --studio-host-muted: #aaaaaa;
+  --studio-host-border: #343434;
+  --studio-host-action: #ffffff;
+}
+
+/* Quiet surface hierarchy: chrome recedes, working surfaces sit one level up.
+   All rules stay dark-scoped; the light identity and layout mechanics remain. */
+html[data-theme="dark"] body.studio-workspace { scrollbar-color: #555 #181818; }
+html[data-theme="dark"] body.studio-workspace :is(h1, h2, h3)[tabindex="-1"]:focus { outline: none; box-shadow: none; }
+html[data-theme="dark"] body.studio-workspace .panel-head { border-color: var(--border); }
+html[data-theme="dark"] body.studio-workspace .runs .panel-head { gap: 22px; }
+html[data-theme="dark"] body.studio-workspace .brand-glyph { width: 32px; height: 32px; }
+html[data-theme="dark"] body.studio-workspace .brand-mark { font-size: 19px; letter-spacing: .15em; }
+html[data-theme="dark"] body.studio-workspace .sidebar-start { border-radius: 10px; font-weight: 600; }
+html[data-theme="dark"] body.studio-workspace .journey-run-search input { background: var(--surface-2); border-color: transparent; border-radius: 9px; }
+html[data-theme="dark"] body.studio-workspace .journey-run-search input:focus { border-color: var(--border-strong); }
+html[data-theme="dark"] body.studio-workspace .run { border-radius: 10px; padding: 12px; }
+html[data-theme="dark"] body.studio-workspace .run.is-active { background: var(--surface-3); border-color: transparent; box-shadow: inset 2px 0 var(--text-muted); }
+html[data-theme="dark"] body.studio-workspace .sidebar-foot { border-top-color: transparent; }
+html[data-theme="dark"] body.studio-workspace .sidebar-foot-btn { border-radius: 9px; }
+html[data-theme="dark"] body.studio-workspace .feature-action { border-radius: 12px; }
+html[data-theme="dark"] body.studio-workspace .feature-action:hover .feature-icon { color: var(--text); }
+html[data-theme="dark"] body.studio-workspace .btn { border-radius: 10px; min-height: 38px; padding-inline: 15px; }
+html[data-theme="dark"] body.studio-workspace .btn-ghost { background: transparent; border-color: var(--border); }
+html[data-theme="dark"] body.studio-workspace .btn-primary { box-shadow: 0 1px 2px #0002; }
+html[data-theme="dark"] body.studio-workspace .btn-primary:active:not(:disabled) { background: #bfbfbf; border-color: #bfbfbf; }
+html[data-theme="dark"] body.studio-workspace .chat > .panel-head { padding: 22px 24px; }
+html[data-theme="dark"] body.studio-workspace #chat-title { font-size: 18px; font-weight: 600; letter-spacing: -.025em; }
+html[data-theme="dark"] body.studio-workspace .chat .transcript { background: var(--panel-chat); }
+html[data-theme="dark"] body.studio-workspace #chat-empty { padding: 30px; }
+html[data-theme="dark"] body.studio-workspace #chat-empty h2 { font-size: clamp(23px, 2vw, 29px); font-weight: 550; line-height: 1.3; letter-spacing: -.035em; }
+html[data-theme="dark"] body.studio-workspace #chat-empty > p { font-size: 13px; line-height: 1.8; }
+html[data-theme="dark"] body.studio-workspace .journey-eyebrow { color: var(--text-muted); font-weight: 550; letter-spacing: .11em; }
+html[data-theme="dark"] body.studio-workspace .welcome-steps { gap: 16px; }
+html[data-theme="dark"] body.studio-workspace .welcome-steps li > span { background: var(--surface-3); border-color: transparent; border-radius: 50%; color: var(--text-secondary); }
+html[data-theme="dark"] body.studio-workspace .welcome-steps strong { font-weight: 550; }
+html[data-theme="dark"] body.studio-workspace #composer { margin: 14px 16px 16px; padding: 10px; border-radius: 18px; background: var(--surface-3); border: 1px solid var(--border); box-shadow: 0 4px 16px #0001; }
+html[data-theme="dark"] body.studio-workspace #composer textarea { background: transparent; border: 0; font-size: 13px; line-height: 1.7; padding: 10px; }
+html[data-theme="dark"] body.studio-workspace #composer:focus-within { outline: 1px solid var(--text-muted); outline-offset: 1px; border-color: transparent; }
+html[data-theme="dark"] body.studio-workspace #composer #send-btn { border-radius: 11px; }
+html[data-theme="dark"] body.studio-workspace .bubble { background: var(--surface-1); border-radius: 12px; }
+html[data-theme="dark"] body.studio-workspace .journey-run-guide { background: var(--surface-1); border-radius: 12px; padding: 18px; }
+html[data-theme="dark"] body.studio-workspace .urlbar { border-radius: 9px; background: var(--surface-2); border-color: var(--border); }
+html[data-theme="dark"] body.studio-workspace .stage { background: var(--canvas); }
+html[data-theme="dark"] body.studio-workspace .stage-empty-art { opacity: .6; }
+html[data-theme="dark"] body.studio-workspace .tabs .tab { font-weight: 500; }
+html[data-theme="dark"] body.studio-workspace .tabs .tab.is-active { font-weight: 600; }
+html[data-theme="dark"] body.studio-workspace :is(.modal, .account-dialog) { border-radius: 18px; border-color: var(--border); box-shadow: 0 24px 80px #0006; }
+html[data-theme="dark"] body.studio-workspace .modal-inner { border-radius: inherit; }
+html[data-theme="dark"] body.studio-workspace .modal-head { background: var(--surface-1); }
+html[data-theme="dark"] body.studio-workspace .modal-head h2 { font-weight: 550; font-size: 22px; }
+html[data-theme="dark"] body.studio-workspace :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) { background-color: var(--surface-2); border-color: var(--border-strong); border-radius: 10px; }
+html[data-theme="dark"] body.studio-workspace .route-page { border-radius: 0; box-shadow: none; }
+html[data-theme="dark"] body.studio-workspace #qa-start .modal-head { background: var(--bg); padding-block: 28px; }
+html[data-theme="dark"] body.studio-workspace #qa-start .modal-body { background: var(--bg); }
+html[data-theme="dark"] body.studio-workspace #qa-start .journey-step { background: var(--surface-1); border-radius: 16px; border-color: var(--border); padding: 30px; }
+html[data-theme="dark"] body.studio-workspace #qa-start .journey-step > h2 { font-weight: 550; letter-spacing: -.035em; }
+html[data-theme="dark"] body.studio-workspace #qa-start .field > :is(input, textarea) { border-radius: 12px; background: var(--surface-2); }
+html[data-theme="dark"] body.studio-workspace #qa-start .route-section-nav > button { border-radius: 12px; }
+html[data-theme="dark"] body.studio-workspace #qa-start .route-section-nav > button[aria-current="step"] { background: var(--surface-3); border-color: transparent; color: var(--text); }
+html[data-theme="dark"] body.studio-workspace #qa-start .modal-foot { background: var(--bg); }
+html[data-theme="dark"] body.studio-workspace :is(.account-body, .bugs-view) { background: var(--bg); }
+html[data-theme="dark"] body.studio-workspace .account-dialog.route-page .account-section { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: 24px; }
+html[data-theme="dark"] body.studio-workspace .bugs-toolbar { padding: 16px; border-radius: 12px; }
+html[data-theme="dark"] body.studio-workspace .bugs-table tbody tr:hover { background: var(--surface-3); }
+html[data-theme="dark"] body.studio-workspace[data-page="results"] .results-page-head { background: var(--bg); }
+html[data-theme="dark"] body.studio-workspace[data-page="results"] #tabs { background: var(--bg); }
+html[data-theme="dark"] body.studio-workspace[data-page="results"] .tab-body { background: var(--surface-2); }
+html[data-theme="dark"] body.studio-workspace[data-page="results"] :is(.ro-outcome, .ro-metrics, .ro-next, .finding) { border-radius: 14px; background: var(--surface-1); border-color: var(--border); }
+html[data-theme="dark"] body.studio-workspace[data-page="results"] .ro-metrics dd { font-weight: 500; letter-spacing: -.04em; }
+html[data-theme="dark"] body.studio-workspace[data-page="results"] .results-page-actions .btn { border-radius: 10px; }
+
+/* Semantic lights restore operational color in dark mode. Keep general
+   navigation, badge text, and surfaces neutral. Labels still convey status
+   independently of color, including when reduced motion is enabled. */
+html[data-theme="dark"] body.studio-workspace {
+  --signal-success: #4ade80;
+  --signal-running: #60a5fa;
+  --signal-warning: #fbbf24;
+  --signal-error: #f87171;
+  --signal-muted: #a3a3a3;
+  --status-light: var(--signal-muted);
+}
+html[data-theme="dark"] body.studio-workspace :is([data-status="done"], [data-status="completed"], [data-status="passed"], [data-status="pass"], [data-status="pass_with_issues"], [data-tone="complete"]) { --status-light: var(--signal-success); }
+html[data-theme="dark"] body.studio-workspace :is([data-status="running"], [data-status="starting"], [data-status="in_progress"]) { --status-light: var(--signal-running); }
+html[data-theme="dark"] body.studio-workspace :is([data-status="awaiting_input"], [data-status="blocked"], [data-status="interrupted"], [data-status="paused"], [data-tone="attention"]) { --status-light: var(--signal-warning); }
+html[data-theme="dark"] body.studio-workspace :is([data-status="error"], [data-status="failed"], [data-status="fail"]) { --status-light: var(--signal-error); }
+html[data-theme="dark"] body.studio-workspace :is([data-status="idle"], [data-status="queued"], [data-status="cancelled"], [data-status="stopped"], [data-status="skipped"]) { --status-light: var(--signal-muted); }
+html[data-theme="dark"] body.studio-workspace :is(.status-chip, .run-status, .live-pill)::before {
+  background: var(--status-light) !important;
+  opacity: 1;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-light) 10%, transparent) !important;
+}
+html[data-theme="dark"] body.studio-workspace .run .dot {
+  background: var(--status-light) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-light) 8%, transparent) !important;
+}
+html[data-theme="dark"] body.studio-workspace #browser-dot { background: var(--status-light) !important; }
+html[data-theme="dark"] body.studio-workspace .journey-status-dot { background: var(--signal-warning) !important; }
+html[data-theme="dark"] body.studio-workspace .journey-connection[data-ready="true"] .journey-status-dot { background: var(--signal-success) !important; }
+html[data-theme="dark"] body.studio-workspace :is(.mini-status, #results-page-status, #ldv-live):not([hidden]) { display: inline-flex; align-items: center; gap: 7px; }
+html[data-theme="dark"] body.studio-workspace :is(.mini-status, #results-page-status, #ldv-live)::before { content: ""; width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--status-light); }
+html[data-theme="dark"] body.studio-workspace [data-severity="critical"] .ro-severity-dot { background: var(--signal-error) !important; }
+html[data-theme="dark"] body.studio-workspace :is([data-severity="high"], [data-severity="medium"]) .ro-severity-dot { background: var(--signal-warning) !important; }
+html[data-theme="dark"] body.studio-workspace [data-severity="low"] .ro-severity-dot { background: var(--signal-running) !important; }
+html[data-theme="dark"] body.studio-workspace [data-severity="info"] .ro-severity-dot { background: var(--signal-muted) !important; }
+
+/* Disabled is a separate readable state, not a transparent enabled button.
+   Native disabled behavior is retained; hover/active rules exclude it. */
+html[data-theme="dark"] body.studio-workspace .btn:disabled {
+  opacity: 1; color: #aaaaaa; background: #282828; border-color: #414141;
+  box-shadow: none; cursor: not-allowed;
+}
+html[data-theme="dark"] body.studio-workspace .btn-primary:disabled {
+  color: #bdbdbd; background: #343434; border-color: #484848;
+}
+/* Recognizable browser brands are intentional color exceptions to neutral
+   chrome. Labels stay neutral for contrast; icons and borders identify brands. */
+html[data-theme="dark"] body.studio-workspace :is(.mx-brand-icon, .mp-browser-icon, .browser-icon) { filter: none; }
+html[data-theme="dark"] body.studio-workspace [data-family="chrome"] { --browser-brand: #8ab4f8; }
+html[data-theme="dark"] body.studio-workspace [data-family="edge"] { --browser-brand: #56d6b5; }
+html[data-theme="dark"] body.studio-workspace [data-family="firefox"] { --browser-brand: #ffab70; }
+html[data-theme="dark"] body.studio-workspace [data-family="safari"] { --browser-brand: #75baff; }
+html[data-theme="dark"] body.studio-workspace [data-family="brave"] { --browser-brand: #ff926b; }
+html[data-theme="dark"] body.studio-workspace [data-family="opera"] { --browser-brand: #ff7b8b; }
+html[data-theme="dark"] body.studio-workspace [data-family="duckduckgo"] { --browser-brand: #f3a35f; }
+html[data-theme="dark"] body.studio-workspace #qa-start .mp-browser {
+  background: color-mix(in srgb, var(--browser-brand, var(--text-muted)) 7%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--browser-brand, var(--text-muted)) 35%, var(--border));
+  color: var(--text-secondary);
+}
+html[data-theme="dark"] body.studio-workspace #qa-start .mp-browser[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--browser-brand, var(--text-muted)) 16%, var(--surface-1));
+  border-color: var(--browser-brand, var(--text-muted)); color: var(--text);
+}
+html[data-theme="dark"] body.studio-workspace #qa-start .mp-browser:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--browser-brand, var(--text-muted)) 20%, var(--surface-1));
+  border-color: var(--browser-brand, var(--text-muted)); color: var(--text);
+}
+html[data-theme="dark"] body.studio-workspace #qa-start .mp-browser:disabled { opacity: 1; color: var(--text-muted); border-color: var(--border); background: var(--surface-2); }
+html[data-theme="dark"] body.studio-workspace #qa-start .mp-browser:disabled .mx-brand-icon { opacity: .6; }
+@media (max-width: 760px) {
+  html[data-theme="dark"] body.studio-workspace #qa-start .journey-step { padding: 20px; border-radius: 12px; }
+  html[data-theme="dark"] body.studio-workspace #chat-empty { padding: 22px; }
+  html[data-theme="dark"] body.studio-workspace #composer { margin: 10px 12px 12px; }
+  html[data-theme="dark"] body.studio-workspace .account-dialog.route-page .account-section { padding: 18px; }
+  body.studio-workspace #qa-start .journey-step { padding: 20px; }
+  body.studio-workspace .modal-head { padding: 20px; }
+  body.studio-workspace .modal-body { padding: 20px; }
+  body.studio-workspace .account-section { padding: 20px; }
+  body.studio-workspace .bugs-view { padding: 22px 16px; }
+  body.studio-workspace #auth-gate .auth-card { padding: 24px; }
+  body.studio-workspace .feature-dock { padding-top: 6px; gap: 4px; }
+  body.studio-workspace .feature-action { min-height: 52px; gap: 4px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.studio-workspace *, body.studio-workspace *::before, body.studio-workspace *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

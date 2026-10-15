@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { DEFAULT_TENANT_CONTEXT } from './tenancy.js';
 import { createPostgresApplicationServices } from './postgresServices.js';
@@ -316,18 +317,23 @@ test('loaded summaries preserve newest-first ordering and exact child counts', a
 	assert.equal(summaries[0].findings, undefined);
 });
 
-test('load recovery interrupts active runs, clears pending input and all secret names', async () => {
+test('load recovery interrupts executing runs but preserves durable approval waits', async () => {
 	const running = session({
 		id: FIRST_ID,
 		status: 'running',
 		pendingQuestion: { question: 'Should be cleared?' },
-		secretNames: ['QA_PASSWORD']
+		secretNames: ['QA_PASSWORD'],
+		activities: [
+			{ id: 'call_stuck', ts: 10, status: 'running', toolName: 'browser_click' },
+			{ id: 'done-open', ts: 9, status: 'done', toolName: 'browser_open' }
+		]
 	});
 	const waiting = session({
 		id: SECOND_ID,
 		status: 'awaiting_input',
 		pendingQuestion: { question: 'Continue?' },
-		secretNames: ['QA_USERNAME', 'QA_PASSWORD']
+		secretNames: ['QA_USERNAME', 'QA_PASSWORD'],
+		activities: [{ id: 'call_waiting', ts: 10, status: 'running', toolName: 'browser_wait' }]
 	});
 	const fake = createFakeRepository({
 		rows: [{ session: running, version: 2 }, { session: waiting, version: 5 }]
@@ -339,12 +345,25 @@ test('load recovery interrupts active runs, clears pending input and all secret 
 	});
 	await services.runs.load();
 
-	for (const id of [FIRST_ID, SECOND_ID]) {
-		const recovered = await services.runs.get(id);
-		assert.equal(recovered.status, 'interrupted');
-		assert.equal(recovered.pendingQuestion, undefined);
+	const recoveredRunning = await services.runs.get(FIRST_ID);
+	assert.equal(recoveredRunning.status, 'interrupted');
+	assert.equal(recoveredRunning.pendingQuestion, undefined);
+	const recoveredWaiting = await services.runs.get(SECOND_ID);
+	assert.equal(recoveredWaiting.status, 'awaiting_input');
+	assert.deepEqual(recoveredWaiting.pendingQuestion, { question: 'Continue?' });
+	for (const recovered of [recoveredRunning, recoveredWaiting]) {
 		assert.deepEqual(recovered.secretNames, []);
+		assert.ok(recovered.activities.every(activity => activity.status === 'failed' || activity.status === 'done'),
+			'no activity may stay "running" after recovery');
 	}
+	const stuck = (await services.runs.get(FIRST_ID)).activities.find(activity => activity.id === 'call_stuck');
+	assert.equal(stuck.status, 'failed');
+	assert.match(stuck.error, /Interrupted by a server restart/);
+	assert.equal(
+		fake.state.saveCalls.every(call => call.session.activities.every(activity => activity.status !== 'running')),
+		true,
+		'recovery persistence must never retain a "running" activity'
+	);
 	assert.equal(
 		fake.state.saveCalls.every(call => call.session.secretNames.length === 0),
 		true,
@@ -402,4 +421,39 @@ test('trusted Drytis request identity is retained for detached durable user even
 	assert.equal(fake.state.deleteCalls[0].metadata.actorUserId, actorUserId);
 	assert.equal(fake.state.deleteCalls[0].metadata.correlationId, requestId);
 	assert.deepEqual(fake.state.deleteCalls[0].metadata.payload, { reasonCode: 'user_request' });
+});
+
+test('finding status transitions persist through the durable event log', async () => {
+	const { repository, state } = createFakeRepository();
+	const services = createPostgresApplicationServices({ repository, tenantContext: DEFAULT_TENANT_CONTEXT });
+	await services.runs.load();
+
+	const run = await services.runs.create('Tracked bugs run', {});
+	run.findings = [{
+		id: randomUUID(), ts: 900, severity: 'high', title: 'Checkout fails',
+		category: 'cart', url: 'https://example.test/cart', expected: 'order placed', actual: 'error'
+	}];
+
+	const finding = await services.runs.setFindingStatus(run, run.findings[0].id, { status: 'in_progress', note: 'triaged' });
+	assert.equal(finding.status, 'in_progress');
+
+	const save = state.saveCalls.at(-1);
+	assert.equal(save.metadata.eventType, 'finding_status');
+	assert.equal(save.session.findings[0].status, 'in_progress');
+	assert.equal(save.session.findings[0].statusNote, 'triaged');
+
+	const events = [];
+	services.events.subscribe(run.id, event => events.push(event.type));
+	await services.runs.setFindingStatus(run, run.findings[0].id, { status: 'fixed' });
+	assert.deepEqual(events, ['finding_status']);
+
+	const rows = await services.runs.aggregateFindings({ ownerUserId: run.ownerUserId });
+	assert.equal(rows.length, 1);
+	assert.equal(rows[0].status, 'fixed');
+
+	await assert.rejects(
+		() => services.runs.setFindingStatus(run, randomUUID(), { status: 'fixed' }),
+		error => error.code === 'QASE_FINDING_NOT_FOUND'
+	);
+	await services.runs.close();
 });

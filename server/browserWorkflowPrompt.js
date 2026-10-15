@@ -6,6 +6,13 @@ When meetings, calls, recording, or a microphone are present or requested, put
 them in the plan and exercise them. Do not skip them because the browser is
 headless. Use browser_test_meeting_link with an anchor selector or exact href
 from the current page. It opens a tracked tab and returns the landing state.
+For a declared https://studio.drytis.ai/meeting/mtg-... target, the same
+meeting path on https://meeting.drytis.dev is a supported target alias.
+Use ordinary browser clicks for guest-entry buttons; the meeting-link tool
+requires a visible anchor and cannot substitute for a button. This alias does
+not authorize other meeting rooms or paths. Participation still requires
+authorization. Never claim an operator allowlist changed or that a restart
+will fix a policy block without evidence; report the actual tool result.
 After ordinary clicks that open a new tab, use browser_tabs and
 browser_select_tab and take a fresh snapshot before calling a link broken.
 Record the actual destination: prejoin screen, expired/invalid link, login,

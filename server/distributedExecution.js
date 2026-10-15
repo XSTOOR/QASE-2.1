@@ -137,7 +137,7 @@ export function createExecutionWorker(options = {}) {
 					await services.secrets.store(job.runId, values);
 				}
 				if (await pulseLease() !== 'leased') return;
-				services.agent.ensureRuntime(session);
+				await services.agent.ensureRuntime(session);
 				await services.agent.runTurn(session, job.payload);
 			});
 			executionFinished = true;

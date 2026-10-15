@@ -3,6 +3,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+import { verifyRelease } from './verify-release.mjs';
 
 /**
  * Builds a zip of the source that is safe to hand to somebody else.
@@ -13,7 +15,8 @@ import { fileURLToPath } from 'node:url';
  */
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const output = path.join(root, 'qase-share.zip');
+const output = path.resolve(root, process.argv[2] ?? 'qase-share.zip');
+if (!output.toLowerCase().endsWith('.zip')) throw new Error('Package output must be a .zip file.');
 
 const EXCLUDED_ROOTS = new Set([
 	'node_modules', '.qase', '.git', '.claude', '.idea', '.vscode',
@@ -22,7 +25,7 @@ const EXCLUDED_ROOTS = new Set([
 const EXCLUDED_EXTENSIONS = new Set(['.zip', '.log', '.pem', '.key', '.p12', '.pfx']);
 const INCLUDED_DIRECTORIES = ['public', 'server', 'scripts', 'docs', 'deploy', 'load', 'integrations', '.github'];
 const INCLUDED_FILES = [
-	'package.json', 'package-lock.json', 'README.md', '.env.example',
+	'package.json', 'package-lock.json', 'README.md', 'DEPLOYMENT_PROMPT.md', 'RELEASE_NOTES.md', '.env.example',
 	'.gitignore', '.gitattributes', '.dockerignore', '.nvmrc', 'Dockerfile'
 ];
 
@@ -48,6 +51,28 @@ try {
 		}
 		fs.copyFileSync(source, path.join(staging, file));
 	}
+	const entries = [];
+	function collect(directory) {
+		for (const item of fs.readdirSync(directory, { withFileTypes: true })) {
+			const full = path.join(directory, item.name);
+			if (item.isSymbolicLink()) throw new Error('Refusing to package symbolic links.');
+			if (item.isDirectory()) collect(full);
+			else {
+				// Match .gitattributes so Linux Git checkouts preserve manifest hashes.
+				let bytes = fs.readFileSync(full);
+				const text = bytes.toString('utf8');
+				if (!bytes.includes(0) && Buffer.from(text, 'utf8').equals(bytes)) {
+					bytes = Buffer.from(text.replace(/\r\n/g, '\n'), 'utf8');
+					fs.writeFileSync(full, bytes);
+				}
+				entries.push({ path: path.relative(staging, full).replaceAll('\\', '/'), sha256: createHash('sha256').update(bytes).digest('hex') });
+			}
+		}
+	}
+	collect(staging);
+	const release = JSON.parse(fs.readFileSync(path.join(staging, 'public/release.json'), 'utf8'));
+	fs.writeFileSync(path.join(staging, 'SOURCE_MANIFEST.json'), JSON.stringify({ schema: 1, releaseId: release.releaseId, files: entries.sort((a, b) => a.path.localeCompare(b.path)) }, null, 2) + '\n');
+	verifyRelease(staging);
 
 	if (process.platform === 'win32') {
 		// Modern Windows ships bsdtar, which selects ZIP from the output suffix.
@@ -77,9 +102,9 @@ listing = listing
 	.filter(entry => entry && entry !== '.');
 
 const leaked = listing.filter(entry => {
-	const [topLevel] = entry.split('/');
+	const parts = entry.split('/');
 	const name = path.basename(entry);
-	return EXCLUDED_ROOTS.has(topLevel)
+	return parts.some(part => EXCLUDED_ROOTS.has(part))
 		|| name === '.env'
 		|| (name.startsWith('.env.') && name !== '.env.example')
 		|| EXCLUDED_EXTENSIONS.has(path.extname(name).toLowerCase());
@@ -110,6 +135,8 @@ for (const required of [
 	'integrations/drytis/protocol.js',
 	'integrations/drytis/README.md',
 	'scripts/data-governance.mjs',
+	'SOURCE_MANIFEST.json', 'public/release.json', 'public/runCard.css', 'public/runCard.js',
+	'DEPLOYMENT_PROMPT.md', 'RELEASE_NOTES.md', 'deploy/production/compose.yaml',
 	'docs/enterprise-migration/phase-10-data-governance.md'
 ]) {
 	if (!listing.includes(required)) {
@@ -119,6 +146,7 @@ for (const required of [
 }
 
 const size = (fs.statSync(output).size / 1024).toFixed(0);
-console.log(`\n  qase-share.zip  ${size} KB  ${listing.length} files`);
+console.log(`\n  ${path.basename(output)}  ${size} KB  ${listing.length} archive entries`);
 console.log('  No API key, no run history, no node_modules.\n');
-console.log('  They run:  npm install && npm run install-browser && npm start\n');
+fs.writeFileSync(`${output}.sha256`, `${createHash('sha256').update(fs.readFileSync(output)).digest('hex')}  ${path.basename(output)}\n`);
+console.log('  Read DEPLOYMENT_PROMPT.md; verify SOURCE_MANIFEST.json before building.\n');

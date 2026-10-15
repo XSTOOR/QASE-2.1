@@ -35,13 +35,29 @@ try {
 	await page.locator('#auth-gate').waitFor({ state: 'visible' });
 	assert.equal(await page.locator('.auth-drytis').textContent(), 'CREATED FOR DRYTIS');
 	assert.equal(await page.locator('.app').evaluate(node => node.inert), true);
+	await page.locator('#auth-theme-select').selectOption('dark');
+	assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(16, 16, 18)');
+	await page.reload();
+	await page.locator('#auth-gate').waitFor({state:'visible'});
+	assert.equal(await page.locator('#auth-theme-select').inputValue(), 'dark');
+	await page.locator('#auth-theme-select').selectOption('light');
+	assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(255, 255, 255)');
 	await fs.mkdir(path.join(repo, 'artifacts/auth'), { recursive: true });
 	await page.screenshot({ path: path.join(repo, 'artifacts/auth/desktop.png'), fullPage: true });
 	await page.setViewportSize({ width: 390, height: 844 });
 	assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+	assert.ok(await page.locator('#auth-theme-select').isVisible());
+	await page.locator('#auth-theme-select').selectOption('system');
 	await page.screenshot({ path: path.join(repo, 'artifacts/auth/mobile.png'), fullPage: true });
 	await page.setViewportSize({ width: 1440, height: 1000 });
 	await page.locator('#auth-switch').click();
+	// Signup-side 8-char boundary (ticket #15672): a 7-character password must
+	// fail native validation in register mode; an 8-character one must pass.
+	await page.locator('#auth-password').fill('seven7c');
+	assert.equal(await page.locator('#auth-password').evaluate(node => node.minLength), 8, 'register mode enforces minLength 8');
+	assert.equal(await page.locator('#auth-password').evaluate(node => node.checkValidity()), false, '7-char password rejected in register mode');
+	await page.locator('#auth-password').fill('eight8ch');
+	assert.equal(await page.locator('#auth-password').evaluate(node => node.checkValidity()), true, '8-char password accepted in register mode');
 	await page.locator('#auth-email').fill('alice@example.com');
 	await page.locator('#auth-password').fill('a strong original password');
 	await page.locator('#auth-display').fill('Alice');
@@ -55,7 +71,10 @@ try {
 		return { status:response.status, body:response.status === 204 ? null : await response.json() };
 	}, { url, method, body });
 	assert.equal((await api('/config', 'PUT', { provider:'custom', baseUrl:'https://example.com', model:'alice-model', apiKey:'alice-secret-key' })).status, 200);
-	await page.locator('#qa-close').click();
+	// A fresh workspace no longer ambushes with the blocking QA modal — the
+	// welcome toast points at the composer instead (bootWorkspace change).
+	// Close it only if a previous step happened to open it.
+	if (await page.locator('#qa-start').isVisible()) await page.locator('#qa-close').click();
 	assert.equal((await api('/sessions', 'POST', {})).status, 201);
 	await page.locator('#open-profile').click();
 	await page.locator('#profile-name').fill('Alice QA');
@@ -77,6 +96,9 @@ try {
 	assert.equal((await (await bob.request.get(base + '/api/config')).json()).hasApiKey, false);
 	assert.equal((await bob.request.put(base + '/api/profile', { data: { displayName:'forged' } })).status(), 403);
 	await page.locator('#current-password').fill('a strong original password');
+	// Change-password form enforces the same 8-char minimum.
+	await page.locator('#new-password').fill('seven7c');
+	assert.equal(await page.locator('#new-password').evaluate(node => node.checkValidity()), false, '7-char new password rejected');
 	await page.locator('#new-password').fill('a strong replacement password');
 	await page.locator('#password-form button').click();
 	await page.locator('#auth-gate').waitFor({ state:'visible' });

@@ -11,7 +11,8 @@ import {
 	FOUNDER_SCHEMA_VERSION,
 	founderCategory,
 	founderLevel,
-	normalizeFounderReport
+	normalizeFounderReport,
+	upgradeLegacyReport
 } from './founderSchema.js';
 import { redact } from './secrets.js';
 
@@ -107,16 +108,105 @@ export function createFounderState(input = {}, now = () => Date.now()) {
 				policy: 'non_destructive_product_review'
 			},
 			productContext: normalizeProductContext(input.productContext),
-			categories: [...FOUNDER_CATEGORY_IDS]
+			categories: [...FOUNDER_CATEGORY_IDS],
+			// Trusted project context detected server-side (Phase 1). Never
+			// sourced from request bodies — see app.js detectFounderProjectContext.
+			...(input.projectContext ? { projectContext: normalizeDetectedProjectContext(input.projectContext) } : {})
 		},
 		observations: [],
 		updatedAt: createdAt
 	};
 }
 
-/** Pending state may gain new categories; finalized reports remain immutable. */
+/**
+ * Server-detected project context (Studio metadata, prior findings, previous
+ * founder context). Strictly normalized and size-bounded; every entry is
+ * labeled with its fact taxonomy origin so the prompt can distinguish
+ * observed facts from user-provided context.
+ */
+export function normalizeDetectedProjectContext(input = {}) {
+	assertPlainObject(input, 'Detected project context');
+	const output = {};
+	if (input.targetUrl !== undefined) {
+		const url = boundedText(input.targetUrl, 'Detected target URL', 8_192);
+		if (url) output.targetUrl = url;
+	}
+	if (input.studio !== undefined) {
+		if (!input.studio || typeof input.studio !== 'object') {
+			throw new TypeError('Detected Studio context must be an object.');
+		}
+		const studio = {};
+		if (input.studio.project) {
+			assertPlainObject(input.studio.project, 'Detected Studio project');
+			studio.project = {
+				id: boundedText(input.studio.project.id, 'Detected Studio project id', 200, { required: true }),
+				name: boundedText(input.studio.project.name, 'Detected Studio project name', 200, { required: true }),
+				revision: boundedText(input.studio.project.revision, 'Detected Studio project revision', 200)
+			};
+		}
+		if (input.studio.projectContext) {
+			assertPlainObject(input.studio.projectContext, 'Detected Studio projectContext');
+			studio.projectContext = {};
+			for (const [field, maximum] of [
+				['description', 2_000], ['applicationType', 100], ['primaryLanguage', 100],
+				['environment', 100], ['defaultBranch', 200]
+			]) {
+				const value = boundedText(input.studio.projectContext[field], `Detected projectContext ${field}`, maximum);
+				if (value) studio.projectContext[field] = value;
+			}
+			if (Array.isArray(input.studio.projectContext.frameworks)) {
+				studio.projectContext.frameworks = boundedStrings(
+					input.studio.projectContext.frameworks,
+					'Detected projectContext frameworks',
+					{ maximum: 20, itemMaximum: 100 }
+				);
+			}
+		}
+		if (Object.keys(studio).length > 0) output.studio = studio;
+	}
+	if (input.previousFindings !== undefined) {
+		if (!input.previousFindings || typeof input.previousFindings !== 'object') {
+			throw new TypeError('Detected previous findings must be an object.');
+		}
+		output.previousFindings = {
+			count: input.previousFindings.count,
+			sample: boundedStrings(
+				(input.previousFindings.sample ?? []).map(item =>
+					typeof item === 'string'
+						? item
+						: `${item?.title ?? 'Untitled finding'}${item?.severity ? ` [${item.severity}]` : ''}`),
+				'Detected previous findings sample',
+				{ maximum: 12, itemMaximum: 320 }
+			)
+		};
+	}
+	if (input.previousFounder !== undefined) {
+		if (!input.previousFounder || typeof input.previousFounder !== 'object') {
+			throw new TypeError('Detected previous founder context must be an object.');
+		}
+		const previous = {};
+		const goal = boundedText(input.previousFounder.productContext?.primaryGoal, 'Previous founder goal', 1_000);
+		if (goal) previous.primaryGoal = goal;
+		const constraints = boundedText(input.previousFounder.productContext?.constraints, 'Previous founder constraints', 2_000);
+		if (constraints) previous.constraints = constraints;
+		const finalizedAt = boundedText(input.previousFounder.finalizedAt, 'Previous founder finalizedAt', 100);
+		if (finalizedAt) previous.finalizedAt = finalizedAt;
+		if (Object.keys(previous).length > 0) output.previousFounder = previous;
+	}
+	assertFounderStateSize(output);
+	return output;
+}
+
+/** Pending state may gain new categories; finalized reports remain immutable
+ *  (their recommendations are upgraded in-place on read so legacy finalized
+ *  reviews render and hand off with the full structured fields). */
 export function normalizeFounderState(input) {
-	if (!input || typeof input !== 'object' || Array.isArray(input) || input.finalizedAt) return input;
+	if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+	if (input.finalizedAt) {
+		const report = input.report ? upgradeLegacyReport(input.report) : input.report;
+		if (report !== input.report) return { ...input, report };
+		return input;
+	}
 	if (input.schemaVersion === FOUNDER_SCHEMA_VERSION
 		&& FOUNDER_CATEGORY_IDS.every(id => input.scope?.categories?.includes(id))) return input;
 	return {
@@ -402,9 +492,34 @@ export function buildFounderReportMarkdown(founderOrSession) {
 		trace(lines, report.monetization); lines.push('');
 	}
 	lines.push('## Prioritized recommendations', '');
+	if (report.recommendationSet?.setVersion) {
+		lines.push(`Recommendation set v${report.recommendationSet.setVersion} · generated ${report.recommendationSet.generatedAt ?? report.generatedAt}`, '');
+	}
 	for (const [index, item] of report.recommendations.entries()) {
-		lines.push(`### ${index + 1}. ${item.title}`, '', `- **ID:** ${code(item.id)}`, `- **Area:** ${item.category}`, `- **Impact:** ${item.impact}`, `- **Effort:** ${item.effort}`, `- **Confidence:** ${item.confidence}`, '', item.rationale, '', '**Actions**', '');
-		completeList(lines, item.actions); trace(lines, item); lines.push('');
+		lines.push(
+			`### ${index + 1}. ${item.title}`,
+			'',
+			`- **ID:** ${code(item.id)}`,
+			`- **Area:** ${item.category}`,
+			`- **Priority:** ${item.priority ?? index + 1}${item.priorityReason ? ` — ${item.priorityReason}` : ''}`,
+			`- **Impact:** ${item.impact}`,
+			`- **Effort:** ${item.effort}`,
+			`- **Confidence:** ${item.confidence}`,
+			...(item.dependencies?.length ? [`- **Dependencies:** ${item.dependencies.join(', ')}`] : []),
+			'',
+			...(item.opportunity ? [item.opportunity] : []),
+			'',
+			...(item.proposedFeature ? [`**Proposed feature or integration:** ${item.proposedFeature}`] : []),
+			...(item.whyItMatters ? [`**Why it matters:** ${item.whyItMatters}`] : []),
+			...(item.intendedOutcome ? [`**Intended business outcome:** ${item.intendedOutcome}`] : []),
+			...(item.implementationScope ? ['', '**Implementation scope**', '', item.implementationScope] : []),
+			...(item.acceptanceCriteria?.length ? ['', '**Acceptance criteria**'] : []),
+		);
+		if (item.acceptanceCriteria?.length) list(lines, item.acceptanceCriteria);
+		lines.push('', '**Actions**', '');
+		completeList(lines, item.actions);
+		trace(lines, item);
+		lines.push('');
 	}
 	lines.push('## Marketing & growth', '');
 	for (const item of report.marketing.channels) {

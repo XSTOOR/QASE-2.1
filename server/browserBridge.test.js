@@ -1,16 +1,36 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { attachBrowserBridge } from './browserBridge.js';
+import { attachBrowserBridge, selectSnapshotElements } from './browserBridge.js';
 import { BROWSER_POLICY_CODES, createBrowserPolicy } from './browserPolicy.js';
 
-function fakeLocator(descriptor = {}) {
+test('snapshot selection finds late controls without renumbering or exceeding its budget', () => {
+	const nodes = Array.from({ length: 600 }, (_, i) => ({ id: `e${i + 1}`, tagName: 'div' }));
+	nodes.push({ id: 'e601', tagName: 'button', interactive: true });
+	nodes.push({ id: 'e602', tagName: 'input', interactive: true });
+	const selected = selectSnapshotElements(nodes, 20);
+	assert.equal(selected.length, 20);
+	assert.deepEqual(selected.slice(0, 2).map(node => node.id), ['e601', 'e602']);
+	assert.equal(new Set(selected.map(node => node.id)).size, 20);
+	assert.equal(selectSnapshotElements(nodes, 999).length, 500);
+	assert.equal(selectSnapshotElements(nodes, NaN).length, 150);
+	assert.equal(selectSnapshotElements(nodes, 0).length, 1);
+});
+
+function fakeLocator(descriptor = {}, options = {}) {
 	const locator = {
 		filter: () => locator,
-		count: async () => 1,
+		count: async () => typeof options.count === 'function' ? options.count() : options.count ?? 1,
 		first: () => locator,
+		waitFor: async () => {
+			if (options.waitError) throw options.waitError;
+			options.onWait?.();
+		},
 		boundingBox: async () => undefined,
-		evaluate: async () => descriptor,
-		evaluateAll: async () => []
+		evaluate: async () => { options.onEvaluate?.(); return descriptor; },
+		evaluateAll: async () => [],
+		click: async () => {
+			if (options.trialError) throw options.trialError;
+		}
 	};
 	return locator;
 }
@@ -85,7 +105,7 @@ test('browser bridge blocks out-of-scope navigation and gates destructive clicks
 		environment: { NODE_ENV: 'test' },
 		now: () => clock
 	});
-	const bridge = attachBrowserBridge(session, service, runStore, { policy });
+	const bridge = await attachBrowserBridge(session, service, runStore, { policy });
 
 	const direct = await service.open('https://outside.example.test/');
 	assert.equal(direct.success, false);
@@ -112,6 +132,71 @@ test('browser bridge blocks out-of-scope navigation and gates destructive clicks
 	bridge.dispose();
 });
 
+test('browser bridge fails ambiguous and obscured click targets before the driver timeout', async () => {
+	const session = {
+		id: '00000000-0000-4000-8000-000000000004',
+		targetUrl: 'https://app.example.test/start',
+		messages: []
+	};
+	const { service, calls } = fakeService();
+	const bridge = await attachBrowserBridge(session, service, fakeRunStore(), {
+		policy: createBrowserPolicy({
+			getTargetUrl: () => session.targetUrl,
+			environment: { NODE_ENV: 'test' }
+		})
+	});
+
+	service.locator = async () => fakeLocator({ text: 'Cancel' }, { count: 3 });
+	const ambiguous = await service.click('ide', { text: 'Cancel' });
+	assert.equal(ambiguous.success, false);
+	assert.equal(ambiguous.code, 'BROWSER_TARGET_AMBIGUOUS');
+	assert.equal(ambiguous.matches, 3);
+	assert.equal(calls.click, 0);
+
+	service.locator = async () => fakeLocator(
+		{ text: 'Create Meeting' },
+		{ trialError: new Error('overlay intercepts pointer events') }
+	);
+	const obscured = await service.click('ide', { selector: '#create-meeting' });
+	assert.equal(obscured.success, false);
+	assert.equal(obscured.code, 'BROWSER_TARGET_OBSCURED');
+	assert.match(obscured.error, /overlay or another element/);
+	assert.equal(calls.click, 0);
+
+	let appeared = false;
+	service.locator = async () => fakeLocator(
+		{ text: 'Delayed control' },
+		{ count: () => appeared ? 1 : 0, onWait: () => { appeared = true; } }
+	);
+	const delayed = await service.click('ide', { selector: '#delayed' });
+	assert.equal(delayed.success, true);
+	assert.equal(calls.click, 1);
+
+	service.locator = async () => fakeLocator(
+		{ text: 'Disabled control' },
+		{ trialError: new Error('element is not enabled') }
+	);
+	const disabled = await service.click('ide', { selector: '#disabled' });
+	assert.equal(disabled.success, false);
+	assert.equal(disabled.code, 'BROWSER_TARGET_NOT_ACTIONABLE');
+	assert.doesNotMatch(disabled.error, /overlay/);
+
+	let missingDescriptorReads = 0;
+	const timeout = new Error('Timeout 2500ms exceeded');
+	timeout.name = 'TimeoutError';
+	service.locator = async () => fakeLocator(
+		{},
+		{ waitError: timeout, onEvaluate: () => { missingDescriptorReads++; } }
+	);
+	const started = Date.now();
+	const missing = await service.click('ide', { selector: '#never-renders' });
+	assert.equal(missing.success, false);
+	assert.equal(missing.code, 'BROWSER_TARGET_NOT_FOUND');
+	assert.equal(missingDescriptorReads, 0);
+	assert.ok(Date.now() - started < 100, 'fixture should take the bounded preflight path without descriptor auto-wait');
+	bridge.dispose();
+});
+
 test('browser bridge installs a context-wide route that blocks private subresources', async () => {
 	const session = {
 		id: '00000000-0000-4000-8000-000000000002',
@@ -125,7 +210,7 @@ test('browser bridge installs a context-wide route that blocks private subresour
 		environment: { NODE_ENV: 'production' },
 		resolveHost: async () => [{ address: '93.184.216.34', family: 4 }]
 	});
-	const bridge = attachBrowserBridge(session, service, runStore, { policy });
+	const bridge = await attachBrowserBridge(session, service, runStore, { policy });
 	await service.ensurePage();
 	assert.equal(typeof context.routeHandler, 'function');
 	assert.equal(context.initScripts.length, 2);
@@ -187,7 +272,7 @@ test('browser bridge coalesces concurrent captures and does not publish identica
 			title: 'Target'
 		};
 	};
-	const bridge = attachBrowserBridge(session, service, runStore, {
+	const bridge = await attachBrowserBridge(session, service, runStore, {
 		policy: createBrowserPolicy({
 			getTargetUrl: () => session.targetUrl,
 			environment: { NODE_ENV: 'test' }

@@ -1,5 +1,7 @@
 # Dependencies and generated output
 node_modules/
+node_modules.broken/
+server.corrupt-*/
 coverage/
 .nyc_output/
 test-results/
@@ -9,6 +11,7 @@ tmp/
 temp/
 *.log
 *.zip
+*.zip.sha256
 artifacts/
 
 # Private runtime state and credentials
@@ -26,3 +29,31 @@ artifacts/
 Thumbs.db
 .idea/
 .vscode/
+
+# Dev agent state
+.playwright-mcp/
+.ka-sid
+
+# Quarantined corrupt runtime state
+.qase.corrupt-*/
+server.corrupt-*/
+userDocs.corrupt-*/
+.drytis/specs.corrupt-*/
+
+# Session dumps / test credentials / mislabeled binaries — never repo content
+userDocs/image_21567749.png
+.drytis/cred.json
+.drytis/specs/prepopulate-llm-key-new-users.md
+
+# Root-level screenshots and OS binaries — local artifacts, not repo content
+/*.png
+/*.deb
+userDocs/image_73eed07c.png
+
+# #15971: internal agent tooling/specs/reports — never publish (leaks absolute preview URLs)
+.drytis/
+
+
+# #16228: local-only scratch (user screenshots, extracted browsers)
+userDocs/
+.local-browsers/

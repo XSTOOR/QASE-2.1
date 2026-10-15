@@ -201,7 +201,7 @@ export function createDrytisQaseClient({
 	fetchImpl = globalThis.fetch,
 	now = Date.now,
 	createUuid = randomUUID,
-	createNonce = () => randomBytes(18).toString('base64url'),
+	createNonce = () => randomBytes(18).toString('hex'),
 	maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
 	requestTimeoutMs = 10_000
 } = {}) {

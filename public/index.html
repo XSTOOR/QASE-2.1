@@ -3,107 +3,366 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#05080d">
-<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b1220">
+<meta name="color-scheme" content="light dark">
 <meta name="description" content="Qase is an autonomous website QA workspace with live browser testing, findings, and reports.">
-<title>Qase — autonomous QA agent</title>
-<link rel="stylesheet" href="styles.css">
-<link rel="stylesheet" href="entry-terminal.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230a84ff'/><path d='M11 8h10M13 8v7L9.5 22a2 2 0 0 0 1.8 3h9.4a2 2 0 0 0 1.8-3L19 15V8' stroke='%23fff' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<title>QASE — Autonomous quality assurance</title>
+<script src="theme.js?v=20261015-11"></script>
+<script src="studioMode.js?v=20261014-6"></script>
+<link rel="stylesheet" href="styles.css?v=20261015-15">
+<link rel="stylesheet" href="bugsView.css?v=20261014-6">
+<link rel="stylesheet" href="studio-workspace.css?v=20261015-6">
+<link rel="stylesheet" href="studio-embed.css?v=20261015-7">
+<link rel="stylesheet" href="journey.css?v=20261015-4">
+<link rel="stylesheet" href="matrixPicker.css?v=20261015-5">
+<link rel="stylesheet" href="resultsPage.css?v=20261015-8">
+<link rel="stylesheet" href="brand.css?v=20261015-15">
+<link rel="stylesheet" href="runCard.css?v=20261015-17">
+<link rel="stylesheet" href="auth.css?v=20261015-14">
+<link rel="icon" type="image/svg+xml" href="qase-mark.svg">
 </head>
-<body class="cli-theme">
+<body class="cli-theme studio-workspace" data-has-run="false">
 
 <section class="auth-gate" id="auth-gate" hidden aria-labelledby="auth-title">
-  <div class="terminal-atmosphere" aria-hidden="true"><canvas id="entry-motion"></canvas><div class="terminal-grid"></div><div class="terminal-scanlines"></div></div>
-  <header class="terminal-masthead">
-    <a class="terminal-brand" href="/" aria-label="Qase home"><span class="terminal-brand-icon" aria-hidden="true">❯_</span><span>QASE<span class="terminal-brand-detail"> / AUTONOMOUS QA</span></span></a>
-    <button class="terminal-motion-toggle" id="entry-motion-toggle" type="button" aria-pressed="false"><span aria-hidden="true">Ⅱ</span> Pause motion</button>
+  <header class="auth-masthead">
+    <a class="auth-brand" href="/" aria-label="QASE home"><span class="auth-brand-symbol" aria-hidden="true"></span><span>QΛSE</span></a>
+    <div class="auth-appearance">
+      <label class="theme-control" for="auth-theme-select"><span>Theme</span><select id="auth-theme-select" name="theme" data-theme-control><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+    </div>
   </header>
   <div class="auth-story">
-    <div class="terminal-windowbar" aria-hidden="true"><span class="terminal-lights"><i></i><i></i><i></i></span><span>qase@drytis:~/workspace</span><span class="terminal-windowtype">zsh</span></div>
-    <div class="terminal-story-content">
-      <p class="terminal-command"><span aria-hidden="true">❯</span> ./qase <span>--initialize</span></p>
-      <h2 class="terminal-wordmark" aria-label="QASE"><span aria-hidden="true">QASE</span><i aria-hidden="true"></i></h2>
-      <p class="auth-drytis">CREATED FOR DRYTIS</p>
-      <p class="terminal-tagline"><span aria-hidden="true">//</span> Quality at the speed of light.</p>
-      <p class="auth-description">Real browsers. Clear evidence.<br>One workspace to test what matters.</p>
-      <div class="terminal-modules" aria-label="Available review modes"><span><i aria-hidden="true">01</i> QA</span><span><i aria-hidden="true">02</i> SQA</span><span><i aria-hidden="true">03</i> FOUNDER</span></div>
-      <div class="terminal-visual-caption" aria-hidden="true"><span>FIG. 01 / QUALITY CORE</span><span class="terminal-signal"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span>∞</span></div>
+    <p class="auth-kicker">AUTONOMOUS QUALITY ASSURANCE</p>
+    <h2>Confidence.<br><span>Built into every release.</span></h2>
+    <p class="auth-story-copy">From the first interaction to the final report.<br>Understand what works, uncover what doesn’t,<br class="auth-desktop-break"> and move forward with evidence.</p>
+    <div class="auth-method" aria-label="How QASE works">
+      <div><span class="auth-method-number">01</span><strong>Explore</strong><p>A real browser.<br>Your application.</p></div>
+      <div><span class="auth-method-number">02</span><strong>Verify</strong><p>Thoughtful checks.<br>Observable evidence.</p></div>
+      <div><span class="auth-method-number">03</span><strong>Improve</strong><p>Clear findings.<br>Actionable next steps.</p></div>
     </div>
+    <p class="auth-story-caption"><span aria-hidden="true"></span> One workspace. A clearer path to quality.</p>
   </div>
-  <div class="auth-panel"><div class="auth-card">
-    <div class="terminal-accessbar" aria-hidden="true"><span><i></i> ACCOUNT ACCESS</span><span>01 / AUTH</span></div>
-    <p class="auth-eyebrow"><span aria-hidden="true">❯</span> qase auth</p>
-    <h1 id="auth-title">Sign in to your workspace</h1>
-    <p class="auth-copy" id="auth-copy">Your runs, profile, and saved memory stay isolated to your account.</p>
+  <div class="auth-panel" id="signin-panel"><div class="auth-card">
+    <div class="auth-card-emblem" aria-hidden="true"><span></span></div>
+    <p class="auth-card-kicker">YOUR QUALITY WORKSPACE</p>
+    <h1 id="auth-title">Welcome back.</h1>
+    <p class="auth-copy" id="auth-copy">Sign in to pick up where you left off.</p>
     <form id="auth-form">
       <label for="auth-email">Email</label>
-      <input id="auth-email" name="email" type="email" autocomplete="email" required maxlength="254">
+      <input id="auth-email" name="email" type="email" autocomplete="email" placeholder="you@company.com" required maxlength="254" spellcheck="false" autocapitalize="none">
       <label for="auth-password">Password</label>
-      <input id="auth-password" name="password" type="password" autocomplete="current-password" required minlength="12" maxlength="200">
+      <input id="auth-password" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required minlength="8" maxlength="200" aria-describedby="auth-password-hint">
       <label for="auth-display" id="auth-display-label" hidden>Display name</label>
       <input id="auth-display" name="displayName" type="text" autocomplete="name" maxlength="120" hidden>
-      <label class="auth-show"><input id="auth-show-password" type="checkbox"> Show password</label>
-      <p class="auth-hint" id="auth-password-hint">Use at least 12 characters when creating an account.</p>
+      <label for="auth-invite" id="auth-invite-label" hidden>Invite code</label>
+      <input id="auth-invite" name="inviteCode" type="text" autocomplete="off" maxlength="40" hidden>
+      <div class="auth-password-actions"><label class="auth-show"><input id="auth-show-password" type="checkbox"> Show password</label><button class="auth-recovery-link" id="auth-forgot-switch" type="button">Recover account</button></div>
+      <p class="auth-hint" id="auth-password-hint" hidden>Use at least 8 characters.</p>
       <p class="auth-error" id="auth-error" role="alert" hidden></p>
       <button class="btn btn-primary auth-submit" id="auth-submit" type="submit">Sign in</button>
     </form>
-    <button class="auth-switch" id="auth-switch" type="button">Create an account</button>
+    <div class="auth-account-switch"><span id="auth-switch-context">New to QASE?</span><button class="auth-switch" id="auth-switch" type="button">Create an account</button></div>
+    <p class="auth-account-note"><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><rect x="4" y="8" width="12" height="9" rx="2"/><path d="M6.5 8V5.5a3.5 3.5 0 0 1 7 0V8"/></svg>Your runs and saved context belong to your account.</p>
   </div></div>
-  <footer class="terminal-bottom"><span>QASE <span class="terminal-bottom-muted">/ PRIVATE WORKSPACE</span></span><span class="terminal-bottom-center">BUILT TO QUESTION. DESIGNED TO VERIFY.</span><span><i aria-hidden="true"></i> YOUR NEXT RELEASE STARTS HERE</span></footer>
+  <div class="auth-panel" id="forgot-panel" hidden><div class="auth-card">
+    <div class="terminal-accessbar" aria-hidden="true"><span><i></i> ACCOUNT ACCESS</span><span>01 / RESET</span></div>
+    <p class="auth-eyebrow"><span aria-hidden="true">❯</span> qase auth --reset</p>
+    <h1 id="forgot-title">Reset your password</h1>
+    <p class="auth-copy">Enter your account email and we'll send a 6-digit code. It expires in 5 minutes and works once.</p>
+    <form id="forgot-form">
+      <label for="forgot-email">Email</label>
+      <input id="forgot-email" name="email" type="email" autocomplete="email" required maxlength="254">
+      <p class="auth-error" id="forgot-error" role="alert" hidden></p>
+      <p class="auth-hint" id="forgot-notice" hidden></p>
+      <button class="btn btn-primary auth-submit" id="forgot-submit" type="submit">Send code</button>
+    </form>
+    <button class="auth-switch" id="forgot-back" type="button">Back to sign in</button>
+    <button class="auth-switch" id="forgot-recover-link" type="button">No email access? Recover with a recovery code</button>
+  </div></div>
+  <div class="auth-panel" id="recover-panel" hidden><div class="auth-card">
+    <div class="terminal-accessbar" aria-hidden="true"><span><i></i> ACCOUNT ACCESS</span><span>02 / RECOVERY</span></div>
+    <p class="auth-eyebrow"><span aria-hidden="true">❯</span> qase auth --recover</p>
+    <h1 id="recover-title">Recover your account</h1>
+    <p class="auth-copy">Enter your account email and one unused recovery code to set a new password. Each code works once.</p>
+    <form id="recover-form">
+      <label for="recover-email">Email</label>
+      <input id="recover-email" name="email" type="email" autocomplete="email" required maxlength="254">
+      <label for="recover-code">Recovery code</label>
+      <input id="recover-code" name="code" type="text" autocomplete="off" spellcheck="false" required placeholder="XXXX-XXXX-XXXX" maxlength="14" style="font-family:var(--mono-font,monospace);letter-spacing:1px">
+      <p class="auth-hint">Format XXXX-XXXX-XXXX, generated in Profile → Security. No recovery codes? Contact an administrator — a registered email alone cannot reset your password.</p>
+      <p class="auth-error" id="recover-error" role="alert" hidden></p>
+      <p class="auth-hint" id="recover-notice" hidden></p>
+      <button class="btn btn-primary auth-submit" id="recover-submit" type="submit">Verify code</button>
+    </form>
+    <button class="auth-switch" id="recover-back" type="button">Back to sign in</button>
+  </div></div>
+  <div class="auth-panel" id="otp-panel" hidden><div class="auth-card">
+    <div class="terminal-accessbar" aria-hidden="true"><span><i></i> ACCOUNT ACCESS</span><span>02 / CODE</span></div>
+    <p class="auth-eyebrow"><span aria-hidden="true">❯</span> qase auth --verify</p>
+    <h1 id="otp-title">Enter your code</h1>
+    <p class="auth-copy">We emailed a 6-digit code. It expires in 5 minutes and can be used once.</p>
+    <form id="otp-form">
+      <label for="otp-input">Verification code</label>
+      <input id="otp-input" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" required pattern="[0-9]{6}" maxlength="6">
+      <p class="auth-error" id="otp-error" role="alert" hidden></p>
+      <p class="auth-hint" id="otp-notice" hidden></p>
+      <button class="btn btn-primary auth-submit" id="otp-submit" type="submit">Verify code</button>
+    </form>
+    <button class="auth-switch" id="otp-resend" type="button">Resend code</button>
+    <button class="auth-switch" id="otp-back" type="button">Back to sign in</button>
+  </div></div>
+  <div class="auth-panel" id="reset-panel" hidden><div class="auth-card">
+    <div class="terminal-accessbar" aria-hidden="true"><span><i></i> ACCOUNT ACCESS</span><span>03 / NEW PASSWORD</span></div>
+    <p class="auth-eyebrow"><span aria-hidden="true">❯</span> qase auth --new-password</p>
+    <h1 id="reset-title">Choose a new password</h1>
+    <p class="auth-copy">Code verified. Pick a password of at least 8 characters.</p>
+    <form id="reset-form">
+      <label for="reset-password">New password</label>
+      <input id="reset-password" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="200">
+      <label for="reset-confirm">Confirm password</label>
+      <input id="reset-confirm" name="confirm" type="password" autocomplete="new-password" required minlength="8" maxlength="200">
+      <p class="auth-hint" id="reset-password-hint">Use at least 8 characters.</p>
+      <p class="auth-error" id="reset-error" role="alert" hidden></p>
+      <p class="auth-hint" id="reset-notice" hidden></p>
+      <button class="btn btn-primary auth-submit" id="reset-submit" type="submit">Update password</button>
+    </form>
+    <button class="auth-switch" id="reset-back" type="button">Back to sign in</button>
+  </div></div>
+  <footer class="auth-bottom"><span>QASE <span aria-hidden="true">/</span> Autonomous quality assurance</span><span>Built to question. Designed to verify.</span></footer>
 </section>
 
 <a class="skip-link" href="#composer-input" inert aria-hidden="true">Skip to agent input</a>
 
+<div class="studio-demo-shell" id="studio-demo-shell">
+  <aside class="studio-host-rail" aria-label="Drytis navigation">
+    <div class="studio-host-mark" aria-label="Drytis">D</div>
+    <nav class="studio-host-nav" aria-label="Studio tools">
+      <span class="studio-host-item" aria-label="Home"><span aria-hidden="true">⌂</span></span>
+      <span class="studio-host-item" aria-label="Projects"><span aria-hidden="true">▱</span></span>
+      <span class="studio-host-item is-active" aria-current="page" aria-label="Qase"><span aria-hidden="true">Q</span></span>
+      <span class="studio-host-item" aria-label="Files"><span aria-hidden="true">≡</span></span>
+    </nav>
+    <span class="studio-host-avatar" aria-label="Demo workspace">PP</span>
+  </aside>
+
+  <aside class="studio-context" id="studio-context" aria-labelledby="studio-context-title">
+    <header class="studio-context-head">
+      <span class="studio-context-mark" aria-hidden="true">✦</span>
+      <div>
+        <strong id="studio-context-title">Project context</strong>
+        <span>AI workspace</span>
+      </div>
+    </header>
+    <section class="studio-project-card" aria-label="Current Studio project">
+      <span class="studio-context-label">Current project</span>
+      <strong id="studio-project-name">Drytis Studio</strong>
+      <a id="studio-project-target" href="https://studio.drytis.ai/" target="_blank" rel="noopener noreferrer">studio.drytis.ai</a>
+    </section>
+    <div class="studio-context-thread" aria-label="Project conversation">
+      <p class="studio-context-user">Check this project before the next release.</p>
+      <p class="studio-context-agent">Qase has the current preview and project context. Recommended coverage is ready.</p>
+    </div>
+    <p class="studio-context-note">Context stays available while Qase uses the center workspace.</p>
+  </aside>
+
+  <div class="studio-context-resizer" id="studio-context-resizer" role="separator" tabindex="0"
+       aria-label="Resize project context" aria-controls="studio-context"
+       aria-orientation="vertical" aria-valuemin="220" aria-valuemax="340" aria-valuenow="280"
+       title="Drag or use arrow keys to resize project context">
+    <span aria-hidden="true"></span>
+  </div>
+
+  <section class="studio-tool-workspace" aria-label="Qase in Drytis Studio">
+    <header class="studio-tool-header">
+      <div class="studio-tool-identity">
+        <span class="studio-tool-glyph" aria-hidden="true">Q</span>
+        <span><strong>Qase</strong><small>Quality workspace</small></span>
+      </div>
+      <span class="studio-demo-badge">Studio demo</span>
+      <label class="studio-theme-control" for="studio-theme-select">
+        <span>Theme</span>
+        <select id="studio-theme-select" name="studioTheme" data-theme-control aria-label="Workspace theme">
+          <option value="system">System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </label>
+      <button class="studio-context-toggle" id="studio-context-toggle" type="button"
+              aria-controls="studio-context" aria-expanded="true"
+              aria-label="Hide project context" title="Hide project context">
+        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+          <rect x="2.5" y="3" width="15" height="14" rx="2"></rect>
+          <path d="M7 3v14M12.5 7.25 9.75 10l2.75 2.75"></path>
+        </svg>
+      </button>
+    </header>
+
 <div class="app" inert aria-hidden="true">
+
+  <nav class="workspace-mobile-nav" aria-label="Workspace panels">
+    <button type="button" data-workspace-view="runs" aria-controls="workspace-runs" aria-pressed="false">Runs</button>
+    <button type="button" data-workspace-view="agent" aria-controls="workspace-agent" aria-pressed="true">Agent</button>
+    <button type="button" data-workspace-view="browser" aria-controls="workspace-viewer" aria-pressed="false">Browser</button>
+    <button type="button" data-workspace-view="results" aria-controls="workspace-viewer" aria-pressed="false">Results</button>
+  </nav>
 
   <div class="workspace-chrome" aria-hidden="true">
     <span class="workspace-lights"><i></i><i></i><i></i></span>
   </div>
 
   <!-- ── Left: runs ─────────────────────────────────────────────── -->
-  <aside class="panel runs" aria-label="QA runs">
+  <aside class="panel runs" id="workspace-runs" aria-label="QA runs">
     <header class="panel-head" data-path="~/qase/runs">
       <div class="brand">
         <span class="brand-lockup">
           <span class="brand-glyph" aria-hidden="true">Q</span>
-          <span class="brand-mark">Qase</span>
+          <span class="brand-mark" aria-label="QASE">QΛSE</span>
         </span>
-        <button class="brand-sub" id="model-badge" title="Model settings">…</button>
+        <button class="sidebar-collapse-toggle" id="sidebar-collapse-toggle" type="button"
+                aria-controls="workspace-runs" aria-expanded="true"
+                aria-label="Collapse recent tests sidebar" title="Collapse sidebar">
+          <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+            <rect x="2.5" y="3" width="15" height="14" rx="2"></rect>
+            <path d="M7 3v14M12.5 7.25 9.75 10l2.75 2.75"></path>
+          </svg>
+        </button>
       </div>
-      <p class="run-explorer-label"><span aria-hidden="true">./</span> recent sessions</p>
+      <button class="btn btn-primary sidebar-start" id="sidebar-new-run" type="button" title="Start testing">
+        <span class="sidebar-control-icon" aria-hidden="true">+</span>
+        <span class="sidebar-control-label">Start testing</span>
+      </button>
+      <p class="run-explorer-label"><span class="sidebar-control-label">Recent tests</span></p>
     </header>
+    <label class="journey-run-search"><span class="sr-only">Find a test run</span><input id="journey-run-search" type="search" placeholder="Find a test run…" autocomplete="off"></label>
+    <p class="journey-no-matches" id="journey-no-matches" role="status" hidden>No matching runs. Try another website or title.</p>
     <div class="run-list" id="run-list" role="list" aria-label="Recent runs"></div>
-    <footer class="panel-foot">
-      <span class="dot" id="conn-dot" aria-hidden="true"></span>
-      <span id="conn-label" role="status" aria-live="polite">connecting…</span>
-      <button class="btn btn-ghost btn-sm foot-btn" id="open-profile" type="button">My account</button>
-      <button class="btn btn-ghost btn-sm foot-btn" id="sign-out" title="Sign out">Sign out</button>
-      <button class="btn btn-ghost btn-sm foot-btn" id="open-settings" title="Model and endpoint settings">Settings</button>
+    <footer class="sidebar-foot" aria-label="Account and workspace controls">
+      <button class="sidebar-foot-btn" id="sidebar-open-settings" type="button" title="Settings">
+        <span class="sidebar-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m9 3-.7 3-2.8 1L3 9l1 3-1 3 2.5 2 2.8 1 .7 3h6l.7-3 2.8-1 2.5-2-1-3 1-3-2.5-2-2.8-1L15 3H9Z"/><circle cx="12" cy="12" r="3"/></svg></span><span class="sidebar-control-label">Settings</span>
+      </button>
+      <button class="sidebar-foot-btn" id="sidebar-open-profile" type="button" title="My account">
+        <span class="sidebar-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></span><span class="sidebar-control-label">Account</span>
+      </button>
+      <button class="sidebar-foot-btn sidebar-foot-btn--signout" id="sidebar-sign-out" type="button" title="Sign out">
+        <span class="sidebar-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 4H4v16h5m6-12 4 4-4 4M9 12h10"/></svg></span><span class="sidebar-control-label">Sign out</span>
+      </button>
     </footer>
   </aside>
 
+  <div class="pane-resizer pane-resizer--runs" id="runs-pane-resizer"
+       role="separator" aria-label="Resize recent tests panel" aria-orientation="vertical"
+       aria-valuemin="180" aria-valuemax="320" tabindex="0"></div>
+
   <!-- ── Middle: agent chat ─────────────────────────────────────── -->
-  <main class="panel chat" aria-label="Agent conversation">
+  <main class="panel chat" id="workspace-agent" aria-label="Agent conversation">
     <header class="panel-head" data-path="~/qase/agent.log">
       <div class="chat-id">
-        <h1 id="chat-title">No run selected</h1>
-        <p class="subtle" id="chat-target">Start a run and send a URL to test</p>
+        <h1 id="chat-title" tabindex="-1">Test workspace</h1>
+        <p class="subtle" id="chat-target">Autonomous testing, evidence, and results</p>
       </div>
       <div class="head-actions">
         <span class="status-chip" id="status-chip" data-status="idle" role="status" aria-live="polite" aria-atomic="true">idle</span>
+        <span class="meta-chip" id="timer-chip" hidden title="Elapsed run time">00:00</span>
+        <span class="meta-chip" id="token-chip" hidden title="Model context window used by this run">0%</span>
+        <!-- DEV run-timer: kept in the DOM for the merged timing code paths; the
+             Phase-4 #timer-chip above is the visible elapsed-time display. -->
+        <span class="run-timer" id="run-timer" hidden aria-hidden="true">
+          <span class="run-timer-icon" aria-hidden="true">⏱</span>
+          <span class="run-timer-label" id="run-timer-label">Elapsed</span>
+          <span class="run-timer-clock" id="run-timer-clock">00:00:00</span>
+        </span>
+        <button id="resume-run" class="btn btn-ghost btn-sm" hidden>Resume</button>
         <button id="stop-run" class="btn btn-danger btn-sm" hidden>Stop</button>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false" aria-label="Switch to dark theme" title="Switch to dark theme">
+          <span class="theme-toggle-icon" aria-hidden="true">
+            <svg class="theme-toggle-glyph theme-toggle-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+              <circle cx="12" cy="12" r="3.5"></circle>
+              <path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"></path>
+            </svg>
+            <svg class="theme-toggle-glyph theme-toggle-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20.2 15.2A8.5 8.5 0 0 1 8.8 3.8 8.5 8.5 0 1 0 20.2 15.2Z"></path>
+            </svg>
+          </span>
+          <span class="theme-toggle-text" id="theme-toggle-text">Light</span>
+        </button>
       </div>
     </header>
 
+    <!-- Run summary: token row + progress card, separate non-overlapping regions.
+         Collapsible: toggle keeps the token row visible and swaps the detail for a
+         compact one-line mirror (see #run-summary-mini). -->
+    <section class="run-summary" id="run-summary" aria-label="Run summary" hidden>
+      <div class="journey-run-guide" id="journey-run-guide" hidden><div><strong id="journey-run-title"></strong><p id="journey-run-description"></p></div><button type="button" class="btn btn-ghost btn-sm" id="journey-run-action"></button></div>
+      <div class="run-summary-mini" id="run-summary-mini" hidden>
+        <span class="mini-tokens" id="mini-tokens"></span>
+        <span class="mini-status" id="mini-status"></span>
+        <span class="mini-progress" id="mini-progress"></span>
+        <span class="mini-findings" id="mini-findings"></span>
+      </div>
+      <div class="token-summary" id="token-summary">
+        <span class="token-glyph" aria-hidden="true">✦</span>
+        <span class="token-text" id="token-text"></span>
+        <span class="live-pill" id="live-pill" hidden>LIVE</span>
+        <button id="run-summary-toggle" class="run-summary-toggle" type="button"
+                aria-expanded="true" aria-controls="run-summary-detail"
+                aria-label="Collapse run summary"
+                title="Collapse run summary">⌃</button>
+      </div>
+      <div class="run-summary-detail" id="run-summary-detail">
+        <div class="progress-card" id="progress-card">
+          <div class="progress-top">
+            <span class="progress-steps" id="progress-steps"></span>
+            <span class="progress-pct" id="progress-pct"></span>
+            <button class="progress-findings" id="progress-findings" type="button" hidden></button>
+          </div>
+          <div class="progress-bar" id="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Run progress"><i></i></div>
+          <div class="current-activity" id="current-activity">
+            <span class="ca-label">Current activity</span>
+            <span class="ca-state" id="current-activity-state"></span>
+          </div>
+          <details class="execution-details" id="execution-details" hidden>
+            <summary>Run details</summary>
+            <div class="run-env-block" id="run-env-block">
+              <span class="re-line" id="run-env-testcase"></span>
+              <span class="re-line" id="run-env-current"></span>
+              <span class="re-line" id="run-env-execution"></span>
+              <span class="re-line" id="run-env-session"></span>
+              <span class="re-line" id="run-env-usage"></span>
+              <span class="re-line" id="run-env-count"></span>
+            </div>
+          </details>
+          <div class="run-queue-panel" id="run-queue-panel" hidden>
+            <span class="rq-dot" aria-hidden="true"></span>
+            <span class="rq-label" id="run-queue-label">Queued for device</span>
+            <span class="rq-detail" id="run-queue-detail"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="run-queue-cancel">Cancel</button>
+          </div>
+          <div class="bulk-progress" id="bulk-progress" hidden>
+            <div class="bp-top">
+              <span class="bp-label" id="bulk-progress-label"></span>
+              <span class="bp-pct" id="bulk-progress-pct"></span>
+            </div>
+            <div class="bp-bar" id="bulk-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Bulk run progress"><i></i></div>
+            <div class="bp-counts" id="bulk-progress-counts"></div>
+            <details class="bp-list-wrap">
+              <summary>Executions</summary>
+              <ul class="bp-list" id="bulk-progress-list"></ul>
+            </details>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <div class="transcript" id="transcript" role="log" aria-label="Agent conversation" aria-live="polite" aria-relevant="additions">
+      <div class="exec-target-host" id="execution-target-block" hidden></div>
       <div class="empty-state" id="chat-empty">
-        <h2>Autonomous website QA</h2>
-        <p>Paste the URL of the site you want tested. Qase opens it in a real
-           browser, writes a test plan, works through it, and files what breaks.</p>
-        <p class="empty-note">If the site needs a login, the agent stops and asks.
-           Credentials you provide stay on this machine and are swapped in at the
-           keyboard — the model never sees them.</p>
+        <span class="journey-eyebrow">YOUR QUALITY WORKSPACE</span>
+        <h2>Confidence before your next release.</h2>
+        <p>Give Qase a website. Follow the test live, answer when it needs you, and get findings with evidence.</p>
+        <ol class="welcome-steps"><li><span>1</span><div><strong>Choose your website</strong><small>Start with a URL and what matters to you.</small></div></li><li><span>2</span><div><strong>Watch Qase test</strong><small>See the browser, progress, and any questions.</small></div></li><li><span>3</span><div><strong>Review and act</strong><small>Open the report, inspect evidence, and share fixes.</small></div></li></ol>
+        <div class="empty-actions">
+          <button type="button" class="btn btn-primary btn-sm" id="empty-start">Start testing</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="empty-demo">Try the demo site</button>
+        </div>
       </div>
     </div>
 
@@ -120,25 +379,79 @@
 
     <div class="question-slot" id="question-slot" aria-live="assertive"></div>
 
+    <!-- Quick actions + inline Choose Device strip removed (#14102):
+         device selection happens ONLY via the #device-picker dialog,
+         opened from the LIVE DEVICE VIEW header's [Change] button. -->
+
     <form class="composer" id="composer">
       <label class="sr-only" for="composer-input">URL or instruction for the QA agent</label>
       <textarea id="composer-input" rows="1" placeholder="Paste a URL or tell Qase what to test…" autocomplete="off" aria-describedby="composer-hint"></textarea>
       <span class="sr-only" id="composer-hint">Press Enter to send. Press Shift and Enter for a new line.</span>
       <button type="submit" class="btn btn-primary" id="send-btn">Send</button>
+      <p class="composer-hint" id="composer-running-hint" hidden>Agent is working. You can reply when it pauses.</p>
     </form>
   </main>
 
+  <div class="pane-resizer pane-resizer--agent" id="agent-pane-resizer"
+       role="separator" aria-label="Resize agent panel" aria-orientation="vertical"
+       aria-valuemin="280" aria-valuemax="620" tabindex="0"></div>
+
   <!-- ── Right: live browser + activity ─────────────────────────── -->
-  <aside class="panel viewer" aria-label="Live browser and test results">
+  <aside class="panel viewer" id="workspace-viewer" aria-label="Live browser and test results">
+    <header class="results-page-head" id="results-page-head">
+      <nav class="results-breadcrumb" aria-label="Breadcrumb"><span class="results-wordmark">Qase</span><span aria-hidden="true">/</span><button id="results-page-all" type="button">Test runs</button><span aria-hidden="true">/</span><span>Results</span></nav>
+      <div class="results-page-identity">
+        <p>TEST REPORT</p>
+        <h1 id="results-page-title" tabindex="-1">Results</h1>
+        <div class="results-page-meta" aria-label="Result summary">
+          <span id="results-page-status">Complete</span>
+          <span id="results-page-findings">0 findings</span>
+          <span id="results-page-target"></span>
+          <time id="results-page-date" hidden></time>
+        </div>
+      </div>
+      <div class="results-page-actions">
+        <button class="btn btn-ghost btn-sm" id="results-page-back" type="button"><span aria-hidden="true">←</span> Run workspace</button>
+        <button class="btn btn-primary btn-sm" id="results-page-export" type="button">Export PDF <span aria-hidden="true">↓</span></button>
+        <button class="btn btn-ghost btn-sm" id="results-page-new" type="button">New test</button>
+      </div>
+    </header>
     <header class="panel-head" data-path="~/qase/browser.preview">
+      <div class="live-device-view-head" id="live-device-view-head">
+        <span class="ldv-title" id="ldv-title">Preview</span>
+        <span class="ldv-device" id="ldv-device">—</span>
+        <span class="ldv-badges">
+          <span class="ldv-badge" id="ldv-exec">No device</span>
+          <span class="ldv-badge ldv-live" id="ldv-live">Idle</span>
+        </span>
+        <button type="button" class="btn btn-ghost btn-sm ldv-change" id="ldv-change-device" title="Change the test device (opens the device picker)">Change</button>
+      </div>
       <div class="urlbar">
         <span class="dot" id="browser-dot" aria-hidden="true"></span>
         <span class="url" id="browser-url">about:blank</span>
       </div>
       <span class="subtle" id="browser-title"></span>
+      <button id="stage-toggle" class="btn btn-sm preview-toggle" type="button" hidden
+              aria-expanded="true" aria-label="Minimize live preview" title="Minimize live preview">⤡</button>
     </header>
 
     <div class="stage" id="stage">
+      <div class="ldv-unavailable" id="ldv-unavailable" hidden>
+        <span class="ldv-unavailable-title">Browser unavailable</span>
+        <div class="ldv-unavailable-env" id="ldv-unavailable-env"></div>
+        <div class="ldv-unavailable-reason" id="ldv-unavailable-reason"></div>
+        <div class="ldv-unavailable-actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="ldv-retry">Retry</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="ldv-change-env">Change browser</button>
+        </div>
+      </div>
+      <div class="browser-chrome" id="browser-chrome" hidden>
+        <span class="chrome-brand-dot" id="chrome-brand-dot" aria-hidden="true"></span>
+        <span class="chrome-brand" id="chrome-brand">Browser</span>
+        <span class="chrome-nav" id="chrome-nav">← → ↻</span>
+        <span class="chrome-lock" id="chrome-lock" aria-hidden="true">🔒</span>
+        <span class="chrome-url" id="chrome-url">about:blank</span>
+      </div>
       <div class="stage-inner" id="stage-inner" hidden>
         <img id="frame" alt="Live view of the site under test">
         <div class="overlay" id="overlay">
@@ -165,106 +478,388 @@
         <span>No browser yet</span>
         <small>The live view appears when the agent opens the site</small>
       </div>
+      <div class="stage-note" id="stage-note" hidden>Run complete · Preview minimized</div>
     </div>
 
+    <!-- Run workspace tabs (UI Fix Phase 1): Activity/Plan/Findings/Bugs/Report
+         live INSIDE the right execution panel — sticky tab bar, scrollable
+         active pane, never a page footer. -->
     <nav class="tabs" id="tabs" role="tablist" aria-label="Run details">
       <button class="tab is-active" id="tab-activity" data-tab="activity" role="tab" aria-selected="true" aria-controls="pane-activity">Activity</button>
       <button class="tab" id="tab-plan" data-tab="plan" role="tab" aria-selected="false" aria-controls="pane-plan" tabindex="-1">Plan <span class="count" id="count-plan"></span></button>
       <button class="tab" id="tab-findings" data-tab="findings" role="tab" aria-selected="false" aria-controls="pane-findings" tabindex="-1">Findings <span class="count" id="count-findings"></span></button>
       <button class="tab" id="tab-report" data-tab="report" role="tab" aria-selected="false" aria-controls="pane-report" tabindex="-1">Report</button>
-      <button class="tab tab-sqa" id="tab-sqa" data-tab="sqa" role="tab" aria-selected="false" aria-controls="pane-sqa" tabindex="-1" hidden>SQA <span class="count" id="count-sqa"></span></button>
+      <button class="tab tab-sqa" id="tab-sqa" data-tab="sqa" role="tab" aria-selected="false" aria-controls="pane-sqa" tabindex="-1" hidden>Quality <span class="count" id="count-sqa"></span></button>
       <button class="tab tab-founder" id="tab-founder" data-tab="founder" role="tab" aria-selected="false" aria-controls="pane-founder" tabindex="-1" hidden>Founder <span class="count" id="count-founder"></span></button>
     </nav>
-
     <div class="tab-body">
       <section class="tab-pane is-active" id="pane-activity" data-pane="activity" role="tabpanel" aria-labelledby="tab-activity"><div class="feed" id="activity-feed" role="list" aria-live="polite" aria-relevant="additions text"></div></section>
       <section class="tab-pane" id="pane-plan" data-pane="plan" role="tabpanel" aria-labelledby="tab-plan"><div class="feed" id="plan-list" role="list"></div></section>
       <section class="tab-pane" id="pane-findings" data-pane="findings" role="tabpanel" aria-labelledby="tab-findings"><div class="feed" id="findings-list" role="list"></div></section>
+      <section class="tab-pane" id="pane-bugs" data-pane="bugs" role="tabpanel" aria-label="Bugs"><div class="feed" id="bugs-list" role="list"><div class="feed-empty">No bugs detected yet — use Report bug on a run with findings.</div></div></section>
       <section class="tab-pane" id="pane-report" data-pane="report" role="tabpanel" aria-labelledby="tab-report"><div class="feed" id="report-view"></div></section>
       <section class="tab-pane" id="pane-sqa" data-pane="sqa" role="tabpanel" aria-labelledby="tab-sqa"><div class="feed sqa-view" id="sqa-view" aria-live="polite"></div></section>
       <section class="tab-pane" id="pane-founder" data-pane="founder" role="tabpanel" aria-labelledby="tab-founder"><div class="feed founder-view" id="founder-view" aria-live="polite"></div></section>
     </div>
+
   </aside>
 
   <!-- Feature dock stays outside the three working panels so launch actions
        remain available without displacing the browser/results workspace. -->
   <nav class="feature-dock" aria-label="Qase features">
     <span class="feature-dock-title" aria-hidden="true">modes</span>
-    <div class="feature-device" title="Emulate a real mobile browser (User-Agent, viewport, touch) for the next run.">
-      <label for="device-select" class="feature-device-label">device</label>
-      <select id="device-select" class="feature-device-select" aria-label="Target device for the next run"></select>
+    <div class="feature-device" title="Choose where the next run executes (real device, OS and browser).">
+      <div id="device-chip" class="device-chip" data-ready="false">
+        <div class="device-chip-rows">
+          <div class="device-chip-row"><span class="device-chip-label" title="Device">DEVICE</span><span id="device-chip-env" class="device-chip-env">none yet</span></div>
+          <div class="device-chip-row"><span class="device-chip-label" title="Operating system">OS</span><span id="device-chip-os" class="device-chip-value">—</span></div>
+          <div class="device-chip-row"><span class="device-chip-label" title="Browser">BROWSER</span><span id="device-chip-browser" class="device-chip-value">—</span></div>
+          <div class="device-chip-row"><span class="device-chip-label" title="Execution type">EXECUTION</span><span id="device-chip-exec" class="device-chip-value device-chip-exec">—</span></div>
+          <div class="device-chip-row"><span class="device-chip-label" title="Status">STATUS</span><span id="device-chip-status" class="device-chip-value device-chip-status-label">○ Idle</span></div>
+          <div class="device-chip-row"><span class="device-chip-label" title="Runtime session">SESSION</span><span id="device-chip-session" class="device-chip-value device-chip-session">—</span></div>
+        </div>
+        <div class="device-chip-actions">
+          <button id="device-chip-change" class="btn btn-ghost btn-sm device-chip-change" type="button">Change</button>
+          <button id="device-chip-details" class="btn btn-ghost btn-sm device-chip-details" type="button">Device details</button>
+        </div>
+      </div>
       <label class="feature-device-landscape" title="Rotate the emulated device to landscape.">
         <input id="device-landscape" type="checkbox">
         <span>landscape</span>
       </label>
     </div>
     <button id="new-run" class="feature-action" type="button" aria-label="Start standard QA run" aria-describedby="feature-tip-qa" aria-keyshortcuts="Control+N Meta+N" data-feature="qa">
-      <span class="feature-icon" aria-hidden="true">&gt;_</span>
-      <span class="feature-label">QA</span>
+      <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="m8 12 3 3 5-6"/></svg></span>
+      <span class="feature-label">Test</span>
       <span class="feature-tooltip" id="feature-tip-qa" role="tooltip">New QA run <kbd>⌘N</kbd></span>
     </button>
-    <button id="new-sqa" class="feature-action" type="button" aria-label="Start SQA assessment" aria-describedby="feature-tip-sqa" data-feature="sqa">
-      <span class="feature-icon" aria-hidden="true">◇</span>
+    <button id="new-sqa" class="feature-action" type="button" aria-label="Start quality review" aria-describedby="feature-tip-sqa" data-feature="sqa">
+      <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 8 4v5c0 4-4 7-8 9-4-2-8-5-8-9V7l8-4Z"/><path d="m8 12 3 3 5-6"/></svg></span>
       <span class="feature-label">SQA</span>
-      <span class="feature-tooltip" id="feature-tip-sqa" role="tooltip">Standards-informed SQA assessment</span>
+      <span class="feature-tooltip" id="feature-tip-sqa" role="tooltip">Review quality and readiness</span>
     </button>
     <button id="new-founder" class="feature-action feature-action--founder" type="button" aria-label="Start Founder Mode review" aria-describedby="feature-tip-founder" data-feature="founder">
-      <span class="feature-icon" aria-hidden="true">◆</span>
+      <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 9 7-9 11L3 10l9-7Z"/><path d="m3 10 18 0M8 10l4 11 4-11M8 10l4-7 4 7"/></svg></span>
       <span class="feature-label">Founder</span>
       <span class="feature-tooltip" id="feature-tip-founder" role="tooltip">Founder Mode product review</span>
+    </button>
+    <button id="open-bugs" class="feature-action" type="button" aria-label="Open the bug tracker" aria-describedby="feature-tip-bugs" data-feature="bugs" aria-pressed="false">
+      <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="13" rx="5"/><path d="m9 7-2-3m8 3 2-3M3 10h4m10 0h4M3 15h4m10 0h4M5 21l3-3m8 0 3 3M12 10v7"/></svg></span>
+      <span class="feature-label">Bugs</span>
+      <span class="feature-tooltip" id="feature-tip-bugs" role="tooltip">Track every bug across runs</span>
     </button>
     <span class="feature-dock-status" aria-hidden="true">03 tools</span>
   </nav>
 
 </div>
 
+<div class="page-route-notice" id="page-route-notice" role="status" aria-live="polite" hidden>
+  <span id="page-route-message"></span>
+  <button class="btn btn-ghost btn-sm" id="page-route-retry" type="button" hidden>Try again</button>
+</div>
+
+<!-- ── Bug tracker ─────────────────────────────────────────────── -->
+<section class="bugs-view" id="bugs-view" hidden aria-labelledby="bugs-title">
+  <header class="bugs-head">
+    <div class="bugs-head-id">
+      <p class="bugs-eyebrow"><span aria-hidden="true">❯</span> QASE / Findings</p>
+      <h2 id="bugs-title" tabindex="-1">Bug tracker</h2>
+      <p class="subtle" id="bugs-subtitle">Every finding from every run, one backlog</p>
+    </div>
+    <div class="bugs-head-actions">
+      <button class="btn btn-ghost btn-sm" id="bugs-refresh" type="button">Refresh</button>
+      <button class="btn btn-primary btn-sm" id="bugs-close" type="button">Back to runs</button>
+    </div>
+  </header>
+
+  <div class="bugs-toolbar" role="search">
+    <div class="bugs-filter-group" role="group" aria-label="Filter by status" id="bugs-status-filter">
+      <button class="bugs-chip is-active" data-status="" type="button" aria-pressed="true">All</button>
+      <button class="bugs-chip" data-status="open" type="button" aria-pressed="false">Open</button>
+      <button class="bugs-chip" data-status="in_progress" type="button" aria-pressed="false">In progress</button>
+      <button class="bugs-chip" data-status="fixed" type="button" aria-pressed="false">Fixed</button>
+      <button class="bugs-chip" data-status="wont_fix" type="button" aria-pressed="false">Won't fix</button>
+    </div>
+    <div class="bugs-filter-group" role="group" aria-label="Filter by severity" id="bugs-severity-filter">
+      <button class="bugs-chip bugs-chip--sev" data-severity="" type="button" aria-pressed="true">Any severity</button>
+      <button class="bugs-chip bugs-chip--sev" data-severity="critical" type="button" aria-pressed="false">Critical</button>
+      <button class="bugs-chip bugs-chip--sev" data-severity="high" type="button" aria-pressed="false">High</button>
+      <button class="bugs-chip bugs-chip--sev" data-severity="medium" type="button" aria-pressed="false">Medium</button>
+      <button class="bugs-chip bugs-chip--sev" data-severity="low" type="button" aria-pressed="false">Low</button>
+      <button class="bugs-chip bugs-chip--sev" data-severity="info" type="button" aria-pressed="false">Info</button>
+    </div>
+    <label class="bugs-run-filter">
+      <span class="sr-only">Filter by run</span>
+      <select id="bugs-run-filter-select" aria-label="Filter by run">
+        <option value="">All runs</option>
+      </select>
+    </label>
+    <label class="bugs-search">
+      <span class="sr-only">Search bugs</span>
+      <input id="bugs-search-input" type="search" placeholder="Search title, category, page…" autocomplete="off" maxlength="200">
+    </label>
+  </div>
+
+  <div class="bugs-summary" id="bugs-summary" role="status" aria-live="polite"></div>
+
+  <div class="bugs-table-wrap" id="bugs-table-wrap">
+    <table class="bugs-table" id="bugs-table">
+      <thead>
+        <tr>
+          <th scope="col" class="bugs-col-sev">Severity</th>
+          <th scope="col" class="bugs-col-status">Status</th>
+          <th scope="col" class="bugs-col-title">Bug</th>
+          <th scope="col" class="bugs-col-run">Run</th>
+          <th scope="col" class="bugs-col-page">Page</th>
+          <th scope="col" class="bugs-col-found">Found</th>
+        </tr>
+      </thead>
+      <tbody id="bugs-tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="bugs-empty" id="bugs-empty" hidden>
+    <span class="bugs-empty-glyph" aria-hidden="true">⬡</span>
+    <span>No bugs match the current filters</span>
+    <small>New findings appear here as the QA agent files them</small>
+  </div>
+</section>
+
+  </section>
+</div>
+
+<!-- ── Settings ─────────────────────────────────────────────────── -->
+<!-- ── Environments (device & environment matrix) ──────────────── -->
+
+<!-- ── Device & Environment Matrix ──────────────────────────────── -->
+<dialog class="modal dm-modal" id="device-matrix" aria-labelledby="dm-title">
+  <form class="modal-inner" method="dialog" id="dm-form">
+    <header class="modal-head">
+      <div>
+        <h2 id="dm-title">Device &amp; Environment Matrix</h2>
+        <p>Browse the device catalog, build testing environments in bulk, and extend the catalog with new devices, OS and browser versions.</p>
+      </div>
+      <button class="btn btn-ghost btn-sm dm-close" type="button">Close</button>
+    </header>
+    <nav class="tabs dm-tabs" role="tablist" aria-label="Device Matrix views">
+      <button class="tab is-active" type="button" data-dm-tab="browse" role="tab" aria-selected="true">Catalog</button>
+      <button class="tab" type="button" data-dm-tab="builder" role="tab" aria-selected="false">Environment builder</button>
+      <button class="tab" type="button" data-dm-tab="environments" role="tab" aria-selected="false">Environments</button>
+      <button class="tab" type="button" data-dm-tab="catalogForms" role="tab" aria-selected="false">Add to catalog</button>
+      <button class="tab" type="button" data-dm-tab="coverage" role="tab" aria-selected="false">Coverage</button>
+    </nav>
+    <div class="modal-body">
+      <section data-dm-pane="browse" role="tabpanel" aria-label="Catalog browse">
+        <p class="dm-hint" id="dm-facet-summary" aria-live="polite">Loading catalog…</p>
+        <div class="field-row">
+          <label class="field"><span>Category</span><select id="dm-browse-category"><option value="">All categories</option></select></label>
+          <label class="field dm-search"><span>Search</span><input id="dm-browse-search" type="search" placeholder="iPhone 16 Pro…" autocomplete="off"></label>
+        </div>
+        <div class="dm-browse-list" id="dm-browse-list"></div>
+      </section>
+      <section data-dm-pane="builder" role="tabpanel" aria-label="Environment builder" hidden>
+        <p class="dm-hint">Pick devices, OS versions and browsers; every cross-combination is validated against the compatibility rules — invalid ones are skipped.</p>
+        <div class="dm-builder-grid">
+          <fieldset class="dm-picker"><legend>Devices</legend><div class="dm-check-list" id="dm-builder-devices"></div></fieldset>
+          <fieldset class="dm-picker"><legend>OS versions</legend><div class="dm-check-list" id="dm-builder-os"></div></fieldset>
+          <fieldset class="dm-picker"><legend>Browsers</legend><div class="dm-check-list" id="dm-builder-browsers"></div></fieldset>
+        </div>
+        <div class="dm-builder-preview" id="dm-builder-preview" aria-live="polite"></div>
+        <button class="btn" type="button" id="dm-builder-create" disabled>Create environments</button>
+      </section>
+      <section data-dm-pane="environments" role="tabpanel" aria-label="Environments" hidden>
+        <div class="field-row">
+          <label class="field"><span>Platform</span>
+            <select id="dm-env-platform"><option value="">All</option><option value="apple">Apple</option><option value="android">Android</option><option value="windows">Windows</option><option value="ios">iOS</option><option value="ipados">iPadOS</option><option value="macos">macOS</option></select>
+          </label>
+          <label class="field"><span>Browser</span><select id="dm-env-browser"><option value="">All</option></select></label>
+          <label class="field"><span>State</span>
+            <select id="dm-env-active"><option value="">All</option><option value="true">Active</option><option value="false">Inactive</option></select>
+          </label>
+          <label class="field dm-search"><span>Search</span><input id="dm-env-search" type="search" placeholder="ENV-IOS-…" autocomplete="off"></label>
+        </div>
+        <p class="env-summary" id="dm-env-summary" aria-live="polite"></p>
+        <div class="env-table-wrap">
+          <table class="env-table">
+            <thead><tr><th>Device</th><th>Manufacturer</th><th>Model</th><th>OS</th><th>OS Version</th><th>Browser</th><th>Browser Version</th><th>Resolution</th><th>Orientation</th><th>Execution</th><th>Capabilities</th><th>Availability</th><th>Last Tested</th><th>Last Result</th><th></th></tr></thead>
+            <tbody id="dm-env-tbody"></tbody>
+          </table>
+        </div>
+        <div class="dm-pager">
+          <button class="btn btn-ghost btn-sm" type="button" id="dm-env-prev">‹ Prev</button>
+          <button class="btn btn-ghost btn-sm" type="button" id="dm-env-next">Next ›</button>
+        </div>
+        <div class="dm-editor" id="dm-env-editor" hidden></div>
+      </section>
+      <section data-dm-pane="catalogForms" role="tabpanel" aria-label="Add to catalog" hidden>
+        <p class="dm-hint">Catalog entries are reference data shared by every environment. Adds are validated and effective immediately — no code changes.</p>
+        <div class="dm-forms" id="dm-catalog-forms"></div>
+      </section>
+      <section data-dm-pane="coverage" role="tabpanel" aria-label="Coverage matrix" hidden>
+        <div class="dm-coverage-metrics" id="dm-coverage-metrics" aria-live="polite"></div>
+        <div class="cov-matrix-wrap">
+          <table class="cov-matrix" id="dm-coverage-table">
+            <thead><tr id="dm-coverage-head"></tr></thead>
+            <tbody id="dm-coverage-tbody"></tbody>
+          </table>
+        </div>
+        <div class="dm-cov-detail" id="dm-coverage-detail" hidden></div>
+      </section>
+    </div>
+  </form>
+</dialog>
+<!-- ── Execution fallback (Phase 23) ─────────────────────────────── -->
+<dialog class="modal" id="exec-fallback" aria-labelledby="exec-fallback-title">
+  <form method="dialog" class="modal-inner">
+    <header class="modal-head">
+      <h2 id="exec-fallback-title">REAL DEVICE UNAVAILABLE</h2>
+      <button class="btn btn-ghost btn-sm" value="cancel" formnovalidate>Close</button>
+    </header>
+    <div class="modal-body">
+      <p id="exec-fallback-reason" class="dm-hint"></p>
+      <div class="exec-fallback-options" id="exec-fallback-options"></div>
+      <div class="exec-fallback-actions">
+        <button type="button" class="btn btn-ghost btn-sm" id="exec-fallback-retry">Retry</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="exec-fallback-change">Choose another device</button>
+      </div>
+      <p class="dm-hint exec-fallback-note">Results are always labeled with the execution type actually used — never reported as REAL DEVICE unless a device runtime is verified.</p>
+    </div>
+  </form>
+</dialog>
+<!-- ── Device busy (Phase D2) ───────────────────────────────────── -->
+<dialog class="modal" id="device-busy" aria-labelledby="device-busy-title">
+  <form method="dialog" class="modal-inner">
+    <header class="modal-head">
+      <h2 id="device-busy-title">DEVICE BUSY</h2>
+      <button class="btn btn-ghost btn-sm" value="cancel" formnovalidate>Close</button>
+    </header>
+    <div class="modal-body">
+      <p id="device-busy-detail" class="dm-hint"></p>
+      <div class="exec-fallback-options" id="device-busy-options"></div>
+      <p class="dm-hint exec-fallback-note">QASE never moves your test to another device automatically — you decide.</p>
+    </div>
+  </form>
+</dialog>
+<!-- ── Environments (Apple compatibility matrix) ────────────────── -->
+<dialog class="modal" id="environments" aria-labelledby="environments-title">
+  <form class="modal-inner" id="env-form" method="dialog">
+    <header class="modal-head">
+      <div>
+        <h2 id="environments-title">Apple environments</h2>
+        <p>iPhone · iPad · macOS × Safari, Chrome, Firefox, Edge, Opera — only combinations a runtime can actually execute.</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" type="button" id="env-close">Close</button>
+    </header>
+    <div class="modal-body">
+      <div class="field-row" id="env-filters">
+        <label class="field"><span>Platform</span><select id="env-filter-platform"><option value="">All</option></select></label>
+        <label class="field"><span>OS version</span><select id="env-filter-osversion"><option value="">All</option></select></label>
+        <label class="field"><span>Browser</span><select id="env-filter-browser"><option value="">All</option></select></label>
+        <label class="field"><span>Browser version</span><select id="env-filter-browserversion"><option value="">All</option></select></label>
+        <label class="field"><span>State</span>
+          <select id="env-filter-active">
+            <option value="">All</option>
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
+          </select>
+        </label>
+        <label class="field env-search"><span>Search</span><input id="env-filter-search" type="search" placeholder="ENV-IOS-IP16PRO…" autocomplete="off"></label>
+      </div>
+      <p class="env-summary" id="env-summary" aria-live="polite"></p>
+      <div class="env-table-wrap">
+        <table class="env-table" id="env-table">
+          <thead>
+            <tr>
+              <th>Environment ID</th><th>Device</th><th>OS</th><th>Browser</th><th>Version</th><th>Type</th><th>Provider</th><th>State</th>
+            </tr>
+          </thead>
+          <tbody id="env-tbody"></tbody>
+        </table>
+      </div>
+      <p class="env-detail" id="env-detail" aria-live="polite"></p>
+      <details class="env-availability">
+        <summary>Why some browsers are missing (Brave, DuckDuckGo, Firefox-on-iOS…)</summary>
+        <div id="env-availability-body">Loading availability…</div>
+      </details>
+    </div>
+  </form>
+</dialog>
+<!-- ── Analytics dashboard (UX U5) ───────────────────────────────── -->
+<dialog class="modal" id="analytics" aria-labelledby="analytics-title">
+  <div class="modal-inner analytics-inner">
+    <header class="modal-head">
+      <div>
+        <h2 id="analytics-title">Analytics</h2>
+        <p>Your run history at a glance — volume, outcomes, durations, feedback, and top targets.</p>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost btn-sm" id="analytics-refresh" type="button">Refresh</button>
+        <button class="btn btn-ghost btn-sm" type="button" id="analytics-close">Close</button>
+      </div>
+    </header>
+    <div class="modal-body" id="analytics-body" aria-live="polite"></div>
+  </div>
+</dialog>
+
 <!-- ── Settings ─────────────────────────────────────────────────── -->
 <dialog class="modal" id="settings" aria-labelledby="settings-title" inert aria-hidden="true">
   <form method="dialog" class="modal-inner">
     <header class="modal-head" data-path="~/.qase/config.json">
-      <h2 id="settings-title">Model endpoint</h2>
+      <div><h2 id="settings-title">Models &amp; preferences</h2><p class="journey-settings-copy">Qase provides the models. Choose your model and testing preferences here.</p></div>
       <button class="btn btn-ghost btn-sm" value="cancel" formnovalidate>Close</button>
     </header>
 
     <div class="modal-body">
+      <div id="cfg-managed-connection" hidden>
       <label class="field">
         <span>Provider</span>
         <select id="cfg-provider"></select>
         <small id="cfg-provider-note"></small>
       </label>
 
-      <label class="field">
+      <label class="field" id="cfg-key-field">
         <span>API key</span>
         <input id="cfg-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
         <small id="cfg-key-note"></small>
       </label>
 
       <label class="field" id="cfg-baseurl-field">
-        <span>Base URL</span>
+        <span>API endpoint URL</span>
         <input id="cfg-baseurl" autocomplete="off" spellcheck="false" placeholder="https://your-endpoint.example.com/v1">
         <small>The root the client appends <code>/chat/completions</code> to. Include <code>/v1</code> if your gateway expects it.</small>
       </label>
 
+      </div>
       <label class="field">
         <span>Model name</span>
         <select id="cfg-model" aria-describedby="cfg-model-note">
           <option value="">Loading available models…</option>
         </select>
         <input id="cfg-model-custom" autocomplete="off" spellcheck="false" placeholder="Enter the exact model ID" hidden>
-        <small id="cfg-model-note">Models are loaded from your endpoint. Choose Custom model ID if the model is not advertised.</small>
+        <small id="cfg-model-note">Models are provided and managed by Qase.</small>
+      </label>
+
+      <label class="field">
+        <span>Theme</span>
+        <select id="cfg-theme" name="settingsTheme" data-theme-control aria-describedby="cfg-theme-note">
+          <option value="dark">Dark Mode</option>
+          <option value="light">Light Mode</option>
+          <option value="system">System Default</option>
+        </select>
+        <small id="cfg-theme-note">Applies instantly. System Default follows your operating system's appearance.</small>
       </label>
 
       <div class="field-row">
         <label class="field">
-          <span>Reasoning</span>
+          <span>Analysis depth</span>
           <select id="cfg-reasoning">
-            <option value="low">low</option>
-            <option value="medium">medium</option>
-            <option value="high">high</option>
+            <option value="low">Quick</option>
+            <option value="medium">Balanced</option>
+            <option value="high">Thorough</option>
           </select>
         </label>
         <label class="field">
-          <span>Max turns</span>
+          <span>Maximum agent steps</span>
           <input id="cfg-maxturns" type="number" min="10" max="500" step="10">
         </label>
       </div>
@@ -274,12 +869,18 @@
         <span>Run Chromium off-screen<small>Uncheck to also open a real browser window on this machine.</small></span>
       </label>
 
+      <div class="field">
+        <span>Device management</span>
+        <small>Admin catalog: devices, environments, coverage &amp; runtimes. Not needed for everyday runs — the device picker handles that.</small>
+        <button type="button" class="btn btn-ghost btn-sm" id="open-device-matrix">Open Device Management</button>
+      </div>
+
       <div class="test-result" id="cfg-test" role="status" aria-live="polite"></div>
     </div>
 
     <footer class="modal-foot">
-      <button class="btn btn-ghost" type="button" id="cfg-test-btn">Test connection</button>
-      <button class="btn btn-primary" type="button" id="cfg-save">Save</button>
+      <button class="btn btn-ghost" type="button" id="cfg-test-btn">Check model availability</button>
+      <button class="btn btn-primary" type="button" id="cfg-save">Save &amp; return</button>
     </footer>
   </form>
 </dialog>
@@ -289,40 +890,250 @@
 <!-- Standard QA run launcher. Mirrors the SQA/Founder start pattern so
      device and landscape choices are explicit per run instead of implicit
      from the mode dock. -->
-<dialog class="modal qa-modal" id="qa-start" aria-labelledby="qa-start-title" aria-describedby="qa-start-description">
-  <form class="modal-inner" id="qa-form">
+<dialog class="modal qa-modal route-page" id="qa-start" data-route-page="new-run" aria-labelledby="qa-start-title" aria-describedby="qa-start-description">
+  <form class="modal-inner route-page-shell" id="qa-form" novalidate>
     <header class="modal-head" data-path="~/qase/qa/new">
-      <div>
-        <h2 id="qa-start-title">Start QA run</h2>
-        <p id="qa-start-description">Test a live website in a real browser. Choose the target device to emulate.</p>
+      <div class="route-page-heading">
+        <span class="route-page-mark" aria-hidden="true">Q</span>
+        <div>
+        <p class="route-page-context">New test run</p>
+        <h1 id="qa-start-title" tabindex="-1">Let’s test your website.</h1>
+        <p id="qa-start-description">A little context. A clear plan. Results you can act on.</p>
+        </div>
       </div>
-      <button class="btn btn-ghost btn-sm" type="button" id="qa-close">Close</button>
+      <button class="btn btn-ghost btn-sm route-page-back" type="button" id="qa-close"><span aria-hidden="true">←</span> Back to tests</button>
     </header>
     <div class="modal-body">
+      <nav class="route-section-nav" aria-label="Test setup sections">
+        <p>NEW TEST RUN</p>
+        <button type="button" data-journey-step="0" aria-current="step"><span>1</span><div>Website<small>Where should we start?</small></div></button>
+        <button type="button" data-journey-step="1"><span>2</span><div>Coverage<small>Choose what to check</small></div></button>
+        <button type="button" data-journey-step="2"><span>3</span><div>Review &amp; launch<small>Know exactly what will run</small></div></button>
+        <div class="journey-nav-note"><span aria-hidden="true">✦</span><p>You’re in control.<small>Qase asks when it needs credentials or your input.</small></p></div>
+      </nav>
+      <div class="route-page-content" id="qa-page-content">
+      <section class="journey-step" data-journey-panel="0" aria-labelledby="journey-website-title">
+      <p class="journey-eyebrow">STEP 01 / THE STARTING POINT</p>
+      <h2 id="journey-website-title" tabindex="-1">What are we testing?</h2>
+      <p class="journey-lead">Your homepage, staging environment, or a specific feature. Qase explores from here.</p>
       <label class="field">
-        <span>Target URL</span>
-        <input id="qa-target-url" name="targetUrl" type="url" required maxlength="2048" inputmode="url" autocomplete="url" placeholder="https://example.com" autofocus>
-        <small>Qase opens this URL immediately after the run is created.</small>
+        <span>Website URL</span>
+        <input id="qa-target-url" name="targetUrl" type="url" required maxlength="2048" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://example.com">
+        <small>Paste a link, or enter a domain such as example.com.
+          <button type="button" class="link-btn" id="qa-demo-fill">Try the demo site</button></small>
       </label>
-      <fieldset class="qa-device-fieldset">
-        <legend>Target device</legend>
-        <div class="field-row">
-          <label class="field">
-            <span>Device</span>
-            <select id="qa-device-select"></select>
-          </label>
-          <label class="check qa-landscape">
-            <input id="qa-device-landscape" type="checkbox">
-            <span>Landscape orientation</span>
-          </label>
+      <label class="field journey-goal"><span>Anything you’d like Qase to focus on? <small>Optional</small></span><textarea id="qa-goal" rows="3" maxlength="2000" placeholder="For example: check sign-in, project creation, and the mobile navigation."></textarea><small>Describe the workflow or concern. Provide sign-in credentials only when the agent asks.</small></label>
+      </section>
+      <section class="journey-step" data-journey-panel="1" aria-labelledby="journey-coverage-title" hidden>
+      <p class="journey-eyebrow">STEP 02 / YOUR TEST PLAN</p>
+      <h2 id="journey-coverage-title" tabindex="-1">Start with the essentials.</h2>
+      <p class="journey-lead">Recommended checks are ready. Adjust the selection if this run needs something specific.</p>
+      <div class="journey-presets" role="group" aria-label="Browser coverage size"><button type="button" id="journey-focused" aria-pressed="true"><strong>Focused check <span>Recommended</span></strong><small>One available browser. A manageable first run.</small></button><button type="button" id="journey-custom" aria-pressed="false"><strong>Custom coverage</strong><small>Choose browsers, devices, and versions.</small></button></div>
+      <section class="qa-recommended" aria-labelledby="qa-recommended-title">
+        <h3 id="qa-recommended-title">Recommended checks are selected</h3>
+        <p>Check forms, navigation, layout and accessibility. Customize the coverage for your website below.</p>
+        <p id="qa-selection-summary" role="status" aria-live="polite">Loading available checks…</p>
+      </section>
+      <div class="journey-benefits"><span>Forms &amp; validation</span><span>Navigation &amp; links</span><span>Layout &amp; accessibility</span></div>
+      <details class="qa-customize" id="qa-customize">
+        <summary>Customize devices, browsers and checks</summary>
+        <div class="qa-customize-body">
+      <fieldset class="qa-device-fieldset test-on-fieldset" hidden>
+        <legend>Test on</legend>
+        <div class="test-on-summary" id="qa-test-on" data-empty="true">
+          <span class="test-on-prompt">Choose a device</span>
         </div>
-        <small>Mobile and tablet profiles emulate the real device (User-Agent, viewport, touch), not a resized desktop window.</small>
+        <div class="field-row test-on-actions">
+          <button type="button" class="btn btn-primary btn-sm test-on-change" data-test-on-change>Change device</button>
+        </div>
+        <details class="qa-advanced">
+          <summary>Advanced device options</summary>
+          <div class="qa-advanced-body">
+            <!-- Phase 5 duplicate-UI audit (#15500): the dead
+                 #qa-environment-select (never populated, never read — the QA
+                 submit path is 100% matrix configurationEnvIds) was removed. -->
+            <small>Choose browsers, devices and orientation below. Each selected configuration runs separately, one browser at a time.</small>
+            <small>The run executes on exactly this device, OS and browser. Changing it here updates everywhere. Mobile and tablet profiles emulate the real device (User-Agent, viewport, touch), not a resized desktop window.</small>
+          </div>
+        </details>
       </fieldset>
+      <fieldset class="qa-engine-fieldset qa-matrix-fieldset" id="qa-matrix-fieldset">
+        <legend>Browsers &amp; devices</legend>
+        <div class="qa-matrix-state" id="qa-matrix-state" role="status" aria-live="polite">Loading device &amp; browser catalog…</div>
+        <div class="qa-matrix" id="qa-matrix-root" hidden>
+          <div class="qa-matrix-filters">
+            <label for="qa-matrix-search" class="mp-search-label">Find a device</label>
+            <input class="qa-matrix-search" id="qa-matrix-search" type="search" placeholder="Search devices, operating systems or browser versions…" autocomplete="off" aria-label="Search devices and configurations">
+          </div>
+          <div class="qa-matrix-body">
+            <div class="qa-matrix-browsers" id="qa-matrix-browsers"></div>
+            <div class="qa-matrix-devices" id="qa-matrix-devices"></div>
+          </div>
+          <div class="qa-matrix-summary" id="qa-matrix-summary" aria-live="polite"></div>
+        </div>
+        <div class="qa-matrix-error" id="qa-matrix-error" hidden>
+          <span id="qa-matrix-error-text"></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="qa-matrix-retry">Retry</button>
+        </div>
+      </fieldset>
+      <fieldset class="qa-scope-fieldset">
+        <legend>Coverage selection</legend>
+        <div class="coverage-heading">Supported Coverage</div>
+        <div class="scope-controls">
+          <button type="button" class="btn btn-ghost btn-sm" id="qa-scope-select-all">Select All</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="qa-scope-deselect-all">Deselect All</button>
+        </div>
+        <div class="scope-options" id="qa-scope-options">
+          <div class="scope-group" id="qa-scope-group-uiux">
+            <label class="check scope-parent">
+              <input id="qa-uiux-parent" type="checkbox" checked>
+              <span><strong>UI &amp; User Experience</strong></span>
+            </label>
+            <div class="scope-children">
+              <label class="check"><input class="qa-scope" type="checkbox" value="desktop-layout" checked title="desktop layout and responsive behaviour across viewport widths"><span>Desktop layout &amp; responsive behaviour</span></label>
+              <label class="check"><input class="qa-scope" type="checkbox" value="mobile-layout" checked title="mobile layout using an emulated phone viewport"><span>Mobile layout</span></label>
+              <label class="check"><input class="qa-scope" type="checkbox" value="ui-consistency" checked title="UI consistency: buttons, fonts, colors, spacing, forms, cards, navigation consistent across pages"><span>UI consistency</span></label>
+              <label class="check"><input class="qa-scope" type="checkbox" value="content-validation" checked title="content validation: text, labels, headings, messages, placeholders correct, readable, properly presented"><span>Content &amp; text validation</span></label>
+              <div class="scope-browser-row" title="Browser compatibility follows the browser engines selected below — every checked engine runs the site.">
+                <span class="check"><input class="qa-browser-inline" type="checkbox" checked disabled aria-label="Browser compatibility is controlled by the browser engines selection"><span>Browser compatibility</span></span>
+                <small>driven by the browser engines below</small>
+              </div>
+            </div>
+          </div>
+          <div class="scope-group" id="qa-scope-group-other">
+            <div class="scope-group-title">Other supported coverage</div>
+            <div class="scope-children">
+              <label class="check"><input class="qa-scope" type="checkbox" value="forms" checked title="forms and input validation (required fields, invalid input handling, submission feedback)"><span>Functional Testing</span></label>
+              <label class="check"><input class="qa-scope" type="checkbox" value="console-errors" checked title="console errors and failed network requests while browsing"><span>Console &amp; Network Health</span></label>
+              <label class="check"><input class="qa-scope" type="checkbox" value="navigation" checked title="navigation and internal links (broken links, dead ends, back-navigation)"><span>Navigation &amp; Links</span></label>
+              <label class="check"><input class="qa-scope" type="checkbox" value="accessibility" checked title="accessibility basics (labels, contrast, keyboard reachability, focus visibility)"><span>Accessibility Testing</span></label>
+              <label class="check"><input class="qa-scope" type="checkbox" value="security" title="security basics (header presence, cookie flags, XSS reflection, SQL injection error signatures) using the security_check tool"><span>Security Testing</span></label>
+            </div>
+          </div>
+        </div>
+        <small>Recommended standard coverage is preselected. Enable security testing only for an authorized test environment.</small>
+      </fieldset>
+      <fieldset class="qa-optional-fieldset">
+        <legend>Optional choices</legend>
+        <div class="scope-options" id="qa-optional-options">
+          <label class="check"><input id="qa-founder-mode" type="checkbox"><span>Founder Mode</span></label>
+          <label class="check"><input id="qa-compliance" type="checkbox"><span>Compliance (SQA assessment)</span></label>
+        </div>
+        <small>Both are optional. When checked, the corresponding review flow opens after this QA run starts — prefilled with the same target, and you confirm before anything runs.</small>
+      </fieldset>
+      <fieldset class="sqa-fieldset qa-tests-fieldset" id="qa-tests-fieldset" disabled>
+        <legend>Tests</legend>
+        <div class="qa-tests-toolbar">
+          <span class="qa-tests-count" id="qa-tests-count" aria-live="polite"></span>
+          <span class="qa-tests-bulk">
+            <button class="btn btn-ghost btn-sm" type="button" id="qa-select-all">Select all</button>
+            <button class="btn btn-ghost btn-sm" type="button" id="qa-deselect-all">Deselect all</button>
+          </span>
+        </div>
+        <div class="sqa-catalog-state" id="qa-tests-state" role="status" aria-live="polite">Loading standard tests…</div>
+        <section class="qa-category" id="qa-category-standard">
+          <h4 class="qa-category-heading">
+            <label class="check qa-category-toggle">
+              <input type="checkbox" id="qa-category-standard-toggle" checked>
+              <span>Standard tests</span>
+            </label>
+          </h4>
+          <div class="sqa-option-grid" id="qa-test-options"></div>
+        </section>
+        <section class="qa-category" id="qa-category-security" hidden>
+          <h4 class="qa-category-heading">
+            <label class="check qa-category-toggle">
+              <input type="checkbox" id="qa-category-security-toggle">
+              <span>Security testing</span>
+            </label>
+          </h4>
+          <div class="sqa-option-grid" id="qa-security-options"></div>
+        </section>
+      </fieldset>
+        </div>
+      </details>
+          <div class="qa-security-auth" id="qa-security-auth" hidden>
+            <label class="check qa-security-auth-confirm">
+              <input type="checkbox" id="qa-security-authorized">
+              <span>I confirm this is an explicitly authorized, isolated test environment.</span>
+            </label>
+            <!-- Pipeline Phase 3: unattended runs consume this authorization —
+                 tell the operator what it means before they submit. -->
+            <p class="qa-security-auth-note" id="qa-security-auth-note">
+              Runs are unattended: with this confirmation captured, the run will not re-ask
+              target-permission or scan-continuation questions for the authorized target.
+              Sign-in credentials and destructive actions are never auto-approved.
+            </p>
+            <details class="qa-security-scope" id="qa-security-scope">
+              <summary>Add scope notes <small>(optional)</small></summary>
+              <label class="field qa-security-auth-scope">
+                <span class="sr-only">Security testing scope notes</span>
+                <textarea id="qa-security-notes" rows="2" autocomplete="off" placeholder="Example: isolated staging copy, no production data…"></textarea>
+              </label>
+            </details>
+          </div>
+      </section>
+      <section class="journey-step" data-journey-panel="2" aria-labelledby="journey-review-title" hidden>
+        <p class="journey-eyebrow">STEP 03 / READY WHEN YOU ARE</p>
+        <h2 id="journey-review-title" tabindex="-1">Here’s your test run.</h2>
+        <p class="journey-lead">Check the details, then let Qase take it from here.</p>
+        <div class="journey-review-card"><div class="journey-review-target"><span class="journey-site-icon" aria-hidden="true">↗</span><div><small>Website</small><strong id="journey-review-url"></strong></div><button type="button" class="link-btn" data-journey-edit="0">Edit</button></div><dl><div><dt>Checks selected</dt><dd id="journey-review-checks">—</dd></div><div><dt>Browser configurations</dt><dd id="journey-review-devices">—</dd></div><div><dt>Qase-provided model</dt><dd id="journey-review-model">—</dd></div><div id="journey-review-goal-row" hidden><dt>Your focus</dt><dd id="journey-review-goal"></dd></div></dl><button type="button" class="link-btn" data-journey-edit="1">Edit coverage and devices</button></div>
+        <p class="journey-volume-note" id="journey-volume-note" hidden></p>
+        <div class="journey-next"><strong>What happens next</strong><ol><li>Qase opens your website in a real browser.</li><li>Follow progress live. Answer any sign-in or workflow questions.</li><li>Review findings, evidence, and the final report when the run finishes.</li></ol></div>
+      </section>
       <div class="test-result" id="qa-form-error" role="alert" aria-live="assertive"></div>
+      </div>
     </div>
     <footer class="modal-foot">
       <button class="btn btn-ghost" type="button" id="qa-cancel">Cancel</button>
-      <button class="btn btn-primary" type="submit" id="qa-submit">Start QA run</button>
+      <button class="btn btn-ghost" type="button" id="journey-back" hidden>← Back</button>
+      <p class="journey-footer-hint" id="journey-footer-hint" aria-live="polite"></p>
+      <button class="btn btn-primary" type="button" id="journey-next">Choose coverage →</button>
+      <button class="btn btn-primary" type="submit" id="qa-submit" hidden>Start testing</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- Post-run user feedback. Opened from the report actions row; run context
+     (Test Run ID, target, status, duration) is attached server-side from the
+     finished run — the user only picks a rating, category and comments. -->
+<dialog class="modal qa-modal" id="feedback-modal" aria-labelledby="feedback-title" aria-describedby="feedback-description">
+  <form class="modal-inner" id="feedback-form">
+    <header class="modal-head" data-path="~/qase/feedback">
+      <div>
+        <h2 id="feedback-title">Provide Feedback</h2>
+        <p id="feedback-description">Share your experience with the Qase team. Your feedback goes to the Feedback Inbox for human review.</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" type="button" id="feedback-close" title="Close without submitting">Close</button>
+    </header>
+    <div class="modal-body">
+      <p class="feedback-meta" id="feedback-run-meta"></p>
+      <fieldset class="feedback-stars" id="feedback-stars">
+        <legend aria-hidden="false">How was your QASE testing experience? <span class="req" aria-hidden="true">*</span></legend>
+        <div class="feedback-star-row" role="radiogroup" aria-label="Overall rating" id="feedback-star-row"></div>
+      </fieldset>
+      <label class="field">
+        <span>Category <small>(optional)</small></span>
+        <select id="feedback-category">
+          <option value="" selected>Overall Experience</option>
+        </select>
+        <small>What area does your feedback relate to?</small>
+      </label>
+      <label class="field">
+        <span>Tell us more <small>(optional)</small></span>
+        <textarea id="feedback-comments" maxlength="4000" rows="4" placeholder="Tell us about your testing experience, test results, accuracy, performance, or any issues you encountered..."></textarea>
+      </label>
+      <label class="field">
+        <span>What should we improve? <small>(optional)</small></span>
+        <textarea id="feedback-improvement" maxlength="4000" rows="2" placeholder="Optional — anything we could do better"></textarea>
+      </label>
+      <div class="test-result" id="feedback-error" role="alert" aria-live="assertive"></div>
+      <p class="feedback-success" id="feedback-success" role="status" aria-live="polite"></p>
+    </div>
+    <footer class="modal-foot">
+      <button class="btn btn-ghost" type="button" id="feedback-cancel">Cancel</button>
+      <button class="btn btn-ghost" type="button" id="feedback-edit" title="Edit your feedback for this test run" hidden>Edit feedback</button>
+      <button class="btn btn-primary" type="submit" id="feedback-submit">Submit feedback</button>
     </footer>
   </form>
 </dialog>
@@ -333,85 +1144,97 @@
   <form class="modal-inner sqa-modal-inner" id="sqa-form">
     <header class="modal-head" data-path="~/qase/sqa/new">
       <div>
-        <h2 id="sqa-start-title">Start SQA assessment</h2>
-        <p id="sqa-start-description">Define the assessment boundary and target URL. Starting the assessment opens the target and begins evidence collection.</p>
+        <h2 id="sqa-start-title">Review product quality</h2>
+        <p id="sqa-start-description">Check the product against a recommended quality baseline and collect evidence for anything that needs attention.</p>
       </div>
       <button class="btn btn-ghost btn-sm" type="button" id="sqa-close">Close</button>
     </header>
 
     <div class="modal-body sqa-modal-body">
-      <div class="sqa-intro">
-        <span class="sqa-kicker">Standards-informed engineering assurance</span>
-        <strong>Evidence-backed, scoped, and conservative by design.</strong>
-        <p id="sqa-catalog-disclaimer">Loading the current catalog and assessment notice…</p>
+      <div class="sqa-recommended">
+        <h3>Recommended quality review</h3>
+        <p>Qase includes the universal product-quality baseline and uses evidence it can observe directly.</p>
+        <p class="sqa-selection-summary" id="sqa-selection-summary" role="status" aria-live="polite">Loading the recommended scope…</p>
+        <details class="sqa-boundary">
+          <summary>About this review</summary>
+          <p id="sqa-catalog-disclaimer">This is readiness guidance, not certification or regulatory approval.</p>
+        </details>
         <span class="sqa-catalog-meta" id="sqa-catalog-version" aria-live="polite"></span>
       </div>
 
       <div class="sqa-catalog-state" id="sqa-catalog-state" role="status" aria-live="polite">Loading assessment catalog…</div>
 
-      <fieldset class="sqa-fieldset" id="sqa-profiles-fieldset" disabled>
-        <legend>Assurance profiles</legend>
-        <p>Select only profiles that apply to this product and release. The universal core is always included.</p>
-        <div class="sqa-option-grid" id="sqa-profile-options"></div>
-      </fieldset>
-
-      <fieldset class="sqa-fieldset" id="sqa-attributes-fieldset" disabled>
-        <legend>Product attributes</legend>
-        <p>Attributes determine which conditional controls enter the assessment scope.</p>
-        <div class="sqa-option-grid sqa-option-grid--compact" id="sqa-attribute-options"></div>
-      </fieldset>
-
-      <aside class="sqa-scope-guidance" id="sqa-scope-guidance" role="note">
-        <strong>Choose the narrowest truthful scope</strong>
-        <p>Core with applicable website attributes enables controlled-browser checks. Sector profiles and broad or all-attribute selections also require external artifacts such as risk records, approvals, traceability, security reports, or an SBOM. Authenticated workflows may require test credentials after the run starts. Missing reviewer evidence is reported as <em>Evidence incomplete</em>, not as a failed automated test.</p>
-      </aside>
-
-      <fieldset class="sqa-fieldset sqa-target-fields">
-        <legend>Assessment target</legend>
-        <div class="field-row sqa-field-row">
-          <label class="field">
-            <span>Product or service</span>
-            <input id="sqa-target-name" name="targetName" required maxlength="200" autocomplete="off" placeholder="Customer portal" autofocus>
-          </label>
-          <label class="field">
-            <span>Release</span>
-            <input id="sqa-target-release" name="targetRelease" required maxlength="200" autocomplete="off" placeholder="2026.08.15">
-          </label>
-          <label class="field">
-            <span>Environment</span>
-            <input id="sqa-target-environment" name="targetEnvironment" required maxlength="100" autocomplete="off" placeholder="staging">
-          </label>
-        </div>
+      <fieldset class="sqa-fieldset sqa-target-primary">
+        <legend>Product to review</legend>
         <label class="field">
           <span>Target URL</span>
-          <input id="sqa-target-url" name="targetUrl" type="url" required maxlength="2048" inputmode="url" autocomplete="url" placeholder="https://staging.example.com">
-          <small>Qase opens this URL immediately after the assessment scope is created.</small>
-        </label>
-        <label class="field">
-          <span>Scope notes</span>
-          <textarea id="sqa-scope-notes" name="scopeNotes" rows="3" maxlength="4000" placeholder="In-scope workflows, exclusions, assumptions, and evidence locations…"></textarea>
-          <small>Record boundaries precisely. Unavailable evidence is reported as blocked or not assessed.</small>
+          <input id="sqa-target-url" name="targetUrl" type="url" required maxlength="2048" inputmode="url" autocomplete="url" placeholder="https://staging.example.com…">
+          <small>Qase opens this URL and starts the recommended review.</small>
         </label>
       </fieldset>
 
       <label class="check sqa-authorization">
         <input id="sqa-authorization" type="checkbox" required>
-        <span>I confirm that I own this target or am authorized to test it, and I accept non-destructive testing only.<small>This confirmation is required before Qase can create the assessment session.</small></span>
+        <span>I have permission to test this product.<small>Qase will use non-destructive checks only.</small></span>
       </label>
 
-      <fieldset class="qa-device-fieldset sqa-device-fieldset">
-        <legend>Target device</legend>
-        <div class="field-row">
-          <label class="field">
-            <span>Device</span>
-            <select id="sqa-device-select"></select>
-          </label>
+      <details class="qa-customize sqa-customize" id="sqa-customize">
+        <summary>Advanced options</summary>
+        <div class="qa-customize-body sqa-customize-body">
+          <fieldset class="sqa-fieldset" id="sqa-profiles-fieldset" disabled>
+            <legend>Additional standards profiles</legend>
+            <p>Add only profiles that apply to this product. The universal quality baseline is always included.</p>
+            <div class="sqa-option-grid" id="sqa-profile-options"></div>
+          </fieldset>
+
+          <fieldset class="sqa-fieldset" id="sqa-attributes-fieldset" disabled>
+            <legend>Product characteristics</legend>
+            <p>Use these details when they materially change the quality controls that apply.</p>
+            <div class="sqa-option-grid sqa-option-grid--compact" id="sqa-attribute-options"></div>
+          </fieldset>
+
+          <fieldset class="sqa-fieldset sqa-target-fields">
+            <legend>Review details</legend>
+            <div class="field-row sqa-field-row">
+              <label class="field">
+                <span>Product name <small>(optional)</small></span>
+                <input id="sqa-target-name" name="targetName" maxlength="200" autocomplete="off" placeholder="Customer portal…">
+              </label>
+              <label class="field">
+                <span>Release <small>(optional)</small></span>
+                <input id="sqa-target-release" name="targetRelease" maxlength="200" autocomplete="off" placeholder="Current…">
+              </label>
+              <label class="field">
+                <span>Environment <small>(optional)</small></span>
+                <input id="sqa-target-environment" name="targetEnvironment" maxlength="100" autocomplete="off" placeholder="Preview…">
+              </label>
+            </div>
+            <label class="field">
+              <span>Scope notes <small>(optional)</small></span>
+              <textarea id="sqa-scope-notes" name="scopeNotes" rows="3" maxlength="4000" placeholder="In-scope workflows, exclusions, assumptions, and evidence locations…"></textarea>
+            </label>
+          </fieldset>
+
+
+          <aside class="sqa-scope-guidance" id="sqa-scope-guidance" role="note">
+            <strong>Evidence boundary</strong>
+            <p>Some standards require documents, approvals, security reports, or independent review that a browser test cannot provide. Qase labels those requirements <em>Evidence incomplete</em> instead of reporting a false failure.</p>
+          </aside>
+        </div>
+      </details>
+      <fieldset class="qa-device-fieldset sqa-device-fieldset test-on-fieldset">
+        <legend>TEST ON</legend>
+        <div class="test-on-summary" id="sqa-test-on" data-empty="true">
+          <span class="test-on-prompt">SELECT A DEVICE</span>
+        </div>
+        <div class="field-row test-on-actions">
+          <button type="button" class="btn btn-primary btn-sm test-on-change" data-test-on-change>Change device</button>
           <label class="check qa-landscape">
             <input id="sqa-device-landscape" type="checkbox">
             <span>Landscape orientation</span>
           </label>
         </div>
-        <small>Emulates a real mobile or tablet browser (User-Agent, viewport, touch) for the assessment.</small>
+        <small>The assessment executes on exactly this device, OS and browser.</small>
       </fieldset>
 
       <div class="test-result" id="sqa-form-error" role="alert" aria-live="assertive"></div>
@@ -419,7 +1242,7 @@
 
     <footer class="modal-foot">
       <button class="btn btn-ghost" type="button" id="sqa-cancel">Cancel</button>
-      <button class="btn btn-primary" type="submit" id="sqa-submit" disabled>Start assessment</button>
+      <button class="btn btn-primary" type="submit" id="sqa-submit" disabled>Start quality review</button>
     </footer>
   </form>
 </dialog>
@@ -430,97 +1253,85 @@
   <form class="modal-inner founder-modal-inner" id="founder-form">
     <header class="modal-head" data-path="~/qase/founder/new">
       <div>
-        <span class="founder-kicker">Founder Mode // product intelligence</span>
-        <h2 id="founder-start-title">Start founder review</h2>
-        <p id="founder-start-description">Give Qase the product and business context it needs to connect observed UX evidence to focused growth decisions.</p>
+        <h2 id="founder-start-title">Review Product Ideas</h2>
+        <p id="founder-start-description">Find what to improve, what to build next, why it matters, and what to prioritize.</p>
       </div>
       <button class="btn btn-ghost btn-sm" type="button" id="founder-close">Close</button>
     </header>
 
     <div class="modal-body founder-modal-body">
-      <aside class="founder-intro" role="note">
+      <aside class="founder-intro founder-recommended" role="note">
         <span aria-hidden="true">◆</span>
         <div>
-          <strong>Evidence first. Strategy second.</strong>
-          <p>Founder Mode reviews the authorized product surface, then separates observed evidence from strategic assumptions. It does not contact prospects, change pricing, publish content, or modify the target.</p>
+          <strong>Recommended Product Review</strong>
+          <p>Qase reviews the current product, connects observed evidence to opportunities, and orders the recommendations for you.</p>
           <small id="founder-catalog-meta" aria-live="polite">Loading review catalog…</small>
         </div>
       </aside>
 
-      <fieldset class="founder-fieldset">
-        <legend>Product target</legend>
-        <div class="field-row founder-target-row">
-          <label class="field">
-            <span>Product or project</span>
-            <input id="founder-target-name" name="targetName" required maxlength="200" autocomplete="off" placeholder="Acme workspace" autofocus>
-          </label>
-          <label class="field">
-            <span>Release</span>
-            <input id="founder-target-release" name="targetRelease" maxlength="200" autocomplete="off" placeholder="2026.08">
-          </label>
-          <label class="field">
-            <span>Environment</span>
-            <input id="founder-target-environment" name="targetEnvironment" maxlength="100" autocomplete="off" placeholder="production">
-          </label>
-        </div>
+      <div class="founder-detected-context" id="founder-detected-context" hidden></div>
+
+      <fieldset class="founder-fieldset founder-target-primary">
+        <legend>Product to review</legend>
         <label class="field">
           <span>Target URL</span>
-          <input id="founder-target-url" name="targetUrl" type="url" required maxlength="8192" inputmode="url" autocomplete="url" placeholder="https://product.example.com">
-          <small>Qase opens this URL after the review scope is created.</small>
+          <input id="founder-target-url" name="targetUrl" type="url" required maxlength="8192" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://product.example.com…">
+          <small>Qase uses the current Studio project when it is available.</small>
         </label>
-      </fieldset>
-
-      <fieldset class="founder-fieldset">
-        <legend>Business context</legend>
-        <div class="field-row founder-context-row">
-          <label class="field">
-            <span>Business stage</span>
-            <input id="founder-stage" name="stage" maxlength="200" autocomplete="off" placeholder="Pre-seed, growth, enterprise…">
-          </label>
-          <label class="field">
-            <span>Business model</span>
-            <input id="founder-business-model" name="businessModel" maxlength="500" autocomplete="off" placeholder="B2B SaaS, usage-based…">
-          </label>
-        </div>
-        <label class="field">
-          <span>Target customer / ICP hypothesis</span>
-          <textarea id="founder-target-customer" name="targetCustomer" rows="2" maxlength="1000" placeholder="Who buys, who uses, and what urgent job are they hiring this product to do?"></textarea>
-        </label>
-        <label class="field">
-          <span>Primary goal</span>
-          <textarea id="founder-primary-goal" name="primaryGoal" rows="2" maxlength="1000" placeholder="The single outcome this review should optimize for…"></textarea>
-        </label>
-        <div class="field-row founder-context-row">
-          <label class="field">
-            <span>Constraints</span>
-            <textarea id="founder-constraints" name="constraints" rows="3" maxlength="2000" placeholder="Team, runway, compliance, technical or launch constraints…"></textarea>
-          </label>
-          <label class="field">
-            <span>Known competitors</span>
-            <textarea id="founder-competitors" name="competitors" rows="3" maxlength="10019" aria-describedby="founder-competitors-note" placeholder="One company or product per line…"></textarea>
-            <small id="founder-competitors-note">Up to 20 entries, 500 characters each.</small>
-          </label>
-        </div>
       </fieldset>
 
       <label class="check founder-authorization">
         <input id="founder-authorization" type="checkbox" required>
-        <span>I confirm that I own this target or am authorized to review it using non-destructive browser testing.<small>Founder Mode observes and analyzes; it does not execute external business actions.</small></span>
+        <span>I have permission to review this product.<small>Qase observes the product without changing it or taking external business actions.</small></span>
       </label>
 
-      <fieldset class="qa-device-fieldset founder-device-fieldset">
-        <legend>Target device</legend>
-        <div class="field-row">
-          <label class="field">
-            <span>Device</span>
-            <select id="founder-device-select"></select>
-          </label>
+      <details class="qa-customize founder-customize" id="founder-customize">
+        <summary>Advanced Options</summary>
+        <div class="qa-customize-body founder-customize-body">
+          <fieldset class="founder-fieldset">
+            <legend>Project Details</legend>
+            <div class="field-row founder-target-row">
+              <label class="field">
+                <span>Product or project <small>(optional)</small></span>
+                <input id="founder-target-name" name="targetName" maxlength="200" autocomplete="off" placeholder="Acme workspace…">
+              </label>
+              <label class="field">
+                <span>Release <small>(optional)</small></span>
+                <input id="founder-target-release" name="targetRelease" maxlength="200" autocomplete="off" placeholder="Current…">
+              </label>
+              <label class="field">
+                <span>Environment <small>(optional)</small></span>
+                <input id="founder-target-environment" name="targetEnvironment" maxlength="100" autocomplete="off" placeholder="Preview…">
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="founder-fieldset">
+            <legend>Business Context <small class="founder-context-note">optional</small></legend>
+            <label class="field">
+              <span>Primary goal</span>
+              <textarea id="founder-primary-goal" name="primaryGoal" rows="2" maxlength="1000" placeholder="The outcome this review should optimize for…"></textarea>
+            </label>
+            <label class="field">
+              <span>Constraints</span>
+              <textarea id="founder-constraints" name="constraints" rows="3" maxlength="2000" placeholder="Team, runway, compliance, or launch constraints…"></textarea>
+            </label>
+          </fieldset>
+        </div>
+      </details>
+      <fieldset class="qa-device-fieldset founder-device-fieldset test-on-fieldset">
+        <legend>REVIEW ON</legend>
+        <div class="test-on-summary" id="founder-test-on" data-empty="true">
+          <span class="test-on-prompt">SELECT A DEVICE</span>
+        </div>
+        <div class="field-row test-on-actions">
+          <button type="button" class="btn btn-primary btn-sm test-on-change" data-test-on-change>Change device</button>
           <label class="check qa-landscape">
             <input id="founder-device-landscape" type="checkbox">
             <span>Landscape orientation</span>
           </label>
         </div>
-        <small>Founder Mode uses this profile when opening the target site.</small>
+        <small>The review executes on exactly this device, OS and browser.</small>
       </fieldset>
 
       <div class="test-result" id="founder-form-error" role="alert" aria-live="assertive"></div>
@@ -528,25 +1339,352 @@
 
     <footer class="modal-foot">
       <button class="btn btn-ghost" type="button" id="founder-cancel">Cancel</button>
-      <button class="btn btn-primary founder-submit" type="submit" id="founder-submit">Start founder review</button>
+      <button class="btn btn-primary founder-submit" type="submit" id="founder-submit">Start Product Review</button>
     </footer>
   </form>
 </dialog>
 
+<!-- Test Cases (Phase 4): reusable QA scenarios with multi-environment assignment. -->
+<dialog class="modal" id="test-cases" aria-labelledby="test-cases-title">
+  <div class="modal-inner test-cases-inner">
+    <header class="modal-head">
+      <div>
+        <h2 id="test-cases-title">Test cases</h2>
+        <p>Create reusable QA scenarios and assign them to one or more devices.</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" type="button" id="tc-close">Close</button>
+    </header>
+    <div class="modal-body">
+      <p class="tc-summary" id="tc-summary"></p>
+      <label class="field">
+        <span>Search</span>
+        <input id="tc-search" type="search" placeholder="TC number, title, or tag" maxlength="120">
+      </label>
+      <label class="field tc-source-field">
+        <span>Source</span>
+        <select id="tc-source">
+          <option value="">All</option>
+          <option value="manual">Manual</option>
+          <option value="auto">Agent</option>
+        </select>
+      </label>
+      <table class="tc-table">
+        <thead><tr><th>Case</th><th>Test</th><th>Platforms</th><th>Last run</th><th>Tags</th><th></th></tr></thead>
+        <tbody id="tc-tbody"></tbody>
+      </table>
+      <form id="tc-form" class="tc-form">
+        <h3 id="tc-form-heading">New test case</h3>
+        <label class="field"><span>Title <em>(required)</em></span><input id="tc-title" required maxlength="300"></label>
+        <label class="field"><span>Description</span><textarea id="tc-description" maxlength="4000" rows="2"></textarea></label>
+        <label class="field"><span>Steps <small>(one per line)</small></span><textarea id="tc-steps" maxlength="50000" rows="4"></textarea></label>
+        <label class="field"><span>Expected result</span><textarea id="tc-expected" maxlength="4000" rows="2"></textarea></label>
+        <label class="field"><span>Tags <small>(comma-separated)</small></span><input id="tc-tags" maxlength="200"></label>
+        <label class="field tc-devices-field"><span>TEST ON DEVICES</span>
+          <div class="dcl-list" id="tc-device-chips"></div>
+          <button type="button" class="btn btn-ghost btn-sm dcl-add" id="tc-add-device">+ Add device</button>
+        </label>
+        <div class="tc-form-actions">
+          <button type="button" class="btn btn-ghost" id="tc-cancel">Reset</button>
+          <button type="submit" class="btn btn-primary" id="tc-submit">Create test case</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</dialog>
+
+<!-- Bulk run wizard (Phase 11): what → where → summary. -->
+<dialog class="modal" id="bulk-run" aria-labelledby="bulk-run-title">
+  <div class="modal-inner bulk-run-inner">
+    <header class="modal-head">
+      <div>
+        <h2 id="bulk-run-title">Launch bulk runs</h2>
+        <p>Three steps: what to run, where, then launch.</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" type="button" id="bulk-close">Close</button>
+    </header>
+    <div class="modal-body">
+      <ol class="bulk-steps" id="bulk-steps">
+        <li class="bulk-step is-active" data-bulk-step="1">
+          <h3>1 · What to run</h3>
+          <label class="field">
+            <span>Which tests?</span>
+            <select id="bulk-what">
+              <option value="all">All test cases</option>
+              <option value="selected">Selected test cases</option>
+              <option value="failed">Failed results only</option>
+              <option value="notRun">Not run yet</option>
+            </select>
+          </label>
+          <div class="field" id="bulk-cases-field" hidden>
+            <div class="qa-tests-toolbar">
+              <span class="qa-tests-count" id="bulk-cases-count" aria-live="polite"></span>
+              <span class="qa-tests-bulk">
+                <button type="button" class="btn btn-ghost btn-sm" id="bulk-cases-all">Select all</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="bulk-cases-none">Clear all</button>
+              </span>
+            </div>
+            <div class="bulk-case-list" id="bulk-case-list" role="group" aria-label="Test cases to run"></div>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm bulk-next" data-bulk-next="2">Next: where →</button>
+        </li>
+        <li class="bulk-step" data-bulk-step="2" hidden>
+          <h3>2 · Where to run</h3>
+          <label class="field">
+            <span>On which devices?</span>
+            <select id="bulk-where">
+              <option value="assigned">Every environment assigned to each case</option>
+              <option value="default">The current default device</option>
+              <option value="pick">Pick environments</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>DEVICES</span>
+            <div class="dcl-list" id="bulk-device-chips"></div>
+            <button type="button" class="btn btn-ghost btn-sm dcl-add" id="bulk-add-device">+ Add device</button>
+          </label>
+          <div class="tc-form-actions">
+            <button type="button" class="btn btn-ghost btn-sm bulk-back" data-bulk-back="1">← Back</button>
+            <button type="button" class="btn btn-primary btn-sm bulk-next" data-bulk-next="3">Next: summary →</button>
+          </div>
+        </li>
+        <li class="bulk-step" data-bulk-step="3" hidden>
+          <h3>3 · Summary</h3>
+          <p class="bulk-preview" id="bulk-preview"></p>
+          <div class="bulk-availability" id="bulk-availability" aria-live="polite"></div>
+          <button type="button" class="btn btn-primary" id="bulk-launch">Run tests</button>
+          <button type="button" class="btn btn-ghost btn-sm bulk-back" data-bulk-back="2" style="margin-left:8px">← Back</button>
+          <pre class="bulk-result" id="bulk-result" hidden></pre>
+        </li>
+      </ol>
+    </div>
+  </div>
+</dialog>
+
+<!-- QA matrix run results board (#14942 Phase 4): per-configuration results,
+     evidence and totals for the launcher's matrix runs. -->
+<dialog class="modal" id="qa-matrix-run-dialog" aria-labelledby="qa-matrix-run-title">
+  <div class="modal-inner qmr-modal-inner">
+    <header class="modal-head">
+      <div>
+        <h2 id="qa-matrix-run-title">QA run</h2>
+        <p class="qmr-subtitle" id="qa-matrix-run-sub"></p>
+      </div>
+      <span>
+        <button type="button" class="btn btn-ghost btn-sm" id="qa-matrix-run-close">Close</button>
+      </span>
+    </header>
+    <div class="modal-body" id="qa-matrix-run-body"></div>
+  </div>
+</dialog>
+
+<!-- Run-target dialog (Phase 11): where should this test execute? -->
+<dialog class="modal" id="run-target" aria-labelledby="run-target-title">
+  <div class="modal-inner run-target-inner">
+    <header class="modal-head">
+      <div>
+        <h2 id="run-target-title">Where do you want to test?</h2>
+        <p id="run-target-sub">Pick the devices for this test run.</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" type="button" id="rt-close">Close</button>
+    </header>
+    <div class="modal-body">
+      <div class="rt-choices" role="radiogroup" aria-label="Run targets">
+        <label class="rt-choice"><input type="radio" name="rt-choice" value="current" checked><span><strong>Current device</strong><small>Use the environment chosen in the device panel</small></span></label>
+        <label class="rt-choice"><input type="radio" name="rt-choice" value="all"><span><strong>All selected devices</strong><small>Every environment assigned to this test</small></span></label>
+        <label class="rt-choice"><input type="radio" name="rt-choice" value="choose"><span><strong>Choose devices</strong><small>Pick specific environments</small></span></label>
+      </div>
+      <label class="field" id="rt-envs-field" hidden>
+        <span>DEVICES</span>
+        <div class="dcl-list" id="rt-device-chips"></div>
+        <button type="button" class="btn btn-ghost btn-sm dcl-add" id="rt-add-device">+ Add device</button>
+      </label>
+      <p class="form-error test-result" id="rt-error" hidden></p>
+      <div class="tc-form-actions">
+        <button type="button" class="btn btn-ghost" id="rt-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="rt-run">Run test</button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+
+<!-- Quick Actions strip (Phase 11). Sits inside the chat panel, directly
+     above the composer, so it takes flow space — never overflows the fold. -->
+
 <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false" inert aria-hidden="true"></div>
 
-<dialog id="profile-dialog" class="account-dialog" aria-labelledby="profile-title">
-  <header><div><p class="auth-eyebrow">YOUR PRIVATE WORKSPACE</p><h2 id="profile-title">My account</h2></div><button type="button" id="profile-close" class="btn btn-ghost">Close</button></header>
-  <p id="profile-email" class="auth-copy"></p>
-  <form id="profile-form"><label for="profile-name">Display name</label><input id="profile-name" required maxlength="120" autocomplete="name"><label for="profile-timezone">Timezone</label><input id="profile-timezone" required maxlength="100" placeholder="Asia/Kolkata"><button class="btn btn-primary" type="submit">Save profile</button></form>
-  <hr><h3>Change password</h3><p class="auth-copy">Changing your password signs out all sessions.</p>
-  <form id="password-form"><label for="current-password">Current password</label><input id="current-password" type="password" required maxlength="200" autocomplete="current-password"><label for="new-password">New password</label><input id="new-password" type="password" required minlength="12" maxlength="200" autocomplete="new-password"><button class="btn btn-primary" type="submit">Update password</button></form>
-  <hr><h3>Saved memory</h3><p class="auth-copy">Preferences and context used by your agents. Never add credentials.</p><ul id="profile-memory"></ul>
-  <form id="memory-form"><label for="memory-key">Name</label><input id="memory-key" required maxlength="80" pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}" placeholder="preferred-browser"><label for="memory-value">Value</label><textarea id="memory-value" required maxlength="4000"></textarea><button class="btn btn-primary" type="submit">Save memory</button></form>
-  <p id="profile-message" role="status" aria-live="polite"></p>
+<!-- Device Matrix drawer (Phase 10): selection surface over the catalog.
+     Overlay only — the workspace behind it keeps its full width. -->
+<dialog id="device-drawer" class="device-drawer" aria-labelledby="device-drawer-title">
+  <header class="dd-head">
+    <div>
+      <h2 id="device-drawer-title">Device matrix</h2>
+      <p class="dd-sub">Pick devices, operating systems and browsers to test on.</p>
+    </div>
+    <button type="button" class="btn btn-ghost btn-sm" id="dd-close">Close</button>
+  </header>
+  <div class="dd-body">
+    <label class="field"><span>Search devices</span><input id="dd-search" type="search" placeholder="e.g. Galaxy S24, Pixel, Laptop…" maxlength="120"></label>
+    <div class="dd-tabs" role="tablist" aria-label="Device platform">
+      <button type="button" class="dd-tab is-active" data-dd-tab="all" aria-selected="true">All</button>
+      <button type="button" class="dd-tab" data-dd-tab="apple" aria-selected="false">Apple</button>
+      <button type="button" class="dd-tab" data-dd-tab="android" aria-selected="false">Android</button>
+      <button type="button" class="dd-tab" data-dd-tab="windows" aria-selected="false">Windows</button>
+    </div>
+    <div id="dd-sections" class="dd-sections" aria-label="Devices by manufacturer"></div>
+    <div id="dd-detail" class="dd-detail" hidden>
+      <div id="dd-detail-body"></div>
+    </div>
+    <div class="dd-selection">
+      <span id="dd-selection-summary">0 environments selected</span>
+      <button type="button" class="btn btn-ghost btn-sm" id="dd-clear-selection" hidden>Clear</button>
+      <button type="button" class="btn btn-primary btn-sm" id="dd-apply" disabled>Save environments</button>
+    </div>
+    <section class="dd-saved-section">
+      <header class="dd-saved-head">
+        <h3>Saved environments</h3>
+        <button type="button" class="btn btn-ghost btn-sm" id="dd-saved-refresh">Refresh</button>
+      </header>
+      <ul id="dd-saved-list" class="dd-saved-list"></ul>
+    </section>
+    <details class="dd-advanced">
+      <summary id="dd-advanced-toggle" aria-expanded="false">Advanced settings</summary>
+      <div id="dd-advanced-body" hidden></div>
+    </details>
+  </div>
 </dialog>
-<script src="entry.js" type="module"></script>
-<script src="entry-motion.js" type="module"></script>
-<script src="app.js" type="module"></script>
+
+<!-- ONE Device Picker (DX Phase 1 → Matrix M3 #14422): sidebar categories +
+     browser columns matrix inside the same overlay dialog. -->
+<dialog id="device-picker" class="modal dp-modal mx-modal" aria-labelledby="device-picker-title">
+  <div class="modal-inner">
+    <header class="modal-head">
+      <div>
+        <h2 id="device-picker-title">TEST ON DEVICE</h2>
+        <p class="dp-sub">Pick a device, then a browser version — the environment resolves automatically.</p>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm" id="dp-close">Close</button>
+    </header>
+    <div class="modal-body dp-body">
+      <label class="field"><span>Search</span><input id="dp-search" type="search" placeholder="e.g. iPhone, Pixel, Chrome 154…" maxlength="120"></label>
+      <!-- Matrix shell (M3): sidebar + browser columns. The legacy chip filter
+           rows and card list were removed (M7 #14474) — the sidebar's
+           categories and search fully replace them. -->
+      <div class="mx-shell">
+        <nav class="mx-sidebar" id="mx-sidebar" aria-label="Device categories"></nav>
+        <div class="mx-main">
+          <!-- Matrix top bar (M4 #14423): target URL + refresh, bound to the
+               REAL run state — no decorative chrome. Refresh pre-fills the QA
+               launcher with the current target and reloads live picker data. -->
+          <div class="mx-topbar">
+            <button type="button" class="mx-sidebar-toggle" id="mx-sidebar-toggle" aria-expanded="true" aria-controls="mx-sidebar" title="Show or hide the device categories">▾ Categories</button>
+            <label class="mx-topbar-url">
+              <span class="sr-only" id="mx-url-label">Target URL</span>
+              <input id="mx-target-url" type="url" maxlength="2048" placeholder="https://example.com — target for the next run" aria-labelledby="mx-url-label">
+            </label>
+            <button type="button" class="btn btn-sm" id="mx-refresh" title="Refresh the device catalog and re-open the target">Refresh</button>
+          </div>
+          <div id="dp-cards" class="dp-cards" aria-label="Devices" hidden></div>
+          <div id="mx-columns" class="mx-columns" aria-label="Browsers for the selected device" hidden></div>
+          <p id="mx-columns-empty" class="dp-empty" hidden>Select a device from the sidebar to see its browsers.</p>
+        </div>
+      </div>
+      <p id="dp-summary" class="dp-summary" data-empty="true">SELECT A DEVICE</p>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="profile-dialog" class="account-dialog route-page" data-route-page="account" aria-labelledby="profile-title">
+  <div class="account-shell route-page-shell">
+    <header class="account-head">
+      <div class="account-identity">
+        <span class="account-avatar" aria-hidden="true">Q</span>
+        <div>
+          <p class="account-eyebrow">Account settings</p>
+          <h1 id="profile-title" tabindex="-1">My account</h1>
+          <p id="profile-email" class="account-email"></p>
+        </div>
+      </div>
+      <button type="button" id="profile-close" class="btn btn-ghost btn-sm route-page-back"><span aria-hidden="true">←</span> Back to tests</button>
+    </header>
+
+    <div class="account-body">
+      <nav class="route-section-nav account-nav" aria-label="Account sections">
+        <p>Settings</p>
+        <button type="button" data-page-jump="account-profile-heading"><span aria-hidden="true">01</span> Profile</button>
+        <button type="button" data-page-jump="account-password-heading"><span aria-hidden="true">02</span> Password</button>
+        <button type="button" data-page-jump="account-recovery-heading"><span aria-hidden="true">03</span> Recovery codes</button>
+        <button type="button" data-page-jump="account-memory-heading"><span aria-hidden="true">04</span> Saved memory</button>
+        <small>Changes apply only to your Qase workspace.</small>
+      </nav>
+      <div class="account-content" id="account-page-content">
+      <section class="account-section" aria-labelledby="account-profile-heading">
+        <div class="account-section-copy">
+          <h3 id="account-profile-heading" tabindex="-1">Profile</h3>
+          <p>Update the name and timezone shown across your workspace.</p>
+        </div>
+        <form id="profile-form" class="account-form">
+          <div class="account-field-grid">
+            <label for="profile-name"><span>Display name</span><input id="profile-name" name="displayName" required maxlength="120" autocomplete="name"></label>
+            <label for="profile-timezone"><span>Timezone</span><input id="profile-timezone" name="timezone" required maxlength="100" autocomplete="off" spellcheck="false" placeholder="Asia/Kolkata"></label>
+          </div>
+          <div class="account-actions"><button class="btn btn-primary" type="submit">Save profile</button></div>
+        </form>
+      </section>
+
+      <section class="account-section" aria-labelledby="account-password-heading">
+        <div class="account-section-copy">
+          <h3 id="account-password-heading" tabindex="-1">Password</h3>
+          <p>Changing your password signs out all active sessions.</p>
+        </div>
+        <form id="password-form" class="account-form">
+          <div class="account-field-grid">
+            <label for="current-password"><span>Current password</span><input id="current-password" name="currentPassword" type="password" required maxlength="200" autocomplete="current-password"></label>
+            <label for="new-password"><span>New password</span><input id="new-password" name="newPassword" type="password" required minlength="8" maxlength="200" autocomplete="new-password"><small>Use at least 8 characters.</small></label>
+          </div>
+          <div class="account-actions"><button class="btn btn-primary" type="submit">Update password</button></div>
+        </form>
+      </section>
+
+      <section class="account-section" aria-labelledby="account-recovery-heading">
+        <div class="account-section-copy">
+          <h3 id="account-recovery-heading" tabindex="-1">Recovery codes</h3>
+          <p>One-time codes that let you regain access without email. Store them somewhere safe — they're shown only once. Generating new codes invalidates all previously generated codes.</p>
+        </div>
+        <p class="account-copy" id="recovery-status"></p>
+        <form id="recovery-generate-form" class="account-form">
+          <div class="account-field-grid">
+            <label for="recovery-current-password"><span>Current password</span><input id="recovery-current-password" type="password" required maxlength="200" autocomplete="current-password"></label>
+          </div>
+          <div class="account-actions"><button class="btn btn-primary" type="submit" id="recovery-generate">Generate codes</button></div>
+        </form>
+        <div id="recovery-codes-result" hidden>
+          <p class="auth-hint"><strong>Save these now — this is the only time they're shown.</strong> Generating new codes invalidates all previous ones.</p>
+          <ol id="recovery-codes-list" style="font-family:var(--mono-font,monospace);letter-spacing:1px;margin:8px 0;"></ol>
+          <button type="button" class="btn" id="recovery-copy">Copy all</button>
+          <button type="button" class="btn" id="recovery-download">Download .txt</button>
+        </div>
+      </section>
+
+      <section class="account-section" aria-labelledby="account-memory-heading">
+        <div class="account-section-copy">
+          <h3 id="account-memory-heading" tabindex="-1">Saved memory</h3>
+          <p>Store preferences and context used by your agents. Never add credentials.</p>
+        </div>
+        <ul id="profile-memory" class="account-memory-list"></ul>
+        <form id="memory-form" class="account-form account-memory-form">
+          <label for="memory-key"><span>Name</span><input id="memory-key" name="memoryKey" required maxlength="80" pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}" autocomplete="off" spellcheck="false" placeholder="preferred-browser"></label>
+          <label for="memory-value"><span>Value</span><textarea id="memory-value" name="memoryValue" required maxlength="4000" rows="3" autocomplete="off" placeholder="The preference or context to remember…"></textarea></label>
+          <div class="account-actions"><button class="btn btn-primary" type="submit">Save memory</button></div>
+        </form>
+      </section>
+      </div>
+    </div>
+
+    <footer class="account-status"><p id="profile-message" role="status" aria-live="polite"></p></footer>
+  </div>
+</dialog>
+<script src="entry.js?v=20261014-6" type="module"></script>
+<script src="app.js?v=20261015-18" type="module"></script>
 </body>
 </html>
