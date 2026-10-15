@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "releaseId": "qase-2026-10-15-run-cards-compact-r1",
+  "releaseId": "qase-2026-10-16-single-browser-r4",
   "files": [
     {
       "path": ".dockerignore",
@@ -88,11 +88,11 @@
     },
     {
       "path": "DEPLOYMENT_PROMPT.md",
-      "sha256": "2df909241d95458b4d5106741739bb34bf98ad382dbf3844e1c863752b62e943"
+      "sha256": "bac8acf6506ab7f0d4eab45fa380c85f7ea5b6c5d023b6569f559acf8e3b76e5"
     },
     {
       "path": "Dockerfile",
-      "sha256": "1fa050a3a5586db9e2687eff170626880bc4e1ceec0e05dee3ac0890baf43a1e"
+      "sha256": "612c4d1a0d154f8722f6b985d729d1b84e66e7cf78e1d550db5dfa5b12a34ce0"
     },
     {
       "path": "docs/auth-architecture-2026-09-10.md",
@@ -177,6 +177,10 @@
     {
       "path": "docs/production-readiness-report-2026-09-10.md",
       "sha256": "706efd791c3a14438a17e3d7eab19bc17e046bdfee0e4ff33918d1a8f898afae"
+    },
+    {
+      "path": "docs/production-run-startup.md",
+      "sha256": "e1bf16c1b45c5e958922ee2d08dde3a3edb6d6d49d4844c677d47a208f84ff6c"
     },
     {
       "path": "docs/QASE_STUDIO_UI_IMPLEMENTATION_REPORT.md",
@@ -264,7 +268,7 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "2f81117309d1272b995ece024e022b6d5a478c11e58f6e2d5725c26ca940869d"
+      "sha256": "e145ff4ded9f9c6a3396f26dd929b7f27fd2e0018786f44709cedfc3f6361589"
     },
     {
       "path": "public/auth.css",
@@ -292,7 +296,7 @@
     },
     {
       "path": "public/browserCards.test.js",
-      "sha256": "c47d7ceee877759e3f62ca99de908b401ae8fccba79c0f05df49a282608e5b9c"
+      "sha256": "fabd511a0d75a2f6fd970becd215f6f03655802ed4e9571d77792496b5ec5e06"
     },
     {
       "path": "public/browserChannels.js",
@@ -352,7 +356,7 @@
     },
     {
       "path": "public/deviceCategorizationUi.test.js",
-      "sha256": "85555381b184e32d3e375979b4e702af742a2529ef36880ff3226194000d2625"
+      "sha256": "c897d9b564872d6e5148c07541dd387e0e4b2029fe04bf69196ccc71018c56ff"
     },
     {
       "path": "public/deviceDrawer.js",
@@ -380,7 +384,7 @@
     },
     {
       "path": "public/deviceRows.test.js",
-      "sha256": "07d2fe12d09e0fa13d9632a4ebebfea284794f3f14e24e7708b38cab836fd67c"
+      "sha256": "f3a62a2115a31a8bd5d843a903898b68765a75cee24e7986738b8a48f2705dfc"
     },
     {
       "path": "public/deviceRuntimeUi.js",
@@ -392,7 +396,7 @@
     },
     {
       "path": "public/deviceSelectionUi.test.js",
-      "sha256": "aa06cabc32a818d72822d685011d6ee8a95e802e99428d20d5930671d2f6cf46"
+      "sha256": "1d48e854ac7446cab0d4852f15a8b6146747af5aabab438c4cfa17aa6ed2c44b"
     },
     {
       "path": "public/entry-motion.js",
@@ -405,6 +409,10 @@
     {
       "path": "public/entry.js",
       "sha256": "646aff48797952ae50c23e4f738865e6d8babeb7fe071b397b80e9c095284bf8"
+    },
+    {
+      "path": "public/feedbackRunBinding.test.js",
+      "sha256": "b2dbf03d7d93cc9dfa57ca37367f0ed22980c0ff091645b42907d66a55b8abe2"
     },
     {
       "path": "public/fixPromptBuilder.js",
@@ -452,7 +460,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "d25f80c259e68e5cabcffadd354ce12087c83ca8bda4270d300932f0daa81264"
+      "sha256": "6d00c0b3df264d3e193cf233e6452f00a57314fda5819b3f433b557db29fd443"
     },
     {
       "path": "public/journey.css",
@@ -463,12 +471,24 @@
       "sha256": "ad2f6ad94784436915929e73ab08de847a66403adf0b1c2d7a5e23c4c0966961"
     },
     {
+      "path": "public/matrixLaunch.js",
+      "sha256": "8f67c3f60563d4af2cd309f6c78fcbccc588afdf8525877954feef5e4a90a1ff"
+    },
+    {
+      "path": "public/matrixLaunch.test.js",
+      "sha256": "bcea6a6b0c34c3b79216f683cf48c83df203edf2ae728ccd062601d6bbda7b6b"
+    },
+    {
       "path": "public/matrixPicker.css",
-      "sha256": "fe78b8ddc99359b1b5fad18e6832cfaf1024c831aaf25a2eef74cb31d05ff5ed"
+      "sha256": "05086815d3a30ad6138aaf669806eb31f4450f04cbb8630036042bcbb0db9968"
     },
     {
       "path": "public/matrixPicker.js",
-      "sha256": "0d4993bdb13da8889d9ee28966a042337c01166a45b9c99c3777d3f6b269bce3"
+      "sha256": "04241a8bc65c2496634ea4d871e641f334592a27362a6645bdfe74aec8ef762d"
+    },
+    {
+      "path": "public/matrixPickerHarness.js",
+      "sha256": "76c83e705fd820242729058f51a9e41d2c1a84de6334ead98687c9ff50286f03"
     },
     {
       "path": "public/matrixPickerModel.js",
@@ -484,19 +504,19 @@
     },
     {
       "path": "public/pageRouter.js",
-      "sha256": "b9ff4866d9bb4dea77b0e099fc38a10c2f0704321c16713c43a853c42eff5681"
+      "sha256": "019c3cfa965d72d7bfff544cf32f43e32011e68c249d0604653a39a1dc0398e2"
     },
     {
       "path": "public/pageRouter.test.js",
-      "sha256": "239501e8f7886dabc3866945c4b832dbfcd8abd841282f1eff2972e3aa958d37"
+      "sha256": "75ff9fb56e08b0b4f1cecd5c2cb0d463b867598f212126200e6281157d145b03"
     },
     {
       "path": "public/perBrowserSelectionUi.test.js",
-      "sha256": "98632eab17389caa3aa5a65617d34712aa3f12ee2d45bb92778e634fc13aac08"
+      "sha256": "6b952264a5d5f461144666e10c285ec37c46b4a707406846b2babf3e2c7cac7f"
     },
     {
       "path": "public/phase13eContract.test.js",
-      "sha256": "f8ab61c14ee1085f880444edfc9519aacf53ae90bdf116f3cdf19219e91b19b6"
+      "sha256": "58d15b7ed3739e0c52fdb7789fe9308b492f251c4cd7790a411dde9eca11f1eb"
     },
     {
       "path": "public/previewLayout.js",
@@ -520,7 +540,7 @@
     },
     {
       "path": "public/qaJourney.js",
-      "sha256": "90b79f357f942aa81812ccc836f7a883d5c72579591a29c5b1abaf021a58c9f8"
+      "sha256": "7ebfa96574373b4561c5de8d0b337d49d56c533ce4876874dd80bafd5a5fd7bc"
     },
     {
       "path": "public/qaJourney.test.js",
@@ -536,7 +556,7 @@
     },
     {
       "path": "public/qaLauncherIdentifiers.test.js",
-      "sha256": "31aa9cff5eaecbcd2f348c49cc1c6c6931159782aa375f0c934b631cc9ca1887"
+      "sha256": "34e84c83dc9cf6696dc40c513f36dd3df196f9bfb4e3ce62c59204f9a61c4cfd"
     },
     {
       "path": "public/qaMatrixResults.js",
@@ -548,15 +568,15 @@
     },
     {
       "path": "public/qaMatrixResultsView.js",
-      "sha256": "266ec4e489f7644427db5a433b6c8dec0b4b1d020239ff77be61c9909fdef4a0"
+      "sha256": "88ac087604c852ec01819baaba926f0b94473e758a471e5634a00dd459d6ec4c"
     },
     {
       "path": "public/qaMatrixResultsView.test.js",
-      "sha256": "df4f4618869692175ca7235645514af0a6b0e21d2d9b83295e7a56afd67ab80b"
+      "sha256": "c88e496c598aa6684e83afaff2e1e4e8d629428da9847cf3818a006d908d086b"
     },
     {
       "path": "public/qaMatrixScopeView.test.js",
-      "sha256": "971aa05811fe4458be69afe39d223ee6a0e914b721a40cf9241820db240bb343"
+      "sha256": "87fcf694a68727d86289966552b209558a293a6188d4618767fc9503f36c2c0c"
     },
     {
       "path": "public/qaScopeCatalog.js",
@@ -576,7 +596,7 @@
     },
     {
       "path": "public/qaSummary.test.js",
-      "sha256": "97ac67f15752a580417b69e3b3e9a128780ac23e237f2484a77044693ac1294c"
+      "sha256": "a49c39c542dbac0d709974c8b74d5e222406e097131095a01c651883439bb32e"
     },
     {
       "path": "public/qaWorkflows.js",
@@ -592,15 +612,15 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "3edb9ffae46f8892fb55fb7f46a291d82e102aca0e7e3c960480f8317f3d99ab"
+      "sha256": "95ff8796d86c497092222ba654f4f4b610d429980a93f8e21aa8774b0bc46ce3"
     },
     {
       "path": "public/renderHealth.js",
-      "sha256": "ce6f3bc2e33213d5b69068ac0eb1bcacbdaba35f9d785b8c693790c3423838de"
+      "sha256": "6ae66d8894e8694f16c8962f90844302f16618c784a124dc52484e5f9780ca57"
     },
     {
       "path": "public/renderHealth.test.js",
-      "sha256": "67fa1bd870892a7aaa69f6addcfc1129a891a9d2d559d225af416cfd58cdb2a8"
+      "sha256": "24005983155eeadc4e392c7e60e5c2649a5de5c1f99c89fa688c9a293147e239"
     },
     {
       "path": "public/resultsOverview.js",
@@ -639,8 +659,28 @@
       "sha256": "91d2ef5e3957319f0391d5fc300a6070007340a4b9dc691f92aaada52eea5b02"
     },
     {
+      "path": "public/runStartup.css",
+      "sha256": "42c438dbef9c126f6d73ebdc98b8d934e954a5ab9f97e665903653127e2f7e20"
+    },
+    {
+      "path": "public/runStartupView.js",
+      "sha256": "1b6f73d63583ebedbf5a32732484d5d7464cbfc91aa5ee7db80f4cebc41347d7"
+    },
+    {
+      "path": "public/runStartupView.test.js",
+      "sha256": "9ce530eec127feff66a93e449f7584d6b0bb3efc7cf86d90d53f2945c06c665c"
+    },
+    {
       "path": "public/runtimeStatusVocabulary.test.js",
       "sha256": "cdaf700b6a064da33401d7ef0a2761fd5fe422cff56672fb5838d11d8136cb16"
+    },
+    {
+      "path": "public/singleRunSelection.js",
+      "sha256": "5c31b9da6c0bf2ae6ebc5f07cdbb4ecb393715b5ad9eec55a112e813e28a4609"
+    },
+    {
+      "path": "public/singleRunSelection.test.js",
+      "sha256": "08dfe89373ce5e5a3c7ae98ed75f5e590219e7e4100d4d19a992391614590cba"
     },
     {
       "path": "public/sqaPresentation.js",
@@ -712,7 +752,7 @@
     },
     {
       "path": "RELEASE_NOTES.md",
-      "sha256": "765faf3a1c036192c2f1416ac660f3c6d11d0ee2e878df16e8730f7d73acdb8d"
+      "sha256": "4acdbe899dc1d8fb028c76ff51d3ec362a0dd0715d5ef8f6946ae310c56c022a"
     },
     {
       "path": "scripts/audit-theme-light.mjs",
@@ -724,7 +764,7 @@
     },
     {
       "path": "scripts/check-deployed-release.mjs",
-      "sha256": "f0dbb7d19d77b84aae6bcacfecd90d67dce51b5e4e32cd6b91edb270b7d20a07"
+      "sha256": "ca3628bea8ffe3bb82a6766507c11aa51c96da770213998b65d4f5efd7779d72"
     },
     {
       "path": "scripts/data-governance.mjs",
@@ -876,7 +916,7 @@
     },
     {
       "path": "server/app.js",
-      "sha256": "35d497ee4bffa0b817d6f15bd5ec727a6626d6569256b3b4bd8c913ff573ee00"
+      "sha256": "d17087b689b29d9bf1f220ecb40bb49506c333f22756a67c2350136053f23ab5"
     },
     {
       "path": "server/app.test.js",
@@ -913,6 +953,14 @@
     {
       "path": "server/authThrottle.js",
       "sha256": "d1c6780e4c450f10163e0f8900f720f9a2e0d26628a4963e1cc4bb56447f2492"
+    },
+    {
+      "path": "server/automaticBrowser.js",
+      "sha256": "16c4a50624c483fdde355304b2b98e203bbd625924b044c2317d4fb845d92aac"
+    },
+    {
+      "path": "server/automaticBrowser.test.js",
+      "sha256": "855b247a214a4fee53a3dd2b8ef81ad02ca59d74aca15bec4dd3d40e335083ee"
     },
     {
       "path": "server/bootstrapOperator.test.js",
@@ -1572,11 +1620,11 @@
     },
     {
       "path": "server/matrixApi.js",
-      "sha256": "60f0338b6e00b8418953b3f2a54a6c4aa09385220403d3570ceed106b87e3e0c"
+      "sha256": "5bc334b0540631caa5dd6dfab93ef8241cd6233e22c22b865bb999d9316e1404"
     },
     {
       "path": "server/matrixApi.test.js",
-      "sha256": "4174f4f0ad5663a1a21acbd0fd5b90870571dafac91959a53aa0c2c75d1b743b"
+      "sha256": "1dcf571996611ca795e6ad5074497a1eb63f3ff3f87e3428687177e036c13920"
     },
     {
       "path": "server/matrixCoverage.js",
@@ -1600,7 +1648,7 @@
     },
     {
       "path": "server/matrixOrchestrator.js",
-      "sha256": "7166937764907093e4dc8f7f444677c13491403eef955000d4fdf92023af1b48"
+      "sha256": "c908ddc8501887777c7d39c6b646fdbfe6138cb91bfdbb84ad782c9ed9b02700"
     },
     {
       "path": "server/matrixOrchestrator.rt2.test.js",
@@ -1608,7 +1656,11 @@
     },
     {
       "path": "server/matrixOrchestrator.test.js",
-      "sha256": "48ebbfef2127b5c8f1b0631397e75e5ee0844bf6d680ca69f86aa0e6a5165f5e"
+      "sha256": "e2e93c7c16d4c97e6f61605fce6979ba06dc3f9c52d2dd9fd40a97023a6e7876"
+    },
+    {
+      "path": "server/matrixOwnership.test.js",
+      "sha256": "85f1468f9af24093a9956e505f8df4c25c3c90f9c7ac67c4673b1e300e7d930c"
     },
     {
       "path": "server/matrixQuestionPolicy.js",
@@ -1620,7 +1672,7 @@
     },
     {
       "path": "server/matrixService.js",
-      "sha256": "5333712699b9234505f78f34a8f9224adc736625e42aed9559df1eac98763f1b"
+      "sha256": "7058221eacc06ec0dc823a6d2d4634176cf79cc989fd76d440bb98d54483d1f0"
     },
     {
       "path": "server/matrixService.queued.test.js",
@@ -2016,7 +2068,7 @@
     },
     {
       "path": "server/qaUiSelection.test.js",
-      "sha256": "9dd807709bf2050bbb9cac848098b0cf9b1a93780a5f786684b915bd8d491ecd"
+      "sha256": "02cb9d0a89770c093d3ee885a03bdf124e16f76a4010cfa28268ee77add26b7b"
     },
     {
       "path": "server/qualificationArtifacts.test.js",
@@ -2171,6 +2223,14 @@
       "sha256": "2f962a8b780608b559ca338259e5b213fd995b9e9a7454f26f215d968abbe48a"
     },
     {
+      "path": "server/singleRunAdmission.js",
+      "sha256": "9a08290dcaa122fed200320f572230fdddd4a012081775f064b472f05f0f5234"
+    },
+    {
+      "path": "server/singleRunAdmission.test.js",
+      "sha256": "01184b1877953b94cc8ac4b6f9193753364ab8f764e6e2ad766bfeb397a7e427"
+    },
+    {
       "path": "server/sqaAssessment.js",
       "sha256": "e30c6b908abfcc1ec2198b28afb231d917d3e81746456e1667fd6eaa9139afbb"
     },
@@ -2316,7 +2376,7 @@
     },
     {
       "path": "server/testCaseAutogen.integration.test.js",
-      "sha256": "b73efb785e7492e65174fae4100c68bd125b774ea0cd0653eb5989e639efb4f3"
+      "sha256": "b6e3f30500b39b930b01b20f006253e8f7253d762083c60e73017196aef8f83a"
     },
     {
       "path": "server/testCaseAutogen.js",
@@ -2340,7 +2400,7 @@
     },
     {
       "path": "server/uiVersion.test.js",
-      "sha256": "f40007c52d5a7fc9aae24429cca6cdb4f43d6a1cb56a823edc8be1558e19872b"
+      "sha256": "096b52f2d26511308401395c468d88a8ade34f00a4674852cb140c9e900e0d02"
     },
     {
       "path": "server/usageCapture.js",

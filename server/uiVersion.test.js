@@ -17,7 +17,7 @@ test('uiAssetVersion picks the numerically newest revision, including two digits
  const compare = (a, b) => a.localeCompare(b, 'en', { numeric: true });
  assert.equal(['20261014-9', '20261009-1', '20261014-10'].sort(compare).at(-1), '20261014-10');
  assert.equal(uiAssetVersion(), stamps.sort(compare).at(-1));
- assert.equal(uiAssetVersion(), '20261015-18');
+ assert.equal(uiAssetVersion(), '20261016-3');
  const client = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
  assert.ok(client.includes("stamps.sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))"));
 });

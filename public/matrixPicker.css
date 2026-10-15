@@ -6,6 +6,17 @@ body.studio-workspace #qa-start .mp-picker :is(.qa-matrix-browsers,.qa-matrix-de
 body.studio-workspace #qa-start .qa-matrix-filters { display: grid; gap: 8px; }
 body.studio-workspace #qa-start .mp-search-label { color: var(--text-secondary); font-size: 12px; font-weight: 600; }
 body.studio-workspace #qa-start .mp-picker .qa-matrix-summary { border-top: 1px solid var(--border); padding: 18px 0 0; color: var(--text); line-height: 1.6; }
+body.studio-workspace #qa-start .mp-title { font-size: 14px; margin: 0 0 8px; color: var(--text); }
+body.studio-workspace #qa-start .mp-picker .mp-button { min-height: 44px; }
+body.studio-workspace #qa-start .mp-filter { display: grid; gap: 7px; flex: 1 1 150px; min-width: 0; font-size: 11px; color: var(--text-secondary); }
+body.studio-workspace #qa-start .mp-filter select { min-height: 44px; width: 100%; }
+body.studio-workspace #qa-start .mp-device-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+body.studio-workspace #qa-start .mp-device { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 14px; }
+body.studio-workspace #qa-start .mp-device-identity { display: grid; gap: 4px; min-width: 0; }
+body.studio-workspace #qa-start .mp-device-identity strong { font-size: 12px; overflow-wrap: anywhere; }
+body.studio-workspace #qa-start .mp-device-check { flex: 0 0 16px; }
+body.studio-workspace #qa-start .mp-single-summary { display: grid; gap: 6px; padding: 16px; border: 1px solid var(--border); background: var(--surface-2); border-radius: 10px; }
+@media (max-width: 540px) { body.studio-workspace #qa-start .mp-device-list { grid-template-columns: minmax(0, 1fr); } }
 body.studio-workspace #qa-start .mp-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 18px 0 12px; flex-wrap: wrap; }
 body.studio-workspace #qa-start .mp-section-heading h3 { margin: 0; font-size: 14px; color: var(--text); letter-spacing: -.02em; }
 body.studio-workspace #qa-start .mp-muted { color: var(--text-muted); font-size: 11px; line-height: 1.6; }

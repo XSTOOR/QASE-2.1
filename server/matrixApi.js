@@ -17,6 +17,18 @@ import { TestCaseValidationError } from './testCaseService.js';
 
 export function createMatrixRoutes({ matrix, orchestrator, bugs, onError, events }) {
 	return (app) => {
+		// The scheduler intentionally reads all owners. HTTP must not inherit
+		// that privilege: status, cancellation and SSE are owner-scoped.
+		app.use('/api/matrix-runs/:id', async (request, response, next) => {
+			try {
+				const run = await matrix.get(request.params.id);
+				if (!run || (request.auth?.userId && run.ownerUserId !== request.auth.userId)) {
+					response.status(404).json({ error: 'Matrix run not found.' });
+					return;
+				}
+				next();
+			} catch (error) { onError?.(error, response); }
+		});
 		app.post('/api/matrix-runs', async (request, response) => {
 			try {
 				const record = await matrix.create(request.body, { ownerUserId: request.auth?.userId ?? null });
@@ -37,9 +49,10 @@ export function createMatrixRoutes({ matrix, orchestrator, bugs, onError, events
 			}
 		});
 
-		app.get('/api/matrix-runs', async (_request, response) => {
+		app.get('/api/matrix-runs', async (request, response) => {
 			try {
-				const runs = await matrix.list();
+				const records = await matrix.list();
+				const runs = records.filter(run => !request.auth?.userId || run.ownerUserId === request.auth.userId);
 				// Summaries only — items are fetched per-run (they can be large).
 				response.json({
 					runs: runs.map(({ items, ...summary }) => ({
@@ -81,7 +94,8 @@ export function createMatrixRoutes({ matrix, orchestrator, bugs, onError, events
 						// linkage is supplemental — ship the run without it
 					}
 				}
-				response.json({ run: { ...run, items }, orchestratorActive: orchestrator ? orchestrator.isActive(run.id) : false });
+				response.json({ run: { ...run, items }, orchestratorActive: orchestrator ? orchestrator.isActive(run.id) : false,
+					execution: orchestrator?.queueStatus?.(run.id) ?? null });
 			} catch (error) {
 				onError?.(error, response);
 			}
@@ -97,8 +111,9 @@ export function createMatrixRoutes({ matrix, orchestrator, bugs, onError, events
 				// `error` runs swept by resume recovery (container restart) keep
 				// their PENDING items — they may be restarted. `running`/`done`
 				// runs may not.
-				const restartable = run.status === 'pending'
-					|| (run.status === 'error' && run.items.some((item) => item.status === 'PENDING'));
+				const restartable = run.kind !== 'parent' && !orchestrator.isActive(run.id)
+					&& ['pending', 'running', 'error'].includes(run.status)
+					&& run.items.some(item => ['PENDING', 'QUEUED'].includes(item.status));
 				if (!restartable) {
 					response.status(409).json({ error: `Matrix run is ${run.status} with no pending profiles; only pending (or interrupted-with-pending) runs can start.` });
 					return;

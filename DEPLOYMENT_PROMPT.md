@@ -4,8 +4,10 @@ You are the Drytis coding and deployment agent. Deploy the attached QASE source 
 
 ## Required release
 
-- Release ID: `qase-2026-10-15-run-cards-compact-r1`.
-- UI version: `20261015-18`, including the compact redesigned run cards (`runCard.css?v=20261015-17`) and numeric stale-tab version comparison.
+- Release ID: `qase-2026-10-16-single-browser-r4`.
+- UI version: `20261016-3`, including one Chrome desktop by default, one browser/device custom selection and duplicate-safe launch admission.
+- Read `docs/production-run-startup.md` first. A successful POST is not proof of execution: verify one configuration, an allocated session, live activity and a terminal outcome. New launches must not accumulate in a capacity queue. Never cancel other users' work to free capacity.
+- For Git-based deployment instead of a ZIP, use a reviewed commit in `https://github.com/XSTOOR/QASE-2.1` whose `SOURCE_MANIFEST.json` verifies as r4. Do not assume an existing branch or main contains this release; an r3 commit is not this update. Record the exact checked-out commit.
 - The application root is the extracted folder containing `package.json`, `public/`, and `server/`. It is a Node.js Express application serving static ES modules, NOT a Next.js or Vite build. Do not deploy the parent workspace, an old `apps/` project, or a generated `dist/` directory.
 - Run Node.js 22 or 24. Keep `package-lock.json` and Playwright `1.62.0` unchanged; use `npm ci`, not dependency upgrades.
 - Preserve all current QA, SQA, Founder, authentication, reports, browser/runtime, device matrix, and UI functionality. Do not redesign or replace the application during deployment.

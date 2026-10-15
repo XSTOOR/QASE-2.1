@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-10-15-run-cards-compact-r1",
-  "uiVersion": "20261015-18",
+  "releaseId": "qase-2026-10-16-single-browser-r4",
+  "uiVersion": "20261016-3",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Current qase-2.1 workspace; compact redesigned run cards included"
+  "source": "One Chrome desktop by default, single browser/device custom picker, duplicate-safe launch admission without new capacity queues"
 }

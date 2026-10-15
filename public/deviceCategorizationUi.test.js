@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { pickerHarness } from './matrixPickerHarness.js';
 
 const [app, styles, model, serverApp] = await Promise.all([
 	readFile(new URL('./app.js', import.meta.url), 'utf8'),
@@ -37,31 +38,22 @@ test('filters state carries deviceType', () => {
 });
 
 const picker = await readFile(new URL('./matrixPicker.js', import.meta.url), 'utf8');
-test("device category counts are unique devices rather than configurations", () => {
-	assert.ok(picker.includes("devices.filter(device"), "devices.filter(device");
-	assert.ok(picker.includes("device.type === id"), "device.type === id");
-	assert.ok(picker.includes("Device categories"), "Device categories");
+test('compatible device count deduplicates versions', () => {
+	const h = pickerHarness(); assert.match(h.text(h.hosts.devices), /2 compatible devices/);
 });
-
-test("category and OS filters compose without changing selections", () => {
-	assert.ok(picker.includes("view.category = id; view.limit = 10; render()"), "view.category = id; view.limit = 10; render()");
-	assert.ok(picker.includes("view.platform = platform.value; view.limit = 10; render()"), "view.platform = platform.value; view.limit = 10; render()");
+test('type, OS and manufacturer filters compose without changing selection', () => {
+	const h = pickerHarness(); h.filter('category', 'mobile'); h.filter('platform', 'android'); h.filter('manufacturer', 'Google');
+	assert.match(h.text(h.hosts.devices), /1 compatible device/); assert.deepEqual(h.ids(), ['desktop']);
 });
-
-test("local filtering uses the complete compact index", () => {
-	assert.ok(picker.includes("matrixDevices(index)"), "matrixDevices(index)");
-	assert.ok(picker.includes("visibleMatrixDevices(devices"), "visibleMatrixDevices(devices");
-	assert.ok(picker.includes("filtered.slice(0, view.limit)"), "filtered.slice(0, view.limit)");
+test('search uses the complete compatible device list and preserves selection', () => {
+	const h = pickerHarness(); h.search('pixel google'); assert.match(h.text(h.hosts.devices), /Pixel 9/);
+	assert.deepEqual(h.ids(), ['desktop']);
 });
-
-test("starter recipes replace selection with actual available catalog rows", () => {
-	assert.ok(picker.includes("matrixRecipe(index, id)"), "matrixRecipe(index, id)");
-	assert.ok(picker.includes("REPLACES SELECTION"), "REPLACES SELECTION");
-	assert.ok(picker.includes("pick.disabled = total === 0"), "pick.disabled = total === 0");
+test('multi-device recipes are removed rather than generating hidden jobs', () => {
+	const h = pickerHarness(); for (const key of ['recipe-balanced', 'recipe-desktop', 'mode-cross']) assert.equal(h.get(key), undefined);
 });
-
-test("selected-only view preserves selections outside current filters", () => {
-	assert.ok(picker.includes("selectedOnly"), "selectedOnly");
-	assert.ok(picker.includes("Filters never change your selection"), "Filters never change your selection");
-	assert.ok(picker.includes("No matching devices"), "No matching devices");
+test('empty filters offer reset without clearing the selected pair', () => {
+	const h = pickerHarness(); h.filter('platform', 'android'); h.filter('category', 'desktop');
+	assert.match(h.text(h.hosts.devices), /No devices match/); h.click('reset-filters');
+	assert.deepEqual(h.ids(), ['desktop']); assert.match(h.text(h.hosts.devices), /2 compatible devices/);
 });

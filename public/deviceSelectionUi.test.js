@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { pickerHarness } from './matrixPickerHarness.js';
 
 const [app, styles] = await Promise.all([
 	readFile(new URL('./app.js', import.meta.url), 'utf8'),
@@ -8,19 +9,15 @@ const [app, styles] = await Promise.all([
 ]);
 
 const picker = await readFile(new URL('./matrixPicker.js', import.meta.url), 'utf8');
-test("device selection writes exact pairs without routing", () => {
-	assert.ok(picker.includes("apply(changeMatrixPairs(index, selection, pairList, checked))"), "apply(changeMatrixPairs(index, selection, pairList, checked))");
-	assert.ok(picker.includes("apply(changeMatrixPairs(index, selection, [[device.key, family.code]], checked))"), "apply(changeMatrixPairs(index, selection, [[device.key, family.code]], checked))");
+test('device selection updates the exact pair without a routing dependency', () => {
+	const h = pickerHarness(); h.click('device-Google|android|Pixel 9');
+	assert.deepEqual(h.ids(), ['phone']); assert.equal(h.applications(), 1);
 });
-
-test("summary separates real runs from distinct devices and browsers", () => {
-	assert.ok(picker.includes("selected.size.toLocaleString()"), "selected.size.toLocaleString()");
-	assert.ok(picker.includes("selectedDevices.length"), "selectedDevices.length");
-	assert.ok(picker.includes("browserCode"), "browserCode");
+test('summary states one browser, one device, one run', () => {
+	const h = pickerHarness(); assert.match(h.text(h.hosts.summary), /1 browser · 1 device · 1 test run/);
 });
-
-test("narrow screens keep the full compatibility grid accessible", () => {
-	assert.ok(picker.includes("mp-table-scroll"), "mp-table-scroll");
-	assert.ok(picker.includes("Scroll horizontally for more browsers."), "Scroll horizontally for more browsers.");
-	assert.ok(picker.includes("scroll.tabIndex = 0"), "scroll.tabIndex = 0");
+test('narrow devices use a single column, not a horizontal compatibility table', async () => {
+	const css = await readFile(new URL('./matrixPicker.css', import.meta.url), 'utf8');
+	assert.match(css, /max-width: 540px/); assert.match(css, /mp-device-list.*grid-template-columns: minmax\(0, 1fr\)/);
+	assert.doesNotMatch(picker, /el\('table'/);
 });

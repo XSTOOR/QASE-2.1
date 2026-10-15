@@ -14,10 +14,11 @@ async function get(route) {
 for (const route of ['/healthz', '/readyz']) await get(route);
 const release = await (await get('/release.json')).json();
 if (release.releaseId !== verified.releaseId) throw new Error('Wrong production release.');
-for (const file of ['index.html', 'app.js', 'runCard.css', 'brand.css', 'auth.css', 'release.json']) {
+const assets = ['index.html', 'app.js', 'runCard.css', 'brand.css', 'auth.css', 'release.json', 'runStartup.css', 'runStartupView.js', 'matrixLaunch.js', 'matrixPicker.js', 'matrixPicker.css', 'singleRunSelection.js', 'qaJourney.js'];
+for (const file of assets) {
  const entry = manifest.files.find(item => item.path === `public/${file}`);
  if (!entry) throw new Error(`Asset absent from manifest: ${file}`);
  const bytes = new Uint8Array(await (await get(`/${file}`)).arrayBuffer());
  if (createHash('sha256').update(bytes).digest('hex') !== entry.sha256) throw new Error(`Stale or modified production asset: ${file}`);
 }
-console.log(`Verified live release and six asset hashes: ${verified.releaseId}`);
+console.log(`Verified live release and ${assets.length} asset hashes: ${verified.releaseId}`);

@@ -1,4 +1,6 @@
 import * as path from 'node:path';
+import { chooseAutomaticBrowser } from './automaticBrowser.js';
+import { createSingleRunAdmission } from './singleRunAdmission.js';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -305,7 +307,7 @@ export function createApplication(options = {}) {
 		// The HTML shell must never be served from cache — a stale shell
 		// referencing pre-versioned asset URLs resurrects broken layouts.
 		response.set('Cache-Control', 'no-cache');
-		response.sendFile(path.join(publicDirectory, 'index.html'));
+		response.sendFile('index.html', { root: publicDirectory });
 	});
 	// Versioned assets (?v=…) are immutable per version — cache hard. Everything
 	// else (unversioned paths, index.html) revalidates every load.
@@ -1146,6 +1148,10 @@ export function createApplication(options = {}) {
 				// RT2 (#14704): pre-execution health gate — real engine/network/
 				// emulation probes; a FAIL blocks the item with the exact reason.
 				checkEnvironmentHealth,
+				selectAutomaticEnvironment: async run => chooseAutomaticBrowser(services.environments, {
+					...options.automaticBrowserOptions,
+					health: options.automaticBrowserOptions?.health ?? (env => checkEnvironmentHealth(env, { targetUrl: run.targetUrl }))
+				}),
 				// Start a real session for the item — the same path
 				// POST /api/sessions + message uses, so emulation, runtime gates,
 				// findings, and reports behave identically for matrix items.
@@ -1168,14 +1174,18 @@ export function createApplication(options = {}) {
 					);
 					return session;
 				},
-				sendTask: async (session, matrixRun) => {
+				sendTask: async (session, matrixRun, { signal } = {}) => {
+					signal?.throwIfAborted();
 					// #15043 (B1): QA-start runs carry their own kickoff text
 					// (target URL + coverage message); test-case runs send the
 					// raw target as before.
 					const text = matrixRun.kickoffText ?? matrixRun.targetUrl;
 					await services.runs.addMessage(session, { role: 'user', text });
 					session.targetUrl = matrixRun.targetUrl;
+					await services.runs.commit(session, 'session', { targetUrl: matrixRun.targetUrl });
+					signal?.throwIfAborted();
 					await services.agent.ensureRuntime(session);
+					if (signal?.aborted) throw new Error('Run startup was cancelled before the agent turn began.');
 					startTurn(session, { task: text });
 				},
 				// Pipeline Phase 3 (#15493): authorized auto-answer — resume a
@@ -1262,6 +1272,7 @@ export function createApplication(options = {}) {
 		}
 		);
 		services.matrixOrchestrator = orchestrator;
+		const admitSingleRun = createSingleRunAdmission({ matrix: services.matrix, orchestrator });
 		// #14633 (NI02 Phase 1): clean up any matrix run a previous container
 		// died mid-flight — dangling RUNNING items become ERROR "interrupted".
 		orchestrator.resumeRecovery();
@@ -1276,28 +1287,18 @@ export function createApplication(options = {}) {
 					response.status(400).json({ error: 'targetUrl must be an http(s) URL.' });
 					return;
 				}
-				const envIds = Array.isArray(body.configurationEnvIds)
+				let envIds = Array.isArray(body.configurationEnvIds)
 					? body.configurationEnvIds.map(String).filter(Boolean)
 					: [];
-				// Pipeline Phase 2: parent-run creation carries the plan
-				// metadata but no configurations; batches carry the configs.
+				// The customer launcher always creates one runnable configuration.
 				const isParentRequest = body.kind === 'parent';
-				if (isParentRequest && envIds.length > 0) {
-					response.status(422).json({ error: 'A parent run carries no configurations — send them in batches.' });
+				const automatic = body.browserMode === 'automatic' || (!body.browserMode && envIds.length === 0);
+				if ((body.browserMode && !['automatic', 'custom'].includes(body.browserMode)) || isParentRequest || body.parentId || body.batchKey || (!automatic && envIds.length !== 1)) {
+					response.status(422).json({ error: 'Choose exactly one browser and one device. Multiple configurations and batches are not supported in this launcher.' });
 					return;
 				}
-				if (!isParentRequest && envIds.length === 0) {
-					response.status(400).json({ error: 'At least one configuration is required.' });
-					return;
-				}
-				// Per-request cap = per-BATCH limit (Phase 2). A request larger
-				// than one batch is a client bug — the client must plan batches;
-				// never self-inflict a months-long single queue.
-				const MAX_MATRIX_CONFIGURATIONS = 2000;
-				if (envIds.length > MAX_MATRIX_CONFIGURATIONS) {
-					response.status(422).json({
-						error: `Too many configurations in one request (${envIds.length}). The per-batch limit is 2,000 — split the selection into batches.`
-					});
+				if (automatic && (envIds.length || isParentRequest || body.parentId || body.batchKey)) {
+					response.status(422).json({ error: 'Automatic browser selection cannot be combined with custom configurations or batches.' });
 					return;
 				}
 				// Validate the QA context exactly as POST /api/sessions does —
@@ -1321,29 +1322,24 @@ export function createApplication(options = {}) {
 						return;
 					}
 				}
-				// Unknown envIds are NOT rejected here — the matrix service
-				// records them as honest BLOCKED items ("no longer in the
-				// catalog") so every selected configuration gets a result.
-				if (isParentRequest) {
-					const parent = await services.matrix.createParentRun({
+				const launchSingle = async () => {
+					// Unknown envIds are NOT rejected here — the matrix service
+					let browserSelection = null;
+					if (automatic) {
+						try {
+							// Browser processes may only launch after scheduler admission.
+							const chosen = await chooseAutomaticBrowser(services.environments, { ...options.automaticBrowserOptions, probe: false });
+							envIds = [chosen.environment.envId];
+							browserSelection = chosen.selection;
+						} catch (error) {
+							if (error.code !== 'AUTOMATIC_BROWSER_UNAVAILABLE') throw error;
+							return { status: 503, body: { error: error.message } };
+						}
+					}
+					if (!orchestrator.canStartImmediately()) return { status: 503, body: { code: 'QA_CAPACITY_BUSY', error: 'The test service is busy. No run was queued. Please try again shortly.' } };
+					const record = await services.matrix.create({
+						browserSelection,
 						title: String(body.title ?? `QA run — ${targetUrl}`).slice(0, 120),
-						targetUrl,
-						kickoffText: body.kickoffText,
-						selectedTests,
-						securityAuthorization,
-						scopeSelection,
-						totalPlanned: Number(body.totalPlanned ?? 0) || 0
-					}, { ownerUserId: request.auth?.userId ?? null });
-					response.status(201).json(parent);
-					return;
-				}
-				if (body.parentId || body.batchKey) {
-					// Phase 2 batch: idempotent on (parentId, batchKey).
-					const { run: batch, created } = await services.matrix.createBatch({
-						parentId: body.parentId,
-						batchKey: body.batchKey,
-						batchIndex: body.batchIndex,
-						title: body.title,
 						targetUrl,
 						testCaseId: body.testCaseId,
 						configurationEnvIds: envIds,
@@ -1352,32 +1348,17 @@ export function createApplication(options = {}) {
 						securityAuthorization,
 						scopeSelection
 					}, { ownerUserId: request.auth?.userId ?? null });
-					if (created && orchestrator) {
-						const started = orchestrator.start(batch.id);
-						if (!started.ok) {
-							response.status(409).json({ error: started.error });
-							return;
-						}
+					const started = orchestrator.start(record.id);
+					if (!started.ok) {
+						return { status: 409, body: { error: started.error } };
 					}
-					response.status(created ? 201 : 200).json(await services.matrix.get(batch.id));
-					return;
+					return { status: 201, body: await services.matrix.get(record.id) };
+				};
+				const result = await admitSingleRun(request.auth?.userId ?? null, launchSingle);
+				if (result && !response.headersSent) {
+					if (result.status === 503 || result.status === 409) response.set('Retry-After', '15');
+					response.status(result.status).json(result.body);
 				}
-				const record = await services.matrix.create({
-					title: String(body.title ?? `QA run — ${targetUrl}`).slice(0, 120),
-					targetUrl,
-					testCaseId: body.testCaseId,
-					configurationEnvIds: envIds,
-					kickoffText: body.kickoffText,
-					selectedTests,
-					securityAuthorization,
-					scopeSelection
-				}, { ownerUserId: request.auth?.userId ?? null });
-				const started = orchestrator.start(record.id);
-				if (!started.ok) {
-					response.status(409).json({ error: started.error });
-					return;
-				}
-				response.status(201).json(await services.matrix.get(record.id));
 			} catch (error) {
 				safeErrorResponse(request, response, error);
 			}

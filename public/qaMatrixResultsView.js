@@ -19,7 +19,7 @@ import {
 
 const ROW_PAGE_SIZE = 50;
 
-export function createQaMatrixResultsView({ container, api, selectSession, toast, onRunFinished }) {
+export function createQaMatrixResultsView({ container, api, selectSession, toast, onRunFinished, onRunUpdated }) {
 	if (!container) return null;
 
 	const state = {
@@ -29,6 +29,8 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 		renderedRows: 0,
 		filters: { status: '', browser: '', executionType: '', search: '' },
 		pollTimer: null,
+		active: false,
+		request: 0,
 		pollMs: 2500,
 		pushStream: null,
 		status: 'loading' // loading | ready | error | empty
@@ -53,6 +55,9 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 	head.append(title, subtitle, cancelBtn);
 
 	const totalsEl = el('div', 'qmr-totals');
+	const admissionEl = el('p', 'qmr-admission');
+	admissionEl.setAttribute('role', 'status');
+	admissionEl.setAttribute('aria-live', 'polite');
 	const gapsEl = el('div', 'qmr-gaps');
 	gapsEl.hidden = true;
 
@@ -80,7 +85,7 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 	retryEl.textContent = 'Retry';
 	retryEl.hidden = true;
 
-	root.append(head, totalsEl, gapsEl, filtersEl, stateEl, retryEl, board, moreBtn);
+	root.append(head, admissionEl, totalsEl, gapsEl, filtersEl, stateEl, retryEl, board, moreBtn);
 	container.replaceChildren(root);
 
 	function facetSelect(placeholder, className) {
@@ -125,8 +130,14 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 
 	// ---- data ------------------------------------------------------------
 	async function load(runId, { keepView = false } = {}) {
+		if (keepView && !state.active) return;
+		state.active = true;
+		const request = ++state.request;
 		state.runId = runId;
 		if (!keepView) {
+			disconnectPush();
+			clearTimeout(state.pollTimer);
+			retryEl.hidden = true;
 			state.status = 'loading';
 			stateEl.textContent = 'Loading QA run…';
 			stateEl.hidden = false;
@@ -134,20 +145,25 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 		}
 		try {
 			const payload = await api(`/matrix-runs/${encodeURIComponent(runId)}`);
+			if (!state.active || request !== state.request) return;
 			const run = payload?.run ?? payload;
 			if (!run || !Array.isArray(run.items)) throw new Error('Run record unavailable.');
 			state.run = run;
 			state.rows = run.items.map(toResultRow).filter(Boolean);
 			state.status = 'ready';
+			retryEl.hidden = true;
 			stateEl.hidden = true;
 			renderAll();
 			schedulePolling();
 			connectPush();
+			onRunUpdated?.(run);
 		} catch (error) {
+			if (!state.active || request !== state.request) return;
 			state.status = 'error';
 			stateEl.textContent = `Could not load the QA run (${error?.message ?? 'network error'}).`;
 			stateEl.hidden = false;
 			retryEl.hidden = false;
+			if (state.run) schedulePolling();
 		}
 	}
 
@@ -156,8 +172,7 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 	 *  appear immediately instead of on the next poll. Polling stays as the
 	 *  fallback (SSE loss → poll cadence continues). */
 	function connectPush() {
-		disconnectPush();
-		if (!state.runId) return;
+		if (!state.active || state.pushStream || !state.runId) return;
 		try {
 			// Pipeline Phase 5 (#15500): dedicated matrix SSE channel (matrix
 			// ids are not sessions — the session events route 404s them).
@@ -205,6 +220,8 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 	}
 
 	function stop() {
+		state.active = false;
+		state.request += 1;
 		clearTimeout(state.pollTimer);
 		disconnectPush();
 	}
@@ -212,6 +229,14 @@ export function createQaMatrixResultsView({ container, api, selectSession, toast
 	// ---- rendering --------------------------------------------------------
 	function renderAll() {
 		const run = state.run;
+		const totals = computeTotals(run.items ?? []);
+		const queued = totals.queued + totals.pending;
+		admissionEl.hidden = !['pending', 'running'].includes(run.status);
+		admissionEl.textContent = totals.running
+			? 'Your configuration is being prepared or tested. Live activity opens as soon as its session is available.'
+			: queued
+				? 'Your run is saved and queued for a shared browser slot. You can leave and return to this page; you do not need to start another run.'
+				: 'Preparing your test run…';
 		title.textContent = run.title ?? 'QA run';
 		const target = run.targetUrl ? ` · ${run.targetUrl}` : '';
 		if (run.kind === 'parent') {

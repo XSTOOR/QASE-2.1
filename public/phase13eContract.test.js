@@ -25,25 +25,25 @@ test('QA launch enablement includes URL, authorization, checks, configuration an
 
 test('QA submission is single-flight and only closes after create succeeds', () => {
 	assert.match(launcher, /if \(qaUi\.submit\.dataset\.busy === 'true'\) return/);
-	const request = launcher.indexOf("await api('/qa-matrix-runs'");
+	const request = launcher.indexOf("await apiWithTimeout('/qa-matrix-runs'");
 	const close = launcher.indexOf('closeQaStart({ updateRoute: false });', request);
 	assert.ok(request >= 0 && close > request, 'the dialog closes only after the authoritative create response');
 });
 
-test('created matrix run selects its first real session before entering the shared workspace', () => {
-	assert.match(launcher, /async function waitForFirstMatrixSession/);
-	assert.match(launcher, /const createdSessionId = await waitForFirstMatrixSession\(matrixRun\)/);
-	assert.match(launcher, /await selectSession\(createdSessionId\)/);
+test('created matrix run opens a durable queue route before its session exists', () => {
+	assert.match(launcher, /await pageRouter.navigate\(\{ name: 'matrix-run', runId: matrixRun.id \}\)/);
+	assert.doesNotMatch(launcher, /const createdSessionId = await waitForFirstMatrixSession/);
 });
 
 test('#16159: the queued-configurations results board never auto-opens after launch', () => {
 	// The launch path must not call openQaMatrixRunDialog — the live run
 	// workspace (selected above) is the landing surface; the board stays
 	// reachable through explicit user actions.
-	const request = launcher.indexOf("await api('/qa-matrix-runs'");
+	const request = launcher.indexOf("await apiWithTimeout('/qa-matrix-runs'");
 	const tail = launcher.slice(request);
 	assert.doesNotMatch(tail, /openQaMatrixRunDialog/, 'launch flow must not open the results board modal');
-	assert.match(launcher, /QA run started/);
+	assert.match(launcher, /Starting one test/);
+	assert.doesNotMatch(launcher, /planBatches|Creating batch|kind: 'parent'/);
 });
 
 test('sidebar and main Start testing controls share one launcher implementation', () => {
