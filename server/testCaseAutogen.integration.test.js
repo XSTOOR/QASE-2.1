@@ -11,7 +11,10 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { createConfiguredApplicationServices } from './serviceFactory.js';
+// Initialize module-owned auth/store paths in this test's private directory,
+// not the shared checkout used by other concurrent test processes.
+process.chdir(fs.mkdtempSync(path.join(os.tmpdir(), 'qase-autogen-modules-')));
+const { createConfiguredApplicationServices } = await import('./serviceFactory.js');
 
 function makeTempHome() {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-autogen-int-'));

@@ -515,6 +515,27 @@ test('runtime initialization timeout aborts late startup and releases the queue'
 	} finally { delete process.env.QASE_MATRIX_PRELAUNCH_TIMEOUT_S; }
 });
 
+test('automatic browser selection is applied inside execution and persists the actual fallback profile', async () => {
+	const runs = runsFixture();
+	const { service, stored } = matrixFixture({ items: [{}] });
+	stored.browserSelection = { mode: 'automatic' };
+	const hooks = hooksFor(runs, null);
+	let selected = 0;
+	hooks.selectAutomaticEnvironment = async () => {
+		selected++;
+		return { environment: { envId: 'chosen-firefox', profileId: 'chosen-profile', platform: 'windows', device: 'Desktop', deviceType: 'desktop', browserCode: 'firefox', browser: 'Firefox', browserVersion: 'test' }, selection: { mode: 'automatic', phase: 'verified' } };
+	};
+	const realStart = hooks.startSession;
+	hooks.startSession = async (run, item) => { assert.equal(item.environmentId, 'chosen-firefox'); const session = await realStart(run, item); runs.finish(session.id, { status: 'done', report: { verdict: 'pass' } }); return session; };
+	const orchestrator = createMatrixOrchestrator({ runs, matrix: service }, hooks);
+	assert.equal(selected, 0);
+	orchestrator.start('matrix-test');
+	await new Promise(resolve => setTimeout(resolve, 200));
+	const run = await service.get();
+	assert.equal(selected, 1); assert.equal(run.items[0].browserCode, 'firefox');
+	assert.equal(run.items[0].profileId, 'chosen-profile'); assert.equal(run.items[0].status, 'PASSED');
+});
+
 test('statusCounts tallies the full honest vocabulary', () => {
 	const counts = statusCounts([
 		{ status: 'PASSED' }, { status: 'PASSED' }, { status: 'FAILED' },

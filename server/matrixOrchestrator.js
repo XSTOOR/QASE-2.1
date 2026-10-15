@@ -298,13 +298,13 @@ export function createMatrixOrchestrator(services, hooks) {
 				// slotsUsed always equals live holders. Leak-free by
 				// construction: every acquire is matched by exactly one
 				// release-or-handoff.
-				waitQueue.push(resolve);
+				waitQueue.push({ resolve, matrixRunId });
 			});
 		};
 		const releaseSlot = () => {
 			const next = waitQueue.shift();
 			if (next) {
-				next(); // slot transfers to the waiter — counter unchanged
+				next.resolve(); // slot transfers to the waiter — counter unchanged
 			} else {
 				slotsUsed -= 1;
 			}
@@ -368,6 +368,16 @@ export function createMatrixOrchestrator(services, hooks) {
 				// Capability gate re-resolved at execution time — credentials may
 				// have changed since creation. Falls back to the frozen
 				// creation-time verdict (item.browserSupport) when present.
+				if (run.browserSelection?.mode === 'automatic' && hooks.selectAutomaticEnvironment) {
+					await mark({ startupPhase: 'selecting_browser' });
+					const { environment: env, selection } = await hooks.selectAutomaticEnvironment(run);
+					const chosen = { environmentId: env.envId, platform: env.platform, device: env.device,
+						profileId: env.profileId ?? env.envId, deviceType: env.deviceType, browserSupport: env.browserSupport ?? null,
+						os: env.os, osVersion: env.osVersion, browser: env.browser, browserCode: env.browserCode,
+						browserVersion: env.browserVersion, browserSelection: selection };
+					Object.assign(item, chosen);
+					await mark(chosen);
+				}
 				const support = await resolveBrowserSupport(item.platform, item.browserCode);
 				if (support.status === BROWSER_SUPPORT_STATUS.NOT_SUPPORTED
 					|| item.browserSupport?.status === BROWSER_SUPPORT_STATUS.NOT_SUPPORTED) {
@@ -432,6 +442,10 @@ export function createMatrixOrchestrator(services, hooks) {
 				}
 			}
 			// REAL_DEVICE / VIRTUAL_DEVICE requests without a configured remote
+			if (cancelledRuns.has(run.id)) {
+				await mark({ status: 'CANCELLED', reason: 'Cancelled before browser startup.', finishedAt: new Date().toISOString() });
+				return;
+			}
 			// runtime BLOCK — the existing agent path enforces this; the item
 			// records the honest outcome rather than emulating silently.
 			await mark({ status: 'RUNNING', startedAt });
@@ -708,7 +722,11 @@ export function createMatrixOrchestrator(services, hooks) {
 		}
 	}
 
-	return { start, cancel, retryItem, isActive, resumeRecovery: startResumeRecovery };
+	function queueStatus(matrixRunId) {
+		const index = waitQueue.findIndex(waiter => waiter.matrixRunId === matrixRunId);
+		return { capacity: MAX_IN_FLIGHT, inUse: slotsUsed, position: index < 0 ? 0 : index + 1 };
+	}
+	return { start, cancel, retryItem, isActive, queueStatus, resumeRecovery: startResumeRecovery };
 }
 
 const MAX_ITEM_RETRIES = 2;

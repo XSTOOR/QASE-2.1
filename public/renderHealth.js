@@ -2,7 +2,7 @@
 export function renderProbeIds(page) {
   return ({
     'new-run': ['qa-start'],
-    'matrix-run': ['qa-matrix-run-dialog'],
+    'matrix-run': ['run-startup-page'],
     account: ['profile-dialog'],
     bugs: ['bugs-view'],
     results: ['results-page-head', 'workspace-viewer']
