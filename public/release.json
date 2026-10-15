@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-10-15-run-cards-compact-r1",
-  "uiVersion": "20261015-18",
+  "releaseId": "qase-2026-10-15-run-startup-r2",
+  "uiVersion": "20261015-19",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Current qase-2.1 workspace; compact redesigned run cards included"
+  "source": "Production startup hotfix; durable queue route, bounded agent initialization and owner-scoped matrix endpoints"
 }

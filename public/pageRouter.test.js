@@ -1,4 +1,12 @@
 import assert from 'node:assert/strict';
+
+test('queued matrix routes survive reload and reject unsafe identifiers', () => {
+	const route = { name: 'matrix-run', runId: 'matrix-example-123' };
+	assert.equal(routeHash(route), '#/matrix-runs/matrix-example-123');
+	assert.equal(parsePageRoute(routeHash(route)).runId, route.runId);
+	assert.equal(parsePageRoute('#/matrix-runs/../../account').valid, false);
+	assert.equal(routeHash({ ...route, runId: '<script>' }), '#/runs');
+});
 import test from 'node:test';
 import { createPageRouter, parsePageRoute, routeHash } from './pageRouter.js';
 

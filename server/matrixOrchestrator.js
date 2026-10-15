@@ -44,6 +44,19 @@ export function createMatrixOrchestrator(services, hooks) {
 	let slotsUsed = 0; // synchronous check-and-reserve counter across all runs
 	const waitQueue = []; // slot handoff queue (oldest waiter first)
 	const MAX_IN_FLIGHT = configuredParallelism();
+	async function closeItemBrowser(session) {
+		if (!session || !hooks.closeSessionBrowser) return;
+		let timer;
+		try {
+			await Promise.race([
+				Promise.resolve().then(() => hooks.closeSessionBrowser(session)),
+				new Promise((_resolve, reject) => {
+					timer = setTimeout(() => reject(new Error('Browser cleanup exceeded 5s; releasing the execution slot.')), 5000);
+					timer.unref?.();
+				})
+			]);
+		} finally { clearTimeout(timer); }
+	}
 	// Stale-run sweep: any run left `running` by a dead process (container
 	// restart, crash) is transitioned to error before this orchestrator runs.
 	// Same logic as the boot-time resumeRecovery() — both entry points use it.
@@ -466,8 +479,36 @@ export function createMatrixOrchestrator(services, hooks) {
 				}
 			}
 			const session = itemSession;
-			await mark({ sessionId: session.id });
-			await hooks.sendTask(session, run);
+			await mark({ sessionId: session.id, startupPhase: 'initializing' });
+			// Runtime/provider initialization also owns the global slot. Bound it
+			// separately from creation; a never-settling startup must not starve
+			// every user behind this item. Abort prevents late initialization from
+			// starting a model turn after this item's slot has been released.
+			const startupController = new AbortController();
+			let startupExpired = false;
+			let startupTimer;
+			const startup = Promise.resolve().then(() => hooks.sendTask(session, run, { signal: startupController.signal }));
+			void startup.finally(() => {
+				if (startupExpired) void closeItemBrowser(session).catch(() => undefined);
+			}).catch(() => undefined);
+			try {
+				await Promise.race([startup, new Promise((_resolve, reject) => {
+					startupTimer = setTimeout(() => {
+						startupExpired = true;
+						startupController.abort();
+						reject(Object.assign(new Error(`Agent initialization did not complete within ${Math.round(PRELAUNCH_TIMEOUT_MS / 1000)}s. Retry this configuration after checking the model gateway and browser runtime.`), { code: 'MATRIX_STARTUP_TIMEOUT' }));
+					}, PRELAUNCH_TIMEOUT_MS);
+					startupTimer.unref?.();
+				})]);
+			} catch (error) {
+				startupController.abort();
+				try { await services.agent?.stop?.(session.id); } catch { /* preserve startup failure */ }
+				await services.runs.setStatus?.(session, 'error', error.message);
+				throw error;
+			} finally {
+				clearTimeout(startupTimer);
+			}
+			await mark({ startupPhase: 'ready' });
 
 			// Poll until the session reaches a terminal state (the agent turn is
 			// fire-and-forget inside startTurn). Timeout → ERROR, other items run.
@@ -620,7 +661,7 @@ export function createMatrixOrchestrator(services, hooks) {
 			// conversation survives, Chromium process does not linger). Guarded
 			// so cleanup can never mask the item's real outcome.
 			try {
-				await hooks.closeSessionBrowser?.(itemSession);
+				await closeItemBrowser(itemSession);
 			} catch (cleanupError) {
 				console.warn('[matrix] browser cleanup failed:', cleanupError?.message ?? cleanupError);
 			}

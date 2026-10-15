@@ -1,6 +1,15 @@
 # QASE deployment handoff
 
-Release `qase-2026-10-15-run-cards-compact-r1` contains the current `qase-2.1` application, including compact recent-run cards and UI asset version `20261015-18` (compact card stylesheet revision `20261015-17`).
+Release `qase-2026-10-15-run-startup-r2` retains the compact recent-run cards and updates the UI asset version to `20261015-19`.
+
+## Production startup hotfix
+
+- Accepted test runs open a durable queue route immediately, not a previous paused session. Pending work remains discoverable in Recent tests, survives reload, and transitions to its real session only while the user is viewing that queue.
+- Runtime initialization now has the existing configurable prelaunch deadline (120 seconds by default). Timeout aborts late turn startup, records an error, and lets the queue proceed. Browser cleanup is bounded to five seconds so a cleanup hang cannot indefinitely retain an execution slot.
+- Stopping the queue view invalidates in-flight updates; transient status-read failures continue polling rather than silently dropping live updates.
+- Matrix status, event and control endpoints enforce run ownership while the internal scheduler retains its system-level view.
+- The login document is served relative to the public root, including installations beneath hidden release directories, without permitting access outside that root.
+- New regression coverage exercises queued routes, stale responses, runtime timeout/slot release and account isolation. Production rollout and authenticated canaries remain required; see `docs/production-run-startup.md`.
 
 ## Included deployment changes
 
@@ -15,7 +24,7 @@ Release `qase-2026-10-15-run-cards-compact-r1` contains the current `qase-2.1` a
 
 ## Required production gates
 
-Before packaging, the recursive verification suite completed on Windows with Node.js 24: **1,855 tests, 1,828 passed, zero failed, 27 skipped**. Syntax checks passed for 473 JavaScript source files; private-path ignore checks and the high-confidence credential scan passed. Skips include opt-in integration checks and the POSIX file-mode assertion that is not applicable on Windows. Linux image validation and production canaries remain mandatory.
+The prior r1 baseline completed 1,855 tests with zero failures. The r2 handoff includes a separate verification log; do not use the prior baseline as evidence that this hotfix has passed. Skips include opt-in integration checks and the POSIX file-mode assertion that is not applicable on Windows. Linux image validation and production canaries remain mandatory.
 
 The receiving deployment agent must build and scan the Linux image, configure secrets/DNS/TLS/persistence/SMTP, run the full verification suite, and pass authenticated QA/SQA/Founder canaries before switching traffic. Docker and the target production environment are not available in this handoff workspace, so this archive is not evidence of an already completed production deployment.
 

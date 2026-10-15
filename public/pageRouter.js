@@ -1,11 +1,13 @@
 const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+const MATRIX_ID_PATTERN = /^matrix-[a-z0-9-]{1,100}$/i;
 export const DEFAULT_PAGE_ROUTE = Object.freeze({ name: 'runs' });
 
 export function routeHash(route = DEFAULT_PAGE_ROUTE) {
 	if (route?.name === 'new-run') return '#/runs/new';
 	if (route?.name === 'account') return '#/account';
 	if (route?.name === 'bugs') return '#/bugs';
+	if (route?.name === 'matrix-run' && MATRIX_ID_PATTERN.test(route.runId ?? '')) return `#/matrix-runs/${route.runId}`;
 	if (route?.name === 'run' && RUN_ID_PATTERN.test(route.runId ?? '')) return `#/runs/${route.runId.toLowerCase()}`;
 	if (route?.name === 'results' && RUN_ID_PATTERN.test(route.runId ?? '')) return `#/runs/${route.runId.toLowerCase()}/results`;
 	return '#/runs';
@@ -19,6 +21,10 @@ export function parsePageRoute(hash = '') {
 	if (/^#\/runs\/new\/?$/i.test(normalized)) return { name: 'new-run', canonical: '#/runs/new', valid: true };
 	if (/^#\/account\/?$/i.test(normalized)) return { name: 'account', canonical: '#/account', valid: true };
 	if (/^#\/bugs\/?$/i.test(normalized)) return { name: 'bugs', canonical: '#/bugs', valid: true };
+	const matrixMatch = normalized.match(/^#\/matrix-runs\/([^/]+)\/?$/i);
+	if (matrixMatch && MATRIX_ID_PATTERN.test(matrixMatch[1])) {
+		return { name: 'matrix-run', runId: matrixMatch[1], canonical: `#/matrix-runs/${matrixMatch[1]}`, valid: true };
+	}
 
 	const resultsMatch = normalized.match(/^#\/runs\/([^/]+)\/results\/?$/i);
 	if (resultsMatch && RUN_ID_PATTERN.test(resultsMatch[1])) {
