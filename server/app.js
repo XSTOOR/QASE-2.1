@@ -305,7 +305,7 @@ export function createApplication(options = {}) {
 		// The HTML shell must never be served from cache — a stale shell
 		// referencing pre-versioned asset URLs resurrects broken layouts.
 		response.set('Cache-Control', 'no-cache');
-		response.sendFile(path.join(publicDirectory, 'index.html'));
+		response.sendFile('index.html', { root: publicDirectory });
 	});
 	// Versioned assets (?v=…) are immutable per version — cache hard. Everything
 	// else (unversioned paths, index.html) revalidates every load.
@@ -1168,14 +1168,18 @@ export function createApplication(options = {}) {
 					);
 					return session;
 				},
-				sendTask: async (session, matrixRun) => {
+				sendTask: async (session, matrixRun, { signal } = {}) => {
+					signal?.throwIfAborted();
 					// #15043 (B1): QA-start runs carry their own kickoff text
 					// (target URL + coverage message); test-case runs send the
 					// raw target as before.
 					const text = matrixRun.kickoffText ?? matrixRun.targetUrl;
 					await services.runs.addMessage(session, { role: 'user', text });
 					session.targetUrl = matrixRun.targetUrl;
+					await services.runs.commit(session, 'session', { targetUrl: matrixRun.targetUrl });
+					signal?.throwIfAborted();
 					await services.agent.ensureRuntime(session);
+					if (signal?.aborted) throw new Error('Run startup was cancelled before the agent turn began.');
 					startTurn(session, { task: text });
 				},
 				// Pipeline Phase 3 (#15493): authorized auto-answer — resume a

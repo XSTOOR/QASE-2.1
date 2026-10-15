@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "releaseId": "qase-2026-10-15-run-cards-compact-r1",
+  "releaseId": "qase-2026-10-15-run-startup-r2",
   "files": [
     {
       "path": ".dockerignore",
@@ -88,7 +88,7 @@
     },
     {
       "path": "DEPLOYMENT_PROMPT.md",
-      "sha256": "2df909241d95458b4d5106741739bb34bf98ad382dbf3844e1c863752b62e943"
+      "sha256": "abf124fe3d389fca5d1f68b40d7d035076ffc8e55755e9843377d7aaf2119b56"
     },
     {
       "path": "Dockerfile",
@@ -179,6 +179,10 @@
       "sha256": "706efd791c3a14438a17e3d7eab19bc17e046bdfee0e4ff33918d1a8f898afae"
     },
     {
+      "path": "docs/production-run-startup.md",
+      "sha256": "498191c96f9f54c735d8619299a3d16545ac39ac71b3a36415ccd7a28e7ecb97"
+    },
+    {
       "path": "docs/QASE_STUDIO_UI_IMPLEMENTATION_REPORT.md",
       "sha256": "24f93c171941185ba39051f2c21dc235eb698861e63e9f054589278e3ba76781"
     },
@@ -264,7 +268,7 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "2f81117309d1272b995ece024e022b6d5a478c11e58f6e2d5725c26ca940869d"
+      "sha256": "19f658a2248579c76086609fa9d750c8d421510360c05b203743f6f2cdfc7c32"
     },
     {
       "path": "public/auth.css",
@@ -452,7 +456,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "d25f80c259e68e5cabcffadd354ce12087c83ca8bda4270d300932f0daa81264"
+      "sha256": "f1c46b6b12af090375985d0bac78534ccb185c256ddbbcd5c9d4431649f2833f"
     },
     {
       "path": "public/journey.css",
@@ -461,6 +465,14 @@
     {
       "path": "public/matrixColumns.js",
       "sha256": "ad2f6ad94784436915929e73ab08de847a66403adf0b1c2d7a5e23c4c0966961"
+    },
+    {
+      "path": "public/matrixLaunch.js",
+      "sha256": "8f67c3f60563d4af2cd309f6c78fcbccc588afdf8525877954feef5e4a90a1ff"
+    },
+    {
+      "path": "public/matrixLaunch.test.js",
+      "sha256": "bcea6a6b0c34c3b79216f683cf48c83df203edf2ae728ccd062601d6bbda7b6b"
     },
     {
       "path": "public/matrixPicker.css",
@@ -484,11 +496,11 @@
     },
     {
       "path": "public/pageRouter.js",
-      "sha256": "b9ff4866d9bb4dea77b0e099fc38a10c2f0704321c16713c43a853c42eff5681"
+      "sha256": "019c3cfa965d72d7bfff544cf32f43e32011e68c249d0604653a39a1dc0398e2"
     },
     {
       "path": "public/pageRouter.test.js",
-      "sha256": "239501e8f7886dabc3866945c4b832dbfcd8abd841282f1eff2972e3aa958d37"
+      "sha256": "75ff9fb56e08b0b4f1cecd5c2cb0d463b867598f212126200e6281157d145b03"
     },
     {
       "path": "public/perBrowserSelectionUi.test.js",
@@ -496,7 +508,7 @@
     },
     {
       "path": "public/phase13eContract.test.js",
-      "sha256": "f8ab61c14ee1085f880444edfc9519aacf53ae90bdf116f3cdf19219e91b19b6"
+      "sha256": "ce487334789f8c9e0b9f50624d8ac4af7ea77cd27bbfa8194b724f646540e3f2"
     },
     {
       "path": "public/previewLayout.js",
@@ -548,11 +560,11 @@
     },
     {
       "path": "public/qaMatrixResultsView.js",
-      "sha256": "266ec4e489f7644427db5a433b6c8dec0b4b1d020239ff77be61c9909fdef4a0"
+      "sha256": "88ac087604c852ec01819baaba926f0b94473e758a471e5634a00dd459d6ec4c"
     },
     {
       "path": "public/qaMatrixResultsView.test.js",
-      "sha256": "df4f4618869692175ca7235645514af0a6b0e21d2d9b83295e7a56afd67ab80b"
+      "sha256": "c88e496c598aa6684e83afaff2e1e4e8d629428da9847cf3818a006d908d086b"
     },
     {
       "path": "public/qaMatrixScopeView.test.js",
@@ -592,15 +604,15 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "3edb9ffae46f8892fb55fb7f46a291d82e102aca0e7e3c960480f8317f3d99ab"
+      "sha256": "8a90620cf96372e77ca375905c0edf2dfde65a087d885501ca2891179f5b181d"
     },
     {
       "path": "public/renderHealth.js",
-      "sha256": "ce6f3bc2e33213d5b69068ac0eb1bcacbdaba35f9d785b8c693790c3423838de"
+      "sha256": "848e567dd3c1e98cdd9d63f62de0e1de65c77dea9ae15c471d4496637bc675a3"
     },
     {
       "path": "public/renderHealth.test.js",
-      "sha256": "67fa1bd870892a7aaa69f6addcfc1129a891a9d2d559d225af416cfd58cdb2a8"
+      "sha256": "fce4c5a37c6f5969f47f29d24d17c2cf40a88753849a8f25dce734e1de697fdf"
     },
     {
       "path": "public/resultsOverview.js",
@@ -712,7 +724,7 @@
     },
     {
       "path": "RELEASE_NOTES.md",
-      "sha256": "765faf3a1c036192c2f1416ac660f3c6d11d0ee2e878df16e8730f7d73acdb8d"
+      "sha256": "a6ae2c92e50937079c1d00a8fe9caef4ac64d29b2720d30c25237e3a775790ef"
     },
     {
       "path": "scripts/audit-theme-light.mjs",
@@ -876,7 +888,7 @@
     },
     {
       "path": "server/app.js",
-      "sha256": "35d497ee4bffa0b817d6f15bd5ec727a6626d6569256b3b4bd8c913ff573ee00"
+      "sha256": "670178eb922b95cd31b6c24cb968ee36824fbf2687e61eaaf203543177b539a9"
     },
     {
       "path": "server/app.test.js",
@@ -1572,7 +1584,7 @@
     },
     {
       "path": "server/matrixApi.js",
-      "sha256": "60f0338b6e00b8418953b3f2a54a6c4aa09385220403d3570ceed106b87e3e0c"
+      "sha256": "e5e4aa299e103cef39ef6af3e05b980c5d38630783eca66e6e3ad256dffc643b"
     },
     {
       "path": "server/matrixApi.test.js",
@@ -1600,7 +1612,7 @@
     },
     {
       "path": "server/matrixOrchestrator.js",
-      "sha256": "7166937764907093e4dc8f7f444677c13491403eef955000d4fdf92023af1b48"
+      "sha256": "b652299ab4a28a2ffd98e74f5f50b543eea6639097c07cda13447b68474390cb"
     },
     {
       "path": "server/matrixOrchestrator.rt2.test.js",
@@ -1608,7 +1620,11 @@
     },
     {
       "path": "server/matrixOrchestrator.test.js",
-      "sha256": "48ebbfef2127b5c8f1b0631397e75e5ee0844bf6d680ca69f86aa0e6a5165f5e"
+      "sha256": "a1dd1df837d2a7c34ca661f46bc9c862f42bbb7224d8d06435da5ad7d777e86b"
+    },
+    {
+      "path": "server/matrixOwnership.test.js",
+      "sha256": "85f1468f9af24093a9956e505f8df4c25c3c90f9c7ac67c4673b1e300e7d930c"
     },
     {
       "path": "server/matrixQuestionPolicy.js",
@@ -2340,7 +2356,7 @@
     },
     {
       "path": "server/uiVersion.test.js",
-      "sha256": "f40007c52d5a7fc9aae24429cca6cdb4f43d6a1cb56a823edc8be1558e19872b"
+      "sha256": "8fdebad2391502af92180f98f46eb1ddd81b9b9e76aba6db8bc4a59041a85075"
     },
     {
       "path": "server/usageCapture.js",
