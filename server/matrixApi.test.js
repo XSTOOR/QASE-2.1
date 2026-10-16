@@ -15,6 +15,7 @@ import { test } from 'node:test';
 import { createApplication } from './app.js';
 import { createInstanceAccess } from './instanceAccess.js';
 import { createConfiguredApplicationServices } from './serviceFactory.js';
+import { createLocalMatrixBackend } from './matrixService.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -31,6 +32,7 @@ async function startApp({ automaticBrowserOptions } = {}) {
 	const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-matrix-api-'));
 	const composed = await createConfiguredApplicationServices({
 		stateDirectory: stateDir,
+		createLocalMatrixBackend: () => createLocalMatrixBackend({ stateDir }),
 		tenantContext: TENANT
 	});
 	const services = composed.services;
@@ -327,73 +329,41 @@ test('an empty automatic browser catalog returns 503 without creating queued wor
 	} finally { await app.close(); }
 });
 
-test('Phase 2: parent + batches over HTTP — cap is per-request, batches idempotent, parent view aggregates', async () => {
+test('QA launcher rejects all multi-configuration and batch requests, including old clients', async () => {
 	const app = await startApp();
-	// Patch the orchestrator start to a recorder — route logic under test,
-	// not execution.
-	const starts = [];
-	const originalStart = app.services.matrixOrchestrator?.start;
-	if (app.services.matrixOrchestrator) app.services.matrixOrchestrator.start = (id) => { starts.push(id); return { ok: true }; };
 	try {
-		const envs = await app.services.environments.list({ limit: 100 });
-		assert.ok(envs.length >= 3, 'catalog must expose at least 3 environments');
-		const envIds = envs.slice(0, 3).map((env) => env.envId);
-		// Parent request carrying configurations must be rejected — configs
-		// travel in batches only.
-		const badParent = await app.json('/api/qa-matrix-runs', {
-			method: 'POST',
-			json: { kind: 'parent', targetUrl: 'https://example.com', configurationEnvIds: envIds }
-		});
-		assert.equal(badParent.status, 422);
-		// Per-request cap = per-batch limit: >2,000 in ONE request 422s.
-		const oversized = Array.from({ length: 2001 }, (_, i) => `ENV-FAKE-${i}`);
-		const tooBig = await app.json('/api/qa-matrix-runs', {
-			method: 'POST',
-			json: { targetUrl: 'https://example.com', configurationEnvIds: oversized }
-		});
-		assert.equal(tooBig.status, 422);
-		assert.match(String(tooBig.body?.error ?? ''), /per-batch limit is 2,000/);
-		// Parent creation.
-		const parentRes = await app.json('/api/qa-matrix-runs', {
-			method: 'POST',
-			json: { kind: 'parent', targetUrl: 'https://example.com', totalPlanned: 3, title: 'Big run' }
-		});
-		assert.equal(parentRes.status, 201, JSON.stringify(parentRes.body));
-		const parent = parentRes.body;
-		assert.equal(parent.kind, 'parent');
-		assert.equal(parent.itemCount, 0);
-		// Batch 1: 201 + started.
-		const b1 = await app.json('/api/qa-matrix-runs', {
-			method: 'POST',
-			json: { parentId: parent.id, batchKey: 'key-1', batchIndex: 0, targetUrl: 'https://example.com', configurationEnvIds: envIds.slice(0, 2) }
-		});
-		assert.equal(b1.status, 201, JSON.stringify(b1.body));
-		assert.equal(b1.body.kind, 'batch');
-		assert.deepEqual(starts, [b1.body.id], 'newly created batch is started');
-		// Batch retry with the SAME key → 200, NOT re-created, not restarted.
-		const b1Retry = await app.json('/api/qa-matrix-runs', {
-			method: 'POST',
-			json: { parentId: parent.id, batchKey: 'key-1', batchIndex: 0, targetUrl: 'https://example.com', configurationEnvIds: envIds.slice(0, 2) }
-		});
-		assert.equal(b1Retry.status, 200, 'idempotent replay returns 200');
-		assert.equal(b1Retry.body.id, b1.body.id, 'same batch returned');
-		assert.deepEqual(starts, [b1.body.id], 'replayed batch is NOT started twice');
-		// Batch 2 distinct key.
-		const b2 = await app.json('/api/qa-matrix-runs', {
-			method: 'POST',
-			json: { parentId: parent.id, batchKey: 'key-2', batchIndex: 1, targetUrl: 'https://example.com', configurationEnvIds: envIds.slice(2, 3) }
-		});
-		assert.equal(b2.status, 201);
-		assert.deepEqual(starts, [b1.body.id, b2.body.id]);
-		// Parent view aggregates both batches over HTTP.
-		const view = await app.json(`/api/matrix-runs/${parent.id}`);
-		assert.equal(view.status, 200);
-		const aggregated = view.body.run ?? view.body;
-		assert.equal(aggregated.batchCount, 2);
-		assert.equal(aggregated.itemCount, 3);
-		assert.ok(aggregated.items.every((item) => envIds.includes(item.environmentId)), 'union of batch items');
-	} finally {
-		if (app.services.matrixOrchestrator && originalStart) app.services.matrixOrchestrator.start = originalStart;
-		await app.close();
-	}
+		const before = (await app.services.matrix.list()).length;
+		for (const payload of [
+			{ configurationEnvIds: ['one', 'two'] },
+			{ browserMode: 'custom', configurationEnvIds: ['one', 'two'] },
+			{ browserMode: 'custom', configurationEnvIds: [] },
+			{ kind: 'parent', totalPlanned: 3000 },
+			{ parentId: 'old-parent', batchKey: 'batch', configurationEnvIds: ['one'] }
+		]) {
+			const result = await app.json('/api/qa-matrix-runs', { method: 'POST', json: { targetUrl: 'https://example.com', ...payload } });
+			assert.equal(result.status, 422, JSON.stringify(result.body));
+			assert.match(result.body.error, /one browser and one device/);
+		}
+		assert.equal((await app.services.matrix.list()).length, before);
+	} finally { await app.close(); }
+});
+
+test('busy QA startup does not persist a waiting run; repeated requests reuse one owned run', async () => {
+	const app = await startApp();
+	app.services.matrixOrchestrator.start = () => ({ ok: true });
+	try {
+		app.services.matrixOrchestrator.canStartImmediately = () => false;
+		const payload = { targetUrl: 'https://example.com', browserMode: 'automatic' };
+		const busy = await app.json('/api/qa-matrix-runs', { method: 'POST', json: payload });
+		assert.equal(busy.status, 503); assert.equal(busy.body.code, 'QA_CAPACITY_BUSY');
+		assert.equal((await app.services.matrix.list()).length, 0);
+		app.services.matrixOrchestrator.canStartImmediately = () => true;
+		const first = await app.json('/api/qa-matrix-runs', { method: 'POST', json: payload });
+		assert.equal(first.status, 201); assert.equal(first.body.items.length, 1);
+		assert.equal(first.body.items[0].browserCode, 'chrome');
+		assert.equal(first.body.items[0].device, 'Windows Desktop');
+		const second = await app.json('/api/qa-matrix-runs', { method: 'POST', json: payload });
+		assert.equal(second.status, 200); assert.equal(second.body.id, first.body.id); assert.equal(second.body.reused, true);
+		assert.equal((await app.services.matrix.list()).length, 1);
+	} finally { await app.close(); }
 });

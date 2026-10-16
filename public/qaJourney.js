@@ -53,7 +53,7 @@ export function createQaJourney({ document, getState, changed }) {
 		$('qa-submit').hidden = step !== 2;
 		$('journey-review-url').textContent = normalizeWebsite(target.value) || 'Add a website';
 		$('journey-review-checks').textContent = `${state.checks} selected`;
-		$('journey-review-devices').textContent = state.automatic ? 'Automatic · QASE checks availability at startup' : `${state.configurations.toLocaleString()} separate ${state.configurations === 1 ? 'run' : 'runs'}`;
+		$('journey-review-devices').textContent = state.automatic ? 'Chrome · Default desktop · 1 run' : state.environmentLabel || 'Choose one browser and one device';
 		$('journey-review-model').textContent = state.config?.model || 'Provided by Qase';
 		const goal = $('qa-goal').value.trim();
 		$('journey-review-goal-row').hidden = !goal;

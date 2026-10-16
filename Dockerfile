@@ -25,7 +25,7 @@ COPY --chown=node:node scripts ./scripts
 RUN mkdir -p /app/.qase /app/evidence \
     && chown -R node:node /app/.qase /app/evidence
 
-ARG QASE_RELEASE_ID=qase-2026-10-15-run-cards-compact-r1
+ARG QASE_RELEASE_ID=qase-2026-10-16-single-browser-r4
 LABEL org.opencontainers.image.title="QASE" \
       org.opencontainers.image.version=$QASE_RELEASE_ID
 

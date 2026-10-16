@@ -726,7 +726,10 @@ export function createMatrixOrchestrator(services, hooks) {
 		const index = waitQueue.findIndex(waiter => waiter.matrixRunId === matrixRunId);
 		return { capacity: MAX_IN_FLIGHT, inUse: slotsUsed, position: index < 0 ? 0 : index + 1 };
 	}
-	return { start, cancel, retryItem, isActive, queueStatus, resumeRecovery: startResumeRecovery };
+	function canStartImmediately() {
+		return slotsUsed < MAX_IN_FLIGHT && running.size < MAX_IN_FLIGHT && waitQueue.length === 0;
+	}
+	return { start, cancel, retryItem, isActive, queueStatus, canStartImmediately, resumeRecovery: startResumeRecovery };
 }
 
 const MAX_ITEM_RETRIES = 2;

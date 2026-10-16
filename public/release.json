@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-10-16-automatic-startup-r3",
-  "uiVersion": "20261016-2",
+  "releaseId": "qase-2026-10-16-single-browser-r4",
+  "uiVersion": "20261016-3",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Automatic browser selection under scheduler admission, non-modal startup UX and run-bound feedback recovery"
+  "source": "One Chrome desktop by default, single browser/device custom picker, duplicate-safe launch admission without new capacity queues"
 }

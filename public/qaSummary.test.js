@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { pickerHarness } from './matrixPickerHarness.js';
 import { readFile } from 'node:fs/promises';
 
 /* #15970 Phase 3 — live summary + Start gating copy. */
@@ -30,34 +31,22 @@ test('#15970: selectionDimensions counts families, devices, runs', () => {
 });
 
 const picker = await readFile(new URL('./matrixPicker.js', import.meta.url), 'utf8');
-test("summary shows the exact global run total, not a theoretical cross product", () => {
-	assert.ok(picker.includes("selected.size.toLocaleString()"), "selected.size.toLocaleString()");
-	assert.ok(picker.includes("selectedDevices.length"), "selectedDevices.length");
-	assert.ok(picker.includes("new Set(index.filter(row => selected.has(row.envId)).map(row => row.browserCode)).size"), "new Set(index.filter(row => selected.has(row.envId)).map(row => row.browserCode)).size");
+test('summary reports one actual selected environment, never a cross product', () => {
+	const h = pickerHarness(); assert.equal(h.ids().length, 1); assert.match(h.text(h.hosts.summary), /1 browser · 1 device · 1 test run/);
 });
-
-test("zero states tell users how to select a valid combination", () => {
-	assert.ok(picker.includes("Choose at least one browser above"), "Choose at least one browser above");
-	assert.ok(picker.includes("No configurations selected yet."), "No configurations selected yet.");
-	assert.ok(picker.includes("No matching devices. Reset filters"), "No matching devices. Reset filters");
+test('empty filters explain how to recover without discarding the selected environment', () => {
+	const h = pickerHarness(); h.search('no such device'); assert.match(h.text(h.hosts.devices), /Reset filters/); assert.deepEqual(h.ids(), ['desktop']);
 });
-
-test("large selections explain runtime cost and batching", () => {
-	assert.ok(picker.includes("MATRIX_BATCH_SIZE"), "MATRIX_BATCH_SIZE");
-	assert.ok(picker.includes("Math.ceil(selected.size / MATRIX_BATCH_SIZE)"), "Math.ceil(selected.size / MATRIX_BATCH_SIZE)");
-	assert.ok(picker.includes("More configurations take longer"), "More configurations take longer");
+test('bulk selections and version review are absent from the customer picker', () => {
+	assert.doesNotMatch(picker, /MATRIX_BATCH_SIZE|config.browserVersion|Review exact configurations|Select shown devices/);
+	assert.match(app, /selectedCount === 1/);
 });
-
-test("exact review includes all execution dimensions and supports removal", () => {
-	assert.ok(picker.includes("config.osVersion"), "config.osVersion");
-	assert.ok(picker.includes("config.browserVersion"), "config.browserVersion");
-	assert.ok(picker.includes("config.orientation"), "config.orientation");
-	assert.ok(picker.includes("executionTypeLabel(config.executionType)"), "executionTypeLabel(config.executionType)");
-	assert.ok(picker.includes("ids.delete(config.envId)"), "ids.delete(config.envId)");
+test('review keeps the exact browser and device and permits changing the selection', () => {
+	const h = pickerHarness(); h.click('device-Google|android|Pixel 9'); assert.match(h.text(h.hosts.summary), /Pixel 9/);
+	h.click('device-Microsoft|windows|Desktop'); assert.deepEqual(h.ids(), ['desktop']);
 });
-
-test("engine-equivalence notes are preserved for selected browser families", () => {
-	assert.ok(picker.includes("family.note"), "family.note");
-	assert.ok(picker.includes("selection.browserFamilies.has(family.code)"), "selection.browserFamilies.has(family.code)");
-	assert.ok(picker.includes("notes.join"), "notes.join");
+test('engine-equivalence notes remain visible rather than claiming branded hardware', () => {
+	assert.match(picker, /catalogFamilies.find/); assert.match(picker, /familyNote/);
+	assert.match(picker, /engine_equivalent/); assert.match(picker, /not the branded browser binary/);
+	assert.match(picker, /not a physical device/);
 });

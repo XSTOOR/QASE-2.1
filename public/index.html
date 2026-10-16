@@ -14,7 +14,7 @@
 <link rel="stylesheet" href="studio-workspace.css?v=20261015-6">
 <link rel="stylesheet" href="studio-embed.css?v=20261015-7">
 <link rel="stylesheet" href="journey.css?v=20261015-4">
-<link rel="stylesheet" href="matrixPicker.css?v=20261015-5">
+<link rel="stylesheet" href="matrixPicker.css?v=20261016-3">
 <link rel="stylesheet" href="resultsPage.css?v=20261015-8">
 <link rel="stylesheet" href="brand.css?v=20261015-15">
 <link rel="stylesheet" href="runCard.css?v=20261015-17">
@@ -929,7 +929,26 @@
       <p class="journey-eyebrow">STEP 02 / YOUR TEST PLAN</p>
       <h2 id="journey-coverage-title" tabindex="-1">Start with the essentials.</h2>
       <p class="journey-lead">Recommended checks are ready. Adjust the selection if this run needs something specific.</p>
-      <div class="journey-presets" role="group" aria-label="Browser coverage size"><button type="button" id="journey-focused" aria-pressed="true"><strong>Let QASE choose <span>Recommended</span></strong><small>We check browser availability and select a desktop browser. No setup required.</small></button><button type="button" id="journey-custom" aria-pressed="false"><strong>Choose my own</strong><small>Optional. Test specific browsers and devices.</small></button></div>
+      <div class="journey-presets" role="group" aria-label="Test environment"><button type="button" id="journey-focused" aria-pressed="true"><strong>Let QASE choose <span>Recommended</span></strong><small>Chrome on one default desktop. One test run, no setup.</small></button><button type="button" id="journey-custom" aria-pressed="false"><strong>Choose my own</strong><small>Choose one browser and one compatible device.</small></button></div>
+      <fieldset class="qa-engine-fieldset qa-matrix-fieldset" id="qa-matrix-fieldset" hidden>
+        <legend>Browsers &amp; devices</legend>
+        <div class="qa-matrix-state" id="qa-matrix-state" role="status" aria-live="polite">Loading device &amp; browser catalog…</div>
+        <div class="qa-matrix" id="qa-matrix-root" hidden>
+          <div class="qa-matrix-filters">
+            <label for="qa-matrix-search" class="mp-search-label">Find a device</label>
+            <input class="qa-matrix-search" id="qa-matrix-search" type="search" placeholder="Search device name, brand or operating system…" autocomplete="off" aria-label="Search compatible devices">
+          </div>
+          <div class="qa-matrix-body">
+            <div class="qa-matrix-browsers" id="qa-matrix-browsers"></div>
+            <div class="qa-matrix-devices" id="qa-matrix-devices"></div>
+          </div>
+          <div class="qa-matrix-summary" id="qa-matrix-summary" aria-live="polite"></div>
+        </div>
+        <div class="qa-matrix-error" id="qa-matrix-error" hidden>
+          <span id="qa-matrix-error-text"></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="qa-matrix-retry">Retry</button>
+        </div>
+      </fieldset>
       <section class="qa-recommended" aria-labelledby="qa-recommended-title">
         <h3 id="qa-recommended-title">Recommended checks are selected</h3>
         <p>Check forms, navigation, layout and accessibility. Customize the coverage for your website below.</p>
@@ -937,7 +956,7 @@
       </section>
       <div class="journey-benefits"><span>Forms &amp; validation</span><span>Navigation &amp; links</span><span>Layout &amp; accessibility</span></div>
       <details class="qa-customize" id="qa-customize">
-        <summary>Customize devices, browsers and checks</summary>
+        <summary>Customize checks</summary>
         <div class="qa-customize-body">
       <fieldset class="qa-device-fieldset test-on-fieldset" hidden>
         <legend>Test on</legend>
@@ -958,25 +977,6 @@
           </div>
         </details>
       </fieldset>
-      <fieldset class="qa-engine-fieldset qa-matrix-fieldset" id="qa-matrix-fieldset">
-        <legend>Browsers &amp; devices</legend>
-        <div class="qa-matrix-state" id="qa-matrix-state" role="status" aria-live="polite">Loading device &amp; browser catalog…</div>
-        <div class="qa-matrix" id="qa-matrix-root" hidden>
-          <div class="qa-matrix-filters">
-            <label for="qa-matrix-search" class="mp-search-label">Find a device</label>
-            <input class="qa-matrix-search" id="qa-matrix-search" type="search" placeholder="Search devices, operating systems or browser versions…" autocomplete="off" aria-label="Search devices and configurations">
-          </div>
-          <div class="qa-matrix-body">
-            <div class="qa-matrix-browsers" id="qa-matrix-browsers"></div>
-            <div class="qa-matrix-devices" id="qa-matrix-devices"></div>
-          </div>
-          <div class="qa-matrix-summary" id="qa-matrix-summary" aria-live="polite"></div>
-        </div>
-        <div class="qa-matrix-error" id="qa-matrix-error" hidden>
-          <span id="qa-matrix-error-text"></span>
-          <button type="button" class="btn btn-ghost btn-sm" id="qa-matrix-retry">Retry</button>
-        </div>
-      </fieldset>
       <fieldset class="qa-scope-fieldset">
         <legend>Coverage selection</legend>
         <div class="coverage-heading">Supported Coverage</div>
@@ -995,9 +995,9 @@
               <label class="check"><input class="qa-scope" type="checkbox" value="mobile-layout" checked title="mobile layout using an emulated phone viewport"><span>Mobile layout</span></label>
               <label class="check"><input class="qa-scope" type="checkbox" value="ui-consistency" checked title="UI consistency: buttons, fonts, colors, spacing, forms, cards, navigation consistent across pages"><span>UI consistency</span></label>
               <label class="check"><input class="qa-scope" type="checkbox" value="content-validation" checked title="content validation: text, labels, headings, messages, placeholders correct, readable, properly presented"><span>Content &amp; text validation</span></label>
-              <div class="scope-browser-row" title="Browser compatibility follows the browser engines selected below — every checked engine runs the site.">
-                <span class="check"><input class="qa-browser-inline" type="checkbox" checked disabled aria-label="Browser compatibility is controlled by the browser engines selection"><span>Browser compatibility</span></span>
-                <small>driven by the browser engines below</small>
+              <div class="scope-browser-row" title="Checks run on the single browser and device selected for this test.">
+                <span class="check"><input class="qa-browser-inline" type="checkbox" checked disabled aria-label="Check behavior on the selected browser"><span>Selected browser behavior</span></span>
+                <small>uses your selected test environment</small>
               </div>
             </div>
           </div>
@@ -1078,7 +1078,7 @@
         <p class="journey-eyebrow">STEP 03 / READY WHEN YOU ARE</p>
         <h2 id="journey-review-title" tabindex="-1">Here’s your test run.</h2>
         <p class="journey-lead">Check the details, then let Qase take it from here.</p>
-        <div class="journey-review-card"><div class="journey-review-target"><span class="journey-site-icon" aria-hidden="true">↗</span><div><small>Website</small><strong id="journey-review-url"></strong></div><button type="button" class="link-btn" data-journey-edit="0">Edit</button></div><dl><div><dt>Checks selected</dt><dd id="journey-review-checks">—</dd></div><div><dt>Browser configurations</dt><dd id="journey-review-devices">—</dd></div><div><dt>Qase-provided model</dt><dd id="journey-review-model">—</dd></div><div id="journey-review-goal-row" hidden><dt>Your focus</dt><dd id="journey-review-goal"></dd></div></dl><button type="button" class="link-btn" data-journey-edit="1">Edit coverage and devices</button></div>
+        <div class="journey-review-card"><div class="journey-review-target"><span class="journey-site-icon" aria-hidden="true">↗</span><div><small>Website</small><strong id="journey-review-url"></strong></div><button type="button" class="link-btn" data-journey-edit="0">Edit</button></div><dl><div><dt>Checks selected</dt><dd id="journey-review-checks">—</dd></div><div><dt>Test environment</dt><dd id="journey-review-devices">—</dd></div><div><dt>Qase-provided model</dt><dd id="journey-review-model">—</dd></div><div id="journey-review-goal-row" hidden><dt>Your focus</dt><dd id="journey-review-goal"></dd></div></dl><button type="button" class="link-btn" data-journey-edit="1">Edit checks and environment</button></div>
         <p class="journey-volume-note" id="journey-volume-note" hidden></p>
         <div class="journey-next"><strong>What happens next</strong><ol><li>Qase opens your website in a real browser.</li><li>Follow progress live. Answer any sign-in or workflow questions.</li><li>Review findings, evidence, and the final report when the run finishes.</li></ol></div>
       </section>
@@ -1687,6 +1687,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261016-2" type="module"></script>
+<script src="app.js?v=20261016-3" type="module"></script>
 </body>
 </html>

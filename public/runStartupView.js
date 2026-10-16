@@ -6,7 +6,7 @@ export function startupPresentation(run, execution = {}) {
 	const failed = ['error', 'interrupted', 'cancelled', 'done'].includes(run?.status);
 	const preparing = item?.status === 'RUNNING' || item?.startupPhase === 'selecting_browser';
 	return { terminal: failed, preparing, title: failed ? (run.status === 'cancelled' ? 'Test cancelled' : 'Your test needs attention')
-		: preparing ? 'Preparing your test' : 'Your test is ready to start',
+		: preparing ? 'Preparing your test' : execution.position > 0 ? 'Waiting for a test slot' : 'Starting your test',
 		detail: failed ? (run.error || item?.error || item?.reason || 'This run ended before an agent session became available. You can return to your tests and try again.')
 			: preparing ? 'The browser is being prepared and the agent is connecting. Live activity will open here automatically.'
 				: execution.position > 0 ? `Your test is queued (position ${execution.position}). The server is busy. It will start automatically when capacity is available.`
@@ -28,7 +28,7 @@ export function createRunStartupView({ container, api, openSession, back, detail
 	const card = el('section', 'startup-card');
 	const status = el('p', 'startup-status', 'Checking startup status…'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
 	const browser = el('p', 'startup-browser');
-	const note = el('p', 'startup-note', 'You can leave this page and return from Recent tests. Please don’t submit another run while this one is waiting.');
+	const note = el('p', 'startup-note', 'You can leave this page and return from Recent tests. Starting again while this test is active opens the same test, not an additional run.');
 	const actions = el('div', 'startup-actions');
 	const refresh = el('button', 'btn btn-primary', 'Check status'); refresh.type = 'button';
 	const cancel = el('button', 'btn btn-ghost', 'Cancel queued test'); cancel.type = 'button';

@@ -1,11 +1,20 @@
 # QASE deployment handoff
 
-Release `qase-2026-10-16-automatic-startup-r3` retains the compact recent-run cards and updates the UI asset version to `20261016-2`.
+Release `qase-2026-10-16-single-browser-r4` retains the compact recent-run cards and updates the UI asset version to `20261016-3`.
+
+## Single-run workflow
+
+- “Let QASE choose” uses one Chrome desktop configuration. No alternative-engine fallback, tablet default, version selector, parent run or batch fan-out. The generic Windows Desktop is preferred on Windows/Linux hosts; macOS hosts use one compatible desktop from the catalog. Versions remain internal runtime metadata, not separate jobs.
+- Custom selection chooses one browser and one compatible device. Search, device type, operating system and manufacturer filters compose. Filtering never clears the chosen pair, which stays in the summary. Old multi-version preferences migrate to one exact environment.
+- Environment selection is separate from optional advanced checks. The review page names the chosen browser/device and one run. Unavailable browser choices explain their disabled state; emulation and engine-equivalence notes remain honest.
+- The QA launch endpoint rejects multi-configuration and batch requests, including old clients. An owner's repeated request returns their existing active run. Concurrent submissions are guarded across HTTP awaits; a busy local execution service rejects before creating more waiting work and preserves the draft.
+- Existing historical runs, legacy advanced matrix APIs, data and queued production work are preserved, not cancelled or deleted. The local admission guard is process-scoped: use the existing single-process local-store topology. Multi-API/distributed rollouts require explicit shared-capacity and duplicate-start canaries before promotion, not a concurrency increase to hide a backlog.
+- Browser selection, HTTP admission, device filters, focus, stale preferences, feedback and existing runtime behavior have regression coverage. Production rollout and real-model canaries remain required.
 
 ## Automatic startup and feedback UX
 
 - The default launcher is “Let QASE choose”. Browser/device selection is no longer required. Custom configurations remain an explicit option.
-- The server plans one desktop configuration from the current catalog. After scheduler admission it performs health checks and selects a healthy Chromium, Firefox or WebKit-compatible environment. Browser processes are not probed outside the shared capacity budget, and unavailable environments fail honestly rather than claiming execution.
+- The server plans one Chrome desktop configuration from the current catalog. After admission it checks that default profile. A failed Chrome launch is reported honestly without trying other engines or generating additional jobs. Browser processes are not probed outside the shared capacity budget.
 - Startup uses a dedicated full-page status view, not the technical QA-run popup. It explains capacity waiting, reports queue position when available, transitions to the real session, and makes diagnostics optional. Leaving the page stops its polling/navigation. Interrupted queued work can reconnect once without creating another run.
 - Feedback loads and submissions are bound to their run. Late responses cannot overwrite another run; a duplicate save acknowledgement recovers the existing record for editing while preserving the draft. Background synchronization never opens a feedback modal automatically.
 - Local UI verification uses an explicitly labelled simulated agent with notifications disabled. It is not evidence of a successful production model run. Live authenticated canaries remain a rollout gate.
@@ -32,7 +41,7 @@ Release `qase-2026-10-16-automatic-startup-r3` retains the compact recent-run ca
 
 ## Required production gates
 
-The prior r1 baseline completed 1,855 tests with zero failures. The r2 handoff includes a separate verification log; do not use the prior baseline as evidence that this hotfix has passed. Skips include opt-in integration checks and the POSIX file-mode assertion that is not applicable on Windows. Linux image validation and production canaries remain mandatory.
+Local r4 verification completed 1,886 tests: 1,859 passed, zero failed and 27 skipped. Syntax checks passed for 486 source files; private-path checks and the credential scan passed. Skips include opt-in integration checks and the POSIX file-mode assertion that is not applicable on Windows. UI verification covered combined device filters, single-pair review, popup-free startup and the narrow mobile layout. Its isolated runtime harness made no model calls; it is not a production agent canary. Linux image validation and authenticated production canaries remain mandatory.
 
 The receiving deployment agent must build and scan the Linux image, configure secrets/DNS/TLS/persistence/SMTP, run the full verification suite, and pass authenticated QA/SQA/Founder canaries before switching traffic. Docker and the target production environment are not available in this handoff workspace, so this archive is not evidence of an already completed production deployment.
 

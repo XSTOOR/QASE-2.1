@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { pickerHarness } from './matrixPickerHarness.js';
 
 const [app, styles] = await Promise.all([
 	readFile(new URL('./app.js', import.meta.url), 'utf8'),
@@ -8,33 +9,21 @@ const [app, styles] = await Promise.all([
 ]);
 
 const picker = await readFile(new URL('./matrixPicker.js', import.meta.url), 'utf8');
-test("both modes are explicit and have accessible pressed state", () => {
-	assert.ok(picker.includes("Mix & match"), "Mix & match");
-	assert.ok(picker.includes("One device per browser"), "One device per browser");
-	assert.ok(picker.includes("onePerBrowserSelection(index, selection)"), "onePerBrowserSelection(index, selection)");
-	assert.ok(picker.includes("aria-pressed"), "aria-pressed");
+test('browser selection stays mutually exclusive on repeated clicks', () => {
+	const h = pickerHarness(); h.click('browser-firefox'); h.click('browser-firefox');
+	assert.deepEqual(h.ids(), ['ff']);
 });
-
-test("every selected browser has its own labeled device dropdown", () => {
-	assert.ok(picker.includes("for (const family of chosen)"), "for (const family of chosen)");
-	assert.ok(picker.includes("Device for ${family.label}"), "Device for ${family.label}");
-	assert.ok(picker.includes("mp-assignment"), "mp-assignment");
+test('changing browser chooses one compatible device when the previous one is incompatible', () => {
+	const h = pickerHarness(); h.click('device-Google|android|Pixel 9'); h.click('browser-firefox');
+	assert.deepEqual(h.ids(), ['ff']); assert.match(h.text(h.hosts.summary), /Desktop/);
 });
-
-test("per-browser dropdowns contain only compatible devices and retain filtered assignments", () => {
-	assert.ok(picker.includes("device.key === assignedKey"), "device.key === assignedKey");
-	assert.ok(picker.includes("device.pairs.get(family.code)?.some(isSelectable)"), "device.pairs.get(family.code)?.some(isSelectable)");
-	assert.ok(picker.includes("Choose a compatible device"), "Choose a compatible device");
+test('switching browser retains filters explicitly even when no matching devices remain', () => {
+	const h = pickerHarness(); h.filter('manufacturer', 'Google'); h.click('browser-firefox');
+	assert.equal(h.get('manufacturer').value, 'Google'); assert.match(h.text(h.hosts.devices), /no compatible devices/);
+	assert.deepEqual(h.ids(), ['ff']);
 });
-
-test("assignment changes use the validated model and support clearing", () => {
-	assert.ok(picker.includes("assignDevice(selection, index, family.code, select.value)"), "assignDevice(selection, index, family.code, select.value)");
-	assert.ok(picker.includes("unassignDevice(selection, family.code)"), "unassignDevice(selection, family.code)");
-	assert.ok(picker.includes("next.deselectedEnvIds.delete(config.envId)"), "next.deselectedEnvIds.delete(config.envId)");
-});
-
-test("mode changes preserve exact selection on returning to grid", () => {
-	assert.ok(picker.includes("exactMatrixSelection(index, selected, selection)"), "exactMatrixSelection(index, selected, selection)");
-	assert.ok(picker.includes("else if (perBrowser)"), "else if (perBrowser)");
-	assert.ok(picker.includes("const pairs = visible.flatMap"), "const pairs = visible.flatMap");
+test('custom and recommended modes are distinct from optional checks in the page', async () => {
+	const html = await readFile(new URL('./index.html', import.meta.url), 'utf8');
+	assert.ok(html.indexOf('id="qa-matrix-fieldset"') < html.indexOf('id="qa-customize"'));
+	assert.match(html, /Chrome on one default desktop/); assert.doesNotMatch(picker, /Mix & match|One device per browser/);
 });
