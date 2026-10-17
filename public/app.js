@@ -1783,6 +1783,10 @@ function setStatus(status) {
 	const stoppedByUser = status === 'interrupted' && state.session?.statusDetail === 'Stopped by user.';
 	const displayStatus = runPresentationStatus(state.session);
 	el.statusChip.dataset.status = displayStatus;
+	// Presentational hook only (#16650 follow-up): lets the dark-theme CSS
+	// style the user-stopped state (red) distinctly from a paused run
+	// (amber) — both share data-status="interrupted". No behavior change.
+	el.statusChip.dataset.stopped = stoppedByUser ? 'true' : 'false';
 	el.statusChip.textContent = stopping ? 'Stopping…' : status === 'awaiting_input'
 		? 'waiting for you'
 		: status === 'running' ? 'Running'

@@ -13620,3 +13620,73 @@ dialog:not([open]) { display: none !important; }
   background: #4ADE80 !important;         /* status dot follows the green */
   box-shadow: 0 0 9px rgba(74, 222, 128, 0.55) !important;
 }
+
+/* ════════════════════════════════════════════════════════════════
+   #16652 · Dark-theme stopped-run colors — "Stopped" status (red)
+   and "Resume" button (green).
+
+   Scope rules (identical to the #16650 block above):
+   • DARK THEME ONLY — gated on [data-theme="dark"]; light theme keeps
+     its existing appearance completely.
+   • ID-scoped (#status-chip[data-stopped], #resume-run) so no other
+     chip or button changes. The stopped chip styling keys on the
+     presentational data-stopped="true" hook setStatus() sets when the
+     run was stopped by the user — a plain paused run (data-stopped
+     absent/"false") keeps its existing amber "interrupted" colors.
+   • Color/interaction states only — labels, sizes, handlers, and
+     stop/resume logic are untouched.
+   ════════════════════════════════════════════════════════════════ */
+
+/* ── "Stopped" status — pleasant red #F87171 on dark-red #7F1D1D pill ── */
+:root[data-theme="dark"] #status-chip[data-stopped="true"] {
+  border-color: rgba(248, 113, 113, 0.38) !important;
+  background-color: #7F1D1D !important;   /* subtle dark-red pill */
+  color: #F87171 !important;              /* pleasant light-red text */
+}
+
+:root[data-theme="dark"] #status-chip[data-stopped="true"]::before {
+  background: #F87171 !important;         /* status dot follows the red */
+  box-shadow: 0 0 9px rgba(248, 113, 113, 0.55) !important;
+}
+
+/* "Stopping…" mid-transition rides the same stopped palette so the
+   red family is consistent from click to settled state. */
+:root[data-theme="dark"] #status-chip[data-status="running"][data-stopped="true"] {
+  border-color: rgba(248, 113, 113, 0.38) !important;
+  background-color: rgba(127, 29, 29, 0.55) !important;
+  color: #F87171 !important;
+}
+
+/* ── "Resume" button — pleasant green #16A34A (hover #15803D) ────── */
+:root[data-theme="dark"] #resume-run {
+  border-color: #16A34A;
+  background: #16A34A;
+  color: #ffffff;                       /* white on green — AA contrast */
+}
+
+@media (hover: hover) {
+  :root[data-theme="dark"] #resume-run:not(:disabled):hover {
+    border-color: #15803D;
+    background: #15803D;
+    color: #ffffff;
+  }
+}
+
+:root[data-theme="dark"] #resume-run:not(:disabled):active {
+  border-color: #166534;
+  background: #166534;
+  color: #ffffff;
+}
+
+:root[data-theme="dark"] #resume-run:focus-visible {
+  outline: 2px solid #4ADE80;
+  outline-offset: 2px;
+}
+
+:root[data-theme="dark"] #resume-run:disabled {
+  border-color: #16A34A;
+  background: #16A34A;
+  color: #ffffff;
+  opacity: 0.45;                        /* clearly distinguishable from enabled */
+  cursor: not-allowed;
+}
