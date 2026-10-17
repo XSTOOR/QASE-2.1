@@ -13501,3 +13501,122 @@ dialog:not([open]) { display: none !important; }
 	font: 14px/1.4 var(--font-ui, system-ui), sans-serif;
 	border-top: 1px solid var(--border-strong, #3a3a44);
 }
+
+/* ════════════════════════════════════════════════════════════════
+   #16650 · Dark-theme action colors — Start Testing (pleasant blue),
+   Stop (pleasant red), Running status (pleasant green).
+
+   Scope rules:
+   • DARK THEME ONLY — every rule is gated on [data-theme="dark"]
+     (the attribute theme-bootstrap.js always sets on <html>). The
+     light theme keeps its existing appearance completely untouched.
+   • ID-scoped (#sidebar-new-run/#empty-start/#qa-submit,
+     #stop-run, #status-chip) so no other button, chip, or page that
+     shares .btn-primary/.btn-danger/.status-chip changes.
+   • Layered last so these override the earlier .cli-theme token
+     layer; !important only where brand.css/studio-workspace.css
+     repaint the same elements with !important in dark mode.
+   • Sizes, shapes, spacing, icons, typography, labels, and all
+     handlers are untouched — color/interaction states only.
+   ════════════════════════════════════════════════════════════════ */
+
+/* ── Start Testing buttons — pleasant blue #3B82F6 (hover #60A5FA) ── */
+:root[data-theme="dark"] #sidebar-new-run.btn-primary,
+:root[data-theme="dark"] #empty-start.btn-primary,
+:root[data-theme="dark"] #qa-submit.btn-primary {
+  border-color: #3B82F6;
+  background: #3B82F6;
+  color: #ffffff;                       /* white on blue — AA contrast */
+  box-shadow: none;
+  transform: none;
+}
+
+@media (hover: hover) {
+  :root[data-theme="dark"] #sidebar-new-run.btn-primary:not(:disabled):hover,
+  :root[data-theme="dark"] #empty-start.btn-primary:not(:disabled):hover,
+  :root[data-theme="dark"] #qa-submit.btn-primary:not(:disabled):hover {
+    border-color: #60A5FA;
+    background: #60A5FA;
+    color: #0b1220;                     /* dark text on light-blue hover — readable */
+  }
+}
+
+:root[data-theme="dark"] #sidebar-new-run.btn-primary:not(:disabled):active,
+:root[data-theme="dark"] #empty-start.btn-primary:not(:disabled):active,
+:root[data-theme="dark"] #qa-submit.btn-primary:not(:disabled):active {
+  border-color: #2563EB;
+  background: #2563EB;
+  color: #ffffff;
+}
+
+:root[data-theme="dark"] #sidebar-new-run.btn-primary:focus-visible,
+:root[data-theme="dark"] #empty-start.btn-primary:focus-visible,
+:root[data-theme="dark"] #qa-submit.btn-primary:focus-visible {
+  outline: 2px solid #60A5FA;
+  outline-offset: 2px;
+}
+
+/* Disabled stays clearly distinguishable: same blue hue but dimmed —
+   the shared .btn:disabled opacity/dimming keeps applying underneath. */
+:root[data-theme="dark"] #sidebar-new-run.btn-primary:disabled,
+:root[data-theme="dark"] #empty-start.btn-primary:disabled,
+:root[data-theme="dark"] #qa-submit.btn-primary:disabled {
+  border-color: #3B82F6;
+  background: #3B82F6;
+  color: #ffffff;
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ── Stop button — pleasant red #EF4444 (hover #F87171) ─────────── */
+:root[data-theme="dark"] #stop-run.btn-danger {
+  border-color: #EF4444;
+  background: #EF4444;
+  color: #ffffff;                       /* white on red — AA contrast */
+  box-shadow: none;
+}
+
+@media (hover: hover) {
+  :root[data-theme="dark"] #stop-run.btn-danger:not(:disabled):hover {
+    border-color: #F87171;
+    background: #F87171;
+    color: #200606;                     /* dark text on light-red hover — readable */
+  }
+}
+
+:root[data-theme="dark"] #stop-run.btn-danger:not(:disabled):active {
+  border-color: #DC2626;
+  background: #DC2626;
+  color: #ffffff;
+}
+
+:root[data-theme="dark"] #stop-run.btn-danger:focus-visible {
+  outline: 2px solid #F87171;
+  outline-offset: 2px;
+}
+
+:root[data-theme="dark"] #stop-run.btn-danger:disabled {
+  border-color: #EF4444;
+  background: #EF4444;
+  color: #ffffff;
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ── Running status — pleasant green #4ADE80 on dark-green #14532D ──
+   Pill badge: light-green text on a subtle dark-green background.
+   Applies ONLY to data-status="running" — every other status label
+   keeps its existing colors. !important is required because
+   brand.css repaints all status chips neutral in dark mode with
+   !important; the ID selector + attribute scope wins the cascade
+   for the running state only. */
+:root[data-theme="dark"] #status-chip[data-status="running"] {
+  border-color: rgba(74, 222, 128, 0.38) !important;
+  background-color: #14532D !important;   /* subtle dark-green pill */
+  color: #4ADE80 !important;              /* pleasant green text */
+}
+
+:root[data-theme="dark"] #status-chip[data-status="running"]::before {
+  background: #4ADE80 !important;         /* status dot follows the green */
+  box-shadow: 0 0 9px rgba(74, 222, 128, 0.55) !important;
+}
