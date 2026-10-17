@@ -391,6 +391,10 @@ const founderView = createFounderView({
 	onClearSelection: () => founderSaveSelections([]),
 	onSendToStudio: founderSendToStudio,
 	onExportHandoff: founderExportHandoff,
+	onProvideFeedback: () => openFeedbackModal(),
+	getFeedbackRating: () => state.runRatings.get(state.sessionId)
+		?? (state.feedback.existingLoadedFor === state.sessionId ? state.feedback.existing : undefined),
+	renderReportFeedbackSection,
 	elements: {
 		founderView: el.founderView,
 		countFounder: el.countFounder,
@@ -2167,10 +2171,9 @@ const FEEDBACK_STAR_LABELS = {
 };
 
 function feedbackEligible(session) {
-	// Feedback applies to QA runs and SQA assessments once they finish;
-	// Founder reviews keep their own completion flow without feedback.
-	return Boolean(session?.id) && session.mode !== 'founder'
-		&& FEEDBACK_TERMINAL_STATUSES.has(session.status);
+	// Feedback applies to QA runs, SQA assessments, and Founder reviews
+	// once they finish — every mode shares one feedback flow (#16653).
+	return Boolean(session?.id) && FEEDBACK_TERMINAL_STATUSES.has(session.status);
 }
 
 /**
@@ -2238,7 +2241,8 @@ async function openFeedbackModal() {
 	const duration = Number.isFinite(session.completedAt) && Number.isFinite(session.startedAt)
 		? formatClock((session.completedAt - session.startedAt - (Number.isFinite(session.pausedSeconds) ? session.pausedSeconds * 1000 : 0)) / 1000)
 		: null;
-	const bits = [`Test Run: ${session.id.slice(0, 8)}`];
+	const modeLabel = session.mode === 'sqa' ? 'SQA Review' : session.mode === 'founder' ? 'Founder Review' : 'Test Run';
+	const bits = [`${modeLabel}: ${session.id.slice(0, 8)}`];
 	if (session.targetUrl) bits.push(String(session.targetUrl));
 	bits.push(failed ? 'Status: Failed' : 'Status: Completed');
 	if (duration) bits.push(`Duration: ${duration}`);
@@ -4856,6 +4860,11 @@ function handleEvent(event) {
 				renderFounder();
 				renderReport();
 				showCompletedFounderReport();
+				// Founder runs share the feedback flow (#16653): load the
+				// submitter's existing record so the completed report shows
+				// View-vs-Provide state and the run-list badge. Never opens
+				// the modal (same contract as QA/SQA background sync).
+				if (FEEDBACK_TERMINAL_STATUSES.has(session.status)) void syncFeedbackForSession(session);
 			}
 		if (event.status !== 'running') {
 			void refreshRuns();
