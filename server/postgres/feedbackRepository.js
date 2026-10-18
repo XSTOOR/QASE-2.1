@@ -54,7 +54,7 @@ export function createPostgresFeedbackRepository({ pool, tenantContext }) {
 			RETURNING *`,
 			[
 				id, tenant.organizationId, tenant.projectId, runId, submittedBy ?? null,
-				typeof context?.targetUrl === 'string' ? context.target_url ?? context.targetUrl : null,
+				typeof context?.targetUrl === 'string' ? context.targetUrl : null,
 				typeof context?.runStatus === 'string' ? context.runStatus : null,
 				Number.isFinite(context?.durationSeconds) ? context.durationSeconds : null,
 				normalized.rating, normalized.category, normalized.comments,
