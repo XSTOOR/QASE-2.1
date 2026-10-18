@@ -55,9 +55,14 @@ test('keyboard focus, reduced motion, and narrow-screen layouts remain supported
 });
 
 test('background feedback loading cannot interrupt destination navigation', () => {
-  const sync = app.slice(app.indexOf('async function syncFeedbackForSession'), app.indexOf('async function openFeedbackModal'));
+  const sync = app.slice(app.indexOf('async function syncFeedbackForSession'), app.indexOf('async function maybeAutoPromptFeedback'));
   assert.doesNotMatch(sync, /openFeedbackModal\(\)/);
   assert.match(app, /provideFeedback\.onclick = \(\) => openFeedbackModal\(\)/);
+  // #16655: the terminal-event auto prompt is gated to the viewed run and
+  // once per browser session — it is not background-sync interruption.
+  const prompt = app.slice(app.indexOf('async function maybeAutoPromptFeedback'), app.indexOf('\n}', app.indexOf('async function maybeAutoPromptFeedback')));
+  assert.match(prompt, /state\.sessionId !== session\.id/);
+  assert.match(prompt, /feedbackAutoPrompted\.has\(session\.id\)/);
 });
 
 test('dark palette is strictly neutral and uses the white vector mark', () => {

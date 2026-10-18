@@ -2161,6 +2161,14 @@ const FEEDBACK_CATEGORIES = [
 /** A run accepts feedback only once it has reached a terminal state. */
 const FEEDBACK_TERMINAL_STATUSES = new Set(['done', 'error']);
 
+/**
+ * #16655 — Run ids already auto-prompted for feedback this browser session.
+ * Module-level: a full page reload clears it (a refresh never re-nags),
+ * while SPA navigation keeps it — one run prompts at most once per browser
+ * session, and the Provide Feedback button remains available afterwards.
+ */
+const feedbackAutoPrompted = new Set();
+
 /** Spec rating semantics for the star tooltips. */
 const FEEDBACK_STAR_LABELS = {
 	1: '1 — Very Poor',
@@ -2196,6 +2204,43 @@ async function syncFeedbackForSession(session) {
 	if (state.sessionId === runId) renderReport();
 	// Feedback is an explicit report action. Background synchronization must
 	// never interrupt result review or cover a new-run/account destination.
+}
+
+/**
+ * #16655 — Auto pop-up after completion (all modes). Fires once per run per
+ * browser session, only on the terminal event itself, only for the run the
+ * user is actually viewing, and only when the completion view was rendered
+ * here (this handler runs in the SSE status branch that just called
+ * showCompletedQaResults / showCompletedFounderReport / renderSqa). Runs that
+ * complete while the user is elsewhere keep the Provide Feedback button as
+ * the entry point — no interrupting unrelated work. `openFeedbackModal`
+ * re-checks the server's existing record, so an already-submitted run (or a
+ * submit racing on another tab) lands in View mode rather than a duplicate.
+ */
+async function maybeAutoPromptFeedback(session) {
+	if (!session?.id || !feedbackEligible(session)) return;
+	if (feedbackAutoPrompted.has(session.id)) return;
+	if (state.sessionId !== session.id) return;
+	if (el.feedbackModal.open || state.feedback.submitting) return;
+	feedbackAutoPrompted.add(session.id);
+	try {
+		if (!state.feedback.existing && state.feedback.existingLoadedFor !== session.id) {
+			try {
+				state.feedback.existing = await api(`/sessions/${session.id}/feedback`);
+			} catch {
+				state.feedback.existing = null;
+			}
+			state.feedback.existingLoadedFor = session.id;
+		}
+		// Submitted (possibly while we were waiting) → show state, no prompt.
+		if (state.feedback.existing) {
+			applyFeedbackSubmittedState();
+			return;
+		}
+		await openFeedbackModal();
+	} catch {
+		// Never block the completion view on the prompt.
+	}
 }
 
 /**
@@ -4865,6 +4910,9 @@ function handleEvent(event) {
 				// View-vs-Provide state and the run-list badge. Never opens
 				// the modal (same contract as QA/SQA background sync).
 				if (FEEDBACK_TERMINAL_STATUSES.has(session.status)) void syncFeedbackForSession(session);
+				// #16655: founder completions auto-prompt once per browser
+				// session, after the completed report view renders.
+				if (FEEDBACK_TERMINAL_STATUSES.has(session.status)) void maybeAutoPromptFeedback(session);
 			}
 		if (event.status !== 'running') {
 			void refreshRuns();
@@ -4872,6 +4920,9 @@ function handleEvent(event) {
 				renderReport();
 				showCompletedQaResults();
 				void syncFeedbackForSession(session);
+				// #16655: auto pop-up once per run per browser session, after
+				// the completion view renders (QA + SQA share this branch).
+				void maybeAutoPromptFeedback(session);
 			}
 		}
 			if (event.detail && event.status === 'error') {
