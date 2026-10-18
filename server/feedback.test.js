@@ -5,8 +5,16 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 // Feedback store tests run in an isolated CWD so .qase/feedback.json never
-// collides with the developer's real instance data.
-process.chdir(fs.mkdtempSync(path.join(os.tmpdir(), 'qase-feedback-test-')));
+// collides with the developer's real instance data. A per-test before/after
+// pair chdirs in and out — under `node --test --test-isolation=none` this file
+// shares a process with other suites that read files relative to CWD (e.g.
+// server/stageCollapseUi.test.js reading public/app.js), and other suites
+// (feedbackApi) chdir to their own temp dirs, so a fixed cwd either way breaks
+// one side or the other.
+const originalCwd = process.cwd();
+const isolatedCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-feedback-test-'));
+test.before(() => { process.chdir(isolatedCwd); });
+test.after(() => { process.chdir(originalCwd); });
 
 const {
 	createFeedback, getFeedback, findFeedbackForRun, listFeedback,
@@ -190,8 +198,12 @@ test('records persist to disk and reload', async () => {
 		rating: 5, category: 'ease_of_use', comments: 'persisted feedback'
 	});
 	// feedbackStore persists synchronously; simulate a fresh process by
-	// re-reading the file the way loadFeedback does on a cold start.
-	const raw = fs.readFileSync(path.join(process.cwd(), '.qase', 'feedback.json'), 'utf8');
+	// re-reading the file the way loadFeedback does on a cold start. The
+	// store resolves its data dir from its OWN cwd (captured at import time
+	// under this suite's isolated dir) — read against that path, not the
+	// process cwd, which other suites chdir around under --test-isolation=none.
+	const storeFile = path.join(isolatedCwd, '.qase', 'feedback.json');
+	const raw = fs.readFileSync(storeFile, 'utf8');
 	const parsed = JSON.parse(raw);
 	assert.ok(parsed.some(row => row.id === record.id && row.comments === 'persisted feedback'));
 });

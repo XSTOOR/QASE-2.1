@@ -13,6 +13,9 @@ import * as path from 'node:path';
 
 import { createConfiguredApplicationServices } from './serviceFactory.js';
 
+const AUTOGON_ORIGINAL_CWD = process.cwd();
+test.after(() => { process.chdir(AUTOGON_ORIGINAL_CWD); });
+
 function makeTempHome() {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-autogen-int-'));
 	process.chdir(dir);
