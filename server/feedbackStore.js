@@ -128,6 +128,9 @@ export function createFeedback({ runId, submittedBy, context, ...input }) {
 		id: randomUUID(),
 		runId,
 		submittedBy: submittedBy ?? null,
+		// #16656 — testing mode captured at create time from the run context
+		// (qa | sqa | founder); legacy records read as 'qa'.
+		mode: typeof context?.mode === 'string' && context.mode.trim() !== '' ? context.mode.trim() : 'qa',
 		targetUrl: typeof context?.targetUrl === 'string' ? context.targetUrl : undefined,
 		runStatus: typeof context?.runStatus === 'string' ? context.runStatus : undefined,
 		durationSeconds: Number.isFinite(context?.durationSeconds) ? context.durationSeconds : undefined,

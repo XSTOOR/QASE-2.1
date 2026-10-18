@@ -1743,6 +1743,7 @@ export function createApplication(options = {}) {
 				runId,
 				submittedBy: request.auth?.userId ?? null,
 				context: {
+					mode: session.mode,
 					targetUrl: session.targetUrl,
 					runStatus: session.status,
 					durationSeconds
@@ -1769,6 +1770,7 @@ export function createApplication(options = {}) {
 					mode: session.mode,
 					title: session.title,
 					targetUrl: session.targetUrl,
+					projectName: 'QASE',
 					qaseUrl: telegramQaseUrl,
 					submittedByName: request.auth?.displayName ?? request.auth?.email,
 					submittedAt: record.submittedAt,

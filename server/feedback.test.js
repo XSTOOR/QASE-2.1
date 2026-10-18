@@ -31,11 +31,28 @@ test('create stores a feedback record with run context, not user-entered run dat
 	assert.equal(record.targetUrl, 'https://example.com/');
 	assert.equal(record.runStatus, 'done');
 	assert.equal(record.durationSeconds, 92);
+	// #16656 — mode captured from run context, legacy default 'qa'.
+	assert.equal(record.mode, 'qa');
 	assert.equal(record.rating, 5);
 	assert.equal(record.category, 'overall');
 	assert.equal(record.status, 'new');
 	assert.ok(Number.isFinite(record.submittedAt));
 	assert.equal(getFeedback(record.id).id, record.id);
+});
+
+test('#16656 mode is persisted from run context for every mode', () => {
+	for (const mode of ['qa', 'sqa', 'founder']) {
+		const record = createFeedback({
+			runId: RUN_ID, submittedBy: `mode-user-${mode}`,
+			context: { mode, targetUrl: 'https://qase.dev/' },
+			rating: 4
+		});
+		assert.equal(record.mode, mode);
+		assert.equal(getFeedback(record.id).mode, mode);
+	}
+	// Missing context mode falls back to 'qa' (legacy shape).
+	const legacy = createFeedback({ runId: RUN_ID, submittedBy: 'mode-user-legacy', context: {}, rating: 3 });
+	assert.equal(legacy.mode, 'qa');
 });
 
 function UUIDish(value) {
