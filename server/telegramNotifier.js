@@ -131,6 +131,18 @@ export function formatSubmittedOn(timestampMs, timeZone) {
 
 const MODE_LABELS = { qa: 'New QA Run', sqa: 'SQA', founder: 'Founder Review' };
 
+/** #16656 — customer-facing Testing Mode labels for the message's
+ * dedicated mode line (distinct from MODE_LABELS, which builds run labels). */
+const TESTING_MODE_LABELS = { qa: 'Test Mode', sqa: 'SQA Mode', founder: 'Founder Mode' };
+
+/** #16656 — Project name for the message's Project line. Single-tenant local
+ * deployments have no per-run project; the app context name is used. Callers
+ * may pass context.projectName (e.g. a tenant project name) to override. */
+function projectNameFor(context) {
+	const raw = typeof context.projectName === 'string' ? context.projectName.trim() : '';
+	return raw !== '' ? raw : 'QASE';
+}
+
 /**
  * Clock read ONLY when the caller genuinely has no authoritative timestamp
  * (a context built outside the feedback flow). The live feedback route always
@@ -172,6 +184,9 @@ export function buildFeedbackMessage(feedback, context = {}) {
 		'📢 QASE User Feedback Received',
 		'',
 		'A new user feedback has been submitted after completion of a QASE testing task.',
+		'',
+		`🧪 Testing Mode: ${TESTING_MODE_LABELS[context.mode] ?? String(context.mode ?? 'Unknown')}`,
+		`📁 Project: ${projectNameFor(context)}`,
 		'',
 		`⭐ Rating: ${rating}/5`,
 		'',
