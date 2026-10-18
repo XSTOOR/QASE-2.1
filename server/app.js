@@ -2432,6 +2432,10 @@ export function createApplication(options = {}) {
 			if (feedbackSection) markdown += `\n${feedbackSection}`;
 		} else if (session.mode === 'founder') {
 			markdown = buildFounderReportMarkdown(session);
+			// Same USER FEEDBACK section as the QA/SQA reports (#16654):
+			// the submitter's own feedback for THIS review, run-scoped.
+			const founderFeedbackSection = buildFeedbackSectionMarkdown(await attachUserFeedback(session, request.auth?.userId));
+			if (founderFeedbackSection) markdown += `\n${founderFeedbackSection}`;
 		} else {
 			markdown = services.reports.buildMarkdown(await attachMatrixCoverage(await attachUserFeedback(session, request.auth?.userId)));
 		}

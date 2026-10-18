@@ -171,6 +171,45 @@ test('Founder HTML report renders the complete structured professional brief', (
 	assert.doesNotMatch(html, /undefined/);
 });
 
+test('#16654 Founder HTML report embeds the user feedback section', () => {
+	// Minimal-but-valid founder session reusing the founder fixture shape.
+	const founderSession = makeSession({
+		mode: 'founder',
+		founder: {
+			scope: { target: { name: 'Acme AI', url: 'https://example.com/' } },
+			report: { executiveSummary: 'Reduce friction.', caveat: 'Evidence-informed guidance.' },
+			finalizedAt: '2026-10-17T00:00:00.000Z'
+		},
+		userFeedback: {
+			rating: 4,
+			comments: 'Founder review flow was thorough',
+			improvement: 'Add competitor comparison',
+			userName: 'Manoj Kumar',
+			submittedAtFormatted: '17-Oct-2026 10:30 AM IST'
+		}
+	});
+	const html = buildReportHtml(founderSession);
+	assert.match(html, /User feedback<\/h2>/);
+	assert.match(html, /Founder review flow was thorough/);
+	assert.match(html, /Add competitor comparison/);
+	assert.match(html, /Manoj Kumar/);
+	assert.match(html, /17-Oct-2026 10:30 AM IST/);
+});
+
+test('#16654 Founder HTML report omits the feedback section cleanly when absent', () => {
+	const founderSession = makeSession({
+		mode: 'founder',
+		founder: {
+			scope: { target: { name: 'Acme AI', url: 'https://example.com/' } },
+			report: { executiveSummary: 'Reduce friction.' },
+			finalizedAt: '2026-10-17T00:00:00.000Z'
+		}
+	});
+	const html = buildReportHtml(founderSession);
+	assert.doesNotMatch(html, /User feedback<\/h2>/);
+	assert.doesNotMatch(html, /undefined/);
+});
+
 test('HTML report escapes user-supplied content to prevent injection', () => {
 	const html = buildReportHtml(makeSession({
 		targetUrl: '<script>alert(1)</script>',

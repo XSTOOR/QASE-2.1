@@ -25,6 +25,9 @@ export function createFounderView({
 	onClearSelection,
 	onSendToStudio,
 	onExportHandoff,
+	onProvideFeedback,
+	getFeedbackRating,
+	renderReportFeedbackSection,
 	elements,
 	apiText,
 	downloadReportPdf,
@@ -572,7 +575,19 @@ export function createFounderView({
 			try { await downloadReportPdf('qase-founder-review.pdf'); }
 			catch (error) { exportError(error); }
 		};
-		actions.append(download, copy, pdf);
+
+		// Completed Founder reviews share the feedback flow with QA/SQA
+		// (#16653): Provide/View label mirrors the SQA report actions.
+		const feedback = doc.createElement('button');
+		feedback.className = 'btn btn-ghost btn-sm';
+		feedback.type = 'button';
+		const rated = getFeedbackRating?.();
+		feedback.textContent = rated ? 'View Feedback' : 'Provide Feedback';
+		feedback.title = rated
+			? 'View your submitted feedback for this review.'
+			: 'Rate this Founder review experience and tell us how it went.';
+		feedback.onclick = () => onProvideFeedback?.();
+		actions.append(download, copy, pdf, feedback);
 		return actions;
 	}
 
@@ -598,6 +613,9 @@ export function createFounderView({
 			renderFounderMetrics(report),
 			renderFounderBoundary(report)
 		);
+		// USER FEEDBACK section — the submitter's own feedback for THIS review,
+		// same rendering and run-scoping as the QA/SQA reports (#16653).
+		renderReportFeedbackSection?.(getFeedbackRating?.());
 	}
 
 	/** Saved project state card: restored recommendations with selection UI. */
