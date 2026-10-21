@@ -197,6 +197,10 @@ export function createApplication(options = {}) {
 	if (drytisIntegrationApi !== undefined && typeof drytisIntegrationApi?.mount !== 'function') {
 		throw new TypeError('Drytis integration API must provide mount(app).');
 	}
+	const publicApi = options.publicApi;
+	if (publicApi !== undefined && typeof publicApi?.mount !== 'function') {
+		throw new TypeError('Public API must provide mount(app).');
+	}
 	const drytisDelivery = options.drytisDelivery;
 	if (drytisDelivery !== undefined) {
 		if ((drytisDelivery.deliveryClient === undefined) !== (drytisDelivery.ticketsTarget === undefined)) {
@@ -293,6 +297,10 @@ export function createApplication(options = {}) {
 	// The service-to-service data plane authenticates the exact raw request
 	// bytes. It must be mounted before any JSON middleware can transform them.
 	drytisIntegrationApi?.mount(app);
+	// Public read-only connector surface (#17002): GET-only, bearer-token
+	// protected, mounted before the /api auth gate for the same isolation
+	// reasons as the Drytis integration plane.
+	publicApi?.mount(app);
 
 	// QA matrix launcher (#14942): the request body carries every selected
 	// configuration id (a full default selection is ~37k ids ≈ 2MB). The route

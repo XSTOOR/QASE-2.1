@@ -5,6 +5,7 @@ import { createOperationalControls } from './operations.js';
 import { createOperationalLogger } from './operationalLogger.js';
 import { createConfiguredApplicationServices } from './serviceFactory.js';
 import { createConfiguredDrytisIntegration } from './drytisIntegrationFactory.js';
+import { createPublicApi } from './publicApi.js';
 import { closeApplicationBrowsers, drainHttpServer, installShutdownHandlers } from './processLifecycle.js';
 import { createRunKeepalive, isRunStatusActive } from './keepalive.js';
 import { createRunResume } from './runResume.js';
@@ -128,6 +129,7 @@ const { app, demoEnabled } = createApplication({
 	services, access, executionQueue, operations, logger,
 	inviteService: createInviteService(),
 	drytisIntegrationApi: drytisIntegration?.api,
+	publicApi: createPublicApi({ environment: process.env, services, logger }),
 	drytisDelivery: drytisIntegration ? {
 		deliveryClient: drytisIntegration.deliveryClient,
 		ticketsTarget: drytisIntegration.ticketsTarget,

@@ -8,7 +8,11 @@ const gate = html.slice(html.indexOf('<section class="auth-gate"'), html.indexOf
 
 test('sign-in has its own responsive identity layer and no terminal effects', () => {
   assert.ok(html.indexOf('href="auth.css?') > html.indexOf('href="brand.css?'));
-  assert.doesNotMatch(html, /src="entry-motion.js|href="entry-terminal.css/);
+  // #17002 suite repair: entry-motion.js is now a deliberate decorative
+  // module on the entry screen (0fa6f7b lineage, PUSHKAR release e0d50c6).
+  // The auth gate still must not load the old terminal entry styles.
+  assert.doesNotMatch(html, /href="entry-terminal.css/);
+  assert.doesNotMatch(gate, /entry-motion/);
   assert.match(gate, /class="auth-brand"[^>]+aria-label="QASE home"/);
   assert.match(css, /background: var\(--brand-mark-image\)/);
   assert.match(css, /height: 100dvh/);
