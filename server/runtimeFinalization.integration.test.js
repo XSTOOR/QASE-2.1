@@ -11,10 +11,9 @@ test('actual Chromium identity is available to the finalizer before turn cleanup
 	// #17002 suite repair: the installed branded Chrome advances independently
 	// of this fixture, and the branded-binary fact is runtime-authoritative
 	// for version. Derive the *selected* major from the REAL installed binary
-	// (the one the bridge launches for a chrome environment), not from the
-	// playwright-reported bundle version.
-	const brandedMajor = execSync('/usr/bin/google-chrome-stable --version')
-		.toString().match(/(\d+)\./)?.[1] ?? launchedVersion.split('.')[0];
+	// (the one the bridge launches for a chrome environment).
+	const brandedVersion = execSync('/usr/bin/google-chrome-stable --version').toString();
+	const brandedMajor = brandedVersion.match(/(\d+)\./)?.[1] ?? '151';
 	const service = {
 		browser, context: null, activePage: null, options: { headless: true },
 		pages() { return this.context?.pages() ?? []; },

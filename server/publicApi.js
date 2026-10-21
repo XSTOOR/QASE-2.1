@@ -235,10 +235,14 @@ export function createPublicApi(options = {}) {
 				let markdown;
 				if (session.mode === 'sqa') {
 					const { buildSqaReportMarkdown } = await import('./sqaAssessment.js');
-					markdown = session.sqa?.assessment ? buildSqaReportMarkdown(session.sqa.assessment) : undefined;
+					// finalizedAt guard mirrors the internal /api route: an
+					// in-progress assessment is never published publicly.
+					markdown = session.sqa?.assessment && session.sqa?.finalizedAt
+						? buildSqaReportMarkdown(session.sqa.assessment) : undefined;
 				} else if (session.mode === 'founder') {
 					const { buildFounderReportMarkdown } = await import('./founderService.js');
-					markdown = session.founder?.report ? buildFounderReportMarkdown(session) : undefined;
+					markdown = session.founder?.report && session.founder?.finalizedAt
+						? buildFounderReportMarkdown(session) : undefined;
 				} else {
 					markdown = services.reports?.buildMarkdown
 						? services.reports.buildMarkdown(session)
