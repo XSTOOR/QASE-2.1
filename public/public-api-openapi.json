@@ -1,0 +1,287 @@
+{
+  "openapi": "3.1.0",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "Qase Public Read API",
+    "version": "1.0.0",
+    "description": "Public read-only API for the Qase autonomous QA workspace at qase.drytis.com.\nExposes QA run summaries, findings, and markdown reports for external\ndata connectors. GET-only. Data endpoints require a bearer token issued by\nthe workspace owner; health is public.\n"
+  },
+  "servers": [
+    {
+      "url": "https://qase.drytis.com",
+      "description": "Public production origin."
+    }
+  ],
+  "tags": [
+    { "name": "runs" },
+    { "name": "system" }
+  ],
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/public/v1/health": {
+      "get": {
+        "tags": ["system"],
+        "operationId": "getHealth",
+        "summary": "Liveness probe",
+        "description": "No authentication. Returns ok=true when the service is up.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Service is healthy.",
+            "headers": { "Cache-Control": { "schema": { "const": "no-store" } } },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["ok"],
+                  "properties": {
+                    "ok": { "const": true },
+                    "serverNow": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/v1/runs": {
+      "get": {
+        "tags": ["runs"],
+        "operationId": "listRuns",
+        "summary": "List QA runs (most recently updated first)",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 },
+            "description": "Maximum number of runs to return."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["idle", "running", "done", "error", "interrupted", "awaiting_input"] },
+            "description": "Only return runs in this status."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run summaries.",
+            "headers": { "Cache-Control": { "schema": { "const": "no-store" } } },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["runs", "count", "serverNow"],
+                  "properties": {
+                    "runs": { "type": "array", "items": { "$ref": "#/components/schemas/RunSummary" } },
+                    "count": { "type": "integer", "minimum": 0 },
+                    "serverNow": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "503": { "$ref": "#/components/responses/Disabled" }
+        }
+      }
+    },
+    "/public/v1/runs/{id}": {
+      "get": {
+        "tags": ["runs"],
+        "operationId": "getRun",
+        "summary": "One run with findings and report",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run detail.",
+            "headers": { "Cache-Control": { "schema": { "const": "no-store" } } },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RunDetail" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "503": { "$ref": "#/components/responses/Disabled" }
+        }
+      }
+    },
+    "/public/v1/runs/{id}/findings": {
+      "get": {
+        "tags": ["runs"],
+        "operationId": "getRunFindings",
+        "summary": "Findings for one run",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sanitized findings.",
+            "headers": { "Cache-Control": { "schema": { "const": "no-store" } } },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["findings", "count", "serverNow"],
+                  "properties": {
+                    "findings": { "type": "array", "items": { "$ref": "#/components/schemas/Finding" } },
+                    "count": { "type": "integer", "minimum": 0 },
+                    "serverNow": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "503": { "$ref": "#/components/responses/Disabled" }
+        }
+      }
+    },
+    "/public/v1/runs/{id}/report.md": {
+      "get": {
+        "tags": ["runs"],
+        "operationId": "getRunReportMarkdown",
+        "summary": "Markdown report for one run",
+        "description": "Returns the finalized run report as text/markdown. 409 until the run's report is finalized.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Markdown report.",
+            "headers": { "Cache-Control": { "schema": { "const": "no-store" } } },
+            "content": {
+              "text/markdown": {
+                "schema": { "type": "string" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/NotFinalized" },
+          "503": { "$ref": "#/components/responses/Disabled" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Bearer token issued by the Qase workspace owner (QASE_PUBLIC_API_TOKEN)."
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing or invalid bearer token.",
+        "headers": { "WWW-Authenticate": { "schema": { "const": "Bearer" } } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "NotFound": {
+        "description": "No such run.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "NotFinalized": {
+        "description": "This run has no finalized report yet.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "Disabled": {
+        "description": "The public API is not configured on this deployment.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      }
+    },
+    "schemas": {
+      "RunSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "status", "mode", "findingCount"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "status": { "type": "string", "enum": ["idle", "running", "done", "error", "interrupted", "awaiting_input"] },
+          "mode": { "type": "string", "enum": ["qa", "sqa", "founder"] },
+          "targetUrl": { "type": "string" },
+          "device": { "type": "string" },
+          "engine": { "type": "string" },
+          "createdAt": { "type": "integer" },
+          "updatedAt": { "type": "integer" },
+          "startedAt": { "type": "integer" },
+          "completedAt": { "type": "integer" },
+          "findingCount": { "type": "integer", "minimum": 0 },
+          "reportVerdict": { "type": "string", "enum": ["pass", "pass_with_issues", "fail", "blocked"] }
+        }
+      },
+      "Finding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "severity", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "ts": { "type": "number" },
+          "title": { "type": "string", "maxLength": 500 },
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] },
+          "category": { "type": "string", "maxLength": 200 },
+          "url": { "type": "string" },
+          "steps": { "type": "array", "maxItems": 12, "items": { "type": "string", "maxLength": 500 } },
+          "expected": { "type": "string", "maxLength": 1500 },
+          "actual": { "type": "string", "maxLength": 1500 },
+          "evidence": { "type": "string", "maxLength": 1500 },
+          "status": { "type": "string", "enum": ["open", "in_progress", "fixed", "wont_fix"] }
+        }
+      },
+      "PublicReport": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ts": { "type": "number" },
+          "verdict": { "type": "string", "enum": ["pass", "pass_with_issues", "fail", "blocked"] },
+          "summary": { "type": "string" },
+          "covered": { "type": "array", "items": { "type": "string" } },
+          "notCovered": { "type": "array", "items": { "type": "string" } },
+          "recommendations": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "RunDetail": {
+        "type": "object",
+        "allOf": [
+          { "$ref": "#/components/schemas/RunSummary" },
+          {
+            "type": "object",
+            "required": ["findings", "serverNow"],
+            "properties": {
+              "findings": { "type": "array", "items": { "$ref": "#/components/schemas/Finding" } },
+              "report": { "$ref": "#/components/schemas/PublicReport" },
+              "serverNow": { "type": "integer" }
+            }
+          }
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message", "retryable"],
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" },
+              "retryable": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
