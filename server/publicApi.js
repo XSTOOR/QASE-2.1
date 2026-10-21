@@ -117,7 +117,9 @@ function publicRunSummary(session) {
 		startedAt: toIso(session.startedAt),
 		completedAt: toIso(session.completedAt),
 		findingCount: Array.isArray(session.findings) ? session.findings.length : 0,
-		reportVerdict: session.report?.verdict ?? undefined
+		reportVerdict: ['pass', 'pass_with_issues', 'fail', 'blocked'].includes(session.report?.verdict)
+			? session.report.verdict
+			: undefined
 	};
 }
 
