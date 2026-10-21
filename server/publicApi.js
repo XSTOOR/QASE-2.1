@@ -17,8 +17,9 @@ import { timingSafeEqual } from 'node:crypto';
 
 export const PUBLIC_API_BASE_PATH = '/public/v1';
 
-const DEFAULT_LIMIT = 25;
-const MAX_LIMIT = 100;
+const DEFAULT_PAGE = 1;
+const DEFAULT_PAGE_SIZE = 25;
+const MAX_PAGE_SIZE = 100;
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 const FINDING_STATUSES = ['open', 'in_progress', 'fixed', 'wont_fix'];
 const RUN_STATUSES = ['idle', 'running', 'done', 'error', 'interrupted', 'awaiting_input'];
@@ -59,11 +60,15 @@ function safeText(value, maxLength = 2000) {
 	return text.length > maxLength ? text.slice(0, maxLength) : text;
 }
 
+function toIso(ms) {
+	return Number.isFinite(Number(ms)) && Number(ms) > 0 ? new Date(Number(ms)).toISOString() : null;
+}
+
 function publicFinding(finding) {
 	if (!finding || typeof finding !== 'object') return undefined;
 	return {
 		id: typeof finding.id === 'string' ? finding.id : undefined,
-		ts: Number.isFinite(Number(finding.ts)) ? Number(finding.ts) : undefined,
+		ts: toIso(finding.ts),
 		title: safeText(finding.title, 500) ?? '',
 		severity: SEVERITIES.includes(finding.severity) ? finding.severity : 'info',
 		category: safeText(finding.category, 200),
@@ -81,7 +86,7 @@ function publicFinding(finding) {
 function publicReport(report) {
 	if (!report || typeof report !== 'object') return undefined;
 	return {
-		ts: Number.isFinite(Number(report.ts)) ? Number(report.ts) : undefined,
+		ts: toIso(report.ts),
 		verdict: ['pass', 'pass_with_issues', 'fail', 'blocked'].includes(report.verdict)
 			? report.verdict
 			: undefined,
@@ -107,10 +112,10 @@ function publicRunSummary(session) {
 		targetUrl: safeText(session.targetUrl, 2000),
 		device: safeText(session.device, 200),
 		engine: safeText(session.engine, 200),
-		createdAt: session.createdAt,
-		updatedAt: session.updatedAt,
-		startedAt: session.startedAt,
-		completedAt: session.completedAt,
+		createdAt: toIso(session.createdAt),
+		updatedAt: toIso(session.updatedAt),
+		startedAt: toIso(session.startedAt),
+		completedAt: toIso(session.completedAt),
 		findingCount: Array.isArray(session.findings) ? session.findings.length : 0,
 		reportVerdict: session.report?.verdict ?? undefined
 	};
@@ -124,8 +129,34 @@ function publicRunDetail(session) {
 		...publicRunSummary(session),
 		findings,
 		report: publicReport(session.report),
-		serverNow: Date.now()
+		serverNow: new Date().toISOString()
 	};
+}
+
+function paginate(rows, page, pageSize) {
+	return rows.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
+}
+
+function parsePaging(request, response) {
+	const rawPage = request.query.page;
+	const rawPageSize = request.query.page_size;
+	let page = DEFAULT_PAGE;
+	let pageSize = DEFAULT_PAGE_SIZE;
+	if (rawPage !== undefined) {
+		page = Number(rawPage);
+		if (!Number.isSafeInteger(page) || page < 1) {
+			errorResponse(response, 400, 'page must be an integer of 1 or greater.');
+			return undefined;
+		}
+	}
+	if (rawPageSize !== undefined) {
+		pageSize = Number(rawPageSize);
+		if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > MAX_PAGE_SIZE) {
+			errorResponse(response, 400, `page_size must be an integer from 1 through ${MAX_PAGE_SIZE}.`);
+			return undefined;
+		}
+	}
+	return { page, pageSize };
 }
 
 function errorResponse(response, status, message) {
@@ -141,7 +172,7 @@ export function createPublicApi(options = {}) {
 		const api = app;
 
 		api.get(`${PUBLIC_API_BASE_PATH}/health`, (_request, response) => {
-			response.set('Cache-Control', 'no-store').json({ ok: true, serverNow: Date.now() });
+			response.set('Cache-Control', 'no-store').json({ ok: true, serverNow: new Date().toISOString() });
 		});
 
 		// Everything below requires the bearer token. The token is verified
@@ -184,27 +215,68 @@ export function createPublicApi(options = {}) {
 
 		api.get(`${PUBLIC_API_BASE_PATH}/runs`, async (request, response) => {
 			try {
-				const rawLimit = request.query.limit;
-				let limit = DEFAULT_LIMIT;
-				if (rawLimit !== undefined) {
-					limit = Number(rawLimit);
-					if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
-						errorResponse(response, 400, `limit must be an integer from 1 through ${MAX_LIMIT}.`);
-						return;
-					}
-				}
-				let rows = await listRuns(limit);
+				const paging = parsePaging(request, response);
+				if (!paging) return;
+				const { page, pageSize } = paging;
+
 				const statusFilter = request.query.status;
+				let status;
 				if (typeof statusFilter === 'string' && statusFilter.trim() !== '') {
-					const status = statusFilter.trim();
+					status = statusFilter.trim();
 					if (!RUN_STATUSES.includes(status)) {
 						errorResponse(response, 400, `status must be one of: ${RUN_STATUSES.join(', ')}.`);
 						return;
 					}
-					rows = rows.filter(row => row.status === status);
 				}
+				const modeFilter = request.query.mode;
+				let mode;
+				if (typeof modeFilter === 'string' && modeFilter.trim() !== '') {
+					mode = modeFilter.trim();
+					if (!['qa', 'sqa', 'founder'].includes(mode)) {
+						errorResponse(response, 400, 'mode must be one of: qa, sqa, founder.');
+						return;
+					}
+				}
+				const deviceFilter = request.query.device;
+				const device = typeof deviceFilter === 'string' && deviceFilter.trim() !== '' ? deviceFilter.trim() : undefined;
+
+				let fromMs;
+				let toMs;
+				const fromRaw = request.query.from;
+				if (typeof fromRaw === 'string' && fromRaw.trim() !== '') {
+					const from = new Date(`${fromRaw.trim()}T00:00:00.000Z`);
+					if (Number.isNaN(from.getTime())) {
+						errorResponse(response, 400, 'from must be an ISO date (YYYY-MM-DD).');
+						return;
+					}
+					fromMs = from.getTime();
+				}
+				const toRaw = request.query.to;
+				if (typeof toRaw === 'string' && toRaw.trim() !== '') {
+					const to = new Date(`${toRaw.trim()}T23:59:59.999Z`);
+					if (Number.isNaN(to.getTime())) {
+						errorResponse(response, 400, 'to must be an ISO date (YYYY-MM-DD).');
+						return;
+					}
+					toMs = to.getTime();
+				}
+
+				const rows = (await listRuns(Number.MAX_SAFE_INTEGER)).filter(row => {
+					if (status && row.status !== status) return false;
+					if (mode && (row.mode === 'sqa' || row.mode === 'founder' ? row.mode : 'qa') !== mode) return false;
+					if (device && row.device !== device) return false;
+					if (fromMs !== undefined && !(row.createdAt >= fromMs)) return false;
+					if (toMs !== undefined && !(row.createdAt <= toMs)) return false;
+					return true;
+				});
 				response.set('Cache-Control', 'no-store')
-					.json({ runs: rows.map(publicRunSummary), count: rows.length, serverNow: Date.now() });
+					.json({
+						data: paginate(rows, page, pageSize).map(publicRunSummary),
+						total: rows.length,
+						page,
+						page_size: pageSize,
+						serverNow: new Date().toISOString()
+					});
 			} catch (error) {
 				logger?.error?.('public api runs list failed', error);
 				errorResponse(response, 500, 'The run list is temporarily unavailable.');
@@ -235,10 +307,44 @@ export function createPublicApi(options = {}) {
 			try {
 				const session = await requireRun(request, response);
 				if (!session) return;
+				const paging = parsePaging(request, response);
+				if (!paging) return;
+				const { page, pageSize } = paging;
+
+				const severityFilter = request.query.severity;
+				let severity;
+				if (typeof severityFilter === 'string' && severityFilter.trim() !== '') {
+					severity = severityFilter.trim();
+					if (!SEVERITIES.includes(severity)) {
+						errorResponse(response, 400, `severity must be one of: ${SEVERITIES.join(', ')}.`);
+						return;
+					}
+				}
+				const findingStatusFilter = request.query.status;
+				let findingStatus;
+				if (typeof findingStatusFilter === 'string' && findingStatusFilter.trim() !== '') {
+					findingStatus = findingStatusFilter.trim();
+					if (!FINDING_STATUSES.includes(findingStatus)) {
+						errorResponse(response, 400, `status must be one of: ${FINDING_STATUSES.join(', ')}.`);
+						return;
+					}
+				}
+
 				const findings = (Array.isArray(session.findings) ? session.findings : [])
 					.map(publicFinding)
-					.filter(Boolean);
-				response.set('Cache-Control', 'no-store').json({ findings, count: findings.length, serverNow: Date.now() });
+					.filter(Boolean)
+					.filter(finding => {
+						if (severity && finding.severity !== severity) return false;
+						if (findingStatus && finding.status !== findingStatus) return false;
+						return true;
+					});
+				response.set('Cache-Control', 'no-store').json({
+					data: paginate(findings, page, pageSize),
+					total: findings.length,
+					page,
+					page_size: pageSize,
+					serverNow: new Date().toISOString()
+				});
 			} catch (error) {
 				logger?.error?.('public api findings failed', error);
 				errorResponse(response, 500, 'The findings are temporarily unavailable.');

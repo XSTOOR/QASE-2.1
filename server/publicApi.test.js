@@ -107,13 +107,14 @@ function authHeaders(token) {
 	return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-test('health responds without a token', async () => {
+test('health responds without a token and reports ISO serverNow', async () => {
 	const { services } = createServices();
 	await withServer({ environment: { QASE_PUBLIC_API_TOKEN: TOKEN }, services }, async origin => {
 		const response = await fetch(`${origin}/public/v1/health`);
 		assert.equal(response.status, 200);
 		const payload = await response.json();
 		assert.equal(payload.ok, true);
+		assert.match(payload.serverNow, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
 	});
 });
 
@@ -143,23 +144,58 @@ test('missing or wrong bearer token answers 401 without leaking run existence', 
 	});
 });
 
-test('run list returns sanitized summaries and clamps limit', async () => {
+test('run list returns data/total envelopes, ISO timestamps, paging and filters', async () => {
 	const { services } = createServices();
 	await withServer({ environment: { QASE_PUBLIC_API_TOKEN: TOKEN }, services }, async origin => {
-		const response = await fetch(`${origin}/public/v1/runs?limit=1`, { headers: authHeaders(TOKEN) });
+		const response = await fetch(`${origin}/public/v1/runs?page=1&page_size=1`, { headers: authHeaders(TOKEN) });
 		assert.equal(response.status, 200);
 		const payload = await response.json();
-		assert.equal(payload.runs.length, 1);
-		assert.equal(payload.runs[0].id, 'aaaaaaaa-0000-4000-8000-000000000001');
-		assert.equal(payload.runs[0].reportVerdict, 'pass_with_issues');
-		const badLimit = await fetch(`${origin}/public/v1/runs?limit=0`, { headers: authHeaders(TOKEN) });
-		assert.equal(badLimit.status, 400);
+		assert.equal(payload.data.length, 1);
+		assert.equal(payload.total, 2, 'total ignores paging');
+		assert.equal(payload.page, 1);
+		assert.equal(payload.page_size, 1);
+		assert.equal(payload.data[0].id, 'aaaaaaaa-0000-4000-8000-000000000001');
+		assert.equal(payload.data[0].reportVerdict, 'pass_with_issues');
+		assert.match(payload.data[0].createdAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/, 'ISO createdAt');
+		assert.match(payload.serverNow, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+		// second page
+		const page2 = await (await fetch(`${origin}/public/v1/runs?page=2&page_size=1`, { headers: authHeaders(TOKEN) })).json();
+		assert.equal(page2.data.length, 1);
+		assert.equal(page2.data[0].id, 'aaaaaaaa-0000-4000-8000-000000000002');
+		assert.equal(page2.total, 2);
+		// page beyond last
+		const page999 = await (await fetch(`${origin}/public/v1/runs?page=999`, { headers: authHeaders(TOKEN) })).json();
+		assert.deepEqual(page999.data, []);
+		assert.equal(page999.total, 2);
+		// missing startedAt renders null, never epoch
+		assert.equal(page2.data[0].startedAt, null);
+		// invalid paging
+		const badPage = await fetch(`${origin}/public/v1/runs?page=0`, { headers: authHeaders(TOKEN) });
+		assert.equal(badPage.status, 400);
+		const badPageSize = await fetch(`${origin}/public/v1/runs?page_size=101`, { headers: authHeaders(TOKEN) });
+		assert.equal(badPageSize.status, 400);
+		// status filter
 		const statusFilter = await fetch(`${origin}/public/v1/runs?status=running`, { headers: authHeaders(TOKEN) });
 		const filtered = await statusFilter.json();
-		assert.equal(filtered.runs.length, 1);
-		assert.equal(filtered.runs[0].status, 'running');
+		assert.equal(filtered.total, 1);
+		assert.equal(filtered.data[0].status, 'running');
 		const badStatus = await fetch(`${origin}/public/v1/runs?status=bogus`, { headers: authHeaders(TOKEN) });
 		assert.equal(badStatus.status, 400);
+		// mode filter with fallback (run two has no mode → qa)
+		const modeFiltered = await (await fetch(`${origin}/public/v1/runs?mode=qa`, { headers: authHeaders(TOKEN) })).json();
+		assert.equal(modeFiltered.total, 2);
+		const badMode = await fetch(`${origin}/public/v1/runs?mode=nope`, { headers: authHeaders(TOKEN) });
+		assert.equal(badMode.status, 400);
+		// device filter (fixture runs carry no device → 0 matches)
+		const deviceFiltered = await (await fetch(`${origin}/public/v1/runs?device=desktop`, { headers: authHeaders(TOKEN) })).json();
+		assert.equal(deviceFiltered.total, 0);
+		// date range on createdAt (run one: 1000ms epoch; run two: 3000ms)
+		const inRange = await (await fetch(`${origin}/public/v1/runs?from=1970-01-01&to=1970-01-01`, { headers: authHeaders(TOKEN) })).json();
+		assert.equal(inRange.total, 2);
+		const outOfRange = await (await fetch(`${origin}/public/v1/runs?from=2026-01-01`, { headers: authHeaders(TOKEN) })).json();
+		assert.equal(outOfRange.total, 0);
+		const badDate = await fetch(`${origin}/public/v1/runs?from=notadate`, { headers: authHeaders(TOKEN) });
+		assert.equal(badDate.status, 400);
 	});
 });
 
@@ -177,7 +213,7 @@ test('run list ignores the request-scoped actor: uses peek/listAll system reader
 		const list = await fetch(`${origin}/public/v1/runs`, { headers: authHeaders(TOKEN) });
 		assert.equal(list.status, 200);
 		const payload = await list.json();
-		assert.ok(payload.count > 0, 'listAll must be used so real runs appear');
+		assert.ok(payload.total > 0, 'listAll must be used so real runs appear');
 		const detail = await fetch(`${origin}/public/v1/runs/aaaaaaaa-0000-4000-8000-000000000001`, { headers: authHeaders(TOKEN) });
 		assert.equal(detail.status, 200);
 		assert.deepEqual(scopedCalls, [], 'request-scoped get/list must never be called');
@@ -197,18 +233,34 @@ test('run detail exposes findings and report but never private fields', async ()
 		assert.equal(payload.findings.length, 1);
 		assert.equal(payload.findings[0].severity, 'high');
 		assert.equal(payload.report.verdict, 'pass_with_issues');
-		assert.ok(Number.isFinite(payload.serverNow));
+		assert.match(payload.serverNow, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+		assert.match(payload.findings[0].ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/, 'finding ts is ISO');
 	});
 });
 
-test('findings endpoint returns the sanitized aggregate', async () => {
+test('findings endpoint returns the sanitized aggregate with filters and paging', async () => {
 	const { services } = createServices();
 	await withServer({ environment: { QASE_PUBLIC_API_TOKEN: TOKEN }, services }, async origin => {
 		const response = await fetch(`${origin}/public/v1/runs/aaaaaaaa-0000-4000-8000-000000000001/findings`, { headers: authHeaders(TOKEN) });
 		assert.equal(response.status, 200);
 		const payload = await response.json();
-		assert.equal(payload.count, 1);
-		assert.equal(payload.findings[0].title, 'Login broken');
+		assert.equal(payload.total, 1);
+		assert.equal(payload.data[0].title, 'Login broken');
+		assert.equal(payload.page, 1);
+		assert.equal(payload.page_size, 25);
+		// severity filter — match and miss
+		const high = await (await fetch(`${origin}/public/v1/runs/aaaaaaaa-0000-4000-8000-000000000001/findings?severity=high`, { headers: authHeaders(TOKEN) })).json();
+		assert.equal(high.total, 1);
+		const critical = await (await fetch(`${origin}/public/v1/runs/aaaaaaaa-0000-4000-8000-000000000001/findings?severity=critical`, { headers: authHeaders(TOKEN) })).json();
+		assert.equal(critical.total, 0);
+		assert.deepEqual(critical.data, []);
+		const badSeverity = await fetch(`${origin}/public/v1/runs/aaaaaaaa-0000-4000-8000-000000000001/findings?severity=nope`, { headers: authHeaders(TOKEN) });
+		assert.equal(badSeverity.status, 400);
+		// finding status filter
+		const fixed = await (await fetch(`${origin}/public/v1/runs/aaaaaaaa-0000-4000-8000-000000000001/findings?status=fixed`, { headers: authHeaders(TOKEN) })).json();
+		assert.equal(fixed.total, 0);
+		const badFindingStatus = await fetch(`${origin}/public/v1/runs/aaaaaaaa-0000-4000-8000-000000000001/findings?status=nope`, { headers: authHeaders(TOKEN) });
+		assert.equal(badFindingStatus.status, 400);
 	});
 });
 
