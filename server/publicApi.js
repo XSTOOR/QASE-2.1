@@ -165,6 +165,23 @@ export function createPublicApi(options = {}) {
 			next();
 		});
 
+		// System-scope reads (#17004): the request-scoped runs.get/list filter by
+		// the ambient actor, which for these token-authenticated routes is the
+		// tenant default — hiding every real run. peek()/listAll() are the
+		// unscoped readers reserved for system actors; this surface is exactly
+		// that (read-only, bearer-token, allowlist-projected below).
+		async function getRun(id) {
+			if (typeof services.runs.peek === 'function') return services.runs.peek(id);
+			return services.runs.get(id);
+		}
+		async function listRuns(limit) {
+			if (typeof services.runs.listAll === 'function') {
+				const rows = await services.runs.listAll();
+				return Array.isArray(rows) ? rows.slice(0, limit) : [];
+			}
+			return services.runs.list({ limit });
+		}
+
 		api.get(`${PUBLIC_API_BASE_PATH}/runs`, async (request, response) => {
 			try {
 				const rawLimit = request.query.limit;
@@ -176,7 +193,7 @@ export function createPublicApi(options = {}) {
 						return;
 					}
 				}
-				let rows = await services.runs.list({ limit });
+				let rows = await listRuns(limit);
 				const statusFilter = request.query.status;
 				if (typeof statusFilter === 'string' && statusFilter.trim() !== '') {
 					const status = statusFilter.trim();
@@ -195,7 +212,7 @@ export function createPublicApi(options = {}) {
 		});
 
 		async function requireRun(request, response) {
-			const session = await services.runs.get(request.params.id);
+			const session = await getRun(request.params.id);
 			if (!session) {
 				errorResponse(response, 404, 'No such run.');
 				return undefined;

@@ -55,6 +55,7 @@ function createServices() {
 	];
 	const services = {
 		readiness: { check: () => ({ ready: true, checks: {} }) },
+		__all: runs,
 		lifecycle: { close() {} },
 		feedback: { create: async i => i, get: async () => undefined, list: async () => [], update: async i => i, remove: async () => true, stats: async () => ({ total: 0 }), forRun: async () => undefined },
 		events: { publish() {}, subscribe: () => () => {} },
@@ -75,6 +76,8 @@ function createServices() {
 			setStatus: async () => undefined
 		}
 	};
+	services.runs.peek = async id => runs.find(run => run.id === id);
+	services.runs.listAll = async () => runs;
 	return { services, runs };
 }
 
@@ -157,6 +160,27 @@ test('run list returns sanitized summaries and clamps limit', async () => {
 		assert.equal(filtered.runs[0].status, 'running');
 		const badStatus = await fetch(`${origin}/public/v1/runs?status=bogus`, { headers: authHeaders(TOKEN) });
 		assert.equal(badStatus.status, 400);
+	});
+});
+
+test('run list ignores the request-scoped actor: uses peek/listAll system readers (#17004)', async () => {
+	// Regression for the production incident: with no ambient request actor,
+	// runs.get/list filter by the tenant default owner and return NOTHING for
+	// real runs. The public API must read through peek()/listAll().
+	const { services } = createServices();
+	const scopedCalls = [];
+	services.runs.get = async id => { scopedCalls.push(`get:${id}`); return undefined; };
+	services.runs.list = async (options) => { scopedCalls.push('list'); return []; };
+	services.runs.peek = async id => services.__all.find(run => run.id === id);
+	services.runs.listAll = async () => services.__all;
+	await withServer({ environment: { QASE_PUBLIC_API_TOKEN: TOKEN }, services }, async origin => {
+		const list = await fetch(`${origin}/public/v1/runs`, { headers: authHeaders(TOKEN) });
+		assert.equal(list.status, 200);
+		const payload = await list.json();
+		assert.ok(payload.count > 0, 'listAll must be used so real runs appear');
+		const detail = await fetch(`${origin}/public/v1/runs/aaaaaaaa-0000-4000-8000-000000000001`, { headers: authHeaders(TOKEN) });
+		assert.equal(detail.status, 200);
+		assert.deepEqual(scopedCalls, [], 'request-scoped get/list must never be called');
 	});
 });
 
