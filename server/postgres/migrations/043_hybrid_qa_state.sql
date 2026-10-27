@@ -1,4 +1,4 @@
--- Qase PostgreSQL migration 042: optional hybrid QA persistence.
+-- Qase PostgreSQL migration 043: optional hybrid QA persistence.
 -- Authored only; apply through the normal
 -- reviewed deployment migration process before enabling hybrid runs.
 ALTER TABLE qa_runs ADD COLUMN IF NOT EXISTS hybrid_qa jsonb;
