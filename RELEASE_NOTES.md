@@ -1,6 +1,6 @@
 # QASE hybrid production candidate
 
-Release: `qase-2026-10-28-hybrid-production-r3`. UI: `20261028-1`.
+Release: `qase-2026-10-28-hybrid-production-r4`. UI: `20261028-2`.
 Target: `https://qase.drytis.com`. This is a source/image handoff, not a record
 of deployment or production activation.
 
@@ -16,6 +16,10 @@ changed during preparation.
 
 ## Application changes since the previous GitHub release
 
+- Startup recovery preflights unresolved model receipts before constructing a
+  runtime, preserves retry counts and evidence, and does not log failed recovery
+  as success. Missing-receipt guidance offers an explicit fresh setup for the
+  same target without replaying actions, creating a run or copying credentials.
 - Opus 4.7 reasoning and JEV 1.13 typed classification through one CleanSlate
   loop, with host permission, usage, budget and completion authority.
 - Durable scenarios, evidence, conservative usage recovery and explicit gaps;

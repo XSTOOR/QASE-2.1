@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-10-28-hybrid-production-r3",
-  "uiVersion": "20261028-1",
+  "releaseId": "qase-2026-10-28-hybrid-production-r4",
+  "uiVersion": "20261028-2",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Hybrid QA with guarded late-overlay recovery, cancellation-safe request routing and honest connection status; UI 20261028-1"
+  "source": "Hybrid QA with guarded late-overlay recovery, cancellation-safe request routing, honest connection status and preflighted interruption recovery; UI 20261028-2"
 }

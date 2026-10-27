@@ -9,11 +9,15 @@ test('unknown classifier usage offers saved progress instead of an ineffective r
     assert.match(guidance.resumeBlocked, /receipt/);
     assert.equal(guidance.destination, 'progress');
     assert.doesNotMatch(guidance.description, /HYBRID_USAGE_/);
+    assert.match(guidance.description, /server stops/);
+    assert.doesNotMatch(guidance.description, /gateway did not return/);
+    assert.equal(guidance.freshTest, true);
   }
 });
 test('budget exhaustion cannot be bypassed through resume; user-paused and other modes stay resumable', () => {
   assert.ok(workflowStatus(paused({ pauseReason: 'Execution time budget exhausted.' })).resumeBlocked);
   assert.equal(workflowStatus(paused({})).resumeBlocked, undefined);
+  assert.equal(workflowStatus(paused({})).freshTest, undefined);
   for (const mode of ['sqa', 'founder']) assert.equal(workflowStatus({ ...paused({}), mode }).resumeBlocked, undefined);
 });
 test('completion offers an explicit results action and preserves partial coverage messaging', () => {

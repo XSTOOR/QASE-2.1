@@ -2357,3 +2357,67 @@ still require reconciliation rather than invented accounting. Production was
 not deployed or reconfigured. Linux image/staging and opt-in integrations remain
 deployment-host gates. No SDK internals or node_modules were changed, and the
 single SDK/browser execution lifecycle is retained.
+
+## 32. Interrupted-run receipt recovery follow-up (2026-10-28, r4)
+
+The new screenshot is the same saved run as the previous incident, not a
+second API process crash. The patched r3 process remained listening and its log
+contained no new fatal routing exception. The saved run was interrupted with
+ten evidence records, seven settled reasoner requests and one uncertain
+classifier reservation (6,090 reserved exposure tokens; not verified usage).
+There is no exact classifier receipt available locally to reconcile it.
+Neither the reservation nor the evidence was altered during this repair.
+
+An additional recovery defect was found: boot recovery instantiated a runtime
+before checking durable hybrid blockers and then logged `runresume.resumed`
+even when the turn could not proceed. `server/runResume.js` now checks the
+existing host recovery gate before snapshot/runtime construction, leaves the
+retry count and ledger untouched for blocked work, logs a bounded blocker code,
+and scans for another safely resumable owner run. A thrown recovery turn is
+logged and counted as failed rather than resumed. Existing QA, SQA and Founder
+recovery contracts remain in place.
+
+The dashboard now accurately describes a missing *saved* receipt, which can
+result from process interruption, without claiming the gateway necessarily
+failed to return it. An explicit secondary **Set up a fresh test** action opens
+the existing launcher with the original website and an empty goal. It does not
+POST a run, reuse credentials, replay mutations, copy old findings as current
+proof, or bypass Review & Launch. The paused run and its saved progress remain
+available. This is fresh setup, not automatic continuation or reconciliation.
+
+Validation executed:
+
+- Focused recovery, receipt, UI guidance and route-safety tests: **31 passed**.
+- Final focused rerun including operational-log filtering: **34 passed**. The
+  blocker uses the existing sanitized `errorCode` log field.
+- Actual Chromium dashboard/SSE fixture: passed, including the fresh setup
+  action, zero run-creation/message POSTs during that action, unchanged saved
+  session, zero page errors, disabled unsafe Resume, disconnect/resync, secure
+  consent and explicit Results navigation.
+- Initial full verification was sandbox-blocked on disposable loopback HTTP
+  fixtures and was stopped; it is not counted as a passing verification.
+- The loopback-enabled full rerun passed: **2,080 passed, 26 skipped, zero
+  failures/cancellations**; 2,106 tests, 31 suites, approximately 152 seconds.
+  Syntax, private-path ignores and high-confidence credential checks passed.
+- Local gateway qualification had expired during investigation. It was rerun
+  without changing its expiry policy: **all 13 capabilities passed**, nine
+  direct qualification requests plus the native SDK probe. The SDK executed its
+  fixture tool once, continued from the result, read its image, cancelled within
+  the bound and captured two exact completed usage receipts (10,773 total
+  tokens) matching SDK accounting. This does not reconcile the historical
+  missing receipt or establish private-platform coverage. The production
+  example flag remains disabled by default.
+
+Logs: `/private/tmp/qase-recovery-dashboard-final.log`,
+`/private/tmp/qase-recovery-gateway.log`,
+`/private/tmp/qase-recovery-verify.log` (sandbox-blocked attempt),
+`/private/tmp/qase-recovery-verify-final.log` (loopback-enabled rerun).
+
+Readiness: r4 is a local recovery/UI follow-up. The prior routing crash fix is
+retained. Old unverified usage still needs exact provider reconciliation; no
+estimated settlement or automatic replay was introduced. No production
+configuration, deployment, SDK internals or model selection was changed.
+The local r4 listener passes health checks, serves UI `20261028-2`, and its
+configured hybrid profile is enabled, qualified and available. Authenticated
+configuration APIs continue to reject anonymous access. No real private-site
+test was replayed or claimed completed during this follow-up.

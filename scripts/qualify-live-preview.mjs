@@ -11,7 +11,7 @@ const session = { id: randomUUID(), title: 'Live preview fixture', mode: 'qa', q
   environmentSnapshot: { device: 'Desktop', deviceType: 'desktop', platform: 'macos', browser: 'Chrome' },
   messages: [], activities: [], todos: [], findings: [], secretNames: [],
   hybrid: { counts: { planned: 2, passed: 0 }, scenarios: [{ id: 'nav', category: 'navigation', status: 'planned' }, { id: 'layout', category: 'responsive', status: 'planned' }] } };
-const listeners = new Set(), streams = new Set();
+const listeners = new Set(), streams = new Set(), writeRequests = [];
 const publish = (s, type, payload = {}) => { for (const listener of listeners) listener({ type, sessionId: s.id, ts: Date.now(), ...payload }); };
 const config = { provider: 'custom', model: 'preview-fixture', ready: true, hasApiKey: true, providers: ['custom'], headless: true };
 const services = {
@@ -28,7 +28,7 @@ const services = {
 };
 const application = createApplication({ services, environment: { NODE_ENV: 'production' } });
 const server = await new Promise(resolve => { const value = application.app.listen(0, '127.0.0.1', () => resolve(value)); });
-server.on('request', (request, response) => { if (request.url.endsWith('/events')) streams.add(response); });
+server.on('request', (request, response) => { if (request.url.endsWith('/events')) streams.add(response); if (request.method === 'POST' && request.url.startsWith('/api/sessions')) writeRequests.push(request.url); });
 const browser = await chromium.launch(), base = `http://127.0.0.1:${server.address().port}`;
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }), errors = [];
@@ -87,6 +87,17 @@ try {
   await page.reload();
   await page.waitForFunction(() => document.querySelector('#timer-chip')?.textContent === '02:17');
   assert.equal(await page.locator('#resume-run').isDisabled(), true);
+  // A missing receipt must offer a reviewable setup, never replay uncertain
+  // work, inherit credentials/results, or silently create another paid run.
+  const savedRun = structuredClone(session), writesBefore = writeRequests.length;
+  await page.locator('#journey-run-fresh-test').click();
+  await page.waitForURL('**/#/runs/new');
+  assert.equal(await page.locator('#qa-target-url').inputValue(), session.targetUrl);
+  assert.equal(await page.locator('#qa-goal').inputValue(), '');
+  assert.equal(writeRequests.length, writesBefore);
+  assert.deepEqual(session, savedRun);
+  await page.goto(`${base}/#/runs/${session.id}`);
+  await page.waitForFunction(() => document.querySelector('#resume-run')?.disabled);
   // Completing a run must preserve the route and selected tab on desktop/mobile.
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -185,7 +196,7 @@ try {
   assert.equal(new URL(page.url()).hash, `#/runs/${session.id}`);
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ passed: true, liveProgress: true, chromeUrlUpdated: true, responsivePreviewStable: true, responsiveStatusClearedAfterRestore: true, nestedActivityUpdated: true, honestLegacyCoverage: true, explicitAgentIdentity: true,
-    disconnectExplainedAndResynced: true, receiptRecoveryExplained: true, pausedTimerStableAfterReload: true, completionKeepsDesktopAndMobileView: true, explicitResultsNavigation: true,
+    disconnectExplainedAndResynced: true, receiptRecoveryExplained: true, freshTestSetupDoesNotCreateOrReplay: true, pausedTimerStableAfterReload: true, completionKeepsDesktopAndMobileView: true, explicitResultsNavigation: true,
     completedRunStartupAndRefreshStayOnRun: true, latestRunFallbackStaysOnRun: true, launchHandleStaysOnRun: true, explicitResultsRefreshPreserved: true,
     budgetContinuationOptionUsable: true, exactBudgetApprovalPreservesUsage: true, secureCredentialConsent: true, failedCredentialQuestionPreserved: true, publicOnlyDecisionRemembered: true, pageErrors: errors }));
 } finally {

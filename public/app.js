@@ -1663,6 +1663,17 @@ function renderHeader() {
 		$('journey-run-description').textContent = guidance.description;
 		const action = $('journey-run-action');
 		action.textContent = guidance.action;
+		const freshTest = $('journey-run-fresh-test');
+		freshTest.hidden = guidance.freshTest !== true;
+		freshTest.onclick = () => { void (async () => {
+			// Setup only: no POST, runtime replay, inherited credentials, or old
+			// results. Review & Launch remains the sole run creation boundary.
+			const target = session.targetUrl;
+			await openQaStart();
+			qaUi.targetUrl.value = isValidTargetUrl(target) ? target : '';
+			$('qa-goal').value = '';
+			syncQaSubmitState();
+		})().catch(fail); };
 		action.onclick = () => {
 			if (guidance.destination === 'results') void pageRouter.navigate({ name: 'results', runId: state.sessionId });
 			else if (guidance.destination === 'progress') { activateDetailTab($('tab-plan')); setWorkspaceView('results'); }
