@@ -327,6 +327,7 @@ export async function buildQaConfigurations(
 		browser: configuration.browser,
 		browserCode: configuration.browserCode,
 		browserVersion: configuration.browserVersion,
+		executionEngine: configuration.browserSupport.engine,
 		executionType: configuration.executionType,
 		availability: configuration.availability,
 		availabilityReason: configuration.availabilityReason

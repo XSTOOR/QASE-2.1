@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { redact } from './secrets.js';
 import { isEngineId } from './browserEngines.js';
 import { verifyRuntimeIdentity } from './runtimeIdentity.js';
+import { validateHybridFinding, validateHybridReport } from './qaCompletionGate.js';
+import { publicHybridState } from './hybridQaRuntime.js';
 
 /**
  * The two tools the SDK's registry does not ship, because they are specific to
@@ -11,7 +13,7 @@ import { verifyRuntimeIdentity } from './runtimeIdentity.js';
  */
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
-const VERDICTS = ['pass', 'pass_with_issues', 'fail', 'blocked'];
+const VERDICTS = ['pass', 'pass_with_issues', 'partial', 'fail', 'blocked'];
 const MAX_LIST_ITEMS = 100;
 
 function validInput(input) {
@@ -121,6 +123,7 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 		parametersSchema: {
 			type: 'object',
 			properties: {
+				...(session.qaExecutionMode === 'hybrid' ? { scenario_id: { type: 'string' }, assertion_id: { type: 'string' } } : {}),
 				title: { type: 'string', description: 'One line naming the defect, written from the user\'s point of view.' },
 				severity: { type: 'string', enum: SEVERITIES, description: 'User impact: critical blocks the core flow, high breaks an important flow, medium is a real but survivable defect, low is polish, info is an observation.' },
 				category: { type: 'string', description: 'Area of the defect, e.g. authentication, forms, navigation, console, network, accessibility, layout, performance, content.' },
@@ -134,6 +137,14 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 			required: ['title', 'severity', 'expected', 'actual']
 		},
 		async run(input) {
+			let hybridEvidence;
+			if (session.qaExecutionMode === 'hybrid') {
+				try { hybridEvidence = validateHybridFinding(session, input || {}); }
+				catch (error) { return { success: false, error: error.message }; }
+				const existing = session.findings.find(item => item.hybridEvidence?.assertionId === hybridEvidence.assertionId || item.hybridEvidence?.failureKey === hybridEvidence.failureKey);
+				if (existing) return { success: true, finding_id: existing.id, total_findings: session.findings.length };
+				input = { ...input, expected: hybridEvidence.expected, actual: hybridEvidence.actual, url: hybridEvidence.url, evidence: hybridEvidence.evidence };
+			}
 			if (!validInput(input) || !['title', 'expected', 'actual'].every(field => hasText(input[field]))) {
 				return { success: false, error: 'report_finding requires nonempty title, expected, and actual strings.' };
 			}
@@ -160,17 +171,25 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 				statusTs: findingTs,
 				statusNote: ''
 			});
+			if (hybridEvidence) finding.hybridEvidence = hybridEvidence;
 
 			if (!finding.title) {
 				return { success: false, error: 'report_finding requires a title.' };
 			}
 
 			const previousFindings = session.findings;
+			const previousHybridFindings = session.hybrid?.confirmedFindings;
+			const previousObservations = session.hybrid?.observations;
+			if (hybridEvidence) {
+				session.hybrid.confirmedFindings = [...(previousHybridFindings || []), { findingId: finding.id, evidence: hybridEvidence }];
+				session.hybrid.observations = previousObservations.map(item => item.assertionId === hybridEvidence.assertionId ? { ...item, status: 'confirmed', findingId: finding.id } : item);
+			}
 			session.findings = [...previousFindings, finding];
 			try {
 				await runStore.commit(session, 'finding', { finding });
 			} catch (error) {
 				session.findings = previousFindings;
+				if (hybridEvidence) { session.hybrid.confirmedFindings = previousHybridFindings; session.hybrid.observations = previousObservations; }
 				throw error;
 			}
 			return {
@@ -189,7 +208,7 @@ const finishReport = {
 	parametersSchema: {
 		type: 'object',
 		properties: {
-			verdict: { type: 'string', enum: VERDICTS, description: 'pass when nothing of substance broke, pass_with_issues when defects exist but the core flows work, fail when a core flow is broken, blocked when testing could not proceed.' },
+			verdict: { type: 'string', enum: VERDICTS, description: 'pass when nothing of substance broke, pass_with_issues when defects exist but the core flows work, partial when testing ran but selected coverage is incomplete, fail when a core flow is broken, blocked when testing could not proceed.' },
 			summary: { type: 'string', description: 'A short paragraph a product owner could read: what was tested, what state the site is in.' },
 			covered: { type: 'array', items: { type: 'string' }, description: 'The areas and flows actually exercised.' },
 			not_covered: { type: 'array', items: { type: 'string' }, description: 'Anything planned but skipped, and why.' },
@@ -216,6 +235,10 @@ const finishReport = {
 			}
 			if (!validInput(input) || !VERDICTS.includes(input.verdict) || !hasText(input.summary)) {
 				return { success: false, error: 'finish_qa_report requires a valid verdict and a nonempty summary string.' };
+			}
+			if (session.qaExecutionMode === 'hybrid') {
+				try { input = validateHybridReport(session, input); }
+				catch (error) { return { success: false, error: error.message, ...(error.code === 'HYBRID_DEPTH_PENDING' ? { code: error.code, coverage: error.coverage } : {}) }; }
 			}
 			for (const field of ['covered', 'not_covered', 'recommendations']) {
 				if (input[field] !== undefined && (!Array.isArray(input[field]) || !input[field].every(hasText))) {
@@ -259,7 +282,7 @@ const finishReport = {
 				? session.todos.filter(item => item && item.text && item.status !== 'completed')
 				: [];
 			// Model-supplied flags cannot authorize skipping the host's completion gate.
-			if (remainingTodos.length > 0) {
+			if (session.qaExecutionMode !== 'hybrid' && remainingTodos.length > 0) {
 				return {
 					success: false,
 					error: 'finish_qa_report cannot be called until every plan item is completed. Work the remaining items, mark them completed with update_todo, then call finish_qa_report again. If a plan item genuinely cannot be executed, mark it completed with a short note explaining why it was skipped.',
@@ -286,7 +309,8 @@ const finishReport = {
 			// cannot be verified is never reported PASS. The downgrade happens
 			// AFTER the structural gates (plan, browser evidence, coverage)
 			// so a broken run still cannot publish any report at all.
-			const structuralOk = (session.todos ?? []).some(item => hasText(item?.text) && item.status === 'completed')
+			const hasPlan = session.qaExecutionMode === 'hybrid' ? Boolean(session.hybrid?.scenarios?.length) : (session.todos ?? []).some(item => hasText(item?.text) && item.status === 'completed');
+			const structuralOk = hasPlan
 				&& (session.activities ?? []).some(activity => activity.status === 'done' && String(activity.toolName ?? '').startsWith('browser_'))
 				&& (input.covered?.length ?? 0) > 0;
 			// The browser is lazy-created during the turn. Capture its live identity
@@ -311,7 +335,7 @@ const finishReport = {
 					return { success: false, error: 'A blocked report must explain the unavailable checks and concrete blocking prerequisite in not_covered.' };
 				}
 			} else {
-				if (!session.todos?.some(item => hasText(item?.text) && item.status === 'completed')) {
+				if (!hasPlan) {
 					return { success: false, error: 'A completed QA report requires a test plan. Create and execute the plan with update_todo before publishing.' };
 				}
 				if (!(session.activities ?? []).some(activity => activity.status === 'done' && String(activity.toolName ?? '').startsWith('browser_'))) {
@@ -321,8 +345,11 @@ const finishReport = {
 					return { success: false, error: 'A completed QA report must list the areas actually exercised in covered.' };
 				}
 			}
+			if (verdict === 'partial' && !input.not_covered?.length) {
+				return { success: false, error: 'A partial report must identify its coverage gaps in not_covered.' };
+			}
 			if (verdict === 'pass' && session.findings.length > 0) verdict = 'pass_with_issues';
-			if (verdict === 'pass_with_issues'
+			if (['pass_with_issues', 'partial'].includes(verdict)
 				&& session.findings.some(finding => ['critical', 'high'].includes(finding.severity))) verdict = 'fail';
 			const report = redact(session.id, {
 				ts: Date.now(),
@@ -343,6 +370,33 @@ const finishReport = {
 						...(hasText(entry.reason) ? { reason: boundedText(entry.reason, 2_000) } : {})
 					}))
 					: undefined,
+				executionEvidence: session.jev?.qa?.version === 2 ? {
+					controller: 'coverage-decisions-v2',
+					routes: session.jev.qa.visits.length,
+					scenarios: session.jev.qa.checks.length,
+					executedScenarios: session.jev.qa.executedScenarios,
+					observations: session.jev.qa.observations,
+					nativeConstraintAssertions: session.jev.qa.nativeConstraintAssertions,
+					stopReason: session.jev.qa.stopReason,
+					coverage: session.jev.qa.coverage,
+					totalAssertions: session.jev.qa.checks.reduce((sum, check) => sum + (check.assertions?.length || 0), 0),
+					failedAssertions: session.jev.qa.checks.flatMap(check => check.assertions || []).filter(item => item.outcome === 'fail').length,
+					omittedCheckRecords: Math.max(0, session.jev.qa.checks.filter(check => check.assertions?.length || check.success === false || check.trials?.length || check.samples?.length || check.omitted).length - 250),
+					issueReview: (session.jev.qa.issueReview ?? []).map(issue => ({
+						key: boundedText(issue.key, 200), title: boundedText(issue.title, 1000), url: boundedText(issue.url, 8192),
+						category: boundedText(issue.category, 200), severity: boundedText(issue.severity, 30),
+						expected: boundedText(issue.expected, 5000), actual: boundedText(issue.actual, 5000), evidence: boundedText(issue.evidence, 10000),
+						status: ['confirmed', 'excluded'].includes(issue.status) ? issue.status : 'unresolved',
+						reason: boundedText(issue.reason, 2000), modelConfidence: issue.modelConfidence,
+						verification: issue.verification, findingId: boundedText(issue.findingId, 200) || undefined
+					})),
+					checks: session.jev.qa.checks.filter(check => check.assertions?.length || check.success === false || check.trials?.length || check.samples?.length || check.omitted).slice(0, 250).map(check => ({
+						id: check.id, action: check.action, url: check.url, success: check.success, durationMs: check.durationMs,
+						assertions: check.assertions, limitations: check.limitations, error: check.error, gaps: check.gaps, executionComplete: check.executionComplete,
+						trials: check.trials, interactions: check.interactions, samples: check.samples, remainingScroll: check.remainingScroll, omitted: check.omitted
+					}))
+				} : undefined,
+				hybridQa: session.qaExecutionMode === 'hybrid' ? publicHybridState(session) : undefined,
 				attestation: attestationFor(session),
 				bySeverity: SEVERITIES.reduce((counts, severity) => {
 					counts[severity] = session.findings.filter(finding => finding.severity === severity).length;

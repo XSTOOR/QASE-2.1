@@ -25,3 +25,9 @@ test('mode and findings have concise readable labels without missing data', () =
  assert.equal(runCardDetails({}).mode, 'Test');
  assert.equal(runCardDetails({ findingCount: -1 }).findings, 0);
 });
+
+test('hybrid sidebar uses executed scenario coverage instead of completed cosmetic todos', () => {
+ const details = runCardDetails({ qaExecutionMode: 'hybrid', scenarioTotal: 11, scenarioExecuted: 4, todoTotal: 3, todoCompleted: 3 });
+ assert.equal(details.total, 11); assert.equal(details.completed, 4); assert.equal(details.percent, 36);
+ assert.equal(runCardDetails({ todoTotal: 3, todoCompleted: 3 }).percent, 100);
+});

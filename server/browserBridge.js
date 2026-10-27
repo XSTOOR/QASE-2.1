@@ -1,4 +1,4 @@
-import { hasUnresolvedPlaceholder, resolveSecrets } from './secrets.js';
+import { hasUnresolvedPlaceholder, resolveSecrets, redact } from './secrets.js';
 import nodeFs from 'node:fs';
 import nodePath from 'node:path';
 import nodeOs from 'node:os';
@@ -6,6 +6,9 @@ import { createBrowserPolicy, classifyDestructiveAction } from './browserPolicy.
 import { contextOptionsFor, getDeviceProfile, DEFAULT_DEVICE_ID } from './deviceProfiles.js';
 import { runMobileAudit } from './mobileAudit.js';
 import { inspectFormValidation } from './browserFormAudit.js';
+import { runJevBrowserCheck } from './jevBrowserChecks.js';
+import { createQaInputIsolation } from './qaInputIsolation.js';
+import { createHybridAuthentication } from './hybridAuth.js';
 import { resolveEngine, ensureXvfb, ENGINE_IDS } from './browserEngines.js';
 
 /** RT4: the Xvfb display id ensureXvfb manages (":77"). */
@@ -248,6 +251,8 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 	const emulationOptions = execution.mode === 'emulated'
 		? environmentEmulationOptions(environment)
 		: contextOptionsFor(deviceId, { landscape: deviceLandscape });
+	const inputIsolation = createQaInputIsolation();
+	const authentication = createHybridAuthentication(session);
 	const bridge = {
 		service,
 		execution: {
@@ -467,6 +472,145 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 		const page = service.activePage;
 		return page && !page.isClosed() ? page : undefined;
 	};
+	// The SDK currently omits uncaught page errors and failed requests, and
+	// attributes console/network buffers to no source page. Keep independent
+	// bounded observations so clearing, redirects and concurrent identical
+	// requests cannot silently erase or misattribute a target failure.
+	const observedPages = new WeakSet();
+	const diagnosticConsole = [];
+	const diagnosticNetwork = [];
+	const requestObservations = new WeakMap();
+	let diagnosticGeneration = 0;
+	let nextRequestId = 0;
+	const diagnosticText = (value, limit = 4000) => redact(session.id, String(value ?? '')).slice(0, limit);
+	const appendDiagnostic = (buffer, entry) => {
+		buffer.push(entry);
+		if (buffer.length > 200) buffer.splice(0, buffer.length - 200);
+	};
+	const attachDiagnostics = page => {
+		if (!page || typeof page.on !== 'function' || observedPages.has(page)) return;
+		observedPages.add(page);
+		const pageUrl = () => { try { return diagnosticText(page.url()); } catch { return undefined; } };
+		page.on('console', message => {
+			if (bridge.disposed) return;
+			const location = message.location?.() ?? {};
+			const type = message.type?.();
+			appendDiagnostic(diagnosticConsole, {
+				kind: 'console', level: type === 'warning' ? 'warning' : type === 'error' ? 'error' : type === 'debug' ? 'debug' : 'info',
+				message: diagnosticText(message.text?.()), pageUrl: pageUrl(), sourceId: diagnosticText(location.url),
+				lineNumber: location.lineNumber ?? 0, columnNumber: location.columnNumber ?? 0, timestamp: Date.now()
+			});
+		});
+		page.on('pageerror', error => {
+			if (bridge.disposed) return;
+			const stack = diagnosticText(error?.stack);
+			const source = stack.match(/(https?:\/\/[^\s)]+?):(\d+):(\d+)/);
+			appendDiagnostic(diagnosticConsole, {
+				kind: 'pageerror', level: 'error', message: diagnosticText(error?.message || error), stack,
+				pageUrl: pageUrl(), sourceId: source?.[1] || pageUrl(), lineNumber: source ? Number(source[2]) : undefined,
+				columnNumber: source ? Number(source[3]) : undefined, timestamp: Date.now()
+			});
+		});
+		const observeRequest = request => {
+			let entry = requestObservations.get(request);
+			if (entry) return entry;
+			let headers = {};
+			try { headers = request.headers?.() ?? {}; } catch { /* No headers on a detached request. */ }
+			// Never include cookies, authorization or arbitrary application headers.
+			const requestHeaders = Object.fromEntries(['purpose', 'sec-purpose', 'x-purpose', 'next-router-prefetch', 'next-router-segment-prefetch', 'rsc', 'accept']
+				.filter(name => headers[name] !== undefined).map(name => [name, diagnosticText(headers[name], 500)]));
+			let isNavigationRequest = false;
+			let topLevel = false;
+			try { isNavigationRequest = request.isNavigationRequest(); topLevel = isNavigationRequest && !request.frame().parentFrame(); } catch { /* Worker requests have no frame. */ }
+			entry = {
+				id: `qase-${++nextRequestId}`, url: diagnosticText(request.url()), method: request.method(), resourceType: request.resourceType(),
+				pageUrl: topLevel ? diagnosticText(request.url()) : pageUrl(), isNavigationRequest, requestHeaders,
+				speculative: /prefetch/i.test(`${requestHeaders.purpose ?? ''} ${requestHeaders['sec-purpose'] ?? ''} ${requestHeaders['x-purpose'] ?? ''}`)
+					|| requestHeaders['next-router-prefetch'] === '1' || Boolean(requestHeaders['next-router-segment-prefetch']),
+				startedAt: Date.now(), captureGeneration: diagnosticGeneration
+			};
+			requestObservations.set(request, entry);
+			appendDiagnostic(diagnosticNetwork, entry);
+			return entry;
+		};
+		const finishRequest = (request, detail) => {
+			const entry = observeRequest(request);
+			Object.assign(entry, detail, { completedAt: Date.now(), durationMs: Date.now() - entry.startedAt });
+			// An in-flight request may finish after a caller clears diagnostics.
+			// Its completion still belongs in the next observation window.
+			if (entry.captureGeneration !== diagnosticGeneration) {
+				entry.captureGeneration = diagnosticGeneration;
+				appendDiagnostic(diagnosticNetwork, entry);
+			}
+		};
+		page.on('request', request => { if (!bridge.disposed) observeRequest(request); });
+		page.on('response', response => {
+			if (bridge.disposed) return;
+			finishRequest(response.request(), { statusCode: response.status(), fromCache: response.fromServiceWorker?.() ?? false });
+		});
+		page.on('requestfailed', request => {
+			if (bridge.disposed) return;
+			const failure = request.failure?.()?.errorText || 'Request failed';
+			// A previous navigation cancelled by a subsequent navigation is not
+			// evidence of a target defect. Other failures remain observable.
+			if (/ERR_ABORTED|NS_BINDING_ABORTED|Load request cancelled/i.test(failure)) return;
+			finishRequest(request, { error: diagnosticText(failure), errorText: diagnosticText(failure) });
+		});
+	};
+	const originalRegisterPage = service.registerPage?.bind(service);
+	if (originalRegisterPage) service.registerPage = page => { attachDiagnostics(page); return originalRegisterPage(page); };
+	attachDiagnostics(currentPage());
+	for (const page of service.context?.pages?.() ?? []) attachDiagnostics(page);
+	bridge.authenticate = () => authentication.signIn({ getPage: currentPage, reopen: url => service.open(url), signal: activeAbortSignal ?? options.signal,
+		persist: () => runStore.commit(session, 'hybrid.auth', { authentication: { ...session.hybrid.authentication } }) });
+	bridge.runQaCheck = async input => {
+		const signal = activeAbortSignal ?? options.signal;
+		signal?.throwIfAborted();
+		if (bridge.qaOperationActive) return { success: false, action: input?.action, error: 'Another QA scenario is still executing.' };
+		// A screenshot may internally restore an earlier viewport. Drain it and
+		// suspend preview capture while a scenario mutates viewport/history.
+		bridge.qaOperationActive = true;
+		try {
+			await bridge.frameCapture;
+			signal?.throwIfAborted();
+			const page = currentPage();
+			if (page) {
+				const current = await policy.evaluateNavigation(page.url());
+				if (!current.allowed) return policy.asBlockedResult(current);
+			}
+			if (['navigation', 'disclosure', 'dismiss_overlay'].includes(input?.action)) {
+				const descriptor = await resolveActionDescriptor({ selector: input.selector });
+				// These scenarios never consume destructive-action approval grants.
+				if (classifyDestructiveAction('click', descriptor)) return { success: false, action: input.action, code: 'QA_RISKY_CONTROL', error: 'The observed control requires a separate authorized scenario; it is excluded from public read-only QA.' };
+				if (input.action === 'navigation') {
+					const destination = await policy.evaluateNavigation(input.expected);
+					if (!destination.allowed) return policy.asBlockedResult(destination);
+				}
+			}
+			const run = () => runJevBrowserCheck(currentPage(), input, { signal, responsiveBoundaries: session.qaExecutionMode === 'hybrid',
+				liveForms: session.qaExecutionMode === 'hybrid' && protectedContexts.has(currentPage().context?.()) && typeof currentPage().context?.()?.routeWebSocket === 'function', requireLiveForms: session.qaExecutionMode === 'hybrid',
+				protectInputs: page => inputIsolation.protect(page), onViewport: session.qaExecutionMode === 'hybrid' ? async viewport => {
+				if (!session.hybrid) return;
+				session.hybrid.viewport = { ...session.hybrid.viewport, ...viewport, updatedAt: Date.now() };
+				await runStore.commit(session, 'qa.viewport', { viewport: session.hybrid.viewport });
+				if (viewport.phase === 'selected_device') await captureFrame({ withinQaCheck: true });
+			} : undefined, onAction: session.qaExecutionMode === 'hybrid' ? async step => {
+				// Called by fixed checks at serialized, settled action boundaries.
+				// Preview reads cannot navigate, resize or dispatch a browser action.
+				signal?.throwIfAborted();
+				try {
+					await captureFrame({ withinQaCheck: true });
+					if (step.phase === 'before' && step.selector) publishCursor(step.action, await resolveTarget({ selector: step.selector }), { selector: step.selector });
+				} catch { /* Preview delivery cannot turn a QA action into a failure. */ }
+				signal?.throwIfAborted();
+			} : undefined, authorizeControl: async selector => {
+				signal?.throwIfAborted();
+				const descriptor = await resolveActionDescriptor({ selector });
+				if (classifyDestructiveAction('click', descriptor)) throw new Error('Observed control requires a separate authorized scenario.');
+			} });
+			return await inputIsolation.navigation(currentPage(), input.action === 'navigation' ? [currentPage().url(), input.expected] : [], run);
+		} finally { bridge.qaOperationActive = false; }
+	};
 
 	/*
 	 * Signing in has to survive the browser being closed.
@@ -491,6 +635,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 			topLevel: Boolean(detail.topLevel),
 			method: detail.method,
 			resourceType: detail.resourceType,
+			url: detail.url,
 			ts: Date.now()
 		};
 		bridge.securityBlocks.push(entry);
@@ -508,10 +653,20 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 	 */
 	const installNetworkPolicy = async context => {
 		if (!context || protectedContexts.has(context)) return;
+		if (session.qaExecutionMode === 'hybrid') inputIsolation.attach(context);
+		if (session.qaExecutionMode === 'hybrid' && typeof context.addInitScript === 'function') await context.addInitScript(() => {
+			// HTTP routing cannot intercept RTC data channels or WebTransport.
+			// Public hybrid QA does not authorize those out-of-band write paths.
+			for (const name of ['RTCPeerConnection', 'webkitRTCPeerConnection', 'WebTransport', 'SharedWorker']) {
+				if (!(name in globalThis)) continue;
+				Object.defineProperty(globalThis, name, { value: class QaseBlockedRealtimeTransport { constructor() { throw new DOMException('BROWSER_REALTIME_TRANSPORT_BLOCKED: Public hybrid QA does not authorize realtime writes.', 'SecurityError'); } }, configurable: false, writable: false });
+			}
+		});
 		if (typeof context.addInitScript === 'function') await context.addInitScript(installMediaObserver);
 		// SDK-created tabs register diagnostics; window.open popups did not.
-		context.on?.('page', page => service.registerPage?.(page));
-		if (policy.isProduction && typeof context.addInitScript === 'function') {
+		context.on?.('page', page => { attachDiagnostics(page); service.registerPage?.(page); });
+		for (const page of context.pages?.() ?? []) attachDiagnostics(page);
+		if ((policy.isProduction || session.qaExecutionMode === 'hybrid') && typeof context.addInitScript === 'function') {
 			// Playwright routing cannot observe requests intercepted by a Service
 			// Worker. A new Qase browser context has no existing registrations, so
 			// disabling registration before the first target navigation closes that
@@ -540,6 +695,23 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 		}
 		await context.route('**/*', async route => {
 			const request = route.request();
+			const authDecision = session.qaExecutionMode === 'hybrid' ? authentication.requestDecision(request) : null;
+			if (authDecision?.allowed === false) {
+				const destination = new URL(request.url());
+				recordSecurityBlock({ code: authDecision.code, message: 'Outside the single approved sign-in request.' }, { method: request.method(), resourceType: request.resourceType(), url: `${destination.origin}${destination.pathname}` });
+				await route.abort('blockedbyclient').catch(() => undefined); return;
+			}
+			const inputBlock = session.qaExecutionMode === 'hybrid' && !authDecision?.allowed && inputIsolation.decision(request);
+			if (inputBlock) {
+				const destination = new URL(request.url());
+				recordSecurityBlock(inputBlock, { method: request.method(), resourceType: request.resourceType(), url: `${destination.origin}${destination.pathname}` });
+				await route.abort('blockedbyclient').catch(() => undefined); return;
+			}
+			if (session.qaExecutionMode === 'hybrid' && !authDecision?.allowed && !['GET', 'HEAD', 'OPTIONS'].includes(request.method())) {
+				recordSecurityBlock({ code: 'HYBRID_WRITE_REQUEST_BLOCKED', message: 'Hybrid public QA does not authorize target data writes.' }, { method: request.method(), url: request.url() });
+				await route.abort('blockedbyclient').catch(() => undefined);
+				return;
+			}
 			let topLevel = false;
 			try {
 				topLevel = request.isNavigationRequest() && !request.frame().parentFrame();
@@ -564,12 +736,14 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 			recordSecurityBlock(decision, {
 				topLevel,
 				method: request.method(),
-				resourceType: request.resourceType()
+				resourceType: request.resourceType(),
+				url: request.url()
 			});
 			await route.abort('blockedbyclient').catch(() => undefined);
 		});
 		if (typeof context.routeWebSocket === 'function') {
 			await context.routeWebSocket('**/*', async socket => {
+				if (session.qaExecutionMode === 'hybrid') { await socket.close({ code: 1008, reason: 'Hybrid public QA does not authorize WebSocket writes.' }).catch(() => undefined); return; }
 				let decision;
 				try {
 					decision = await policy.evaluateRequest(socket.url(), { topLevel: false });
@@ -584,7 +758,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 					socket.connectToServer();
 					return;
 				}
-				recordSecurityBlock(decision, { method: 'CONNECT', resourceType: 'websocket' });
+				recordSecurityBlock(decision, { method: 'CONNECT', resourceType: 'websocket', url: socket.url() });
 				await socket.close({ code: 1008, reason: 'Blocked by browser safety policy' }).catch(() => undefined);
 			});
 		}
@@ -803,7 +977,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 					const contextOptions = {
 						...(emulationOptions ?? { viewport: { width: 1440, height: 900 }, acceptDownloads: true }),
 						...(emulatedUserAgent ? { userAgent: emulatedUserAgent } : {}),
-						...(policy.isProduction ? { serviceWorkers: 'block' } : {})
+						...(policy.isProduction || session.qaExecutionMode === 'hybrid' ? { serviceWorkers: 'block' } : {})
 					};
 					// Orientation scenario: landscape swaps the emulation viewport.
 					if (orientationScenario === 'landscape' && contextOptions.viewport) {
@@ -905,6 +1079,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 	const originalEnsurePage = service.ensurePage.bind(service);
 	service.ensurePage = async () => {
 		const page = await originalEnsurePage();
+		attachDiagnostics(page);
 		await installNetworkPolicy(service.context);
 		await restoreSession();
 		return currentPage() ?? page;
@@ -1556,17 +1731,21 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 	// the keystrokes reach the page, and never anywhere the model can observe.
 	const originalFill = service.fill.bind(service);
 	service.fill = async (surface, input) => {
+		if (session.qaExecutionMode === 'hybrid' && /\{\{/.test(input?.value || '')) return { success: false, error: 'Use the approved browser_authenticate tool for vault credentials; native fills cannot inject secrets.' };
 		if (hasUnresolvedPlaceholder(session.id, input?.value)) {
 			return {
 				success: false,
 				error: `No stored credential matches the placeholder in that value. Ask the user with ask_question before filling this field.`
 			};
 		}
+		if (session.qaExecutionMode === 'hybrid') inputIsolation.protect(currentPage());
 		return originalFill(surface, { ...input, value: resolveSecrets(session.id, input?.value ?? '') });
 	};
 
 	const originalType = service.typeText.bind(service);
 	service.typeText = async (surface, text) => {
+		if (session.qaExecutionMode === 'hybrid' && /\{\{/.test(text || '')) return { success: false, error: 'Use the approved browser_authenticate tool for vault credentials; native typing cannot inject secrets.' };
+		if (session.qaExecutionMode === 'hybrid') inputIsolation.protect(currentPage());
 		if (hasUnresolvedPlaceholder(session.id, text)) {
 			return {
 				success: false,
@@ -1618,7 +1797,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 			if (requestedUrl) {
 				const decision = await policy.evaluateNavigation(requestedUrl);
 				if (!decision.allowed) {
-					recordSecurityBlock(decision, { topLevel: true, method });
+					recordSecurityBlock(decision, { topLevel: true, method, url: requestedUrl });
 					return policy.asBlockedResult(decision);
 				}
 			}
@@ -1627,7 +1806,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 			const securityMarker = bridge.securityBlocks.length;
 			let result;
 			try {
-				result = await original(...args);
+				result = await inputIsolation.navigation(currentPage(), [requestedUrl, method === 'reload' ? currentPage()?.url() : undefined], () => original(...args));
 			} catch (error) {
 				const navigationBlock = bridge.securityBlocks.slice(securityMarker).find(entry => entry.topLevel);
 				if (navigationBlock) {
@@ -1666,6 +1845,16 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 		service.getDiagnostics = (surface, diagnosticOptions = {}) =>
 			withBrowserOperationTimeout(async () => {
 				const result = await originalDiagnostics(surface, diagnosticOptions);
+				const observedConsole = diagnosticConsole.map(entry => ({ ...entry }));
+				const observedNetwork = diagnosticNetwork.map(({ captureGeneration, ...entry }) => ({ ...entry, requestHeaders: { ...entry.requestHeaders } }));
+				// Retain SDK observations from pages that predate bridge attachment,
+				// replacing only a matching event with the richer captured version.
+				const console = [...(result.console ?? []).filter(entry => !observedConsole.some(observed => observed.kind === 'console'
+					&& observed.message === diagnosticText(entry.message) && observed.sourceId === entry.sourceId
+					&& Math.abs(observed.timestamp - entry.timestamp) < 50)), ...observedConsole].slice(-200);
+				const network = [...(result.network ?? []).filter(entry => !observedNetwork.some(observed => observed.url === entry.url
+					&& observed.method === entry.method && Math.abs(observed.startedAt - entry.startedAt) < 50)), ...observedNetwork].slice(-200);
+				if (diagnosticOptions.clear) { diagnosticConsole.length = 0; diagnosticNetwork.length = 0; diagnosticGeneration++; }
 				const securityBlocks = bridge.securityBlocks.map(entry => ({ ...entry }));
 				if (diagnosticOptions.clear) bridge.securityBlocks.length = 0;
 				// A live mobile/tablet run gets a bounded DOM-only audit attached so the
@@ -1676,7 +1865,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 					mobileAudit = await runMobileAudit(currentPage());
 				}
 				const formValidation = await inspectFormValidation(currentPage());
-				return { ...result, securityBlocks, ...(mobileAudit ? { mobileAudit } : {}), ...(formValidation ? { formValidation } : {}) };
+				return { ...result, console, network, securityBlocks, ...(mobileAudit ? { mobileAudit } : {}), ...(formValidation ? { formValidation } : {}) };
 			}, SNAPSHOT_TIMEOUT_MS, 'browser_diagnostics');
 	}
 
@@ -1697,15 +1886,22 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 	 * unbounded screenshot backlog. Identical frames are retained locally but
 	 * not republished, since replaying the same JPEG cannot change the preview.
 	 */
-	const captureFrame = () => {
+	const captureFrame = ({ withinQaCheck = false } = {}) => {
+		if (bridge.qaOperationActive && !withinQaCheck) return Promise.resolve();
 		if (bridge.frameCapture) return bridge.frameCapture;
 		const page = currentPage();
 		if (!page || bridge.disposed) return Promise.resolve();
 
 		bridge.frameCapture = (async () => {
 			try {
-				const shot = await service.screenshot('ide', { quality: FRAME_QUALITY });
+				const direct = session.qaExecutionMode === 'hybrid' && typeof page.screenshot === 'function';
+				const beforeUrl = page.url(), beforeViewport = viewportOf(page);
+				const shot = direct ? {
+					base64: (await page.screenshot({ type: 'jpeg', quality: FRAME_QUALITY, fullPage: false, timeout: 1200, animations: 'allow', caret: 'initial' })).toString('base64'),
+					mimeType: 'image/jpeg', url: page.url(), title: await page.title()
+				} : await service.screenshot('ide', { quality: FRAME_QUALITY });
 				if (bridge.disposed) return;
+				if (direct && (beforeUrl !== page.url() || JSON.stringify(beforeViewport) !== JSON.stringify(viewportOf(page)))) return;
 				const frame = {
 					base64: shot.base64,
 					mimeType: shot.mimeType,
@@ -1713,10 +1909,13 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 					title: shot.title,
 					loading: shot.loading,
 					viewport: viewportOf(page),
+						...(session.hybrid?.viewport ? { viewportTesting: { ...session.hybrid.viewport } } : {}),
 					ts: Date.now()
 				};
 				if (sameFrame(bridge.lastFrame, frame)) return;
 				bridge.lastFrame = frame;
+				const primary = session.hybrid?.viewport?.primary;
+				if (session.qaExecutionMode === 'hybrid' && (!primary || (frame.viewport.width === primary.width && frame.viewport.height === primary.height))) bridge.primaryFrame = frame;
 				runStore.publish(session, 'frame', { frame });
 			} catch {
 				// A screenshot taken across a navigation throws; the next tick recovers.
@@ -1757,8 +1956,25 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 	bridge.startFrames = startFrames;
 	bridge.stopFrames = stopFrames;
 	bridge.captureFrame = captureFrame;
-	bridge.getLastFrame = () => bridge.lastFrame;
+	bridge.getLastFrame = () => session.hybrid?.viewport?.phase === 'responsive_sample' && bridge.primaryFrame
+		? { ...bridge.primaryFrame, viewportTesting: { ...session.hybrid.viewport } } : bridge.lastFrame;
 	bridge.getSecurityBlocks = () => [...bridge.securityBlocks];
+	bridge.authorizeHybridAction = async (toolName, input) => {
+		if (session.qaExecutionMode !== 'hybrid') return;
+		if (toolName === 'browser_key' && /(?:Enter|NumpadEnter)/i.test(String(input?.key || ''))) throw new Error('Form/key submission requires an explicitly authorized workflow; record this prerequisite.');
+		if (!['browser_click', 'browser_fill', 'browser_type', 'browser_check', 'browser_select', 'browser_key'].includes(toolName)) return;
+		await service.ensurePage();
+		const page = currentPage();
+		if (!page || !service.hasLocator?.(input)) throw new Error('An observed unique control locator is required.');
+		const locator = await service.locator(page, input);
+		if (await locator.count() !== 1) throw new Error('Hybrid control must resolve uniquely.');
+		if (['browser_fill', 'browser_type'].includes(toolName) && await locator.evaluate(element => element.type === 'password')) throw new Error('Password fields require the secure sign-in tool; synthetic login guessing is not authorized.');
+		const descriptor = await resolveActionDescriptor(input);
+		if (classifyDestructiveAction(toolName === 'browser_key' ? 'pressKey' : 'click', descriptor)) throw new Error('This control requires a separate authorized workflow.');
+		if (descriptor.destination && new URL(descriptor.destination, page.url()).origin !== new URL(session.targetUrl).origin) throw new Error('This control leaves the authorized hybrid target origin.');
+		const submission = await locator.evaluate(element => Boolean(element.form && ((element.tagName === 'BUTTON' && element.type === 'submit') || ['submit', 'image'].includes(element.type))), undefined, { timeout: 2000 });
+		if (toolName === 'browser_click' && submission) throw new Error('Form submission is outside hybrid public QA authorization.');
+	};
 	bridge.hasPage = () => Boolean(currentPage());
 	bridge.dispose = () => {
 		bridge.disposed = true;

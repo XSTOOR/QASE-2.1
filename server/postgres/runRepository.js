@@ -3,6 +3,7 @@ import { MAX_FOUNDER_STATE_BYTES, normalizeFounderState } from '../founderServic
 import { normalizePendingSqaState } from '../sqaService.js';
 import { currentRequestActor } from '../requestActor.js';
 import { normalizeQaScopeSelection } from '../../public/qaScopeCatalog.js';
+import { hybridStorage, hydrateHybrid } from '../hybridPersistence.js';
 
 /**
  * PostgreSQL persistence for the current Qase run aggregate.
@@ -50,6 +51,7 @@ const EVENT_CHILD_GROUPS = new Map([
 	['browser', Object.freeze([])],
 	['context', Object.freeze([])],
 	['usage', Object.freeze([])],
+	['hybrid.state', Object.freeze([])],
 	['question', Object.freeze([])],
 	['run.recovered', Object.freeze([])],
 	['run.stop_requested', Object.freeze([])],
@@ -184,6 +186,7 @@ function requireRun(session) {
 		throw new TypeError('A run aggregate with a canonical UUID is required.');
 	}
 	const mode = session.mode === undefined ? 'qa' : session.mode;
+	if (session.qaExecutionMode === 'hybrid') hybridStorage(session);
 	if (mode !== 'qa' && mode !== 'sqa' && mode !== 'founder') {
 		throw new TypeError('Run mode must be qa, sqa, or founder.');
 	}
@@ -550,6 +553,7 @@ function hydrateRun(row, children) {
 		session.drytisIntegration = row.drytis_integration;
 	}
 	hydrateTiming(session, row);
+	hydrateHybrid(session, row.hybrid_qa);
 	Object.assign(session, readTiming(row));
 	return { session, version: Number(row.lock_version) };
 }
@@ -714,6 +718,7 @@ async function appendEvent(client, tenant, runId, sequence, event, createdAt) {
 }
 
 	async function insertAggregate(client, tenant, session, event, nowValue) {
+	const hybrid = hybridStorage(session);
 	const updatedAt = asDate(session.updatedAt, nowValue);
 	const createdAt = asDate(session.createdAt, updatedAt);
 	const nextEventSequence = event.type ? 2 : 1;
@@ -726,8 +731,8 @@ async function appendEvent(client, tenant, runId, sequence, event, createdAt) {
 			engine, device, device_landscape, cohort, scope_selection,
 			created_at, updated_at, queued_at, paused_at, selected_tests, security_authorization,
 			environment_id, environment_snapshot, test_case_id,
-			execution_level_actual, execution_provider_actual, runtime_facts, matrix_run_id
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,0,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
+			execution_level_actual, execution_provider_actual, runtime_facts, matrix_run_id${hybrid ? ', hybrid_qa' : ''}
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,0,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37${hybrid ? ',$38' : ''})
 			RETURNING lock_version, updated_at`,
 		[
 			session.id, tenant.organizationId, tenant.projectId, session.ownerUserId ?? event.actorUserId ?? tenant.actorUserId,
@@ -753,7 +758,8 @@ async function appendEvent(client, tenant, runId, sequence, event, createdAt) {
 			session.executionLevel ?? session.executionLevelActual ?? null,
 			session.executionProviderActual ?? null,
 			json(session.runtimeFacts ?? null),
-			session.matrixRunId ?? null
+			session.matrixRunId ?? null,
+			...(hybrid ? [hybrid] : [])
 		]
 	);
 	await replaceChildren(client, tenant, session, updatedAt);
@@ -868,7 +874,7 @@ export function createPostgresRunRepository({
 			const runs = await client.query(
 				`SELECT id, created_by_user_id, title, target_url, status, run_mode, sqa_profiles, sqa_assessment, founder_assessment, drytis_integration,
 					pending_question, context_usage, token_usage, secret_names, engine, device, device_landscape, cohort, selected_tests, security_authorization, scope_selection, created_at, updated_at, lock_version,
-					environment_id, environment_snapshot, test_case_id, execution_level_actual, execution_provider_actual, runtime_facts, matrix_run_id, ${TIMING_COLUMNS}
+					environment_id, environment_snapshot, test_case_id, execution_level_actual, execution_provider_actual, runtime_facts, matrix_run_id, to_jsonb(qa_runs)->'hybrid_qa' AS hybrid_qa, ${TIMING_COLUMNS}
 				 FROM qa_runs
 				 WHERE organization_id = $1 AND project_id = $2 AND deleted_at IS NULL
 				 ORDER BY updated_at DESC, id ASC`,
@@ -886,7 +892,7 @@ export function createPostgresRunRepository({
 			const result = await client.query(
 				`SELECT id, created_by_user_id, title, target_url, status, run_mode, sqa_profiles, sqa_assessment, founder_assessment, drytis_integration,
 					pending_question, context_usage, token_usage, secret_names, engine, device, device_landscape, cohort, selected_tests, security_authorization, scope_selection, created_at, updated_at, lock_version,
-					environment_id, environment_snapshot, test_case_id, execution_level_actual, execution_provider_actual, runtime_facts, matrix_run_id, ${TIMING_COLUMNS}
+					environment_id, environment_snapshot, test_case_id, execution_level_actual, execution_provider_actual, runtime_facts, matrix_run_id, to_jsonb(qa_runs)->'hybrid_qa' AS hybrid_qa, ${TIMING_COLUMNS}
 				 FROM qa_runs
 				 WHERE organization_id = $1 AND project_id = $2 AND id = $3
 					AND deleted_at IS NULL
@@ -1032,6 +1038,7 @@ export function createPostgresRunRepository({
 
 	async function save(session, options = {}) {
 		requireRun(session);
+		const hybrid = hybridStorage(session);
 		const expectedVersion = nonNegativeInteger(options.expectedVersion, 'expectedVersion');
 		return transaction(async client => {
 			const updatedAt = asDate(now(), Date.now());
@@ -1061,7 +1068,7 @@ export function createPostgresRunRepository({
 					failure_reason = CASE WHEN $30 IS NOT NULL THEN $30 ELSE failure_reason END,
 					engine = $33, device = $34, device_landscape = $35,
 					cohort = $36,
-					scope_selection = $38
+					scope_selection = $38${hybrid ? ', hybrid_qa = $39' : ''}
 					WHERE organization_id = $1 AND project_id = $2 AND id = $3
 					AND lock_version = $37 AND deleted_at IS NULL
 					AND ($21::uuid IS NULL OR created_by_user_id = $21)
@@ -1096,7 +1103,8 @@ export function createPostgresRunRepository({
 					runEngine(session), runDevice(session), session.deviceLandscape === true, // $33-$35
 					runCohort(session),                                       // $36
 					expectedVersion,                                         // $37
-					scopeSelectionJson(session)                              // $38
+					scopeSelectionJson(session),                             // $38
+					...(hybrid ? [hybrid] : [])                              // $39, only after optional migration
 				]
 			);
 			if (!result.rows?.length) {

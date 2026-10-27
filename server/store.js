@@ -33,7 +33,7 @@ function statePaths() {
  *  Resolved lazily alongside statePaths() for the same chdir reasons. */
 function founderProjectStatePaths() {
 	const { stateDir } = statePaths();
-	return { founderProjectStateFile: path.join(stateDir, 'founder-project-state.json') };
+	return { stateDir, founderProjectStateFile: path.join(stateDir, 'founder-project-state.json') };
 }
 
 /** Live, non-serialisable per-session handles, keyed by session id. */
@@ -87,7 +87,7 @@ export function normalizeFindingStatus(finding) {
 
 let saveTimer;
 
-function persistNow() {
+function persistNow({ strict = false } = {}) {
 	let tmp;
 	const { stateDir, stateFile } = statePaths();
 	try {
@@ -106,6 +106,7 @@ function persistNow() {
 		// A dashboard that cannot write its history is still a usable dashboard,
 		// but surface it loudly so the operator notices data loss risk.
 		console.error(`[qase-store] failed to persist sessions: ${error?.code ?? error?.message ?? 'unknown'}`);
+		if (strict) throw error;
 	}
 }
 
@@ -118,10 +119,10 @@ function persistSoon() {
 export { persistSoon };
 
 /** Flushes pending local history before the process exits. */
-export function flushSessions() {
+export function flushSessions(options) {
 	clearTimeout(saveTimer);
 	saveTimer = undefined;
-	persistNow();
+	persistNow(options);
 }
 
 export function loadSessions() {
@@ -194,6 +195,7 @@ export function createSession(title = 'New test run', options = {}) {
 	if (!options || typeof options !== 'object' || Array.isArray(options)) {
 		throw new TypeError('Run creation options must be an object.');
 	}
+	if (options.qaExecutionMode !== undefined && !['legacy', 'hybrid'].includes(options.qaExecutionMode)) throw new TypeError('Unknown QA execution mode.');
 	const id = options.id ?? randomUUID();
 	if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
 		throw new TypeError('Run ID must be a canonical UUID.');
@@ -311,6 +313,7 @@ export function createSession(title = 'New test run', options = {}) {
 		pendingQuestion: undefined,
 		/** Selected standard QA test ids; undefined = full coverage. */
 		selectedTests: options.selectedTests ? [...options.selectedTests] : undefined,
+		qaExecutionMode: options.qaExecutionMode === 'hybrid' ? 'hybrid' : undefined,
 		/** Security testing authorization for runs with security checks. */
 		securityAuthorization: options.securityAuthorization
 			? structuredClone(options.securityAuthorization)
@@ -374,6 +377,8 @@ export function listSessions({ limit = 100, ownerUserId, unbounded = false } = {
 			pausedSeconds: session.pausedSeconds ?? 0,
 			durationSeconds: activeDurationSeconds(session),
 			findingCount: session.findings.length,
+			...(session.qaExecutionMode === 'hybrid' && session.hybrid ? { qaExecutionMode: 'hybrid', scenarioTotal: session.hybrid.scenarios?.length || 0,
+				scenarioExecuted: session.hybrid.scenarios?.filter(item => ['passed', 'failed'].includes(item.status)).length || 0 } : {}),
 			messageCount: session.messages.length,
 			...(session.report?.verdict ? { reportVerdict: session.report.verdict } : {}),
 			// Plan progress for the sidebar card — derived, never stored.
@@ -555,10 +560,10 @@ const EPHEMERAL = new Set(['frame', 'cursor', 'reasoning', 'message_delta', 'tur
  * Applies a mutation and broadcasts it. Every state change in the app funnels
  * through here, so the SSE stream and the stored session can never disagree.
  */
-export function emit(session, type, payload = {}) {
+export function emit(session, type, payload = {}, { durable = false } = {}) {
 	if (!EPHEMERAL.has(type)) {
 		session.updatedAt = Date.now();
-		persistSoon();
+		if (durable) flushSessions({ strict: true }); else persistSoon();
 	}
 	bus.emit(session.id, { type, sessionId: session.id, ts: Date.now(), ...payload });
 }

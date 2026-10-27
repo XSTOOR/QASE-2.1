@@ -5,12 +5,13 @@
 export function runPresentationStatus(session) {
 	const status = String(session?.status ?? '').toLowerCase();
 	const verdict = String(session?.report?.verdict ?? session?.reportVerdict ?? '').toLowerCase();
-	return status === 'done' && verdict === 'blocked' ? 'blocked' : status;
+	return status === 'done' && ['blocked', 'partial'].includes(verdict) ? verdict : status;
 }
 
 export function runPresentationLabel(session) {
 	const status = runPresentationStatus(session);
 	if (status === 'blocked') return 'Blocked';
+	if (status === 'partial') return 'Completed with gaps';
 	if (status === 'done') return 'Complete';
 	if (status === 'running') return 'Running';
 	if (status === 'awaiting_input') return 'Waiting for you';

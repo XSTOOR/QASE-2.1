@@ -194,6 +194,9 @@ function withTimeout(promise, timeoutMs, label) {
 
 /** One OpenAI-compatible completion. Returns draft array; throws on failure. */
 async function generateDraftsWithLlm({ config, fetchImpl, context, maxCases, timeoutMs }) {
+	if (config?.provider === 'jev') {
+		throw new TestCaseAutogenError('JEV is decision-only; generate cases deterministically from recorded findings.', 'QASE_AUTOGEN_DECISION_ONLY');
+	}
 	const apiKey = config?.apiKey;
 	if (!apiKey) throw new TestCaseAutogenError('No API key configured.', 'QASE_AUTOGEN_NO_KEY');
 	if (config?.provider === 'bedrock') {

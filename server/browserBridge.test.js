@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { EventEmitter } from 'node:events';
 import { attachBrowserBridge, selectSnapshotElements } from './browserBridge.js';
 import { BROWSER_POLICY_CODES, createBrowserPolicy } from './browserPolicy.js';
 
@@ -91,6 +92,72 @@ function fakeRunStore() {
 	};
 }
 
+test('QA macros honor the active run cancellation before dispatch and after queued preview capture', async () => {
+  const { service } = fakeService();
+  const bridge = await attachBrowserBridge({ id: 'qa-cancel', targetUrl: service.activePage.url(), messages: [] }, service, fakeRunStore());
+  const first = new AbortController();
+  first.abort(new Error('Run cancelled'));
+  bridge.setAbortSignal(first.signal);
+  await assert.rejects(bridge.runQaCheck({ action: 'inspect' }), /Run cancelled/);
+  const next = new AbortController();
+  bridge.setAbortSignal(next.signal);
+  let release;
+  bridge.frameCapture = new Promise(resolve => { release = resolve; });
+  const pending = bridge.runQaCheck({ action: 'inspect' });
+  next.abort(new Error('Run paused during preview'));
+  release();
+  await assert.rejects(pending, /Run paused during preview/);
+  assert.equal(bridge.qaOperationActive, false);
+  bridge.dispose();
+});
+
+test('hybrid context blocks target writes and WebSocket connections before forwarding', async () => {
+  const { service, context } = fakeService();
+  const session = { id: 'hybrid-policy', qaExecutionMode: 'hybrid', targetUrl: service.activePage.url(), messages: [] };
+  const bridge = await attachBrowserBridge(session, service, fakeRunStore());
+  await service.ensurePage();
+  let forwarded = false, aborted = false;
+  await context.routeHandler({ request: () => ({ method: () => 'POST', url: () => 'https://app.example.test/records', resourceType: () => 'fetch' }), continue: async () => { forwarded = true; }, abort: async () => { aborted = true; } });
+  assert.equal(forwarded, false); assert.equal(aborted, true);
+  let connected = false, closed = false;
+  await context.webSocketHandler({ connectToServer() { connected = true; }, async close() { closed = true; } });
+  assert.equal(connected, false); assert.equal(closed, true);
+  assert.ok(bridge.securityBlocks.some(item => item.code === 'HYBRID_WRITE_REQUEST_BLOCKED'));
+  bridge.dispose();
+});
+
+test('diagnostics capture uncaught exceptions and failed requests once, with provenance and clear semantics', async () => {
+  const { service } = fakeService();
+  const events = new EventEmitter();
+  service.activePage.on = events.on.bind(events);
+  service.activePage.evaluate = async () => undefined;
+  service.getDiagnostics = async () => ({ success: true, console: [], network: [] });
+  service.registerPage = () => {};
+  const session = { id: 'diagnostic-fixture', targetUrl: service.activePage.url(), messages: [] };
+  const bridge = await attachBrowserBridge(session, service, fakeRunStore());
+  service.registerPage(service.activePage); service.registerPage(service.activePage);
+  assert.equal(events.listenerCount('pageerror'), 1);
+  const exception = new Error('Fixture uncaught error');
+  exception.stack = 'Error: Fixture uncaught error\n at https://app.example.test/app.js:12:3';
+  events.emit('pageerror', exception);
+  const request = { url: () => 'https://app.example.test/required.js', method: () => 'GET', resourceType: () => 'script', headers: () => ({ authorization: 'never-export', cookie: 'private', purpose: 'prefetch' }), isNavigationRequest: () => false, failure: () => ({ errorText: 'net::ERR_CONNECTION_RESET' }) };
+  events.emit('request', request);
+  const first = await service.getDiagnostics('ide', { clear: true });
+  assert.equal(first.console.length, 1);
+  assert.equal(first.console[0].kind, 'pageerror');
+  assert.equal(first.console[0].sourceId, 'https://app.example.test/app.js');
+  assert.equal(first.console[0].pageUrl, session.targetUrl);
+  assert.equal(first.network[0].speculative, true);
+  assert.doesNotMatch(JSON.stringify(first), /never-export|private/);
+  events.emit('requestfailed', request);
+  const second = await service.getDiagnostics('ide', { clear: true });
+  assert.equal(second.console.length, 0);
+  assert.equal(second.network.length, 1, 'In-flight completion remains visible after the initial request was cleared.');
+  assert.match(second.network[0].error, /CONNECTION_RESET/);
+  assert.deepEqual((await service.getDiagnostics('ide')).network, []);
+  await bridge.dispose();
+});
+
 test('browser bridge blocks out-of-scope navigation and gates destructive clicks before execution', async () => {
 	let clock = 1_000;
 	const session = {
@@ -103,9 +170,18 @@ test('browser bridge blocks out-of-scope navigation and gates destructive clicks
 	const policy = createBrowserPolicy({
 		getTargetUrl: () => session.targetUrl,
 		environment: { NODE_ENV: 'test' },
+		resolveHost: async () => [{ address: '93.184.216.34', family: 4 }],
 		now: () => clock
 	});
 	const bridge = await attachBrowserBridge(session, service, runStore, { policy });
+	const qaExternal = await bridge.runQaCheck({ action: 'navigation', selector: '#external', expected: 'https://outside.example.test/' });
+	assert.equal(qaExternal.success, false);
+	assert.equal(qaExternal.code, BROWSER_POLICY_CODES.OUT_OF_SCOPE_NAVIGATION);
+	const originalLocator = service.locator;
+	service.locator = async () => fakeLocator({ text: 'Delete project', tagName: 'BUTTON' });
+	const qaRisky = await bridge.runQaCheck({ action: 'disclosure', selector: '#delete-project' });
+	assert.equal(qaRisky.code, 'QA_RISKY_CONTROL');
+	service.locator = originalLocator;
 
 	const direct = await service.open('https://outside.example.test/');
 	assert.equal(direct.success, false);
@@ -307,5 +383,28 @@ test('browser bridge coalesces concurrent captures and does not publish identica
 	});
 	await bridge.captureFrame();
 	assert.equal(runStore.events.filter(event => event.type === 'frame').length, 2);
+	bridge.dispose();
+});
+
+test('hybrid preview reads the existing page without SDK ensurePage or viewport mutation and skips active QA timers', async () => {
+	const session = { id: 'preview-hybrid', qaExecutionMode: 'hybrid', targetUrl: 'https://app.example.test/', messages: [] };
+	const { service } = fakeService(), runStore = fakeRunStore();
+	let screenshots = 0;
+	service.screenshot = async () => { throw new Error('SDK screenshot must not prepare or restore the page'); };
+	service.activePage.screenshot = async options => {
+		assert.equal(options.timeout, 1200); assert.equal(options.animations, 'allow'); assert.equal(options.caret, 'initial');
+		screenshots++; return Buffer.from('read-only-preview');
+	};
+	const bridge = await attachBrowserBridge(session, service, runStore, { policy: createBrowserPolicy({ getTargetUrl: () => session.targetUrl, environment: { NODE_ENV: 'test' } }) });
+	bridge.qaOperationActive = true;
+	await bridge.captureFrame(); assert.equal(screenshots, 0);
+	await bridge.captureFrame({ withinQaCheck: true }); assert.equal(screenshots, 1);
+	assert.equal(bridge.qaOperationActive, true, 'Preview reads cannot release execution ownership.');
+	const frame = runStore.events.find(event => event.type === 'frame').payload.frame;
+	assert.equal(frame.url, service.activePage.url()); assert.equal(frame.title, 'Target');
+	assert.deepEqual(frame.viewport, { width: 1440, height: 900 });
+	service.activePage.screenshot = async () => { throw new Error('Fixture screenshot timeout'); };
+	await bridge.captureFrame({ withinQaCheck: true });
+	assert.equal(bridge.getLastFrame(), frame, 'Failed preview keeps the last honest frame, without failing the QA action.');
 	bridge.dispose();
 });

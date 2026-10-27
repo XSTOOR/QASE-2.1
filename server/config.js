@@ -5,6 +5,8 @@ import * as path from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { PublicInputError } from './publicErrors.js';
 import { fileURLToPath } from 'node:url';
+import { createJevClient, JEV_ENDPOINT, JEV_MODEL, JEV_CAPABILITIES, validateJevConfiguration } from './jevClient.js';
+import { hybridAvailability, hybridProfile } from './hybridConfig.js';
 
 /**
  * UI asset version (ticket #16228 follow-up / #15766 round-3 rule): derived
@@ -44,7 +46,7 @@ const CONFIG_DIR = path.join(process.cwd(), '.qase');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 export const PROVIDERS = [
-	'custom', 'anthropic', 'openai', 'azureOpenAI', 'gemini',
+	'jev', 'custom', 'anthropic', 'openai', 'azureOpenAI', 'gemini',
 	'grok', 'nvidia', 'openrouter', 'bedrock'
 ];
 
@@ -75,7 +77,7 @@ function readStored() {
 function fromEnv() {
 	return {
 		provider: process.env.QASE_PROVIDER,
-		apiKey: process.env.QASE_API_KEY ?? process.env.ANTHROPIC_API_KEY,
+		apiKey: process.env.QASE_API_KEY ?? (process.env.QASE_PROVIDER === 'jev' ? process.env.JEV_API_KEY : process.env.ANTHROPIC_API_KEY),
 		baseUrl: process.env.QASE_BASE_URL,
 		model: process.env.QASE_MODEL,
 		reasoning: process.env.QASE_REASONING,
@@ -101,7 +103,7 @@ const DEFAULTS = {
 };
 
 /** Default model per provider when none is configured. */
-const DEFAULT_MODELS = { custom: 'z-ai/glm-5.2' };
+const DEFAULT_MODELS = { custom: 'z-ai/glm-5.2', jev: JEV_MODEL };
 
 /** Models that were once configured by default but are not served by this
  * gateway. Stored copies of these are stale; fall back to the provider default
@@ -165,6 +167,17 @@ export function getConfig() {
 			}
 		}
 	}
+	const modelLocked = process.env.QASE_LOCK_MODEL === 'true';
+	if (modelLocked) {
+		for (const [key, value] of Object.entries(fromEnv())) {
+			if (['provider', 'apiKey', 'baseUrl', 'model'].includes(key) && value) merged[key] = value;
+		}
+	}
+	if (merged.provider === 'jev') {
+		merged.apiKey = (!modelLocked && stored.apiKey) || process.env.JEV_API_KEY || process.env.QASE_API_KEY || '';
+		merged.baseUrl = (!modelLocked && stored.baseUrl) || process.env.QASE_BASE_URL || JEV_ENDPOINT;
+		merged.model = (!modelLocked && stored.model) || process.env.QASE_MODEL || JEV_MODEL;
+	}
 	if ((!stored.model || STALE_MODELS.has(stored.model)) && (!fromEnv().model || STALE_MODELS.has(fromEnv().model))) {
 		const fallback = defaultModelFor(merged.provider);
 		if (fallback) merged.model = fallback;
@@ -211,8 +224,12 @@ export async function validateModelUsability(candidate, options = {}) {
 /** The same settings with the key reduced to a hint. Safe to send to a browser. */
 export function getPublicConfig() {
 	const config = getConfig();
+	const hybrid = hybridAvailability(hybridProfile(config));
 	return {
+		hybridQa: { ...hybrid, reasoner: 'drytis/claude-opus-4.7', classifier: 'jev-1.13' },
 		provider: config.provider,
+		modelLocked: process.env.QASE_LOCK_MODEL === 'true',
+		...(config.provider === 'jev' ? { modelCapabilities: JEV_CAPABILITIES } : {}),
 		baseUrl: config.baseUrl,
 		model: config.model,
 		uiVersion: uiAssetVersion(),
@@ -222,7 +239,7 @@ export function getPublicConfig() {
 		securityPayloadLimit: clampSecurityPayloadLimit(config.securityPayloadLimit),
 		hasApiKey: Boolean(config.apiKey),
 		apiKeyHint: config.apiKey ? `••••${config.apiKey.slice(-4)}` : '',
-		apiKeyFromEnv: Boolean(fromEnv().apiKey) && !readStored().apiKey,
+		apiKeyFromEnv: Boolean(fromEnv().apiKey) && (process.env.QASE_LOCK_MODEL === 'true' || !readStored().apiKey),
 		providers: PROVIDERS,
 		ready: isReady(config),
 		problem: describeProblem(config)
@@ -234,6 +251,9 @@ function isReady(config = getConfig()) {
 }
 
 function describeProblem(config) {
+	if (config.provider === 'jev') {
+		try { validateJevConfiguration(config); } catch (error) { return error.message; }
+	}
 	if (config.provider !== 'bedrock' && !config.apiKey) {
 		return 'Required API configuration is missing: no API key. Set QASE_API_KEY in the environment, or add a key under Settings.';
 	}
@@ -247,6 +267,12 @@ function describeProblem(config) {
 }
 
 export function saveConfig(patch) {
+	if (process.env.QASE_LOCK_MODEL === 'true') {
+		const current = getConfig();
+		for (const key of ['provider', 'model', 'baseUrl', 'apiKey']) {
+			if (patch[key] && patch[key] !== current[key]) throw new PublicInputError('The instance model is locked by the operator.');
+		}
+	}
 	const next = { ...readStored() };
 	for (const key of ['provider', 'apiKey', 'baseUrl', 'model', 'reasoning']) {
 		if (typeof patch[key] === 'string') {
@@ -391,6 +417,10 @@ function parseCompletionProbeUrl(baseUrl, { production }) {
  * Returns a failure result, or undefined when the destination is allowed.
  */
 function assertEnvKeyDestinationAllowed(config, { environment }) {
+	if (environment.JEV_API_KEY && config.apiKey === environment.JEV_API_KEY) {
+		return config.provider === 'jev' && config.baseUrl === JEV_ENDPOINT ? undefined
+			: { ok: false, error: 'The shared JEV key can only be used with the fixed JEV Decisions endpoint.' };
+	}
 	const envKey = String(environment.QASE_API_KEY ?? environment.ANTHROPIC_API_KEY ?? '').trim();
 	if (!envKey) {
 		return undefined; // no env key at stake on this instance
@@ -529,6 +559,18 @@ export async function testConnection(candidate, options = {}) {
 	const problem = describeProblem(config);
 	if (problem) {
 		return { ok: false, error: problem };
+	}
+	if (config.provider === 'jev') {
+		const guard = assertEnvKeyDestinationAllowed(config, { environment: options.environment ?? process.env });
+		if (guard) return guard;
+		try {
+			const result = await createJevClient(config, options).decide('QASE service is ready.', {
+				ready: { type: 'noul', instructions: 'Does the state explicitly say QASE is ready?' }
+			});
+			return { ok: true, models: [config.model], matched: true, completionVerified: false, decisionVerified: true,
+				modelCapabilities: JEV_CAPABILITIES, actualModel: result.model,
+				message: 'JEV Decisions verified. QASE uses bounded browser actions and evidence-based report templates.' };
+		} catch (error) { return { ok: false, error: error.message }; }
 	}
 	if (!config.baseUrl) {
 		return { ok: true, skipped: true, message: `${config.provider} uses its own endpoint; nothing to probe.` };

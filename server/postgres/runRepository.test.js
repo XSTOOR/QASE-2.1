@@ -38,6 +38,30 @@ const FINDING_ID = '0d9156f8-b0f3-4f35-ae55-74070310de64';
 const CORRELATION_ID = '08ddf3b0-4499-4101-a20f-d87d3eebcd52';
 const SOURCE_HASH = 'a'.repeat(64);
 const NOW = Date.parse('2026-08-06T10:00:00.000Z');
+
+test('hybrid state uses optional additive storage and survives authoritative reads without affecting legacy writes', async () => {
+  let stored;
+  const fake = scriptedPool(call => {
+    if (call.text.startsWith('INSERT INTO qa_runs')) { stored = call.params.at(-1); return { rows: [{ lock_version: 0, updated_at: NOW }] }; }
+    if (call.text.startsWith('UPDATE qa_runs')) { stored = call.params.at(-1); return { rows: [{ lock_version: 1, updated_at: NOW, next_event_sequence: 3 }] }; }
+    if (call.text.includes('FROM qa_runs')) return { rows: [{ id: RUN_ID, run_mode: 'qa', status: 'interrupted', title: 'Hybrid', created_at: NOW, updated_at: NOW, hybrid_qa: JSON.parse(stored), created_by_user_id: TENANT.actorUserId }] };
+    return { rows: [] };
+  });
+  const repository = createPostgresRunRepository({ pool: fake.pool, tenantContext: TENANT, now: () => NOW });
+  const run = session({ mode: 'qa', qaExecutionMode: 'hybrid', hybrid: { version: 1, scenarios: [{ id: 'host-scenario', status: 'inconclusive' }], actions: [{ id: 'pending', status: 'uncertain' }] } });
+  await repository.create(run);
+  assert.match(fake.calls.find(call => call.text.startsWith('INSERT INTO qa_runs')).text, /hybrid_qa/);
+  await repository.save(run, { expectedVersion: 0, eventType: 'hybrid.state', payload: { status: 'paused' } });
+  const update = fake.calls.find(call => call.text.startsWith('UPDATE qa_runs'));
+  assert.match(update.text, /hybrid_qa = \$39/); assert.equal(update.params.length, 39);
+  const loaded = await repository.get(RUN_ID);
+  assert.equal(loaded.session.qaExecutionMode, 'hybrid');
+  assert.equal(loaded.session.hybrid.actions[0].status, 'uncertain');
+  assert.match(fake.calls.find(call => call.text.includes('FROM qa_runs')).text, /to_jsonb\(qa_runs\)->'hybrid_qa'/);
+  const legacy = scriptedPool(call => ({ rows: [{ lock_version: 0, updated_at: NOW }] }));
+  await createPostgresRunRepository({ pool: legacy.pool, tenantContext: TENANT, now: () => NOW }).create(session());
+  assert.doesNotMatch(legacy.calls.find(call => call.text.startsWith('INSERT INTO qa_runs')).text, /hybrid_qa/);
+});
 const CHILD_TABLE_NAMES = [
 	'qa_messages', 'qa_activities', 'qa_plan_items', 'qa_findings', 'qa_reports'
 ];

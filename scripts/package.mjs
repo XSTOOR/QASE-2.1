@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { verifyRelease } from './verify-release.mjs';
+import { RELEASE_DIRECTORIES, RELEASE_FILES } from './release-source.mjs';
 
 /**
  * Builds a zip of the source that is safe to hand to somebody else.
@@ -23,11 +24,8 @@ const EXCLUDED_ROOTS = new Set([
 	'coverage', 'test-results', 'playwright-report', 'dist', 'tmp', 'temp'
 ]);
 const EXCLUDED_EXTENSIONS = new Set(['.zip', '.log', '.pem', '.key', '.p12', '.pfx']);
-const INCLUDED_DIRECTORIES = ['public', 'server', 'scripts', 'docs', 'deploy', 'load', 'integrations', '.github'];
-const INCLUDED_FILES = [
-	'package.json', 'package-lock.json', 'README.md', 'DEPLOYMENT_PROMPT.md', 'RELEASE_NOTES.md', '.env.example',
-	'.gitignore', '.gitattributes', '.dockerignore', '.nvmrc', 'Dockerfile'
-];
+const INCLUDED_DIRECTORIES = RELEASE_DIRECTORIES;
+const INCLUDED_FILES = RELEASE_FILES;
 
 fs.rmSync(output, { force: true });
 

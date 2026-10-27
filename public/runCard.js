@@ -7,8 +7,10 @@ export function runCardDetails(run, profiles = []) {
  const device = clean(snapshot.device) || clean(profile?.label) || (run.device === 'desktop' ? 'Desktop' : clean(run.device));
  const browser = clean(snapshot.browser) || ({ chromium: 'Chromium', firefox: 'Firefox', webkit: 'WebKit' }[run.engine] ?? clean(run.engine));
  const environment = [device, browser ? [browser, clean(snapshot.browserVersion)].filter(Boolean).join(' ') : ''].filter(Boolean).join(' · ');
- const total = Number.isFinite(run.todoTotal) ? Math.max(0, Math.floor(run.todoTotal)) : 0;
- const completed = Math.min(total, Math.max(0, Number.isFinite(run.todoCompleted) ? Math.floor(run.todoCompleted) : 0));
+ const hybrid = run.qaExecutionMode === 'hybrid' && Number.isFinite(run.scenarioTotal);
+ const rawTotal = hybrid ? run.scenarioTotal : run.todoTotal, rawCompleted = hybrid ? run.scenarioExecuted : run.todoCompleted;
+ const total = Number.isFinite(rawTotal) ? Math.max(0, Math.floor(rawTotal)) : 0;
+ const completed = Math.min(total, Math.max(0, Number.isFinite(rawCompleted) ? Math.floor(rawCompleted) : 0));
  return {
   environment: environment + (environment && run.deviceLandscape ? ' · Landscape' : ''),
   mode: run.mode === 'founder' ? 'Founder' : run.mode === 'sqa' ? 'Quality' : 'Test',

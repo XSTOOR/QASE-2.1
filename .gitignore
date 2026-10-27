@@ -1,5 +1,6 @@
 # Dependencies and generated output
 node_modules/
+.tooling/
 node_modules.broken/
 server.corrupt-*/
 coverage/

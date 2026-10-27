@@ -31,8 +31,8 @@ test('running header and current activity use clear customer language', () => {
 	assert.match(workspaceStyles, /current-activity \.ca-label[\s\S]*text-transform: none/);
 });
 
-test('completed QA selects Findings for issues and Report for a clean run', () => {
-	assert.match(app, /activateDetailTab\(\(session\.findings\?\.length \?\? 0\) > 0 \? \$\('tab-findings'\) : el\.reportTab\)/);
+test('completed QA preserves the current tab and keeps explicit preview preferences', () => {
+	assert.doesNotMatch(app, /showCompletedQaResults/);
 	assert.match(app, /const collapsed = previewCollapsed\(/);
 	assert.match(app, /state\.stageCollapsePreferences\.get\(state\.sessionId\)/);
 });
@@ -51,8 +51,8 @@ test('empty Qase view keeps one primary launcher and routes composer URLs into s
 	assert.match(app, /qaUi\.targetUrl\.value = target\.href/);
 });
 
-test('tablet and mobile move directly to the primary execution surface', () => {
+test('tablet and mobile show the execution surface without switching to results on completion', () => {
 	assert.match(workspaceStyles, /min-width: 721px[\s\S]*data-run-status="running"[\s\S]*\.viewer \{ grid-row: 1; \}/);
 	assert.match(app, /justStarted[\s\S]*setWorkspaceView\('browser'\)/);
-	assert.match(app, /justCompleted[\s\S]*setWorkspaceView\('results'\)/);
+	assert.doesNotMatch(app, /justCompleted[\s\S]*setWorkspaceView\('results'\)/);
 });
