@@ -96,3 +96,11 @@ test('passed assertions on some pages do not label a suite with route gaps as a 
   assert.deepEqual(hybridScenarioProgress(session), { total: 1, done: 0, percent: 0 });
   assert.equal(hybridQaModel(session).coverage, 0);
 });
+
+test('automatic completion status explains the no-approval flow without promising exhaustive coverage', () => {
+  const nodes = [], document = { createElement() { const node = { textContent: '', setAttribute() {}, append() {} }; nodes.push(node); return node; } };
+  renderHybridQa({ mode: 'qa', qaExecutionMode: 'hybrid', hybrid: { executionPolicy: { mode: 'autonomous' }, scenarios: [], counts: {} } }, document);
+  const text = nodes.map(node => node.textContent).join(' ');
+  assert.match(text, /continues without budget or coverage approval prompts/);
+  assert.match(text, /Secure access can still require your input/);
+});

@@ -578,7 +578,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 				const current = await policy.evaluateNavigation(page.url());
 				if (!current.allowed) return policy.asBlockedResult(current);
 			}
-			if (['navigation', 'disclosure', 'dismiss_overlay'].includes(input?.action)) {
+			if (['navigation', 'navigation_control', 'disclosure', 'dismiss_overlay'].includes(input?.action)) {
 				const descriptor = await resolveActionDescriptor({ selector: input.selector });
 				// These scenarios never consume destructive-action approval grants.
 				if (classifyDestructiveAction('click', descriptor)) return { success: false, action: input.action, code: 'QA_RISKY_CONTROL', error: 'The observed control requires a separate authorized scenario; it is excluded from public read-only QA.' };

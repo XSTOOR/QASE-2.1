@@ -891,3 +891,26 @@ for (const throws of [false, true]) test(`a hybrid budget abort that ${throws ? 
   assert.equal(session.pendingQuestion.credentialLike, false);
   assert.equal(checkpoints.at(-1), 'awaiting_input'); assert.equal(session.hybrid.budgets.reasonerTokens, 300000);
 });
+
+for (const stopped of [false, true]) test(`automatic hard-limit closeout ${stopped ? 'honors a simultaneous user stop' : 'finishes without an approval question'}`, async () => {
+  const { session, record, store } = runtimeFixture({ qaExecutionMode: 'hybrid', ownerUserId: 'owner', hybrid: {
+    continuationPolicyVersion: 2, executionPolicy: { mode: 'autonomous', limits: {} }, scenarios: [], modelBudget: { roles: {} }
+  } });
+  let calls = 0;
+  record.hybrid = { async beginTurn() {}, async endTurn() {}, context() { return ''; } };
+  record.runtime.getSessionSnapshot = () => ({});
+  record.runtime.run = async function* () {
+    calls++;
+    if (calls === 1) {
+      record.hybridPause = Object.assign(new Error('Fixture configured limit'), { code: 'HYBRID_MODEL_BUDGET' });
+      record.controller.abort(record.hybridPause);
+      if (stopped) record.userStopRequested = true;
+      throw record.hybridPause;
+    }
+    session.report = { ts: 88, verdict: 'blocked', summary: 'Configured limit reached; no passing coverage claimed.' };
+    yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true } };
+  };
+  await runTurn(session, { task: 'Run the authorized tests.' }, store);
+  assert.equal(session.status, stopped ? 'interrupted' : 'done'); assert.equal(calls, stopped ? 1 : 2);
+  assert.equal(session.pendingQuestion, undefined);
+});

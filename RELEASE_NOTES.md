@@ -1,6 +1,6 @@
 # QASE hybrid production candidate
 
-Release: `qase-2026-10-27-hybrid-production-r1`. UI: `20261027-6`.
+Release: `qase-2026-10-27-hybrid-production-r2`. UI: `20261027-7`.
 Target: `https://qase.drytis.com`. This is a source/image handoff, not a record
 of deployment or production activation.
 
@@ -41,8 +41,8 @@ changed during preparation.
   to the current access state. Compact ledger-based closeout preserves more of the
   existing budget for exploration. Plan resolution is shown separately from coverage.
 
-- New runs enforce host-authored access and continuation questions through the
-  native SDK pause/resume lifecycle. Budget limits no longer silently publish
+- Existing interactive runs retain host-authored access and continuation questions through the
+  native SDK pause/resume lifecycle. For those runs, budget limits do not silently publish
   unfinished work: the owner can approve a displayed bounded extension or
   explicitly request a gap report. Exact usage and prior evidence are retained.
 - Premature prose-only stops get bounded automatic continuation. Budget abort
@@ -54,6 +54,28 @@ changed during preparation.
   cannot prove access. Anonymous and signed-in executions of the same URL are
   tracked separately. These controls apply to new continuation-policy runs;
   existing closed reports are preserved.
+
+## Automatic completion in r2
+
+New runs use continuation policy 2: no token-budget, workflow-priority or generic
+coverage-approval questions. Capacity is allocated automatically within a pinned
+operator envelope; explicit QASE_HYBRID_* limits remain hard ceilings. Without
+explicit overrides, ceilings are 2M Opus / 500k JEV tokens, 200/100 calls, 1,000
+browser tool actions and 60 active minutes. Observed page attempts expand up to
+40 by default, configurable to 80. At a configured limit, the host closes out
+honestly through the same native SDK tools without another model request.
+Unverified usage and uncertain actions still fail closed. Missing secure access
+can still require the owner. Set QASE_HYBRID_AUTONOMOUS_COMPLETION=false to
+retain the prior interactive policy for newly created runs; existing runs keep
+their originally pinned policy.
+
+Rolling inference context retains every human instruction and SDK policy,
+recent tool rounds and durable evidence references. Old anonymous limitations
+become history after confirmed access. Guarded onboarding Skip/dismiss and
+observed navigation-region buttons reveal routes that anchor-only discovery
+missed; writes remain blocked and navigation restores its source. A failed
+restore requires state verification. No complete-site or exhaustive workflow
+coverage is inferred from these bounded checks.
 
 ## Deployment changes
 

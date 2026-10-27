@@ -29,6 +29,11 @@ export function hybridProfile(settings = {}, env = process.env) {
       classifierTimeoutMs: limit(env.QASE_HYBRID_JEV_TIMEOUT_MS, 30000, 60000)
     }
   };
+  const autonomousCeilings = { reasonerTokens: 2000000, classifierTokens: 500000, reasonerCalls: 200, classifierCalls: 100, browserActions: 1000, durationMs: 3600000 };
+  const budgetVariables = { reasonerTokens: 'QASE_HYBRID_OPUS_TOKENS', classifierTokens: 'QASE_HYBRID_JEV_TOKENS', reasonerCalls: 'QASE_HYBRID_OPUS_CALLS', classifierCalls: 'QASE_HYBRID_JEV_CALLS', browserActions: 'QASE_HYBRID_BROWSER_ACTIONS', durationMs: 'QASE_HYBRID_DURATION_MS' };
+  profile.autonomy = { enabled: env.QASE_HYBRID_AUTONOMOUS_COMPLETION !== 'false',
+    limits: Object.fromEntries(Object.entries(autonomousCeilings).map(([key, ceiling]) => [key, env[budgetVariables[key]] !== undefined ? profile.budgets[key] : ceiling])),
+    maxPages: limit(env.QASE_HYBRID_MAX_PAGES, 40, 80) };
   return profile;
 }
 

@@ -157,3 +157,22 @@ test('real browser scenarios exercise history, geometry, validation and images w
   assert.equal(refused.success, false); assert.equal(page.url(), origin + '/');
   assert.equal(writes, 0);
 });
+
+test('navigation button discovery excludes outside/form/destructive controls and quarantines writes before any pass', { timeout: 20000 }, async t => {
+  let writes = 0;
+  const server = http.createServer((req, res) => {
+    if (req.method !== 'GET') { writes++; res.writeHead(405).end(); return; }
+    res.setHeader('Content-Type', 'text/html');
+    res.end(`<title>Control safety fixture</title><nav><button id="projects" onclick="fetch('/delete',{method:'POST'}).catch(()=>{});document.querySelector('main').textContent='Changed'">Projects</button><button id="delete">Delete project</button><button id="hidden" hidden>Settings</button></nav><button id="outside">Projects</button><form><nav><button id="submit">Projects</button></nav></form><main>Initial content</main>`);
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => { server.closeAllConnections(); server.close(); });
+  const browser = await chromium.launch(); t.after(() => browser.close()); const page = await browser.newPage();
+  await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  const observed = await runJevBrowserCheck(page, { action: 'inspect' });
+  assert.deepEqual(observed.inventory.navigationControls.map(item => item.selector), ['#projects']);
+  const outside = await runJevBrowserCheck(page, { action: 'navigation_control', selector: '#outside' });
+  assert.equal(outside.success, false);
+  const blocked = await runJevBrowserCheck(page, { action: 'navigation_control', selector: '#projects' });
+  assert.equal(writes, 0); assert.equal(blocked.assertions.length, 0); assert.ok(blocked.blockedRequests.length);
+  assert.match(blocked.gaps.join(' '), /blocked write/); assert.equal(await page.locator('main').textContent(), 'Initial content');
+});

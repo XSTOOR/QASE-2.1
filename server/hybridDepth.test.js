@@ -11,7 +11,7 @@ import { digestEvidence } from './qaScenarioLedger.js';
 
 function fixture(selectedTests = ['navigation', 'broken_links', 'responsive'], version = 2, paths = ['/docs', '/contact']) {
   const session = { id: randomUUID(), mode: 'qa', qaExecutionMode: 'hybrid', targetUrl: 'https://fixture.test/', selectedTests, messages: [], findings: [], activities: [], todos: [], secretNames: [] };
-  const record = { bridge: { authorizeHybridAction: async () => {} } }, profile = hybridProfile({ apiKey: 'fixture' }, {});
+  const record = { bridge: { authorizeHybridAction: async () => {} } }, profile = hybridProfile({ apiKey: 'fixture' }, { QASE_HYBRID_AUTONOMOUS_COMPLETION: 'false' });
   let runtime = createHybridRuntime({ session, runStore: { async commit() {} }, profile, record });
   session.hybrid.partialReportApproved = { by: 'fixture-owner', at: Date.now() };
   if (version === 1) {

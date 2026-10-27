@@ -126,6 +126,7 @@ export function createRuntimeApplicationServices(runStore, options = {}) {
 			stop(sessionId) {
 				const record = runStore.peekLive?.(sessionId);
 				if (record?.running) {
+					record.userStopRequested = true;
 					record.controller?.abort();
 					return;
 				}

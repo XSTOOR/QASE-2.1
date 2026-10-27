@@ -17,7 +17,7 @@ test('installed SDK pauses for a host budget decision and resumes the same loop 
     approveCommand: async () => false, approveTool: async ({ toolName }) => toolName === 'ask_question', logger: { debug() {}, info() {}, warn() {}, error() {} } });
   t.after(() => { sdk.dispose(); fs.rmSync(root, { recursive: true, force: true }); });
   const session = { id: randomUUID(), mode: 'qa', qaExecutionMode: 'hybrid', targetUrl: 'https://fixture.test/', ownerUserId: 'owner', selectedTests: ['responsive'], messages: [], todos: [], findings: [], secretNames: [] };
-  const hybrid = createHybridRuntime({ session, record: {}, profile: hybridProfile({ apiKey: 'fixture-key' }, {}), runStore: { async commit() {} } });
+  const hybrid = createHybridRuntime({ session, record: {}, profile: hybridProfile({ apiKey: 'fixture-key' }, { QASE_HYBRID_AUTONOMOUS_COMPLETION: 'false' }), runStore: { async commit() {} } });
   t.after(() => hybrid.endTurn('cancelled'));
   const tools = [ALL_TOOLS.find(tool => tool.name === 'ask_question'), createQaTools(session, { async commit() {} }).find(tool => tool.name === 'finish_qa_report')].map(tool => hybrid.wrapTool(tool));
   sdk.headlessRuntime.options.tools = tools; sdk.headlessRuntime.toolsByName.clear(); for (const tool of tools) sdk.headlessRuntime.toolsByName.set(tool.name, tool);
@@ -50,7 +50,7 @@ test('installed SDK pauses for a host budget decision and resumes the same loop 
   assert.equal(session.hybrid.scenarios[0].status, 'planned', 'A model continuation is not evidence that testing passed.');
 });
 
-test('installed SDK can publish an explicit gap report at an exhausted budget without another model request', { timeout: 20000 }, async t => {
+for (const automatic of [false, true]) test(`installed SDK ${automatic ? 'automatic' : 'owner-selected'} closeout publishes at an exhausted budget without another model request`, { timeout: 20000 }, async t => {
   const { pauseForBudgetApproval } = await import('./hybridContinuation.js');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-closeout-sdk-'));
   const sdk = new CleanSlateNodeAgentRuntime({ rootPath: root,
@@ -58,7 +58,7 @@ test('installed SDK can publish an explicit gap report at an exhausted budget wi
     approveCommand: async () => false, approveTool: async () => true, logger: { debug() {}, info() {}, warn() {}, error() {} } });
   t.after(() => { sdk.dispose(); fs.rmSync(root, { recursive: true, force: true }); });
   const session = { id: randomUUID(), mode: 'qa', qaExecutionMode: 'hybrid', targetUrl: 'https://fixture.test/', ownerUserId: 'owner', selectedTests: ['responsive', 'security_authentication'], messages: [], activities: [], todos: [], findings: [], secretNames: [] };
-  const store = { async commit() {} }, hybrid = createHybridRuntime({ session, record: {}, profile: hybridProfile({ apiKey: 'fixture-key' }, {}), runStore: store });
+  const store = { async commit() {} }, hybrid = createHybridRuntime({ session, record: {}, profile: hybridProfile({ apiKey: 'fixture-key' }, { QASE_HYBRID_AUTONOMOUS_COMPLETION: automatic ? 'true' : 'false', QASE_HYBRID_OPUS_TOKENS: '300000' }), runStore: store });
   t.after(() => hybrid.endTurn('done'));
   const tools = [ALL_TOOLS.find(tool => tool.name === 'ask_question'), ...hybrid.tools, ...createQaTools(session, store)].map(tool => hybrid.wrapTool(tool));
   sdk.headlessRuntime.options.tools = tools; sdk.headlessRuntime.toolsByName.clear(); for (const tool of tools) sdk.headlessRuntime.toolsByName.set(tool.name, tool);
@@ -68,10 +68,10 @@ test('installed SDK can publish an explicit gap report at an exhausted budget wi
   let requests = 0; sdk.cleanSlateService.chat = async () => { requests++; throw new Error('No additional paid call authorized'); };
   hybrid.wrapChat(sdk.cleanSlateService);
   const decision = await pauseForBudgetApproval(session, sdk, { code: 'HYBRID_MODEL_BUDGET' });
-  session.pendingQuestion = { toolCallId: decision.id };
-  const answer = decision.input.options.at(-1); applyHostDecision(session, answer);
+  const answer = automatic ? null : decision.input.options.at(-1);
+  if (!automatic) { session.pendingQuestion = { toolCallId: decision.id }; applyHostDecision(session, answer); }
   await hybrid.beginTurn(t.signal);
-  for await (const _part of sdk.resumePendingQuestion(answer, t.signal)) { /* actual SDK dispositions and report */ }
+  for await (const _part of automatic ? sdk.run('Finish the executed scope.', t.signal) : sdk.resumePendingQuestion(answer, t.signal)) { /* actual SDK dispositions and report */ }
   assert.equal(requests, 0); assert.equal(metric.inputTokens, 310000);
   assert.equal(session.report.verdict, 'blocked'); assert.ok(session.report.notCovered.length);
   assert.equal(session.report.securityOutcomes[0].outcome, 'not_tested');

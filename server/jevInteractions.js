@@ -133,3 +133,40 @@ export async function runJevTabs(page, { inspect, settle, prepare, authorizeCont
   });
   return { assertions, trials, omitted: Math.max(0, tabs.length - 12), limitations: 'Local tab selection and declared panel visibility; arbitrary content correctness and remote dependencies are not established.' };
 }
+
+/** Read-only navigation buttons declared inside a navigation region. The
+ * observed selector is revalidated; labels cannot grant writes or scripts. */
+export async function runJevNavigationControl(page, input, { inspect, settle, authorizeControl, onAction }) {
+  const original = await inspect(page), control = original.navigationControls?.find(item => item.selector === input.selector);
+  if (!control || risky.test(control.label)) throw new Error('Choose a fresh observed non-form navigation button.');
+  const source = new URL(page.url()), blocked = [];
+  const guard = async route => {
+    const request = route.request(), destination = new URL(request.url());
+    if (!['GET', 'HEAD'].includes(request.method()) || (['document', 'xhr', 'fetch'].includes(request.resourceType()) && (destination.origin !== source.origin || risky.test(destination.pathname)))) {
+      blocked.push({ method: request.method(), url: destination.origin + destination.pathname }); await route.abort(); return;
+    }
+    await route.fallback();
+  };
+  let destination, changed = false, restored = false;
+  await authorizeControl?.(control.selector);
+  await page.route('**/*', guard);
+  try {
+    await onAction?.({ phase: 'before', action: 'click', selector: control.selector });
+    await page.locator(control.selector).click({ timeout: 3000 }); await settle(page);
+    destination = await inspect(page);
+    changed = destination.url !== original.url || destination.text !== original.text;
+    await onAction?.({ phase: 'after', action: 'click', selector: control.selector });
+  } finally {
+    try { await page.goto(original.url, { waitUntil: 'domcontentloaded', timeout: 15000 }); await settle(page); restored = page.url() === original.url; }
+    catch { restored = false; }
+    finally { await page.unroute('**/*', guard); }
+  }
+  if (!restored) return { success: false, code: 'QA_NAVIGATION_RESTORE_FAILED', assertions: [], gaps: ['Source restoration could not be verified; inspect browser state before any further action.'] };
+  const inventory = await inspect(page);
+  const gaps = blocked.length ? ['Navigation requires a blocked write or unapproved dependency; no correctness verdict was inferred.'] : !changed ? ['The observed control did not produce a verifiable new state; no pass or confirmed defect was inferred.'] : [];
+  if (!restored) gaps.push('Source restoration was not verified.');
+  if (changed && destination.url === original.url) gaps.push('A distinct same-URL state was observed; deeper state-specific workflows require a separate scenario.');
+  return { assertions: changed && restored && !blocked.length ? [result('navigation', 'Observed navigation button changes a rendered state', true, 'A route or rendered content transition after an observed navigation control', { label: control.label, changed, restored })] : [],
+    inventory: destination && changed && !blocked.length ? destination : inventory, restoredInventory: inventory,
+    blockedRequests: blocked, ...(gaps.length ? { gaps } : {}), limitations: 'Observed read-only navigation and source restoration only. No submitted workflow, permissions test or same-URL state coverage is implied.' };
+}

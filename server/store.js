@@ -411,6 +411,7 @@ export function deleteSession(id, ownerUserId) {
 	const session = sessions.get(id);
 	if (!session || (ownerUserId && session.ownerUserId !== ownerUserId)) return false;
 	const record = live.get(id);
+	if (record) record.userStopRequested = true;
 	record?.controller?.abort();
 	record?.dispose?.();
 	live.delete(id);

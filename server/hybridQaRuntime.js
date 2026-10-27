@@ -14,6 +14,7 @@ import { hybridRecoveryProblem } from './hybridRecoveryGate.js';
 import { hybridRoutePolicy } from './hybridRoutePolicy.js';
 import { observeHybridAuthentication, needsHybridAuthQuestion, hasConfirmedAccess } from './hybridAuth.js';
 import { prepareHostDecision, hostCloseoutCalls } from './hybridContinuation.js';
+import { autonomous, ensureAutonomousCapacity, requestAutomaticCloseout, synchronizeAccessPhase } from './hybridAutonomy.js';
 
 const discovery = new Set(['browser_authenticate', 'browser_open', 'browser_snapshot', 'browser_get_url', 'browser_screenshot', 'browser_diagnostics', 'browser_tabs']);
 const forbidden = new Set(['security_check', 'browser_dialog', 'browser_media', 'browser_test_meeting_link']);
@@ -41,7 +42,7 @@ export function initializeHybridState(session, profile) {
   if (session.hybrid && session.hybrid.profileIdentity !== identity) throw new Error('Hybrid model/key identity changed. Requalify and create a new run; an in-progress run cannot switch models.');
   session.hybrid ??= { version: 1, profileIdentity: identity, sdkVersion: profile.sdkVersion,
     reasoner: { model: profile.reasoner.model, endpoint: profile.reasoner.endpoint }, classifier: { model: profile.classifier.model, endpoint: profile.classifier.endpoint },
-    budgets: structuredClone(profile.budgets), allowWithoutClassifier: profile.allowWithoutClassifier, continuationPolicyVersion: 1, status: 'ready', createdAt: Date.now() };
+    budgets: structuredClone(profile.budgets), allowWithoutClassifier: profile.allowWithoutClassifier, continuationPolicyVersion: profile.autonomy?.enabled ? 2 : 1, ...(profile.autonomy?.enabled ? { executionPolicy: { mode: 'autonomous', limits: structuredClone(profile.autonomy.limits), maxPages: profile.autonomy.maxPages } } : {}), status: 'ready', createdAt: Date.now() };
   // Budgets and degradation policy are pinned to the run, not changed by env on resume.
   profile.budgets = structuredClone(session.hybrid.budgets);
   profile.allowWithoutClassifier = session.hybrid.allowWithoutClassifier;
@@ -57,7 +58,7 @@ export function publicHybridState(session) {
   const problem = hybridRecoveryProblem(session);
   const depth = hybridRoutePolicy(state);
   const recovery = { ...state.recovery, ...(problem ? { resumeBlockedReason: problem.reason } : {}) };
-  return { version: state.version, status: state.status, reasoner: state.reasoner, classifier: state.classifier,
+  return { version: state.version, status: state.status, executionPolicy: state.executionPolicy, reasoner: state.reasoner, classifier: state.classifier,
     authentication: state.authentication ? { status: state.authentication.status, verificationMethod: state.authentication.verificationMethod, required: state.authentication.required, origin: state.authentication.origin, attemptedAt: state.authentication.attemptedAt } : undefined,
     currentScenarioId: state.currentScenarioId, viewport: state.viewport, counts: completion?.counts, coverage: completion?.coverage || 0,
     confirmedDefects: completion?.confirmedDefects || 0, unresolved: completion?.unresolved || 0,
@@ -127,6 +128,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
         let release;
         modelToolsReady = new Promise(resolve => { release = resolve; });
         try {
+        if (autonomous(state)) synchronizeAccessPhase(state);
         const closeout = hostCloseoutCalls(session);
         if (closeout) {
           closeoutCalls = closeout;
@@ -140,7 +142,20 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
         const page = record.bridge?.service?.activePage;
         const liveUrl = page && !page.isClosed() ? page.url() : record.bridge?.saved?.url;
         const projected = projectHybridMessages(clean, session, redact(session.id, hybridHostContext(session, liveUrl)));
-        const prepared = prepareHybridInference(projected, options, session);
+        let prepared = prepareHybridInference(projected, options, session);
+        if (autonomous(state) && prepared.closing && !state.budgetFinalizing) {
+          ensureAutonomousCapacity(state, { reasonerTokens: prepared.minimumReasonerCapacity, reasonerCalls: state.telemetry.reasoner.calls + 4, durationMs: state.telemetry.elapsedMs + 120000, browserActions: state.telemetry.browserActions + 36 });
+          Object.assign(profile.budgets, state.budgets);
+          prepared = prepareHybridInference(projected, options, session);
+          if (prepared.closing && !needsHybridAuthQuestion(session)) {
+            requestAutomaticCloseout(session, 'configured_execution_limit');
+            closeoutCalls = hostCloseoutCalls(session);
+            if (closeoutCalls) {
+              await checkpoint();
+              return (async function* () { try { for (const call of closeoutCalls) yield { type: 'tool_call', call }; } finally { release(true); } })();
+            }
+          }
+        }
         const decision = prepareHostDecision(session, { closing: prepared.closing });
         if (decision) {
           telemetry.event('host_question_requested', { kind: decision.kind, decisionId: decision.id });
@@ -166,7 +181,8 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
         try {
           signal?.throwIfAborted();
           if (state.pendingDecision && (tool.name !== 'ask_question' || digestEvidence(input) !== digestEvidence(state.pendingDecision.input))) throw new Error('A host decision is pending. Only its native user question may execute.');
-          const closeout = state.finishRequested && state.partialReportApproved?.decisionId;
+          if (autonomous(state) && tool.name === 'ask_question' && !state.pendingDecision && !needsHybridAuthQuestion(session)) return { success: false, code: 'QASE_CONTINUE_AUTOMATICALLY', error: 'Choose the next safe check using the supplied goal, access state and evidence. Do not ask about budgets, priorities or publishing gaps. Missing optional expectations are report limitations; missing credentials require the secure access workflow.' };
+          const closeout = state.finishRequested && (state.partialReportApproved?.decisionId || autonomous(state) && state.closeoutAuthorization?.source === 'pinned_run_policy');
           if (closeout) {
             // Match the exact host-issued call, not a model-supplied permission flag.
             const index = closeoutCalls.findIndex(call => call.toolName === tool.name && digestEvidence(call.input) === digestEvidence(input));
@@ -195,7 +211,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           if (!routes.access()) throw new Error('An approved route batch owns the browser; wait for its result.');
           if (state.budgetFinalizing) throw new Error('Browser exploration has stopped for budget closeout. Record remaining coverage gaps and publish the host-validated report.');
           if (['browser_qa_check', 'browser_qa_scenario'].includes(tool.name)) {
-            const categories = { navigation: ['navigation', 'broken_links'], anchors: ['navigation', 'broken_links'], disclosure: ['navigation'], tabs: ['navigation'], dismiss_overlay: ['navigation'], responsive: ['responsive'], forms: ['forms'], search: ['search'], media: ['media'], accessibility: ['accessibility'] };
+            const categories = { navigation: ['navigation', 'broken_links'], navigation_control: ['navigation'], anchors: ['navigation', 'broken_links'], disclosure: ['navigation'], tabs: ['navigation'], dismiss_overlay: ['navigation'], responsive: ['responsive'], forms: ['forms'], search: ['search'], media: ['media'], accessibility: ['accessibility'] };
             if (categories[input?.action] && !categories[input.action].some(category => state.scope.includes(category))) throw new Error('The fixed check is outside the selected test scope or selected scenario category.');
           }
           if (state.recovery?.verificationRequired && !['browser_open', 'browser_snapshot', 'browser_get_url'].includes(tool.name)) throw new HybridPause('HYBRID_VERIFY_STATE', 'Recovery requires a fresh browser open and snapshot before actions.');
@@ -203,7 +219,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           if (viewportProblem) { state.recovery = { ...state.recovery, verificationRequired: true }; throw new HybridPause('HYBRID_VIEWPORT_DRIFT', viewportProblem); }
           if (atomicScenario) {
             const scenario = ledger.scenario(input.scenario_id);
-            const compatible = { navigation: ['navigation', 'disclosure', 'anchors', 'tabs'], broken_links: ['navigation', 'anchors'], responsive: ['responsive'], forms: ['forms'], search: ['search'], media: ['media'], accessibility: ['accessibility'] };
+            const compatible = { navigation: ['navigation', 'navigation_control', 'disclosure', 'anchors', 'tabs'], broken_links: ['navigation', 'anchors'], responsive: ['responsive'], forms: ['forms'], search: ['search'], media: ['media'], accessibility: ['accessibility'] };
             if (!compatible[scenario.category]?.includes(input.action)) throw new Error('This action cannot establish the selected scenario category; use its matching fixed check or record a concrete coverage gap.');
             if (state.actions.some(action => action.status === 'uncertain' && action.toolName === 'browser_qa_check' && action.scenarioId === scenario.id)) throw new HybridPause('HYBRID_UNCERTAIN_ACTION', 'The scenario has an uncertain prior browser-check receipt. It cannot be automatically replayed. Record the blocker or choose a separately verified investigation.');
             if (state.currentScenarioId && state.currentScenarioId !== scenario.id) throw new Error('Close the active scenario before executing another.');
@@ -212,6 +228,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           }
           if (!discovery.has(tool.name) && !state.currentScenarioId && !(tool.name === 'browser_qa_check' && ['inspect', 'scroll'].includes(input?.action))) throw new Error('Start a validated QA scenario before this browser action.');
           const actionCost = tool.name === 'browser_authenticate' ? 5 : 1;
+          if (ensureAutonomousCapacity(state, { browserActions: state.telemetry.browserActions + actionCost })) Object.assign(profile.budgets, state.budgets);
           if (state.telemetry.browserActions + actionCost > profile.budgets.browserActions) throw new HybridPause('HYBRID_BROWSER_BUDGET', 'Browser action budget exhausted.');
           if (needsHybridAuthQuestion(session) && tool.name === 'browser_authenticate') throw new Error('Ask for secure test-account authorization before attempting sign-in.');
           if (forbidden.has(tool.name)) throw new Error('This tool requires a separate authorized workflow and is unavailable in hybrid public QA.');
@@ -225,8 +242,9 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           }
           await record.bridge?.authorizeHybridAction?.(tool.name, input);
           if (['browser_click', 'browser_fill', 'browser_type', 'browser_check', 'browser_select', 'browser_key'].includes(tool.name) && state.actions.some(action => action.status === 'uncertain' && action.toolName === tool.name && digestEvidence(action.input) === digestEvidence(redact(session.id, input)))) throw new HybridPause('HYBRID_UNCERTAIN_ACTION', 'This action has an uncertain prior receipt. Inspect state and choose a different verified step or record the blocker; it cannot be automatically replayed.');
-          const key = digestEvidence([tool.name, redact(session.id, input), state.currentScenarioId, state.lastObservedState || 'unobserved']);
-          if (mutates(tool.name)) {
+          const activeRoute = state.exploration?.batches?.findLast(batch => batch.status === 'running')?.currentRouteId;
+          const key = digestEvidence([tool.name, redact(session.id, input), state.currentScenarioId, activeRoute, state.lastObservedState || 'unobserved']);
+          if (mutates(tool.name) && !(tool.name === 'browser_qa_check' && input?.action === 'inspect')) {
             let repeated = state.repeatActions.find(item => item.key === key);
             if (!repeated) { repeated = { key, count: 0, toolName: tool.name }; state.repeatActions.push(repeated); if (state.repeatActions.length > 128) state.repeatActions.shift(); }
             if (++repeated.count >= 3) throw new HybridPause('HYBRID_REPLAN_REQUIRED', 'Repeated action produced no new observed state. Replan from a fresh snapshot.');
@@ -234,6 +252,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           state.telemetry.browserActions += actionCost;
           action = await ledger.beginAction(atomicScenario ? 'browser_qa_check' : tool.name, input);
           const result = await tool.run(tool.name === 'browser_diagnostics' ? { ...input, clear: true } : input, context);
+          if (result?.code === 'QA_NAVIGATION_RESTORE_FAILED') { state.recovery = { ...state.recovery, verificationRequired: true }; throw new HybridPause('QA_NAVIGATION_RESTORE_FAILED', 'Navigation restoration could not be verified. Inspect browser state; do not replay the action.'); }
           if (result?.code === 'QA_INPUT_RESTORE_FAILED') { state.recovery = { ...state.recovery, verificationRequired: true }; throw new HybridPause('QA_INPUT_RESTORE_FAILED', 'Live input restoration could not be verified. Progress is saved; do not replay input actions.'); }
           const restoreProblem = checkPrimaryViewport(session, record.bridge?.service?.activePage);
           if (restoreProblem) { state.recovery = { ...state.recovery, verificationRequired: true }; throw new HybridPause('HYBRID_VIEWPORT_DRIFT', restoreProblem); }
@@ -295,7 +314,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
       state.status = 'running';
       for (const action of state.actions.filter(item => item.status === 'running')) { action.status = 'uncertain'; state.recovery = { verificationRequired: true, uncertainActionId: action.id }; }
       if (state.recovery?.verificationRequired) telemetry.event('recovery_requested');
-      const remaining = profile.budgets.durationMs - state.telemetry.elapsedMs;
+      const remaining = (autonomous(state) ? state.executionPolicy.limits.durationMs : profile.budgets.durationMs) - state.telemetry.elapsedMs;
       if (!closeout) modelTimer = setTimeout(() => { record.hybridPause = new HybridPause('HYBRID_TIME_BUDGET', 'Execution time budget exhausted.'); record.controller?.abort(record.hybridPause); }, Math.max(1, remaining));
       signal.addEventListener('abort', () => telemetry.event('cancelled'), { once: true });
       await checkpoint();

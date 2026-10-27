@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ALL_TOOLS } from '@cleanslate/sdk';
 import { needsHybridAuthQuestion } from './hybridAuth.js';
 import { hybridCompletion } from './qaCompletionGate.js';
+import { autonomous, requestAutomaticCloseout } from './hybridAutonomy.js';
 import { hybridRoutePolicy } from './hybridRoutePolicy.js';
 
 const increments = { reasonerTokens: 300000, classifierTokens: 50000, reasonerCalls: 40, classifierCalls: 20, browserActions: 180, durationMs: 900000 };
@@ -26,7 +27,7 @@ export function continuationOffer(session) {
  * not spend model tokens or create another agent loop. */
 export function prepareHostDecision(session, { closing = false, forcedBudget = false } = {}) {
   const state = session.hybrid;
-  if (state.continuationPolicyVersion !== 1) return null;
+  if (![1, 2].includes(state.continuationPolicyVersion)) return null;
   if (state.pendingDecision && (!forcedBudget || state.pendingDecision.kind === 'budget')) return state.pendingDecision;
   let kind, question, options, offer;
   if (!forcedBudget && needsHybridAuthQuestion(session)) {
@@ -40,7 +41,8 @@ export function prepareHostDecision(session, { closing = false, forcedBudget = f
       question = `Authenticated testing needs test account credentials or an access recovery decision. Use the secure form, or continue public-only.${auth.blockedEndpoint ? ` The site attempted this authentication API; approve its exact URL only if trusted: ${auth.blockedEndpoint}` : ''}`;
       options = ['Provide an authorized test account securely', PUBLIC];
     }
-  } else if (closing && !state.partialReportApproved) {
+  } else if (autonomous(state)) return null;
+  else if (closing && !state.partialReportApproved) {
     kind = 'budget'; offer = continuationOffer(session);
     question = 'Testing is unfinished. Progress and exact usage are saved. Approve a bounded additional budget to continue the remaining tests, or explicitly choose a report with coverage gaps.';
     options = offer.available && offer.changes.reasonerTokens > 0 && offer.changes.durationMs > 0 ? [offer.label, FINISH] : [FINISH];
@@ -58,6 +60,10 @@ export function prepareHostDecision(session, { closing = false, forcedBudget = f
  * Use the supported SDK pending-question API, as the existing JEV controller
  * does. Unknown usage or action state is never reconciled by this approval. */
 export async function pauseForBudgetApproval(session, runtime, error) {
+  if (autonomous(session.hybrid)) {
+    if (['HYBRID_MODEL_BUDGET', 'HYBRID_TIME_BUDGET', 'HYBRID_BROWSER_BUDGET'].includes(error?.code) && requestAutomaticCloseout(session, error.code)) return { automatic: true };
+    return null;
+  }
   if (session.hybrid?.continuationPolicyVersion !== 1 || !['HYBRID_MODEL_BUDGET', 'HYBRID_TIME_BUDGET', 'HYBRID_BROWSER_BUDGET'].includes(error?.code) ||
       typeof runtime.agentSession?.pauseForQuestion !== 'function' || Object.values(session.hybrid.modelBudget?.roles || {}).some(role => role.legacyCalls > 0 || role.reservations?.some(item => ['uncertain', 'pending'].includes(item.status)))) return null;
   const decision = prepareHostDecision(session, { closing: true, forcedBudget: true });
@@ -108,11 +114,13 @@ export function applyHostDecision(session, answer) {
  * No model/browser request or extra budget is permitted in this path. */
 export function hostCloseoutCalls(session) {
   const state = session.hybrid;
-  if (state?.continuationPolicyVersion !== 1 || !state.finishRequested || !state.partialReportApproved?.decisionId || state.partialReportApproved.by !== session.ownerUserId) return null;
+  const approved = state?.continuationPolicyVersion === 1 && state.partialReportApproved?.decisionId && state.partialReportApproved.by === session.ownerUserId;
+  const automatic = autonomous(state) && state.closeoutAuthorization?.source === 'pinned_run_policy';
+  if (!state?.finishRequested || !(approved || automatic)) return null;
   if (Object.values(state.modelBudget?.roles || {}).some(role => role.legacyCalls > 0 || role.reservations?.some(item => ['pending', 'uncertain'].includes(item.status)))) throw new Error('Usage receipts must be reconciled before host closeout.');
   const unfinished = state.scenarios.filter(item => ['planned', 'running'].includes(item.status));
   if (unfinished.length) return unfinished.map(item => ({ id: `qase-close-${randomUUID()}`, toolName: 'qa_close_scenario', input: {
-    scenario_id: item.id, disposition: 'inconclusive', reason: 'The run owner explicitly requested a report with remaining coverage gaps. This scenario was not completed; saved assertions and observations remain available.'
+    scenario_id: item.id, disposition: 'inconclusive', reason: automatic ? `Automatic closeout: ${state.closeoutAuthorization.reason}. This scenario was not completed; saved assertions and observations remain available.` : 'The run owner explicitly requested a report with remaining coverage gaps. This scenario was not completed; saved assertions and observations remain available.'
   } }));
   const result = hybridCompletion(session);
   return [{ id: `qase-report-${randomUUID()}`, toolName: 'finish_qa_report', input: {

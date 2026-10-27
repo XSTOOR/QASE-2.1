@@ -16,7 +16,7 @@ import { storeSecrets, clearSecrets } from './secrets.js';
 function fixture(selectedTests = ['responsive']) {
   const session = { id: randomUUID(), mode: 'qa', qaExecutionMode: 'hybrid', selectedTests, targetUrl: 'https://fixture.test/', ownerUserId: 'owner',
     messages: [{ role: 'user', text: 'The page title must be Welcome.' }], findings: [], activities: [], todos: [], secretNames: [] };
-  const profile = hybridProfile({ apiKey: 'fixture-key' }, {});
+  const profile = hybridProfile({ apiKey: 'fixture-key' }, { QASE_HYBRID_AUTONOMOUS_COMPLETION: 'false' });
   const store = { async commit() {} };
   const record = { bridge: { async authorizeHybridAction() {} } };
   const runtime = createHybridRuntime({ session, runStore: store, profile, record });

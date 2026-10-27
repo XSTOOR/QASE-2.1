@@ -379,6 +379,7 @@ export function createPostgresApplicationServices({
 			}));
 			if (!deleted) return false;
 			const record = live.get(id);
+			if (record) record.userStopRequested = true;
 			record?.controller?.abort();
 			record?.dispose?.();
 			live.delete(id);

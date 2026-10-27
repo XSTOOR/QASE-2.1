@@ -4,6 +4,7 @@ import { digestEvidence } from './qaScenarioLedger.js';
 import { jevRouteCandidates, jevPrioritizeRoutes } from './jevQaRunner.js';
 import { scenarioSummary, assertionSummary } from './hybridSummaries.js';
 import { hybridRoutePolicy, HYBRID_ROUTE_CHECKS } from './hybridRoutePolicy.js';
+import { autonomous } from './hybridAutonomy.js';
 import { hasConfirmedAccess } from './hybridAuth.js';
 
 const supported = HYBRID_ROUTE_CHECKS;
@@ -40,6 +41,8 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
   }
   const stats = () => {
     const routes = observe();
+    const current = hybridRoutePolicy(state);
+    if (autonomous(state) && !state.budgetFinalizing && current.remainingSlots === 0 && current.pending > 0 && exploration.maxPages < state.executionPolicy.maxPages) exploration.maxPages = Math.min(state.executionPolicy.maxPages, exploration.maxPages + 8);
     return { ...hybridRoutePolicy(state),
       entryTested: routes.some(item => key(item.url) === key(session.targetUrl) && item.status === 'tested'),
       minimum: Math.min(exploration.minimumPages, routes.length) };
@@ -87,6 +90,19 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
       try {
         const result = await invoke('browser_qa_check', { action: 'disclosure', selector: control.selector, restore: true }, context.signal);
         trial.status = result.success === false || result.blockedRequests?.length || result.gaps?.length ? 'inconclusive' : 'executed'; trial.evidenceId = result.hostEvidenceId; trial.reason = result.error || result.gaps?.join(' ') || (result.blockedRequests?.length ? result.limitations : undefined);
+      } catch (error) { trial.status = 'interrupted'; throw error; }
+      finally { await checkpoint(); }
+    }
+    if (autonomous(state)) for (const control of (inventory.navigationControls || []).slice(0, 4)) {
+      context.signal?.throwIfAborted();
+      const id = digestEvidence([route.url, route.authenticationContext, 'navigation_control', control.selector]);
+      if (exploration.interactions.some(item => item.id === id)) continue;
+      const trial = { id, url: route.url, action: 'navigation_control', selector: control.selector, status: 'running' };
+      exploration.interactions.push(trial); await checkpoint();
+      try {
+        const result = await invoke('browser_qa_check', { action: 'navigation_control', selector: control.selector }, context.signal);
+        trial.status = result.success === false || result.gaps?.length ? 'inconclusive' : 'executed'; trial.evidenceId = result.hostEvidenceId; trial.reason = result.error || result.gaps?.join(' ');
+        observe();
       } catch (error) { trial.status = 'interrupted'; throw error; }
       finally { await checkpoint(); }
     }
@@ -158,8 +174,18 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
               const opened = await invoke('browser_open', { url: sourceUrl }, context.signal);
               if (opened.success === false || !opened.url || key(opened.url) !== key(sourceUrl)) { route.status = 'failed'; route.reason = 'Opening the observed route failed or redirected; no page coverage was inferred.'; await checkpoint(); continue; }
               let navigationEvidence, navigationScenario;
+              if (autonomous(state) && checks.includes('navigation')) {
+                let observed = await invoke('browser_qa_check', { action: 'inspect' }, context.signal);
+                for (let attempt = 0; attempt < 3; attempt++) {
+                  const overlay = observed.inventory?.overlays?.find(item => item.close);
+                  if (!overlay) break;
+                  navigationScenario ??= await start('navigation', route.url);
+                  observed = await invoke('browser_qa_check', { action: 'dismiss_overlay', selector: overlay.close.selector }, context.signal);
+                  if (observed.success === false) break;
+                }
+              }
               if (route.selector && navigationCategory) {
-                navigationScenario = suites ? await start(navigationCategory, route.url) : await scenarioFor(navigationCategory, route.url);
+                navigationScenario ??= suites ? await start(navigationCategory, route.url) : await scenarioFor(navigationCategory, route.url);
                 if (suites && route.prepareScroll) await invoke('browser_qa_check', { action: 'scroll' }, context.signal);
                 if (suites && route.reveal) {
                   const revealed = await invoke('browser_qa_check', { action: 'disclosure', selector: route.reveal.selector }, context.signal);

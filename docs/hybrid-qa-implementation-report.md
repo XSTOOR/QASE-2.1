@@ -2174,3 +2174,108 @@ Production defaults remain disabled; legacy/JEV-only, SQA and Founder regression
 coverage passed. No SDK internals, node_modules, production configuration or
 production data changed. No deployment or GitHub push was performed for this
 fix. Linux image/staging and opt-in database/integration checks remain required.
+
+
+## 30. Automatic completion, access-phase memory and live-model qualification
+
+Release `qase-2026-10-27-hybrid-production-r2`, UI `20261027-7`.
+
+The reported run `4bb78172-f7d5-42e6-be77-fc2fab3e4e74` asked for three
+budget extensions, then stopped on a generic coverage question. Saved state
+already recorded owner-confirmed access, while scenario reasons still asserted
+that no credentials or authentication permission had been supplied. The visible
+welcome-tour overlay and button-based platform navigation were not reliably
+handled by anchor-only route exploration. These were execution/context defects,
+not evidence that the platform was fully tested.
+
+Implemented:
+
+- New runs use automatic continuation policy 2. Native access questions remain
+  available, but model priority/continue/budget questions and generic host
+  coverage questions no longer interrupt the run. Missing optional copy/design
+  expectations remain report limitations. They are never inferred from the
+  target's own text or converted into passing tests.
+- `hybridAutonomy.js` pins an operator-defined lifetime envelope at creation.
+  Allocation grows within that envelope without user budget questions; exact
+  receipts, pending exposure, action counts and active execution time remain
+  cumulative. Explicit QASE_HYBRID_* limits override the automatic defaults.
+  Defaults cap exposure at 2M Opus / 500k JEV tokens, 200/100 calls, 1,000 browser
+  tool actions and 60 active minutes. Observed page attempts expand to 40 by
+  default, configurable to 80. No unlimited execution or spending is enabled.
+- A known configured-limit stop finishes through the existing native SDK ledger
+  and report tools without another paid request or synthetic user approval.
+  Bounded prose-only continuations can also reach deterministic closeout.
+  Missing usage receipts, persistence failures, uncertain actions and failed
+  navigation restoration still stop safely; user Stop takes precedence even
+  at the automatic closeout boundary. Local/distributed service cancellation
+  and deletion preserve that intent.
+- Rolling inference context removes only old complete native call/result pairs.
+  All human requirements, SDK system policies, recent observations, unmatched
+  calls and original durable transcripts remain available. An access-phase
+  transition archives stale anonymous limitations as history and reopens
+  unexecuted relevant checks. Current host access is authoritative over stale
+  assistant claims; no cross-run credentials or permissions are reused.
+- Guarded onboarding dismissal supports observed Close/Dismiss controls and
+  narrowly identified welcome/tour Skip buttons, including fixed overlays that
+  omit dialog semantics. Navigation-region buttons can reveal observed routes;
+  selectors are freshly validated, writes are blocked, the source is restored,
+  and a failed restore requires state verification. Same-URL transitions remain
+  explicitly limited rather than implying their entire workflow was tested.
+- The loop guard now distinguishes host-owned route executions. Opening the
+  same shared source page to follow different validated links is legitimate
+  work. Repeated mutations within one execution still stop, while read-only
+  inspect does not count as a repeated mutation.
+- Existing runs retain their original pinned policy. The prior interactive
+  behavior remains available for new runs through
+  QASE_HYBRID_AUTONOMOUS_COMPLETION=false. Existing reports are unchanged. New
+  UI status explains automatic completion without promising exhaustive coverage.
+  Release metadata now consistently identifies r2 and UI 20261027-7.
+
+Actual validation:
+
+- Full repository verification: **2,070 passed, 26 skipped, zero failures or cancellations**, 2,096 tests, 31 suites, approximately 139 seconds. Syntax, ignore rules and high-confidence credential scan passed.
+- Installed SDK/browser fixture: onboarding Skip, button-only route discovery,
+  real field filling/negative cases, one reproduced seeded finding and honest
+  final publication, with zero budget/coverage questions or writes. No separate
+  autonomous loop or SDK internals were introduced.
+- Real configured Opus 4.7 and JEV 1.13 canary on the repository's disposable
+  six-page fixture passed: **6/6 pages, all 9 seeded defect groups detected,
+  9 evidence-linked findings, zero unexpected groups, zero writes and zero
+  questions**. Seven category suites and 65 actual SDK browser-tool calls
+  completed in approximately **168 seconds**. This is fixture qualification,
+  not a whole-platform accuracy or production-performance guarantee.
+- Exact canary receipts: Opus 11 calls, 182,209 input / 7,930 output tokens;
+  JEV 11 calls, 11,868 input / 1,448 output tokens. Both roles ended with zero
+  reserved tokens. Only JEV reported cost (0.000498456); no overall cost was
+  estimated. The canary used explicit caps of 600k Opus tokens, 20 calls per
+  role and five active minutes, with no customer login or production changes.
+- An earlier live canary completed only 3/6 pages and failed qualification.
+  It exposed the shared-source repeated-action false positive, which was fixed
+  and covered by a dedicated regression before the successful rerun. In the
+  successful run, malformed tool arguments and an unreproduced finding attempt
+  were rejected; the model recovered and only validated evidence was published.
+- The first broad regression run exposed differences between automatic defaults
+  and fixtures intended to preserve the interactive policy, plus a legacy
+  budget-object synchronization regression. Those fixtures now explicitly
+  select interactive mode, and synchronization preserves its configured limits.
+  Failing attempts were not counted as passes. Focused depth/rollback checks
+  passed 48/48 and final model/UI/continuation contracts passed 67/67 before
+  the additional loop-guard regression.
+- Actual dashboard/SSE checks passed with zero page errors, preserving secure
+  credential consent, failed-form recovery, stable preview, root/refresh behavior
+  and explicit Results navigation. Existing interactive decisions remain usable.
+
+Logs: `/private/tmp/qase-autonomy-release-verify.log`,
+`/private/tmp/qase-autonomy-live-depth-final.log`,
+`/private/tmp/qase-autonomy-native.log`,
+`/private/tmp/qase-autonomy-depth-final.log`,
+`/private/tmp/qase-autonomy-dashboard.log`.
+
+Limitations/readiness: secure credentials, SSO/MFA, unsupported authorization,
+missing authoritative requirements, uncertain state and unavailable external
+services cannot be solved by unlimited retries or fabricated results. This
+release finishes the evidence-backed run and records remaining scope honestly.
+Production hybrid remains disabled by default; Linux image/staging and opt-in
+PostgreSQL/integration checks still require the deployment host. The new release
+was not deployed to qase.drytis.com during this work. Use a fresh run to select
+the automatic policy; saved interactive runs are not silently given new limits.

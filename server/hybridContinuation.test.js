@@ -10,7 +10,7 @@ import { hydrateHybrid, hybridStorage } from './hybridPersistence.js';
 
 function fixture() {
   const session = { id: randomUUID(), mode: 'qa', qaExecutionMode: 'hybrid', ownerUserId: 'owner', targetUrl: 'https://fixture.test/', selectedTests: ['responsive'], messages: [], findings: [], todos: [], secretNames: [] };
-  const profile = hybridProfile({ apiKey: 'fixture-key' }, {}), record = {};
+  const profile = hybridProfile({ apiKey: 'fixture-key' }, { QASE_HYBRID_AUTONOMOUS_COMPLETION: 'false' }), record = {};
   const runtime = createHybridRuntime({ session, profile, record, runStore: { async commit() {} } });
   return { session, runtime, profile, record };
 }

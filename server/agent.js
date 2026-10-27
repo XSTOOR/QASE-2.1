@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { availableParallelism, cpus, totalmem } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { ALL_TOOLS, CleanSlateNodeAgentRuntime, createNodeProviderConfiguration } from '@cleanslate/sdk';
+import { autonomous, requestAutomaticCloseout } from './hybridAutonomy.js';
 import { pauseForBudgetApproval } from './hybridContinuation.js';
 import { chromium } from 'playwright';
 import { attachBrowserBridge } from './browserBridge.js';
@@ -776,6 +777,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	// itself lives on the record (wired in ensureRuntime at the single usage
 	// funnel) so it survives runTurn re-entry across automatic continuations.
 	record.emptyLoopAbort = false;
+	record.userStopRequested = false;
 	bridge.setAbortSignal?.(controller.signal);
 	clearTimeout(record.idleTimer);
 	record.idleTimer = undefined;
@@ -802,6 +804,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	let thinking;
 	let retryAfterTimeout = false;
 	let continueIncompleteRun = false;
+	let automaticCloseout = false;
 	let handoffToFounderSynthesis = false;
 	let successfulFinalizer = false;
 
@@ -1189,7 +1192,10 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		// suspended it. Only the runtime knows which.
 		const pending = runtime.getPendingQuestion();
 		const budgetDecision = controller.signal.aborted && record.hybrid && !successfulFinalizer ? await pauseForBudgetApproval(session, runtime, record.hybridPause) : null;
-		if (budgetDecision) {
+		if (budgetDecision?.automatic && !record.userStopRequested) {
+			automaticCloseout = true; continueIncompleteRun = true; record.hybridPause = undefined;
+			await runStore.setStatus(session, 'running', 'Finalizing the executed checks and recording remaining limitations.');
+		} else if (budgetDecision && !budgetDecision.automatic) {
 			session.pendingQuestion = { toolCallId: budgetDecision.id, ...normaliseQuestion(budgetDecision.input), hybridDecision: 'budget', credentialLike: false };
 			await runStore.commit(session, 'question', { question: session.pendingQuestion });
 			await runStore.setStatus(session, 'awaiting_input', 'Execution budget reached. Approve continuation or choose an explicit gap report.');
@@ -1236,6 +1242,9 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		} else if (record.hybrid && incompleteAttempt < INCOMPLETE_RUN_CONTINUATIONS && !record.hybridPause) {
 			continueIncompleteRun = true;
 			await runStore.setStatus(session, 'running', 'Continuing the remaining QA scenarios from saved evidence.');
+		} else if (record.hybrid && !record.hybridPause && autonomous(session.hybrid) && requestAutomaticCloseout(session, 'bounded_no_progress')) {
+			continueIncompleteRun = true;
+			await runStore.setStatus(session, 'running', 'Finishing the saved test report.');
 		} else if (record.hybrid) {
 			await record.hybrid.endTurn('paused');
 			persistRunSnapshot(session.id, runtime.getSessionSnapshot(), session.ownerUserId);
@@ -1265,7 +1274,10 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		if (successfulFinalizer) {
 			await completeRun();
 			deleteRunSnapshot(session.id);
-		} else if (budgetDecision) {
+		} else if (budgetDecision?.automatic && !record.userStopRequested) {
+			automaticCloseout = true; continueIncompleteRun = true; record.hybridPause = undefined;
+			await runStore.setStatus(session, 'running', 'Finalizing the executed checks and recording remaining limitations.');
+		} else if (budgetDecision && !budgetDecision.automatic) {
 			session.pendingQuestion = { toolCallId: budgetDecision.id, ...normaliseQuestion(budgetDecision.input), hybridDecision: 'budget', credentialLike: false };
 			await runStore.commit(session, 'question', { question: session.pendingQuestion });
 			await runStore.setStatus(session, 'awaiting_input', 'Execution budget reached. Approve continuation or choose an explicit gap report.');
@@ -1306,7 +1318,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	} finally {
 		closeThinking();
 		if (record.hybrid) {
-			const status = successfulFinalizer ? 'done' : session.status === 'awaiting_input' && session.hybrid.pendingDecision ? 'awaiting_input' : controller.signal.aborted ? (record.hybridPause ? 'paused' : 'cancelled') : session.status === 'awaiting_input' ? 'awaiting_input' : continueIncompleteRun ? 'running' : 'paused';
+			const status = successfulFinalizer ? 'done' : automaticCloseout ? 'running' : session.status === 'awaiting_input' && session.hybrid.pendingDecision ? 'awaiting_input' : controller.signal.aborted ? (record.hybridPause ? 'paused' : 'cancelled') : session.status === 'awaiting_input' ? 'awaiting_input' : continueIncompleteRun ? 'running' : 'paused';
 			await record.hybrid.endTurn(status);
 			if (status !== 'done') persistRunSnapshot(session.id, runtime.getSessionSnapshot(), session.ownerUserId);
 		}
@@ -1322,7 +1334,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		openActivities.clear();
 		// Retain cancellation and the running lock through an automatic retry or
 		// phase handoff. Stop must remain effective while the model is backing off.
-		const continuing = !controller.signal.aborted && (continueIncompleteRun || retryAfterTimeout);
+		const continuing = (!controller.signal.aborted || automaticCloseout) && (continueIncompleteRun || retryAfterTimeout);
 		// Capture while the device session/attestation still belongs to this turn.
 		await captureRuntimeFacts(session, bridge, record);
 		if (!continuing) {
@@ -1391,13 +1403,14 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		clearSecrets(session.id);
 		session.secretNames = [];
 	};
-	if (controller.signal.aborted) {
+	if (controller.signal.aborted && !(automaticCloseout && !record.userStopRequested)) {
 		// A host budget handoff is waiting for the owner, not a user stop.
 		// Preserve its native pending question and vault for the same run.
 		if (session.status !== 'awaiting_input' || session.hybrid?.pendingDecision?.kind !== 'budget') await stoppedBeforeContinuation();
 		return;
 	}
 
+	if (record.userStopRequested) { await stoppedBeforeContinuation(); return; }
 	if (continueIncompleteRun) {
 		const completionInstruction = session.mode === 'founder'
 			? 'Continue the unfinished Founder review now. Read the current Progress section, immediately complete the remaining route/surface inventory, representative workflow, diagnostics, and evidence-backed category observations without repeating finished work. Ask for critical founder context or an authenticated/public-only scope decision only when genuinely required. Then call finish_founder_review with the complete evidence-linked strategy; never invent customer, analytics, market, or revenue facts.'

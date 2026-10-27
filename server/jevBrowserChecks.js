@@ -3,12 +3,12 @@
  * submitted and no credentials, purchases or persistent records are created.
  */
 import { runJevAccessibility } from './jevAccessibility.js';
-import { runJevAnchors, runJevTabs, isolated } from './jevInteractions.js';
+import { runJevAnchors, runJevTabs, runJevNavigationControl, isolated } from './jevInteractions.js';
 import { responsiveWidths } from './qaViewport.js';
 import { settleQaControl } from './qaRenderReadiness.js';
 import { runLiveFormChecks } from './qaLiveForms.js';
 
-export const JEV_BROWSER_CHECKS = ['inspect', 'navigation', 'responsive', 'forms', 'search', 'media', 'disclosure', 'accessibility', 'dismiss_overlay', 'anchors', 'tabs', 'scroll'];
+export const JEV_BROWSER_CHECKS = ['inspect', 'navigation', 'responsive', 'forms', 'search', 'media', 'disclosure', 'accessibility', 'dismiss_overlay', 'anchors', 'tabs', 'scroll', 'navigation_control'];
 const risky = /delete|remove|logout|log.?out|sign.?out|reset|cancel|purchase|checkout|payment|subscribe|send|invite|publish|deploy|save|create|destroy|revoke|confirm|unsubscribe/i;
 const trim = value => String(value ?? '').slice(0, 1500);
 const sameUrl = (a, b) => new URL(a).href.replace(/\/$/, '') === new URL(b).href.replace(/\/$/, '');
@@ -30,7 +30,7 @@ export async function settleJevPage(page) {
   // busy state to clear; callers still record the observation if it times out.
   await page.waitForFunction(() => {
     const text = document.body?.innerText.trim() || '';
-    const loadingShell = /^(loading|please wait|loading[.\s…]+|loading (page|application|app)[.\s…]*)$/i.test(text);
+    const loadingShell = /^(loading|please wait|loading[.\s…]+|loading (page|application|app)[.\s…]*|redirecting[.\s…]*)$/i.test(text);
     const busy = [...document.querySelectorAll('[aria-busy="true"]')].some(element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
     // A download/meter/demo progressbar on an otherwise rendered page is not
     // a loading shell and cannot impose a repeated three-second wait.
@@ -72,11 +72,26 @@ export async function inspectJevPage(page) {
     const auth = [...document.querySelectorAll('input[type="password"]')].filter(visible).length > 0 || links.some(link => /\b(log ?in|sign ?in|sign ?up)\b/i.test(link.label));
     const disclosures = [...document.querySelectorAll('summary,button,[role="button"]')].filter(visible).filter(element => element.getAttribute('role') !== 'tab' && !element.disabled && !element.form && element.getAttribute('aria-disabled') !== 'true').filter(element => /^(open |close |toggle |show |hide )?(menu|navigation|details|more|faq|help|filters?|accordion)\b/i.test(label(element)) || element.tagName === 'SUMMARY' || (element.hasAttribute('aria-controls') && element.hasAttribute('aria-expanded')) || (element.closest('[class*="faq" i],[class*="accordion" i]') && /\?/.test(label(element)))).map(element => ({ selector: selector(element), label: label(element) }));
     const tabs = [...document.querySelectorAll('button[role="tab"],[role="tablist"] [role="tab"]')].filter(visible).filter(element => !element.form && !element.hasAttribute('href') && !element.disabled && element.getAttribute('aria-disabled') !== 'true').map(element => ({ selector: selector(element), label: label(element), selected: element.getAttribute('aria-selected') }));
-    const overlays = [...document.querySelectorAll('[role="dialog"],dialog[open],[aria-modal="true"]')].filter(visible).map(dialog => {
-      const close = [...dialog.querySelectorAll('button,[role="button"]')].find(element => visible(element) && !element.disabled && !element.form && /^(close|dismiss)(?:\b|$)/i.test(label(element)));
+    const dialogs = [...document.querySelectorAll('[role="dialog"],dialog[open],[aria-modal="true"]')].filter(visible);
+    // Some onboarding overlays omit dialog semantics. Recognize only a
+    // centered welcome/tour container with an exact Skip button in a fixed layer.
+    for (const button of [...document.querySelectorAll('button')].filter(visible).filter(element => !element.form && !element.disabled && /^skip(?: (?:the )?tour)?$/i.test(label(element)))) {
+      for (let parent = button.parentElement, depth = 0; parent && depth < 5; parent = parent.parentElement, depth++) {
+        const heading = parent.querySelector('h1,h2,h3,[role="heading"]'), box = parent.getBoundingClientRect();
+        if (!/^(?:welcome|quick tour|getting started|onboarding)/i.test(heading ? label(heading) : label(parent)) || box.width < 150 || box.width > innerWidth * .95 || box.height < 80) continue;
+        let fixed = false;
+        for (let layer = parent, index = 0; layer && index < 5; layer = layer.parentElement, index++) if (getComputedStyle(layer).position === 'fixed') fixed = true;
+        if (fixed && !dialogs.some(dialog => dialog.contains(button))) dialogs.push(parent);
+        break;
+      }
+    }
+    const overlays = dialogs.map(dialog => {
+      const onboarding = /welcome|quick tour|getting started|onboarding/i.test(label(dialog));
+      const close = [...dialog.querySelectorAll('button,[role="button"]')].find(element => visible(element) && !element.disabled && !element.form && (/^(close|dismiss)(?:\b|$)/i.test(label(element)) || onboarding && /^skip(?: (?:the )?tour)?$/i.test(label(element))));
       return { selector: selector(dialog), title: label(dialog).slice(0, 120), close: close ? { selector: selector(close), label: label(close) } : null };
     });
-    return { url: location.href, title: document.title, text: document.body.innerText.slice(0, 6000), viewport: { width: innerWidth, height: innerHeight }, links: links.slice(0, 100), totalLinks: links.length, forms, fieldCount: [...document.querySelectorAll('input:not([type="hidden"]),select,textarea')].filter(visible).length, search, auth, authForm: [...document.querySelectorAll('input[type="password"]')].some(visible), disclosures: disclosures.slice(0, 24), totalDisclosures: disclosures.length, tabs: tabs.slice(0, 24), overlays, images: document.images.length, players: document.querySelectorAll('audio,video').length };
+    const navigationControls = [...document.querySelectorAll('nav button,[role="navigation"] button,aside button,nav [role="button"],[role="navigation"] [role="button"]')].filter(visible).filter(element => !element.form && !element.disabled && element.getAttribute('aria-disabled') !== 'true' && !element.getAttribute('aria-current') && element.getAttribute('aria-selected') !== 'true' && /^(?:home|dashboard|projects?|meetings?|chat|settings|search|documents?|docs|teams?|overview|activity|reports?)$/i.test(label(element))).map(element => ({ selector: selector(element), label: label(element) }));
+    return { url: location.href, title: document.title, text: document.body.innerText.slice(0, 6000), viewport: { width: innerWidth, height: innerHeight }, links: links.slice(0, 100), totalLinks: links.length, forms, fieldCount: [...document.querySelectorAll('input:not([type="hidden"]),select,textarea')].filter(visible).length, search, auth, authForm: [...document.querySelectorAll('input[type="password"]')].some(visible), disclosures: disclosures.slice(0, 24), totalDisclosures: disclosures.length, tabs: tabs.slice(0, 24), overlays, navigationControls: navigationControls.slice(0, 24), totalNavigationControls: navigationControls.length, images: document.images.length, players: document.querySelectorAll('audio,video').length };
   });
   return inventory;
 }
@@ -492,6 +507,7 @@ export async function runJevBrowserCheck(page, input, { signal, authorizeControl
       case 'dismiss_overlay': result = await dismissOverlay(page, input); break;
       case 'anchors': result = await runJevAnchors(page, { inspect: inspectJevPage, settle: settleJevPage, prepare: prepareJevControl, authorizeControl, onAction }); break;
       case 'tabs': result = await runJevTabs(page, { inspect: inspectJevPage, settle: settleJevPage, prepare: prepareJevControl, authorizeControl, onAction }); break;
+      case 'navigation_control': result = await runJevNavigationControl(page, input, { inspect: inspectJevPage, settle: settleJevPage, authorizeControl, onAction }); break;
       case 'scroll': result = await exploreScroll(page, signal); break;
     }
     signal?.throwIfAborted();

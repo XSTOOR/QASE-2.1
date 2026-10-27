@@ -72,7 +72,7 @@ test('compact hybrid brief provides current scope, safe workflow, exact navigati
   assert.match(context, /300000 total maximum/); assert.match(context, /navigation REQUIRES selector/);
   assert.match(context, /never permissions/); assert.match(context, /No assertions means blocked\/inconclusive/);
   assert.doesNotMatch(context, /# Meeting links and microphone workflows/);
-  assert.ok(context.length < 6500);
+  assert.ok(context.length < 7600);
 });
 
 test('navigation documentation and execution agree; invalid inputs never reach the browser', async () => {

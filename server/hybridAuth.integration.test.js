@@ -49,6 +49,7 @@ test('installed CleanSlate asks, pauses, resumes through secure host grant and p
     async updateActivity(s, id, value) { Object.assign(s.activities.find(item => item.id === id), value); }, async addMessage(s, item) { s.messages.push(item); } };
   await withUserConfiguration(settings, async () => {}, async () => {
     const record = await ensureRuntime(session, store);
+    session.hybrid.continuationPolicyVersion = 1; // Explicit interactive lifecycle rollback fixture.
     session.hybrid.partialReportApproved = { by: session.ownerUserId, at: Date.now() };
     t.signal.addEventListener('abort', () => record.controller?.abort(new Error('Owned fixture timeout')), { once: true });
     record.hybrid.router.classifier = async (_state, questions) => Object.fromEntries(Object.keys(questions).map(key => [key, { choice: key.startsWith('c') ? 'rendering' : 'investigate' }]));

@@ -55,6 +55,7 @@ export function renderHybridQa(session, document) {
     `${model.counts.passed || 0} passed · ${model.counts.failed || 0} failed · ${model.counts.blocked || 0} blocked · ${model.counts.inconclusive || 0} inconclusive · ${(model.counts.planned || 0) + (model.counts.not_executed || 0)} unexecuted`,
     `Recorded scenario coverage: ${Math.round(Math.max(0, Math.min(1, model.coverage)) * 100)}% · ${model.confirmedDefects} confirmed defects · ${model.unresolved} unresolved observations`
   ];
+  if (model.executionPolicy?.mode === 'autonomous') rows.push('Automatic testing: Qase uses the supplied context and continues without budget or coverage approval prompts. Secure access can still require your input. Remaining limitations are included in the final report.');
   const total = Object.values(model.counts).reduce((sum, value) => sum + value, 0);
   const resolved = ['passed', 'failed', 'blocked', 'inconclusive', 'not_executed'].reduce((sum, status) => sum + (model.counts[status] || 0), 0);
   if (total) rows.push(`Plan outcomes recorded: ${resolved}/${total}. Blocked, inconclusive and unexecuted outcomes close planning items but do not increase verified coverage.`);
