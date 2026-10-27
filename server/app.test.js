@@ -455,6 +455,16 @@ test('standard QA run creation accepts a catalog-validated test selection', asyn
 	assert.match((await body(duplicate)).error, /Duplicate standard test/);
 });
 
+test('hybrid creation is disabled by default and cannot be enabled by request-body flags', async t => {
+  const old = process.env.QASE_HYBRID_QA_ENABLED; delete process.env.QASE_HYBRID_QA_ENABLED;
+  t.after(() => { if (old === undefined) delete process.env.QASE_HYBRID_QA_ENABLED; else process.env.QASE_HYBRID_QA_ENABLED = old; });
+  const fixture = await startFixture(); t.after(() => fixture.close());
+  const response = await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'hybrid', enabled: true, capabilities: { qualified: true } } });
+  assert.equal(response.status, 400); assert.match((await body(response)).error, /disabled/);
+  assert.equal((await body(await fixture.request('/api/sessions'))).length, 0);
+  assert.equal((await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'legacy' } })).status, 201);
+});
+
 test('standard QA run creation persists a whitelisted coverage scope selection', async t => {
 	const fixture = await startFixture();
 	t.after(() => fixture.close());
@@ -1035,6 +1045,30 @@ test('runtime initialization failures retain the user message and return the est
 	assert.equal(session.status, 'error');
 });
 
+test('unreconciled hybrid usage rejects resume before appending messages or starting runtime/browser work', async t => {
+	const fixture = await startFixture(); t.after(() => fixture.close());
+	const session = fixture.services.runs.create();
+	Object.assign(session, { mode: 'qa', qaExecutionMode: 'hybrid', status: 'interrupted', targetUrl: 'https://example.test/',
+		hybrid: { modelBudget: { roles: { classifier: { legacyCalls: 0, reservations: [{ id: 'unknown', status: 'uncertain', tokens: 123 }] } } } } });
+	const before = JSON.stringify(session);
+	const response = await fixture.request(`/api/sessions/${session.id}/message`, { method: 'POST', json: { text: 'continue' } });
+	assert.equal(response.status, 409); assert.equal((await body(response)).code, 'HYBRID_USAGE_UNRESOLVED');
+	assert.equal(fixture.state.ensureCalls.length, 0); assert.equal(fixture.state.runCalls.length, 0);
+	assert.equal(JSON.stringify(session), before);
+});
+
+test('a completed hybrid budget closeout does not spend another model call republishing the same report', async t => {
+	const fixture = await startFixture(); t.after(() => fixture.close());
+	const session = fixture.services.runs.create();
+	Object.assign(session, { mode: 'qa', qaExecutionMode: 'hybrid', status: 'done', report: { verdict: 'partial', summary: 'Preserve this report.' }, hybrid: { budgetFinalizing: true } });
+	const before = JSON.stringify(session);
+	const response = await fixture.request(`/api/sessions/${session.id}/message`, { method: 'POST', json: { text: 'complete the remaining parts' } });
+	assert.equal(response.status, 409); const result = await body(response);
+	assert.equal(result.code, 'HYBRID_COVERAGE_CLOSED'); assert.match(result.error, /Start a new test/);
+	assert.equal(fixture.state.ensureCalls.length, 0); assert.equal(fixture.state.runCalls.length, 0);
+	assert.equal(JSON.stringify(session), before);
+});
+
 test('answers and credentials require pending input and never expose raw credential values', async t => {
 	const fixture = await startFixture();
 	t.after(() => fixture.close());
@@ -1067,6 +1101,25 @@ test('answers and credentials require pending input and never expose raw credent
 	assert.match(resume, /\{\{QA_PASSWORD\}\}/);
 	assert.equal(resume.includes(rawSecret), false);
 	await fixture.whenIdle();
+});
+
+test('hybrid secure access requires consent, stores no values in transcript, and remembers a declined scope', async t => {
+  const fixture = await startFixture(); t.after(() => fixture.close());
+  const session = fixture.services.runs.create();
+  Object.assign(session, { mode: 'qa', qaExecutionMode: 'hybrid', targetUrl: 'https://example.test/', hybrid: { authentication: { status: 'unrequested', required: true } }, pendingQuestion: { question: 'Test account credentials?', credentialLike: true } });
+  const fields = { QA_USERNAME: 'test@example.invalid', QA_PASSWORD: 'fixture-only-password' };
+  assert.equal((await fixture.request(`/api/sessions/${session.id}/credentials`, { method: 'POST', json: { fields } })).status, 400);
+  assert.equal((await fixture.services.secrets.names(session.id)).length, 0);
+  assert.ok(session.pendingQuestion);
+  assert.equal((await fixture.request(`/api/sessions/${session.id}/credentials`, { method: 'POST', json: { fields, authorizeLogin: true, expectedUrl: 'https://outside.test/' } })).status, 400);
+  const result = await fixture.request(`/api/sessions/${session.id}/credentials`, { method: 'POST', json: { fields, authorizeLogin: true, expectedUrl: 'https://example.test/dashboard' } });
+  assert.equal(result.status, 200); await fixture.whenIdle();
+  assert.equal(session.hybrid.authentication.status, 'approved'); assert.equal(session.hybrid.authentication.maxSubmissions, 1);
+  assert.match(fixture.state.runCalls.at(-1).options.resumeAnswer, /browser_authenticate/);
+  assert.ok(!JSON.stringify({ session, events: fixture.state.events, calls: fixture.state.runCalls }).includes(fields.QA_PASSWORD));
+  session.pendingQuestion = { credentialLike: true };
+  assert.equal((await fixture.request(`/api/sessions/${session.id}/answer`, { method: 'POST', json: { answer: 'Continue public-only. No credentials.' } })).status, 200);
+  await fixture.whenIdle(); assert.equal(session.hybrid.authentication.status, 'declined');
 });
 
 test('Founder credential refusal persists a public-only boundary and cannot re-open the login gate', async t => {

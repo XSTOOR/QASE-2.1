@@ -167,7 +167,8 @@ export function createLocalSecretVault(options = {}) {
 	}
 
 	function redactValue(sessionId, value) {
-		const secrets = [...vaultFor(sessionId).values()].filter(secret => secret.length >= 3);
+		const secrets = [...new Set([...vaultFor(sessionId).values()].filter(secret => secret.length >= 3)
+			.flatMap(secret => [secret, encodeURIComponent(secret), new URLSearchParams({ value: secret }).toString().slice(6)]))].sort((a, b) => b.length - a.length);
 		if (secrets.length === 0) return value;
 		const scrubString = text => secrets.reduce(
 			(output, secret) => output.includes(secret) ? output.split(secret).join(MASK) : output,

@@ -18,6 +18,7 @@ function restore(target, snapshot) {
 }
 
 function createSession(title, now, options = {}) {
+	if (options.qaExecutionMode !== undefined && !['legacy', 'hybrid'].includes(options.qaExecutionMode)) throw new TypeError('Unknown QA execution mode.');
 	const timestamp = now();
 	const session = {
 		id: options.id ?? randomUUID(),
@@ -42,6 +43,7 @@ function createSession(title, now, options = {}) {
 		secretNames: [],
 		/** Selected standard QA test ids; undefined = full coverage. */
 		selectedTests: options.selectedTests ? [...options.selectedTests] : undefined,
+		qaExecutionMode: options.qaExecutionMode === 'hybrid' ? 'hybrid' : undefined,
 		/** Security testing authorization for runs with security checks. */
 		securityAuthorization: options.securityAuthorization
 			? structuredClone(options.securityAuthorization)

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reconcileLateRuntimeReport } from './runtimeReportReconciliation.js';
+import { reconcileLateRuntimeReport, reconcileJevCoverageReport } from './runtimeReportReconciliation.js';
 const blocker = 'Blocked: Runtime identity mismatch with the selected environment: runtime identity not observable (no user agent reported). (failed checks: runtimeConnected, browserVerified, osVerified, identityMatchesSelection)';
 function session() {
 	const ts = Date.now();
@@ -31,4 +31,39 @@ test('uncertain or unrelated evidence never upgrades an old report', () => {
 });
 test('severe findings still force fail during a legitimate reconciliation', () => {
 	const severe = session(); severe.findings.push({ severity: 'high' }); assert.equal(reconcileLateRuntimeReport(severe).verdict, 'fail');
+});
+
+function oldJevReport() {
+	const value = session();
+	value.jev = { version: 1, model: 'jev-1.13', decisions: [{ id: 'actual-decision' }] };
+	value.selectedTests = ['navigation', 'console_health', 'forms'];
+	value.activities.push({ toolName: 'browser_diagnostics', status: 'done' });
+	value.report = { verdict: 'blocked', summary: 'JEV Decisions reviewed 1 page observations.', covered: ['Observed https://site.test/ — Test'], notCovered: ['forms: partial or not tested; the JEV controller did not execute the complete required workflow.'] };
+	value.activities[1].input = { verdict: 'blocked', not_covered: [...value.report.notCovered] };
+	return value;
+}
+test('known JEV blanket blocker becomes partial with its original report and gaps preserved', () => {
+	const original = oldJevReport();
+	const corrected = reconcileJevCoverageReport(original);
+	assert.equal(corrected.verdict, 'partial');
+	assert.deepEqual(corrected.notCovered, original.report.notCovered);
+	assert.deepEqual(corrected.coverageCorrection.originalReport, original.report);
+	assert.equal(original.report.verdict, 'blocked');
+});
+test('JEV correction never erases a real blocker, missing evidence or runtime mismatch', () => {
+	for (const mutate of [
+		s => s.report.notCovered.push('Blocked: Runtime mismatch'),
+		s => { s.runtimeFacts = {}; },
+		s => { s.environmentSnapshot.browserCode = 'firefox'; },
+		s => { s.activities[0].status = 'failed'; },
+		s => { s.todos[0].status = 'in_progress'; },
+		s => { s.mode = 'sqa'; },
+		s => { s.jev.decisions = []; },
+		s => { s.report.verdict = 'partial'; }
+	]) {
+		const value = oldJevReport(); mutate(value);
+		assert.equal(reconcileJevCoverageReport(value), null);
+	}
+	const severe = oldJevReport(); severe.findings.push({ severity: 'high' });
+	assert.equal(reconcileJevCoverageReport(severe).verdict, 'fail');
 });

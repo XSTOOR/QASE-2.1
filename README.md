@@ -8,6 +8,18 @@ and [RELEASE_NOTES.md](RELEASE_NOTES.md). The ZIP includes a generated
 Production deployment targets `https://qase.drytis.com`. Never deploy the
 parent workspace or copy developer `.qase` state into production.
 
+This release adds hybrid QA (Opus reasoning, JEV classification, one CleanSlate
+loop) and UI `20261027-4`. Production activation requires gateway qualification
+on the execution host and an explicit opt-in; see [DEPLOYMENT_PROMPT.md](DEPLOYMENT_PROMPT.md).
+Existing PostgreSQL installations need migrations 041/042 before using hybrid
+state and partial QA reports.
+
+After reviewed source edits, regenerate `SOURCE_MANIFEST.json` with
+`npm run release:manifest`, then run `npm run release:verify`. Docker verifies
+the manifest before building runtime layers. CI boots a disposable hardened
+image and checks all three browser engines without paid model calls. It also
+publishes a source ZIP/checksum artifact; it does not deploy.
+
 An autonomous QA agent that tests live websites through a policy-gated browser
 automation runtime.
 
@@ -15,6 +27,10 @@ Paste a URL. Qase opens the site in Chromium, writes a test plan, works through
 it, and files what breaks — while you watch the cursor move.
 
 ## Setup
+
+For the native JEV-only decision controller and local model lab, see
+[JEV integration](docs/jev-integration.md). Its bounded browser-review scope
+differs from the generative agent described below.
 
 Use an actively supported Node.js LTS release (22 or 24).
 
@@ -182,16 +198,23 @@ production boundaries.
 
 ## Testing sites that require login
 
-When the agent hits a login wall it stops and asks. Type the credentials into
-the form that appears and they go into a server-side vault — **the model never
-sees them**. It fills the form with `{{QA_USERNAME}}` and `{{QA_PASSWORD}}`, and
-the real values are substituted at the keyboard. Anything that leaks back
-through a page snapshot or an error is masked before it reaches the model or
-the screen.
+When requested authenticated testing reaches an observed password form, hybrid
+QA asks through CleanSlate's native question flow. Use the secure credential
+form and explicitly approve one test-account sign-in, or choose **Skip login**
+to continue public-only. Never enter passwords into ordinary chat. The model
+receives placeholder names; the fixed `browser_authenticate` host tool reads
+the vault at the browser boundary and permits one same-origin sign-in POST.
+An optional expected signed-in URL helps verify access. This does not establish
+complete authentication/security coverage or authorize account creation,
+SSO/MFA, cross-origin sign-in, or other platform writes. After verified access,
+the agent inspects and tests observed read-only platform routes. Uncertain
+sign-in dispatch is checkpointed and cannot be automatically replayed.
 
-Local-mode credentials are held in memory only. Distributed workers receive a
+Local-mode credentials use an AES-256-GCM encrypted per-run vault under `.qase`,
+with a separate local key, so an ordinary restart preserves the secure handoff.
+Do not copy that state/key into source releases. Distributed workers receive a
 short-lived AES-256-GCM encrypted envelope through Redis so another process can
-perform the run; values are never written to PostgreSQL or the local workspace.
+perform the run; plaintext values are never written to PostgreSQL or the agent workspace.
 Qase clears the envelope on completion or deletion, and its bounded TTL is a
 backstop for interrupted cleanup.
 

@@ -7,6 +7,35 @@ import test from 'node:test';
 import { createFounderState } from './founderService.js';
 import { runTurn } from './agent.js';
 
+test('hybrid durable events are written before publication and filesystem failures propagate', async t => {
+  const originalDirectory = process.cwd(); const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'qase-hybrid-store-'));
+  t.after(async () => { process.chdir(originalDirectory); await fs.rm(directory, { recursive: true, force: true }); });
+  process.chdir(directory);
+  const store = await import(`./store.js?hybrid-durable=${Date.now()}`);
+  const session = store.createSession('Hybrid durable fixture', { qaExecutionMode: 'hybrid' });
+  session.hybrid = { version: 1, actions: [{ id: 'receipt', status: 'running' }] };
+  let seenDurable = false;
+  store.bus.on(session.id, () => { seenDurable = true; });
+  store.emit(session, 'hybrid.state', {}, { durable: true });
+  const saved = JSON.parse(await fs.readFile(path.join(directory, '.qase', 'sessions.json'), 'utf8'));
+  assert.equal(saved[0].hybrid.actions[0].id, 'receipt'); assert.equal(seenDurable, true);
+  await fs.rename(path.join(directory, '.qase'), path.join(directory, 'history-backup'));
+  await fs.writeFile(path.join(directory, '.qase'), 'fixture obstructing directory creation');
+  assert.throws(() => store.emit(session, 'hybrid.state', {}, { durable: true }));
+});
+
+test('local Founder project state writes and reloads from its resolved state directory', async t => {
+	const originalDirectory = process.cwd();
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'qase-founder-project-store-'));
+	t.after(async () => { process.chdir(originalDirectory); await fs.rm(directory, { recursive: true, force: true }); });
+	process.chdir(directory);
+	const store = await import(`./store.js?founder-project=${Date.now()}`);
+	const state = { schemaVersion: 1, ownerUserId: 'test-owner', recommendationSet: { recommendations: [{ id: 'rec-1' }] } };
+	store.writeFounderProjectState(state);
+	assert.deepEqual(store.loadFounderProjectState(), state);
+	assert.deepEqual(JSON.parse(await fs.readFile(path.join(directory, '.qase', 'founder-project-state.json'), 'utf8')), state);
+});
+
 test('QA completion message survives a real JSON store reload', async t => {
 	const originalDirectory = process.cwd();
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'qase-chat-store-'));

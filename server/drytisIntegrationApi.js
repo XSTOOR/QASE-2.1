@@ -350,7 +350,7 @@ function publicReport(report) {
 	if (!plainObject(report)) return undefined;
 	return {
 		ts: Number.isFinite(Number(report.ts)) ? Number(report.ts) : undefined,
-		verdict: ['pass', 'pass_with_issues', 'fail', 'blocked'].includes(report.verdict) ? report.verdict : undefined,
+		verdict: ['pass', 'pass_with_issues', 'partial', 'fail', 'blocked'].includes(report.verdict) ? report.verdict : undefined,
 		summary: safeText(report.summary),
 		covered: Array.isArray(report.covered) ? report.covered.slice(0, 25).map(item => safeText(item, 500)).filter(Boolean) : [],
 		notCovered: Array.isArray(report.notCovered) ? report.notCovered.slice(0, 25).map(item => safeText(item, 500)).filter(Boolean) : [],

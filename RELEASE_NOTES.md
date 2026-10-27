@@ -1,22 +1,73 @@
-# QASE deployment handoff
+# QASE hybrid production candidate
 
-Release `qase-2026-10-15-run-cards-compact-r1` contains the current `qase-2.1` application, including compact recent-run cards and UI asset version `20261015-18` (compact card stylesheet revision `20261015-17`).
+Release: `qase-2026-10-27-hybrid-production-r1`. UI: `20261027-4`.
+Target: `https://qase.drytis.com`. This is a source/image handoff, not a record
+of deployment or production activation.
 
-## Included deployment changes
+## Preserved history and compatibility
 
-- Docker browser dependencies follow the locked Playwright installer; the image uses a non-root account, a health check, container binding, and writable state/evidence directories.
-- A single-host Compose baseline includes a TLS reverse proxy, persistent volumes, closed registration, private application port, and streaming configuration.
-- The source ZIP has a generated per-file SHA-256 manifest, a ZIP checksum sidecar, source verification, and a live release/asset verification command.
-- Packaged UTF-8 text uses canonical LF line endings so the same source hashes survive Linux Git checkout; application behavior and binary assets are unchanged.
-- CI checks the source and builds the image. A one-time offline operator bootstrap refuses populated local account stores.
-- Existing application features and data-store implementations remain intact. Developer state, secrets, uploads, browser bundles, dependencies, and previous archives are excluded.
-- Browser capability detection confirms touch injection on an isolated blank page, avoiding false hardware-touch reports for non-touch contexts. Browser fixture tests use their own local servers; verification no longer assumes Linux-only files or preinstalled branded browsers.
-- Client and server compare revision numbers numerically, so revision 17 correctly supersedes revision 9 during stale-tab detection.
+Based on GitHub main `82911f8db54f7eb3efeb9b45e96d12c21805756f`, preserving its
+authentication, tenant isolation, local/PostgreSQL stores, distributed workers,
+SQA/Founder, integration, evidence and deployment-resilience foundations.
+The public site currently reports the October 16 single-browser release;
+compare its actual checkout/infrastructure before promotion because that release
+is newer than the GitHub baseline. No production files, secrets or data were
+changed during preparation.
 
-## Required production gates
+## Application changes since the previous GitHub release
 
-Before packaging, the recursive verification suite completed on Windows with Node.js 24: **1,855 tests, 1,828 passed, zero failed, 27 skipped**. Syntax checks passed for 473 JavaScript source files; private-path ignore checks and the high-confidence credential scan passed. Skips include opt-in integration checks and the POSIX file-mode assertion that is not applicable on Windows. Linux image validation and production canaries remain mandatory.
+- Opus 4.7 reasoning and JEV 1.13 typed classification through one CleanSlate
+  loop, with host permission, usage, budget and completion authority.
+- Durable scenarios, evidence, conservative usage recovery and explicit gaps;
+  no unexecuted scenario or model agreement can become a passing test.
+- Scoped route exploration uses remaining page slots correctly; report
+  publication and closeout share one depth policy. Completed closeout runs do
+  not spend additional model calls republishing their existing report.
+- Guarded live input/negative-path checks restore fields without submission,
+  and responsive samples restore the selected device preview.
+- Hybrid-only QA launcher, clearer recovery/buttons, explicit Results/Back,
+  and startup/refresh restoring the run workspace rather than auto-opening Results.
+- Existing run execution modes remain pinned. Legacy/JEV-only rollback APIs,
+  SQA and Founder paths remain available.
+- Hybrid exposes native blocking questions and requires an access decision at
+  observed login walls. Secure explicit consent grants one guarded test-account
+  sign-in; successful access enables fresh signed-in route observations without
+  treating access as a passed authentication suite. Scope decisions and bounded
+  goal memory survive restart. Failed credential validation retains the form.
 
-The receiving deployment agent must build and scan the Linux image, configure secrets/DNS/TLS/persistence/SMTP, run the full verification suite, and pass authenticated QA/SQA/Founder canaries before switching traffic. Docker and the target production environment are not available in this handoff workspace, so this archive is not evidence of an already completed production deployment.
+## Deployment changes
 
-Read `DEPLOYMENT_PROMPT.md` for exact-version deployment, branch synchronization, migration precautions, and rollback requirements. Do not treat the local-store Compose baseline as a multi-replica design or replace an existing PostgreSQL production store with it.
+- Shared source inventory and `npm run release:manifest` regenerate the checked-in
+  SHA-256 manifest. Docker verifies it in a source stage before runtime layers.
+- Source-only Docker context excludes developer state and dependencies. The
+  runtime retains the locked Node 22/Playwright installation, non-root user,
+  health check and persistent state/evidence paths, with release/revision labels.
+- CI verifies source/tests, builds the image, boots an isolated hardened
+  container, checks protected APIs/closed registration/demo exclusion and launches
+  Chromium, Firefox and WebKit. It also uploads the source ZIP and checksum.
+  CI does not publish images, deploy, migrate data or activate models.
+- Production environment examples and runbook document target-host gateway
+  qualification, receipt persistence/renewal, optional PostgreSQL migrations
+  041/042, draining and rollback. No dependency versions were upgraded.
+
+## Required operator gates
+
+Docker is not installed on the preparation machine; Linux image checks must
+pass in CI or on the approved build host. Test/CI outcomes belong to the review
+commit and must not be inferred from this document. Opt-in database/integration
+skips require isolated staging verification where those services are used.
+
+Keep authentication required and registration closed. Preserve production
+identity, database, Redis, volumes and account settings. Apply migrations through
+the reviewed process before hybrid/partial-report writes on PostgreSQL. Never
+replace an existing distributed deployment with the single-host Compose example.
+
+Hybrid remains disabled by default. Before activation, qualify all 13 gateway/
+SDK capabilities inside the target image using the provisioned account key;
+receipts expire after 24 hours and must be renewed through approved operations.
+Do not copy developer keys or `.qase` state, weaken receipt checks, reset budgets,
+or silently substitute models. Then run authorized staging QA/SQA/Founder,
+SMTP recovery, isolation, evidence-persistence and ingress/SSE canaries.
+
+Read `DEPLOYMENT_PROMPT.md` for exact steps and rollback. Publishing this branch
+does not authorize merging, switching traffic, or changing other branches.

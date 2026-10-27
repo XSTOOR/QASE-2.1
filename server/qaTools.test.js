@@ -27,6 +27,21 @@ const finding = {
 	evidence: 'The microphone track state is ended.'
 };
 
+test('partial results require gaps, keep runtime integrity and never hide high severity', async () => {
+	const partial = { ...report, verdict: 'partial', not_covered: ['Authentication not executed.'] };
+	const valid = fixture();
+	assert.equal((await valid.finish.run(partial)).success, true);
+	assert.equal(valid.session.report.verdict, 'partial');
+	assert.match(buildReportMarkdown(valid.session), /Completed with gaps/);
+	assert.equal((await fixture().finish.run({ ...partial, not_covered: [] })).success, false);
+	const missingIdentity = fixture({ runtimeFacts: {} });
+	await missingIdentity.finish.run(partial);
+	assert.equal(missingIdentity.session.report.verdict, 'blocked');
+	const high = fixture({ findings: [{ ...finding }] });
+	await high.finish.run(partial);
+	assert.equal(high.session.report.verdict, 'fail');
+});
+
 test('QA finding to Markdown workflow preserves evidence, redacts vaulted data, and fails high-impact defects', async t => {
 	const target = fixture();
 	storeSecrets(target.session.id, { password: 'qa-test-private-password' });

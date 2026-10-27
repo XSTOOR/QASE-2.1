@@ -55,6 +55,14 @@ test('projectStateFromSession returns undefined for unfinalized sessions', () =>
 	assert.equal(projectStateFromSession(session), undefined);
 });
 
+test('local Founder finalization can persist without detected Studio project context', () => {
+	const session = finalizedFounderSession();
+	session.founder.scope.projectContext = null;
+	const state = projectStateFromSession(session);
+	assert.equal(state.context, undefined);
+	assert.equal(state.recommendationSet.recommendations.length, 3);
+});
+
 test('reconcileSelections keeps only ids present in the current set', () => {
 	const state = normalizeFounderProjectState({
 		...projectStateFromSession(finalizedFounderSession()),

@@ -10,5 +10,5 @@ test('running summary restores an authoritative activity after reconnect', () =>
 	assert.match(block, /activity\.status === 'running'/);
 	assert.match(block, /session\.todos/);
 	assert.match(block, /todo\.status === 'in_progress'/);
-	assert.match(block, /action \|\| \(text \? tailOf\(text\) : ''\) \|\| savedAction/);
+	assert.match(block, /savedAction \|\| action \|\| \(text \? tailOf\(text\) : ''\)/);
 });

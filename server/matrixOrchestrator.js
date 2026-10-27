@@ -521,6 +521,8 @@ export function createMatrixOrchestrator(services, hooks) {
 				: verdict === 'pass_with_issues' ? 'PASSED'
 				: verdict === 'fail' ? 'FAILED'
 				: verdict === 'blocked' ? 'BLOCKED'
+				// Matrix has no partial state: incomplete scope is never PASSED.
+				: verdict === 'partial' ? 'BLOCKED'
 				: outcome.status === 'done' ? 'PASSED' : null;
 			if (!status) {
 				await mark({ status: 'ERROR', error: `Unexpected session state "${outcome.status}" without report verdict.`, finishedAt, durationMs });

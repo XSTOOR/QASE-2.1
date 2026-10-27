@@ -7,6 +7,7 @@ const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'info'];
 const VERDICT_LABELS = {
 	pass: 'Pass',
 	pass_with_issues: 'Pass with issues',
+	partial: 'Completed with gaps',
 	fail: 'Fail',
 	blocked: 'Blocked'
 };

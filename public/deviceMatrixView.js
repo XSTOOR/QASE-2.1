@@ -73,6 +73,7 @@ export function coverageCellMeta(cell) {
 	if (!['done', 'error'].includes(cell.status)) return { label: '●', cls: 'cov-live', title: `${cell.status} — running or awaiting` };
 	if (cell.verdict === 'pass') return { label: '✓', cls: 'cov-pass', title: 'pass' };
 	if (cell.verdict === 'pass_with_issues') return { label: '~', cls: 'cov-pass-warn', title: 'pass with issues' };
+	if (cell.verdict === 'partial') return { label: '…', cls: 'cov-blocked', title: 'completed with gaps (not a pass)' };
 	if (cell.verdict === 'fail') return { label: '✕', cls: 'cov-fail', title: 'fail' };
 	if (cell.verdict === 'blocked') return { label: '⊘', cls: 'cov-blocked', title: 'blocked' };
 	return { label: '·', cls: 'cov-exec', title: 'executed — no verdict recorded' };

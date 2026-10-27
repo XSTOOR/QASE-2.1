@@ -16,6 +16,7 @@ import { runWithRequestActor } from './requestActor.js';
 import { authThrottleKey, createAuthThrottle } from './authThrottle.js';
 import { InviteError } from './invites.js';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
+import { prepareHybridAuthGrant, recordHybridAnswer } from './hybridAuth.js';
 import {
 	FOUNDER_CATEGORIES,
 	FOUNDER_CAVEAT,
@@ -51,6 +52,9 @@ import { createSqaState, createSqaTodoPlan, publicSqaCatalog, recordReviewerSqaO
 import { preflightSqaRuntime } from './sqaRuntime.js';
 import { publicQaTestCatalog } from './qaTestCatalog.js';
 import { validateQaSelectedTests, validateSecurityAuthorization } from './appQaSelection.js';
+import { selectQaExecutionMode, hybridProfile, loadQualification } from './hybridConfig.js';
+import { hybridRecoveryProblem } from './hybridRecoveryGate.js';
+import { getConfig } from './config.js';
 import { renderReportPdf } from './reportPdf.js';
 import { buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
 import { PublicInputError, publicInput } from './publicErrors.js';
@@ -234,7 +238,7 @@ export function createApplication(options = {}) {
 					: [];
 				await founderProjectState.save(reconcileSelections({ ...state, selections: previousSelections }));
 			} catch (error) {
-				logger?.error?.(`[Founder project state] Could not persist after finalization: ${error?.message ?? error}`);
+				logger?.error?.('founder.project-state.persist-failed', { errorName: error?.name, reason: sanitizeErrorDetail(error, 200) });
 			}
 		});
 	}
@@ -1995,9 +1999,12 @@ export function createApplication(options = {}) {
 			const engine = isEngineId(request.body?.engine) ? request.body.engine : 'chromium';
 			let selectedTests;
 			let securityAuthorization;
+			let qaExecutionMode;
 			try {
 				selectedTests = validateQaSelectedTests(request.body?.selectedTests);
 				securityAuthorization = validateSecurityAuthorization(request.body?.securityAuthorization, selectedTests);
+				qaExecutionMode = selectQaExecutionMode(request.body?.qaExecutionMode);
+				if (qaExecutionMode === 'hybrid') loadQualification(hybridProfile(getConfig()));
 			} catch (error) {
 				response.status(400).json({ error: error instanceof Error ? error.message : 'Invalid test selection.' });
 				return;
@@ -2010,7 +2017,7 @@ export function createApplication(options = {}) {
 				engine === 'chromium' ? undefined : `QA — ${engine}`,
 				{
 					device, deviceLandscape, engine, ownerUserId: request.auth?.userId,
-					cohort, selectedTests, securityAuthorization,
+					cohort, selectedTests, securityAuthorization, qaExecutionMode,
 					...(scopeSelection ? { scopeSelection } : {}),
 					environmentId: environment?.envId,
 					environmentSnapshot: environment,
@@ -2254,6 +2261,11 @@ export function createApplication(options = {}) {
 			response.status(409).json({ error: 'The agent is still working. Stop it before sending another instruction.' });
 			return;
 		}
+		const recoveryProblem = hybridRecoveryProblem(session);
+		if (recoveryProblem) {
+			response.status(409).json({ error: recoveryProblem.message, code: recoveryProblem.code });
+			return;
+		}
 
 		const url = extractUrl(text);
 		if (session.mode === 'founder' && !session.targetUrl && !url) {
@@ -2268,6 +2280,7 @@ export function createApplication(options = {}) {
 			}
 		}
 		await services.runs.addMessage(session, { role: 'user', text });
+		recordHybridAnswer(session, text);
 		if (url && !session.targetUrl) {
 			session.targetUrl = url;
 			// Keep the engine tag when the host-based default title replaces it later.
@@ -2357,6 +2370,7 @@ export function createApplication(options = {}) {
 			answer = FOUNDER_PUBLIC_ONLY_ANSWER;
 		}
 		await services.runs.addMessage(session, { role: 'user', text: answer, kind: 'answer' });
+		recordHybridAnswer(session, answer);
 		startTurn(session, { resumeAnswer: answer });
 		response.json({ ok: true });
 	});
@@ -2376,18 +2390,22 @@ export function createApplication(options = {}) {
 			return;
 		}
 
+		let authGrant;
+		try { authGrant = prepareHybridAuthGrant(session, request.body); }
+		catch (error) { response.status(400).json({ error: error.message }); return; }
 		const names = await services.secrets.store(session.id, fields);
 		if (names.length === 0) {
 			response.status(400).json({ error: 'No usable credentials supplied.' });
 			return;
 		}
 		session.secretNames = await services.secrets.names(session.id);
+		if (authGrant) session.hybrid.authentication = authGrant;
 
 		const note = String(request.body?.note ?? '').trim();
 		const placeholders = names.map(name => `{{${name}}}`).join(', ');
 		const answer = [
 			'The credentials are stored in the host vault. You will not be shown the values.',
-			`Fill the sign-in form using these literal placeholders as the browser_fill value: ${placeholders}.`,
+			authGrant ? 'The owner authorized one test-account sign-in on the target origin. Open the observed sign-in page, then use browser_authenticate with no arguments. Continue read-only testing after verified access. Other writes remain forbidden.' : `Fill the sign-in form using these literal placeholders as the browser_fill value: ${placeholders}.`,
 			'The host substitutes the real secret at the keyboard. Never print, repeat or report a credential value.',
 			note && `Note from the user: ${note}`
 		].filter(Boolean).join(' ');

@@ -176,6 +176,16 @@ describe('createTestCaseAutogen', () => {
 		assert.ok(result.created.length >= 1);
 	});
 
+	test('JEV-only runs generate cases without making a chat request', async () => {
+		const testCases = tempBackend();
+		let calls = 0;
+		const engine = createTestCaseAutogen({ testCases, config: { provider: 'jev', apiKey: 'private-test-key', model: 'jev-1.13', baseUrl: 'https://llm.drytis.ai/typesafe/api/alpha/decisions' }, fetchImpl: async () => { calls++; throw new Error('Unexpected chat request'); } });
+		const result = await engine.generateForSession(completedSession());
+		assert.equal(calls, 0);
+		assert.equal(result.path, 'fallback');
+		assert.ok(result.created.length > 0);
+	});
+
 	test('disabled setting produces nothing', async () => {
 		const testCases = tempBackend();
 		const engine = createTestCaseAutogen({

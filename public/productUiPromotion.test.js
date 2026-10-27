@@ -101,10 +101,12 @@ test('routed setup and account screens present as full product pages', () => {
 	assert.match(workspaceStyles, /\.account-dialog\.route-page \.account-body[^{]+\{[^}]+grid-template-columns: 200px/s);
 });
 
-test('completed runs use a focused routed results page', () => {
+test('completed runs offer a focused results page through an explicit action', () => {
 	assert.match(markup, /class="results-page-head" id="results-page-head"/);
 	assert.match(markup, /id="results-page-back"/);
-	assert.match(app, /session\.status === 'done' \? 'results' : 'run'/);
+	assert.match(app, /guidance\.destination === 'results'\) void pageRouter\.navigate/);
+	assert.doesNotMatch(app, /session\.status === 'done' \? 'results' : 'run'/);
+	assert.doesNotMatch(app, /state\.session\?\.status === 'done' \? 'results' : 'run'/);
 	assert.match(app, /renderResultsPageHeader\(\)/);
 	assert.match(workspaceStyles, /data-page="results"[^}]+\.app[^{]+\{[^}]+grid-template-columns: minmax\(0, 1fr\)/s);
 	assert.match(workspaceStyles, /data-page="results"[^}]+\.viewer[^{]+\{[^}]+width: min\(1180px, 100%\)/s);

@@ -18,6 +18,13 @@ test('unknown and failed reports are never presented as a passing test', () => {
 	assert.equal(resultsOverviewModel({ report: { verdict: 'fail' } }).tone, 'attention');
 	assert.equal(resultsOverviewModel({ report: { verdict: 'pass' } }).tone, 'passed');
 });
+test('partial coverage has a distinct completed outcome without claiming a pass', () => {
+	const model = resultsOverviewModel({ status: 'done', report: { verdict: 'partial', notCovered: ['Forms were not submitted.'] } });
+	assert.equal(model.status, 'partial');
+	assert.equal(model.tone, 'neutral');
+	assert.equal(model.title, 'Testing completed with coverage gaps');
+	assert.equal(model.gaps.length, 1);
+});
 test('report data renders as text and focused layouts retain workspace access', () => {
 	const source = readFileSync(new URL('./resultsOverview.js', import.meta.url), 'utf8');
 	const css = readFileSync(new URL('./resultsPage.css', import.meta.url), 'utf8');

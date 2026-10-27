@@ -12,7 +12,7 @@ export function resultsOverviewModel(session) {
 	const tone = status === 'blocked' ? 'blocked' : severity.critical + severity.high > 0 || ['fail', 'failed'].includes(report.verdict) ? 'attention' : report.verdict === 'pass' ? 'passed' : 'neutral';
 	return {
 		status, tone, severity, total,
-		title: status === 'blocked' ? 'Testing needs a prerequisite' : ['fail', 'failed'].includes(report.verdict) ? 'Issues need your attention' : total ? 'Review the findings before release' : 'Your test report is ready',
+		title: status === 'blocked' ? 'Testing needs a prerequisite' : ['fail', 'failed'].includes(report.verdict) ? 'Issues need your attention' : status === 'partial' ? 'Testing completed with coverage gaps' : total ? 'Review the findings before release' : 'Your test report is ready',
 		summary: report.summary || 'Review the recorded findings and evidence from this execution.',
 		gaps: Array.isArray(report.notCovered) ? report.notCovered : [],
 		next: Array.isArray(report.recommendations) ? report.recommendations : [],

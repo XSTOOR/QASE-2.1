@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { availableParallelism, cpus, totalmem } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { ALL_TOOLS, CleanSlateNodeAgentRuntime, createNodeProviderConfiguration } from '@cleanslate/sdk';
 import { chromium } from 'playwright';
 import { attachBrowserBridge } from './browserBridge.js';
@@ -21,6 +22,11 @@ import { sanitizeErrorDetail } from './errorSanitizer.js';
 import { guardSqaBrowserTool } from './sqaBrowserBudget.js';
 import { guardSecurityPayloadTool } from './securityPayloadBudget.js';
 import { applyUsage, attachUsageCapture, createEmptyOutputGuard, createUsageLedger, createUsageLogger, subtractUsage } from './usageCapture.js';
+import { installJevRuntime } from './jevRuntime.js';
+import { hybridEnabled, hybridProfile, loadQualification } from './hybridConfig.js';
+import { createHybridRuntime, hybridRegressionSuggestions } from './hybridQaRuntime.js';
+import { createHybridUsageTransport } from './hybridUsageTransport.js';
+import { createHybridScenarioTool } from './hybridQaTools.js';
 
 export { guardSqaBrowserTool } from './sqaBrowserBudget.js';
 
@@ -109,7 +115,7 @@ const BROWSER_TOOL_NAMES = [
 	'browser_click', 'browser_hover', 'browser_fill', 'browser_check', 'browser_select',
 	'browser_type', 'browser_key', 'browser_scroll', 'browser_diagnostics', 'browser_dialog',
 	'browser_tabs', 'browser_new_tab', 'browser_select_tab', 'browser_close_tab',
-	'browser_media', 'browser_test_meeting_link', 'update_todo', 'ask_question'
+	'browser_media', 'browser_test_meeting_link', 'browser_qa_check', 'update_todo', 'ask_question'
 ];
 
 /** The advertised registry and execution gate share the same mode boundary. */
@@ -145,12 +151,12 @@ function snapshotPathFor(sessionId) {
 /** Persist the runtime's session snapshot atomically (tmp + rename). */
 export function persistRunSnapshot(sessionId, snapshot, ownerUserId) {
 	try {
-		fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
+		fs.mkdirSync(SNAPSHOT_DIR, { recursive: true, mode: 0o700 });
 		const file = snapshotPathFor(sessionId);
 		const tmp = `${file}.tmp-${process.pid}`;
 		// The owner travels with the snapshot so boot-time recovery can restore
 		// the run inside its owner's actor context without needing a listing.
-		fs.writeFileSync(tmp, JSON.stringify({ version: 1, sessionId, ownerUserId, savedAt: Date.now(), snapshot }));
+		fs.writeFileSync(tmp, JSON.stringify({ version: 1, sessionId, ownerUserId, savedAt: Date.now(), snapshot }), { mode: 0o600 });
 		fs.renameSync(tmp, file);
 		return true;
 	} catch {
@@ -290,6 +296,12 @@ const ACTIVITY_LABELS = {
 	browser_wait: 'Waited',
 	browser_screenshot: 'Captured screenshot',
 	browser_diagnostics: 'Checked console and network',
+	browser_qa_check: 'Executed QA scenario',
+	browser_qa_scenario: 'Executed bounded scenario',
+	qa_route_frontier: 'Reviewed observed route coverage',
+	qa_test_routes: 'Tested observed routes',
+	qa_load_tools: 'Prepared investigation tools',
+	qa_close_scenario: 'Recorded scenario outcome',
 	browser_get_url: 'Checked URL',
 	browser_dialog: 'Handled dialog',
 	browser_tabs: 'Listed tabs',
@@ -308,6 +320,14 @@ const ACTIVITY_LABELS = {
 	record_founder_observation: 'Recorded founder observation',
 	finish_founder_review: 'Published founder review'
 };
+
+export function activityLabel(toolName, input) {
+	if (['browser_qa_check', 'browser_qa_scenario'].includes(toolName)) {
+		const checks = { inspect: 'Inspected page controls', navigation: 'Clicked link and checked history', scroll: 'Explored page by scrolling', disclosure: 'Tested menu or accordion', tabs: 'Tested tab switching', anchors: 'Tested in-page links', responsive: 'Checked responsive layout', forms: 'Checked native form constraints', search: 'Tested local search', media: 'Checked images and media', accessibility: 'Checked accessible names' };
+		if (checks[input?.action]) return checks[input.action];
+	}
+	return ACTIVITY_LABELS[toolName] ?? toolName;
+}
 
 function describeTarget(input) {
 	if (!input || typeof input !== 'object') {
@@ -417,6 +437,15 @@ export async function ensureRuntime(session, runStore) {
 	useBundledChromium();
 
 	let settings = getConfig();
+	const credentialSourceSettings = settings;
+	const isHybrid = session.mode === 'qa' && session.qaExecutionMode === 'hybrid';
+	let hybridSettings;
+	if (isHybrid) {
+		if (!session.hybrid && !hybridEnabled()) throw new Error('Hybrid QA is disabled for new runs.');
+		hybridSettings = hybridProfile(settings);
+		loadQualification(hybridSettings);
+		settings = { ...settings, provider: 'custom', model: hybridSettings.reasoner.model, apiKey: hybridSettings.reasoner.apiKey, baseUrl: 'https://llm.drytis.ai/v1' };
+	}
 	// A saved model can go stale (retired/renamed on the gateway) between runs —
 	// the gateway then rejects every completion with 400 "Invalid model name"
 	// and the run dies. Two safety nets:
@@ -429,14 +458,14 @@ export async function ensureRuntime(session, runStore) {
 	//    heal the preference.
 	const storedModel = getStoredModel();
 	const fallback = defaultModelFor(settings.provider);
-	if (storedModel && fallback && storedModel !== settings.model && settings.model === fallback) {
+	if (!isHybrid && storedModel && fallback && storedModel !== settings.model && settings.model === fallback) {
 		await runStore.addMessage(session, {
 			role: 'system',
 			text: `The saved model "${storedModel}" is no longer available on the model gateway. This run (and later ones) use "${fallback}" instead — pick a different model in Settings if you want.`,
 			kind: 'warning'
 		});
 		await healStoredModel(fallback).catch(() => undefined);
-	} else if (settings.baseUrl && storedModel && storedModel === settings.model && settings.model !== fallback) {
+	} else if (!isHybrid && settings.baseUrl && storedModel && storedModel === settings.model && settings.model !== fallback) {
 		const verdict = await validateModelUsability(settings);
 		if (verdict?.usable === false && fallback) {
 			await runStore.addMessage(session, {
@@ -449,14 +478,20 @@ export async function ensureRuntime(session, runStore) {
 		}
 	}
 	const allowedTools = allowedToolNames(session.mode);
+	if (isHybrid) allowedTools.add('browser_authenticate');
+	if (isHybrid) for (const name of ['qa_plan_scenarios', 'qa_start_scenario', 'qa_close_scenario', 'qa_assert_snapshot', 'qa_assert_diagnostics', 'qa_ledger', 'qa_read_evidence', 'browser_qa_scenario', 'qa_route_frontier', 'qa_test_routes', 'qa_load_tools', 'classify_qa_observations', 'rank_qa_candidates']) allowedTools.add(name);
 	const problem = getPublicConfig().problem;
 	if (problem) {
 		throw new Error(`${problem} Open Settings and add the endpoint details.`);
 	}
-	// Same exfiltration guard as the settings probe: the instance's env key may
-	// only be used against operator-allowlisted model hosts. A user who stored
-	// a different base URL must also store their own key.
-	const envKeyDestination = envKeyDestinationProblem(settings);
+	// Validate the effective credential source, not hybrid's synthetic custom
+	// provider config. The legacy shared-JEV guard correctly rejects custom
+	// providers, so applying it after the qualified hybrid role switch rejects
+	// every env-key-backed hybrid run. Hybrid additionally requires the current
+	// exact key/model/endpoint qualification above; its transports independently
+	// pin the two upstream destinations. This grants no exception to Settings,
+	// legacy QA or arbitrary endpoints, and never sends the real key to loopback.
+	const envKeyDestination = envKeyDestinationProblem(isHybrid ? credentialSourceSettings : settings);
 	if (envKeyDestination) {
 		throw new Error(envKeyDestination);
 	}
@@ -467,9 +502,9 @@ export async function ensureRuntime(session, runStore) {
 	fs.mkdirSync(rootPath, { recursive: true });
 
 	const configuration = createNodeProviderConfiguration({
-		provider: settings.provider,
+		provider: settings.provider === 'jev' ? 'custom' : settings.provider,
 		model: settings.model,
-		apiKey: settings.apiKey,
+		apiKey: settings.provider === 'jev' ? '' : settings.apiKey,
 		baseUrl: settings.baseUrl || undefined,
 		reasoningLevel: settings.reasoning,
 		maxTurns: Number(settings.maxTurns),
@@ -481,7 +516,7 @@ export async function ensureRuntime(session, runStore) {
 		azureApiVersion: settings.apiVersion || undefined
 	});
 
-	// Token usage capture. The SDK never forwards provider usage to the agent
+	// Legacy token usage capture. The SDK never forwards provider usage to the agent
 	// stream, so two instance-level hooks harvest it: a wrapper on
 	// logProviderReportedUsage that sees the real normalized usage for every
 	// provider before the SDK drops it, and a logger that parses the SDK's
@@ -489,7 +524,8 @@ export async function ensureRuntime(session, runStore) {
 	// reports no usage in-stream). Both fail safe — if SDK internals move, no
 	// usage is recorded and runs are unaffected. The ledger stamps every
 	// harvested call with a unique id and drops duplicates, so the same report
-	// can never be counted twice however many times it surfaces.
+	// can never be counted twice however many times it surfaces. Hybrid instead
+	// uses validated, call-ID keyed transport receipts and never these estimates.
 	const turnUsage = { reports: [], estimates: [] };
 	const usageLedger = createUsageLedger();
 	const harvestUsage = (usage, estimated) => {
@@ -501,136 +537,186 @@ export async function ensureRuntime(session, runStore) {
 		record.onUsageHarvested?.(tracked, estimated);
 	};
 	const usageLogger = createUsageLogger({
-		onEstimate: usage => harvestUsage(usage, true)
+		onEstimate: usage => { if (!isHybrid) harvestUsage(usage, true); }
 	});
 	record.turnUsage = turnUsage;
-
-	const runtime = new CleanSlateNodeAgentRuntime({
-		rootPath,
-		workspaceStorageHome: path.join(rootPath, '.state'),
-		configuration,
-		sessionId: session.id,
-		logger: usageLogger,
-		browserHeadless: settings.headless !== false,
-		// This agent never runs commands. The SDK refuses by default; being
-		// explicit means the policy survives an SDK default changing.
-		approveCommand: async () => false,
-		approveTool: async ({ toolName }) => allowedTools.has(toolName),
-		additionalContext: () => appendUserMemory(
-			session.mode === 'founder'
-			? record.founderSynthesis ? buildFounderSynthesisContext(session) : buildFounderContext(session, liveBrowserUrl(record))
-			: session.mode === 'sqa'
-				? buildSqaContext(session, liveBrowserUrl(record))
-				: buildQaContext(session, liveBrowserUrl(record)),
-			session
-		)
-	});
-
-	// CleanSlate's default continuation appends a fresh system message before
-	// every follow-up user turn. Strict Anthropic-compatible gateways reject a
-	// mid-conversation system role. The SDK already exposes the protocol-safe
-	// continuation we need: keep the original system instruction and append only
-	// the latest user message. The per-turn browser context is still included in
-	// that user message by buildPromptContext(), so no guidance is lost.
-	const sdkSession = runtime.agentSession;
-	if (typeof sdkSession?.continueWithLatestUserMessage === 'function') {
-		sdkSession.continueWithTurn = sdkSession.continueWithLatestUserMessage.bind(sdkSession);
+	if (isHybrid) {
+		record.hybrid = createHybridRuntime({ session, runStore, profile: hybridSettings, record, onUsage: usage => harvestUsage({ ...usage, model: hybridSettings.classifier.model }, false) });
+		session.hybrid.regressionSuggestions ??= await hybridRegressionSuggestions(session, runStore);
 	}
 
-	// Real provider usage for every provider arrives here, right before the
-	// SDK would drop it. This is the ONLY real-usage source: the SDK's Azure
-	// debug log line carries the same report, so the logger above deliberately
-	// ignores it (harvesting both would double-count Azure).
-	const releaseUsageCapture = attachUsageCapture(runtime.cleanSlateService, {
-		onUsage: usage => harvestUsage(usage, false)
-	});
-	record.releaseUsageCapture = releaseUsageCapture;
+	let usageTransport, runtime;
+	try {
+		if (isHybrid) {
+			usageTransport = await createHybridUsageTransport(hybridSettings, { onUsage: usage => { harvestUsage({ ...usage, model: hybridSettings.reasoner.model }, false); record.hybrid.usage(usage); } });
+			configuration.providers.custom = { ...configuration.providers.custom, baseUrl: usageTransport.baseUrl, apiKey: usageTransport.apiKey };
+		}
+		runtime = new CleanSlateNodeAgentRuntime({
+			rootPath,
+			workspaceStorageHome: path.join(rootPath, '.state'),
+			configuration,
+			sessionId: session.id,
+			logger: usageLogger,
+			browserHeadless: settings.headless !== false,
+			// This agent never runs commands. The SDK refuses by default; being
+			// explicit means the policy survives an SDK default changing.
+			approveCommand: async () => false,
+			approveTool: async ({ toolName }) => allowedTools.has(toolName),
+			additionalContext: () => appendUserMemory(
+				session.mode === 'founder'
+				? record.founderSynthesis ? buildFounderSynthesisContext(session) : buildFounderContext(session, liveBrowserUrl(record))
+				: session.mode === 'sqa'
+					? buildSqaContext(session, liveBrowserUrl(record))
+					: record.hybrid ? record.hybrid.context(liveBrowserUrl(record)) : buildQaContext(session, liveBrowserUrl(record)),
+				session
+			)
+		});
 
-	// The registry is fixed at construction, so mode-specific tools are
-	// registered afterwards through the headless runtime that resolves them.
-	// Founder observations replace QA findings in that mode; withholding the QA
-	// finalizer prevents an accidental second, semantically unrelated report.
-	const modeTools = session.mode === 'founder'
-		? createFounderTools(session, runStore)
-		: [
-			...createQaTools(session, runStore, {
-				deviceRuntime: null,
-				captureRuntimeFacts: () => captureRuntimeFacts(session, record.bridge, record),
-				isCancelled: () => Boolean(record.controller?.signal.aborted)
-			}),
-			...(session.mode === 'sqa' ? createSqaTools(session, runStore) : [])
-		];
-	const sessionTools = [...modeTools, ...createBrowserTools(() => record.bridge)]
-		.filter(tool => allowedTools.has(tool.name));
-	const headless = runtime.headlessRuntime;
-	const registeredTools = [...ALL_TOOLS, ...sessionTools].filter(tool => allowedTools.has(tool.name)).map(tool => {
-		const guardedTool = guardSecurityPayloadTool(guardSqaBrowserTool(tool, session), session, settings.securityPayloadLimit);
-		if (session.mode !== 'founder' || guardedTool.name !== 'update_todo') return guardedTool;
-		const canonicalPlan = createFounderReviewTodos();
-		return {
-			...guardedTool,
-			description: `${guardedTool.description} Founder mode requires every canonical host-plan item in its original order and text; change only statuses.`,
-			async run(input, context) {
-				const result = await guardedTool.run(input, context);
-				if (result.success === false) return result;
-				const proposed = normaliseTodos(result, []);
-				if (proposed.length !== canonicalPlan.length || proposed.some((todo, index) => todo.text !== canonicalPlan[index].text)) {
-					return { success: false, code: 'FOUNDER_CANONICAL_PLAN_REQUIRED', error: 'Preserve every canonical plan item in this exact order and text. Update only statuses using completed browser evidence.', canonical_plan: canonicalPlan };
+		// CleanSlate's default continuation appends a fresh system message before
+		// every follow-up user turn. Strict Anthropic-compatible gateways reject a
+		// mid-conversation system role. The SDK already exposes the protocol-safe
+		// continuation we need: keep the original system instruction and append only
+		// the latest user message. The per-turn browser context is still included in
+		// that user message by buildPromptContext(), so no guidance is lost.
+		const sdkSession = runtime.agentSession;
+		if (typeof sdkSession?.continueWithLatestUserMessage === 'function') {
+			sdkSession.continueWithTurn = sdkSession.continueWithLatestUserMessage.bind(sdkSession);
+		}
+
+		// Legacy provider usage arrives here, right before the
+		// SDK would drop it. This is the ONLY real-usage source: the SDK's Azure
+		// debug log line carries the same report, so the logger above deliberately
+		// ignores it (harvesting both would double-count Azure). Hybrid counts its
+		// transport receipt instead, not this second copy of the provider report.
+		const releaseUsageCapture = attachUsageCapture(runtime.cleanSlateService, {
+			// Hybrid's validated transport receipts are canonical and call-ID keyed.
+			// Do not count the SDK's copy of that same usage or its estimates again.
+			onUsage: usage => { if (!isHybrid) harvestUsage(usage, false); }
+		});
+		record.releaseUsageCapture = releaseUsageCapture;
+
+		// The registry is fixed at construction, so mode-specific tools are
+		// registered afterwards through the headless runtime that resolves them.
+		// Founder observations replace QA findings in that mode; withholding the QA
+		// finalizer prevents an accidental second, semantically unrelated report.
+		const modeTools = session.mode === 'founder'
+			? createFounderTools(session, runStore)
+			: [
+				...createQaTools(session, runStore, {
+					deviceRuntime: null,
+					captureRuntimeFacts: () => captureRuntimeFacts(session, record.bridge, record),
+					isCancelled: () => Boolean(record.controller?.signal.aborted)
+				}),
+				...(session.mode === 'sqa' ? createSqaTools(session, runStore) : [])
+			];
+		const sessionTools = [...modeTools, ...createBrowserTools(() => record.bridge), ...(record.hybrid?.tools || [])]
+			.filter(tool => allowedTools.has(tool.name));
+		if (isHybrid) sessionTools.push(createHybridScenarioTool(sessionTools.find(tool => tool.name === 'browser_qa_check')));
+		const headless = runtime.headlessRuntime;
+		const registeredTools = [...ALL_TOOLS, ...sessionTools].filter(tool => allowedTools.has(tool.name) && (!record.hybrid || record.hybrid.allows(tool.name))).map(tool => {
+			const legacyGuarded = guardSecurityPayloadTool(guardSqaBrowserTool(tool, session), session, settings.securityPayloadLimit);
+			const guardedTool = record.hybrid ? record.hybrid.wrapTool(legacyGuarded) : legacyGuarded;
+			if (session.mode !== 'founder' || guardedTool.name !== 'update_todo') return guardedTool;
+			const canonicalPlan = createFounderReviewTodos();
+			return {
+				...guardedTool,
+				description: `${guardedTool.description} Founder mode requires every canonical host-plan item in its original order and text; change only statuses.`,
+				async run(input, context) {
+					const result = await guardedTool.run(input, context);
+					if (result.success === false) return result;
+					const proposed = normaliseTodos(result, []);
+					if (proposed.length !== canonicalPlan.length || proposed.some((todo, index) => todo.text !== canonicalPlan[index].text)) {
+						return { success: false, code: 'FOUNDER_CANONICAL_PLAN_REQUIRED', error: 'Preserve every canonical plan item in this exact order and text. Update only statuses using completed browser evidence.', canonical_plan: canonicalPlan };
+					}
+					return result;
 				}
-				return result;
+			};
+		});
+		headless.options.tools = registeredTools;
+		headless.toolsByName.clear();
+		for (const tool of registeredTools) {
+			headless.toolsByName.set(tool.name, tool);
+		}
+		record.hybrid?.registerToolCatalog(registeredTools.map(tool => tool.name));
+		// Do not advertise blocked filesystem/shell tools or another mode's finalizer.
+		runtime.getToolDescriptions = () => isHybrid ? '\nUse the supplied native tool schemas. qa_load_tools discovers additional approved tools.\n' : `\n\nAvailable browser and assessment tools:\n${registeredTools
+			.map(tool => `- ${tool.name}: ${tool.description}\n  Parameters: ${JSON.stringify(tool.parametersSchema)}`)
+			.join('\n')}\n`;
+
+		// The SDK's stream reports tool_result but never tool_start, so the only
+		// way to know a tool has begun — and to show it as running — is to wrap the
+		// executor the loop calls.
+		const originalExecute = headless.executeTool.bind(headless);
+		headless.executeTool = async function* (toolName, input, toolCallId, signal) {
+			await record.hybrid?.awaitToolDispatch(signal);
+			await record.onToolStart?.(toolName, input, toolCallId);
+			yield* originalExecute(toolName, input, toolCallId, signal);
+		};
+		if (isHybrid) record.invokeHybridTool = async (toolName, input, signal) => {
+			if (!['browser_open', 'browser_qa_check', 'browser_qa_scenario', 'browser_diagnostics'].includes(toolName)) throw new Error('This tool is not approved for route composition.');
+			let result;
+			for await (const part of headless.executeTool(toolName, input, randomUUID(), signal)) {
+				if (part.type === 'tool_result') { result = part.result; await record.onNestedToolResult?.(part); }
+			}
+			if (record.hybridPause) throw record.hybridPause;
+			signal?.throwIfAborted();
+			return result || { success: false, error: 'The approved SDK tool returned no receipt.' };
+		};
+
+		const service = headless.getToolContext().browserAutomationService;
+		const bridge = await attachBrowserBridge(session, service, runStore, {
+			device: session.device,
+			deviceLandscape: session.deviceLandscape === true,
+			environment: session.environmentSnapshot
+		});
+
+		// Phase 20: record the honest execution level + provider on the session as
+		// soon as the runtime exists. Runtime facts (observed UA/viewport/DPR) are
+		// attached by the bridge when the browser context is created; they flow
+		// into the same session fields so reports and history carry them.
+		session.executionLevel = bridge.execution?.level ?? null;
+		session.executionProviderActual = bridge.execution?.provider ?? null;
+
+		record.runtime = runtime;
+		record.bridge = bridge;
+		if (record.hybrid) {
+			runtime.cleanSlateService.chat = usageTransport.wrapChat(runtime.cleanSlateService.chat.bind(runtime.cleanSlateService));
+			record.hybrid.wrapChat(runtime.cleanSlateService);
+		}
+		if (settings.provider === 'jev') {
+			// The native controller already owns deterministic synthesis; never
+			// narrow its executor to a generative finalizer-only SDK continuation.
+			record.founderSynthesis = session.mode === 'founder';
+			installJevRuntime(runtime, { session, runStore, configuration: settings, onUsage: usage => harvestUsage(usage, false) });
+		}
+		record.waitingSnapshotRestored = restoreWaitingSnapshot(runtime, session);
+		if (isHybrid && !record.waitingSnapshotRestored && ['interrupted', 'awaiting_input', 'error'].includes(session.status)) {
+			const snapshot = loadRunSnapshot(session.id);
+			if (snapshot) runtime.restoreSessionSnapshot(snapshot);
+			session.hybrid.recovery = { ...session.hybrid.recovery, verificationRequired: true };
+		}
+		record.dispose = () => {
+			usageTransport?.dispose();
+			record.releaseUsageCapture?.();
+			record.releaseUsageCapture = undefined;
+			// Phase 21: release the device session (frees the device; queue advances).
+			record.releaseDeviceSession?.();
+			record.releaseDeviceSession = undefined;
+			bridge.dispose();
+			try {
+				runtime.dispose();
+			} catch {
+				// Disposing a runtime that never opened a browser is not an error.
 			}
 		};
-	});
-	headless.options.tools = registeredTools;
-	headless.toolsByName.clear();
-	for (const tool of registeredTools) {
-		headless.toolsByName.set(tool.name, tool);
-	}
-	// Do not advertise blocked filesystem/shell tools or another mode's finalizer.
-	runtime.getToolDescriptions = () => `\n\nAvailable browser and assessment tools:\n${registeredTools
-		.map(tool => `- ${tool.name}: ${tool.description}\n  Parameters: ${JSON.stringify(tool.parametersSchema)}`)
-		.join('\n')}\n`;
-
-	// The SDK's stream reports tool_result but never tool_start, so the only
-	// way to know a tool has begun — and to show it as running — is to wrap the
-	// executor the loop calls.
-	const originalExecute = headless.executeTool.bind(headless);
-	headless.executeTool = async function* (toolName, input, toolCallId, signal) {
-		await record.onToolStart?.(toolName, input, toolCallId);
-		yield* originalExecute(toolName, input, toolCallId, signal);
-	};
-
-	const service = headless.getToolContext().browserAutomationService;
-	const bridge = await attachBrowserBridge(session, service, runStore, {
-		device: session.device,
-		deviceLandscape: session.deviceLandscape === true,
-		environment: session.environmentSnapshot
-	});
-
-	// Phase 20: record the honest execution level + provider on the session as
-	// soon as the runtime exists. Runtime facts (observed UA/viewport/DPR) are
-	// attached by the bridge when the browser context is created; they flow
-	// into the same session fields so reports and history carry them.
-	session.executionLevel = bridge.execution?.level ?? null;
-	session.executionProviderActual = bridge.execution?.provider ?? null;
-
-	record.runtime = runtime;
-	record.bridge = bridge;
-	record.waitingSnapshotRestored = restoreWaitingSnapshot(runtime, session);
-	record.dispose = () => {
+		return record;
+	} catch (error) {
+		usageTransport?.dispose();
 		record.releaseUsageCapture?.();
-		record.releaseUsageCapture = undefined;
-		// Phase 21: release the device session (frees the device; queue advances).
-		record.releaseDeviceSession?.();
-		record.releaseDeviceSession = undefined;
-		bridge.dispose();
-		try {
-			runtime.dispose();
-		} catch {
-			// Disposing a runtime that never opened a browser is not an error.
-		}
-	};
-	return record;
+		try { runtime?.dispose(); } catch { /* failed construction */ }
+		if (record.runtime === runtime) record.runtime = undefined;
+		throw error;
+	}
 }
 
 /**
@@ -761,6 +847,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	// the moment, not the transcript, and a reloaded page should show what the
 	// agent said rather than what it was mulling over an hour ago.
 	const appendThinking = content => {
+		if (record.hybrid) return;
 		if (!content) {
 			return;
 		}
@@ -805,7 +892,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 			}
 			session.tokenUsage = applyUsage(session.tokenUsage, usage);
 			console.info(JSON.stringify({
-				event: 'token_usage_commit', runId: session.id, model: getConfig().model,
+				event: 'token_usage_commit', runId: session.id, model: usage.model || getConfig().model,
 				callId: usage.callId, inputTokens: usage.inputTokens ?? 0,
 				outputTokens: usage.outputTokens ?? 0,
 				totalTokens: (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0),
@@ -959,7 +1046,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 			id: toolCallId,
 			type: 'tool',
 			toolName,
-			label: ACTIVITY_LABELS[toolName] ?? toolName,
+			label: activityLabel(toolName, safeInput),
 			detail: describeTarget(safeInput),
 			input: safeInput,
 			status: 'running'
@@ -969,12 +1056,22 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	};
 
 	record.onToolStart = beginActivity;
+	record.onNestedToolResult = async part => {
+		const id = openActivities.get(part.toolCallId) ?? part.toolCallId;
+		const result = redact(session.id, part.result), ok = result?.success !== false;
+		await runStore.updateActivity(session, id, { status: ok ? 'done' : 'failed', error: ok ? undefined : sanitizeErrorDetail(result?.error ?? result?.message), summary: summariseResult(part.toolName, result) });
+		openActivities.delete(part.toolCallId);
+		if (part.toolName === 'browser_open' && ok) bridge.startFrames();
+		if (session.qaExecutionMode === 'hybrid' && ['browser_open', 'browser_qa_check', 'browser_qa_scenario'].includes(part.toolName)) await bridge.captureFrame();
+		runStore.markExecutionStarted?.(session);
+	};
 
 	// Crash recovery: mirror the model conversation to disk while the run is in
 	// flight so an interrupted run can be auto-resumed after a restart.
 	const snapshots = snapshotWriter(session.id, runtime, session.ownerUserId);
 
 	try {
+		if (record.hybrid) await record.hybrid.beginTurn(controller.signal);
 		const recoveryTask = resumeAnswer === undefined || canResumePendingQuestion
 			? task
 			: [
@@ -1049,6 +1146,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 					});
 					openActivities.delete(part.toolCallId);
 					snapshots.maybePersist();
+					if (record.hybridPause) break streamLoop;
 
 					if (part.toolName === 'update_todo' && ok) {
 						session.todos = normaliseTodos(part.result, session.todos);
@@ -1100,7 +1198,8 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 				clearSecrets(session.id);
 				deleteRunSnapshot(session.id);
 			} else {
-				await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
+				if (record.hybridPause) await runStore.setStatus(session, 'interrupted', record.hybridPause.message);
+				else await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
 				deleteRunSnapshot(session.id);
 			}
 		} else if (successfulFinalizer) {
@@ -1126,6 +1225,10 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 			// invoking ask_question. No QA run has started yet, so continuing
 			// automatically would only repeat the request and lock the composer.
 			await runStore.setStatus(session, 'awaiting_input', 'Waiting for a target URL.');
+		} else if (record.hybrid) {
+			await record.hybrid.endTurn('paused');
+			persistRunSnapshot(session.id, runtime.getSessionSnapshot(), session.ownerUserId);
+			await runStore.setStatus(session, 'interrupted', session.hybrid.pauseReason || 'Hybrid QA checkpointed before completion. Continue to verify state and resume.');
 		} else if (incompleteAttempt < INCOMPLETE_RUN_CONTINUATIONS) {
 			// CleanSlate may host-finalize a prose-only model turn even though the
 			// QA-specific completion tool was never called. That is a pause, not an
@@ -1158,9 +1261,15 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 				clearSecrets(session.id);
 				deleteRunSnapshot(session.id);
 			} else {
-				await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
+				if (record.hybridPause) await runStore.setStatus(session, 'interrupted', record.hybridPause.message);
+				else await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
 				deleteRunSnapshot(session.id);
 			}
+		} else if (record.hybrid) {
+			session.hybrid.pauseReason = error.code ? `${error.code}: ${sanitizeErrorDetail(error)}` : 'Reasoner interrupted; progress checkpointed.';
+			await record.hybrid.endTurn('paused');
+			persistRunSnapshot(session.id, runtime.getSessionSnapshot(), session.ownerUserId);
+			await runStore.setStatus(session, 'interrupted', session.hybrid.pauseReason);
 		} else if (retryAttempt < MODEL_TIMEOUT_RETRIES && isRetryableModeInterruption(error, session.mode)) {
 			retryAfterTimeout = true;
 			const interrupted = !isRetryableModelTimeout(error);
@@ -1180,6 +1289,11 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		}
 	} finally {
 		closeThinking();
+		if (record.hybrid) {
+			const status = successfulFinalizer ? 'done' : controller.signal.aborted ? (record.hybridPause ? 'paused' : 'cancelled') : session.status === 'awaiting_input' ? 'awaiting_input' : 'paused';
+			await record.hybrid.endTurn(status);
+			if (status !== 'done') persistRunSnapshot(session.id, runtime.getSessionSnapshot(), session.ownerUserId);
+		}
 		// A provider can end a turn while a parallel tool call is still open.
 		// Never leave those activities looking permanently in-flight; the next
 		// continuation will inspect current browser state before retrying.
@@ -1323,6 +1437,13 @@ export function summariseResult(toolName, result) {
 	}
 	if (toolName === 'browser_snapshot') {
 		return `${result.elements?.length ?? 0} elements on ${result.title || result.url || 'page'}`;
+	}
+	if (toolName === 'browser_qa_check' || toolName === 'browser_qa_scenario') {
+		if (result.formTesting) return `Live form inputs: ${result.formTesting.fieldsFilled} fields · ${result.formTesting.casesExecuted} cases · ${result.formTesting.negativeCases} negative cases · no submission${result.formTesting.restored === false ? ' · restoration needs verification' : ''}`;
+		const assertions = result.assertions ?? [];
+		const failed = result.assertionCounts?.failed ?? assertions.filter(item => item.outcome === 'fail').length;
+		const count = result.assertionCounts ? result.assertionCounts.passed + failed : assertions.length;
+		return `${result.action}: ${count} assertions, ${failed} failed${result.url ? ` · ${result.url}` : ''}${result.error ? ` — ${result.error}` : result.skipped ? ` — ${result.skipped}` : ''}`;
 	}
 	if (toolName === 'browser_media') {
 		const application = result.observed?.requests?.filter(request => request.source === 'application').at(-1);

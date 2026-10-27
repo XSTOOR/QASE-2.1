@@ -56,6 +56,11 @@ import { createPageRouter, routeHash } from './pageRouter.js';
 import { blockedRunReason, runPresentationLabel, runPresentationStatus } from './runPresentation.js';
 import { createQaJourney, normalizeWebsite } from './qaJourney.js';
 import { workflowStatus } from './workflowStatus.js';
+import { renderJevExecution } from './jevExecutionView.js';
+import { planPresentation } from './planPresentation.js';
+import { qaPlanProgress, qaExecutionModeLabel, qaLauncherModeLabel, qaLauncherSelectionProblem } from './qaExecutionView.js';
+import { renderHybridQa, hybridLaunchOptions, hybridScenarioProgress, hybridScenarioPlan, hybridAvailabilityMessage, holdPrimaryPreview, viewportStatusText } from './hybridQaView.js';
+import { focusedBrowserConfiguration, qaBrowserStatus, renderQaBrowserStatus } from './qaBrowserStatus.js';
 
 /**
  * Qase dashboard.
@@ -240,8 +245,6 @@ const state = {
 	runTimer: { interval: undefined, startedAt: undefined, endedAt: undefined },
 	/** Per-session expand preference after the post-run auto-collapse. */
 	stageCollapsePreferences: new Map(),
-	/** Run whose completed QA results were automatically revealed. */
-	shownQaResults: undefined,
 	/** Run whose live Plan was revealed once without overriding later tab choices. */
 	shownRunningPlan: undefined,
 	/** Instance is in pilot mode (invite-only registration, beta notice). */
@@ -1054,7 +1057,6 @@ function selectSessionWithTimeout(id, options, timeoutMs) {
 async function selectSession(id, { updateRoute = true } = {}) {
 	if (document.body.dataset.workspaceView === 'runs') setWorkspaceView('agent');
 	state.shownFounderReport = undefined;
-	state.shownQaResults = undefined;
 	state.shownRunningPlan = undefined;
 	state.sessionId = id;
 	state.bubbles.clear();
@@ -1069,7 +1071,6 @@ async function selectSession(id, { updateRoute = true } = {}) {
 	const session = await api(`/sessions/${id}`);
 	if (state.sessionId !== id) return;
 	applySessionSnapshot(session);
-	if (session.status === 'done' && matchMedia('(max-width: 720px)').matches) setWorkspaceView('results');
 	if (session.mode === 'founder') {
 		void founderLoadProjectState().then(() => renderFounder());
 	} else {
@@ -1077,7 +1078,7 @@ async function selectSession(id, { updateRoute = true } = {}) {
 	}	await connect(id);
 	await refreshRuns();
 	if (updateRoute && pageRouter.started) {
-		await pageRouter.navigate({ name: session.status === 'done' ? 'results' : 'run', runId: id });
+		await pageRouter.navigate({ name: 'run', runId: id });
 	}
 }
 
@@ -1310,7 +1311,6 @@ function applySessionSnapshot(session) {
 	renderFounder();
 	showCompletedFounderReport();
 	showRunningQaPlan();
-	showCompletedQaResults();
 	renderStageCollapse();
 	updateRunTimer();
 	if (_runEnvHook) _runEnvHook(session);
@@ -1348,7 +1348,7 @@ async function startRun() { openQaStart(); }
 
 async function createQaRun({
 	targetUrl, device, deviceLandscape, selectedTests, securityAuthorization,
-	kickoffText, engine = 'chromium', coreFlowsOnly = false, environmentId, scopeSelection
+	kickoffText, engine = 'chromium', coreFlowsOnly = false, environmentId, scopeSelection, qaExecutionMode, testCaseId
 }) {
 	void markOnboarded();
 	const session = await api('/sessions', {
@@ -1358,6 +1358,8 @@ async function createQaRun({
 			deviceLandscape,
 			engine,
 			selectedTests,
+			...(qaExecutionMode ? { qaExecutionMode } : {}),
+			...(testCaseId ? { testCaseId } : {}),
 			...(securityAuthorization ? { securityAuthorization } : {}),
 			...(environmentId ? { environmentId } : {}),
 			...(scopeSelection ? { scopeSelection } : {})
@@ -1644,6 +1646,12 @@ function renderMiniSummary() {
 
 function renderHeader() {
 	const session = state.session;
+	const resumeBlock = workflowStatus(session).resumeBlocked;
+	el.resumeRun.disabled = Boolean(resumeBlock);
+	el.resumeRun.title = resumeBlock || '';
+	el.resumeRun.textContent = resumeBlock ? 'Review required' : 'Resume';
+	const executionLabel = $('qa-agent-mode');
+	if (executionLabel) { executionLabel.textContent = qaExecutionModeLabel(session); executionLabel.hidden = !executionLabel.textContent; }
 	const guide = $('journey-run-guide');
 	guide.hidden = !state.sessionId || Boolean(workflowStatus(session).hidden);
 	if (state.sessionId) {
@@ -1655,6 +1663,7 @@ function renderHeader() {
 		action.textContent = guidance.action;
 		action.onclick = () => {
 			if (guidance.destination === 'results') void pageRouter.navigate({ name: 'results', runId: state.sessionId });
+			else if (guidance.destination === 'progress') { activateDetailTab($('tab-plan')); setWorkspaceView('results'); }
 			else if (guidance.destination === 'question') { setWorkspaceView('agent'); el.questionSlot.scrollIntoView({ block: 'nearest' }); el.questionSlot.querySelector('input, textarea, button')?.focus(); }
 			else if (guidance.destination === 'conversation') { setWorkspaceView('agent'); el.transcript.scrollTop = el.transcript.scrollHeight; el.composerInput.focus(); }
 			else el.composerInput.focus();
@@ -1694,6 +1703,7 @@ function renderHeader() {
 	el.chatTitle.textContent = session.status === 'running'
 		? `Testing ${targetName}`
 		: displayStatus === 'blocked' ? 'Testing blocked'
+			: displayStatus === 'partial' ? 'Testing completed with gaps'
 			: session.status === 'done' ? 'Testing complete' : targetName;
 	// Keep the engine visible in the header for non-chromium runs (the run
 	// list already carries an engine pill in its meta row).
@@ -1713,6 +1723,8 @@ function renderHeader() {
  * right-hand Plan tab, kept here once so the two can never disagree.
  */
 function runProgress() {
+	const hybrid = hybridScenarioProgress(state.session); if (hybrid) return hybrid;
+	const qa = qaPlanProgress(state.session); if (qa) return qa;
 	const todos = state.session?.todos ?? [];
 	const total = todos.length;
 	const done = todos.filter(todo => todo.status === 'completed').length;
@@ -1755,15 +1767,15 @@ function renderCurrentActivity() {
 			.find(activity => activity.status === 'running');
 		const activePlanItem = (session.todos ?? [])
 			.find(todo => todo.status === 'in_progress');
-		const savedAction = runningActivity?.label || runningActivity?.title
+		const savedAction = [runningActivity?.label || runningActivity?.title, runningActivity?.detail].filter(Boolean).join(' — ')
 			|| activePlanItem?.text || activePlanItem?.title || '';
-		const label = action || (text ? tailOf(text) : '') || savedAction;
+		const label = savedAction || action || (text ? tailOf(text) : '');
 		el.currentActivityState.textContent = label || 'Working…';
 		el.currentActivity.hidden = false;
 	} else if (session?.status === 'done') {
 		el.currentActivityState.textContent = runPresentationStatus(session) === 'blocked'
 			? `Testing could not proceed — ${truncate(blockedRunReason(session), 160)}`
-			: 'Testing complete';
+			: runPresentationStatus(session) === 'partial' ? 'QA scenarios completed — review executed evidence and remaining workflows.' : 'Testing complete';
 		el.currentActivity.hidden = false;
 	} else {
 		el.currentActivityState.textContent = '';
@@ -1773,11 +1785,9 @@ function renderCurrentActivity() {
 
 function setStatus(status) {
 	const previousStatus = document.body.dataset.runStatus;
-	const justCompleted = status === 'done' && document.body.dataset.runStatus !== 'done';
 	const justStarted = status === 'running' && previousStatus !== 'running';
 	if (state.session) state.session.status = status;
 	document.body.dataset.runStatus = status;
-	if (justCompleted && matchMedia('(max-width: 720px)').matches) setWorkspaceView('results');
 	if (justStarted && matchMedia('(max-width: 720px)').matches) setWorkspaceView('browser');
 	const stopping = status === 'running' && state.stopRequests.has(state.sessionId);
 	const stoppedByUser = status === 'interrupted' && state.session?.statusDetail === 'Stopped by user.';
@@ -1787,6 +1797,7 @@ function setStatus(status) {
 		? 'waiting for you'
 		: status === 'running' ? 'Running'
 			: displayStatus === 'blocked' ? 'Blocked'
+				: displayStatus === 'partial' ? 'Completed with gaps'
 				: status === 'done' ? 'Complete'
 				: stoppedByUser ? 'Stopped'
 					: status === 'interrupted' ? 'Paused'
@@ -1798,6 +1809,10 @@ function setStatus(status) {
 	el.stopRun.disabled = stopping;
 	el.stopRun.textContent = stopping ? 'Stopping…' : 'Stop';
 	el.resumeRun.hidden = !((status === 'interrupted' || status === 'error') && state.sessionId);
+	const resumeBlock = workflowStatus(state.session).resumeBlocked;
+	el.resumeRun.disabled = Boolean(resumeBlock);
+	el.resumeRun.title = resumeBlock || '';
+	el.resumeRun.textContent = resumeBlock ? 'Review required' : 'Resume';
 	el.sendBtn.disabled = running;
 	el.composerInput.disabled = running;
 	el.composerHint.hidden = !running;
@@ -1829,6 +1844,13 @@ function formatElapsed(ms) {
 
 function runElapsedMs() {
 	const timer = state.runTimer;
+	const measured = state.session?.qaExecutionMode === 'hybrid' ? state.session.hybrid?.telemetry?.elapsedMs : undefined;
+	if (Number.isFinite(measured) && measured >= 0) {
+		if (timer.measuredMs !== measured || timer.measuredStatus !== state.session.status) {
+			timer.measuredMs = measured; timer.measuredStatus = state.session.status; timer.measuredAt = Date.now();
+		}
+		return measured + (state.session.status === 'running' ? Math.max(0, Date.now() - timer.measuredAt) : 0);
+	}
 	if (typeof timer.startedAt !== 'number') return undefined;
 	return (typeof timer.endedAt === 'number' ? timer.endedAt : Date.now()) - timer.startedAt;
 }
@@ -1882,6 +1904,7 @@ function syncRunTimer(status) {
 
 function resetRunMeta(session) {
 	const timer = state.runTimer;
+	delete timer.measuredMs; delete timer.measuredStatus; delete timer.measuredAt;
 	if (timer.interval) {
 		clearInterval(timer.interval);
 		timer.interval = undefined;
@@ -1957,14 +1980,6 @@ function showRunningQaPlan() {
 	if (state.shownRunningPlan === session.id) return;
 	state.shownRunningPlan = session.id;
 	activateDetailTab($('tab-plan'));
-}
-
-function showCompletedQaResults() {
-	const session = state.session;
-	if (!session || session.mode === 'sqa' || session.mode === 'founder' || session.status !== 'done') return;
-	if (state.shownQaResults === session.id) return;
-	state.shownQaResults = session.id;
-	activateDetailTab((session.findings?.length ?? 0) > 0 ? $('tab-findings') : el.reportTab);
 }
 
 function syncStageCollapse(status) {
@@ -2062,6 +2077,9 @@ function updateRunTimer() {
 		el.runTimer.dataset.state = 'blocked';
 		el.runTimerLabel.dataset.state = 'blocked';
 		el.runTimerLabel.textContent = '⚠ Testing Blocked';
+	} else if (runPresentationStatus(session) === 'partial') {
+		el.runTimer.dataset.state = 'completed';
+		el.runTimerLabel.textContent = 'Completed with gaps';
 	} else if (session.status === 'done') {
 		el.runTimer.dataset.state = 'completed';
 		el.runTimerLabel.textContent = '✓ Test Completed';
@@ -2655,6 +2673,7 @@ function optionForm(question) {
 function credentialForm() {
 	const form = document.createElement('form');
 	form.className = 'cred-form';
+	const hybrid = state.session?.qaExecutionMode === 'hybrid';
 
 	const row = document.createElement('div');
 	row.className = 'cred-row';
@@ -2678,6 +2697,17 @@ function credentialForm() {
 	note.className = 'cred-note';
 	note.innerHTML = 'Encrypted locally for this run and deleted when the run ends — never sent to the model. ' +
 		'The agent fills the form with <code>{{QA_USERNAME}}</code> and <code>{{QA_PASSWORD}}</code>; the real values are swapped in at the keyboard.';
+	const consent = document.createElement('label');
+	consent.className = 'cred-note';
+	const authorize = document.createElement('input');
+	authorize.type = 'checkbox';
+	authorize.required = hybrid;
+	consent.append(authorize, ' I am authorized to use this test account and approve one sign-in attempt on this website. Continue with read-only testing afterward.');
+	const expectedUrl = document.createElement('input');
+	expectedUrl.type = 'url';
+	expectedUrl.placeholder = 'Expected signed-in page URL (optional)';
+	expectedUrl.setAttribute('aria-label', 'Expected signed-in page URL');
+	if (hybrid) note.textContent = 'Use a test account. Credentials are encrypted in this run’s vault; the model receives placeholders only. One same-origin sign-in is supported. Account creation and SSO/MFA are not automated. You can skip login and continue public-only.';
 
 	const actions = document.createElement('div');
 	actions.className = 'cred-actions';
@@ -2692,37 +2722,44 @@ function credentialForm() {
 	submit.textContent = 'Store and continue';
 	actions.append(skip, submit);
 
-	form.append(row, extra, note, actions);
+	form.append(row, ...(hybrid ? [expectedUrl, consent] : [extra]), note, actions);
 	form.onsubmit = async event => {
 		event.preventDefault();
 		const fields = {};
 		if (username.value) fields.QA_USERNAME = username.value;
 		if (password.value) fields.QA_PASSWORD = password.value;
-		if (extra.value) fields.QA_OTP = extra.value;
+		if (!hybrid && extra.value) fields.QA_OTP = extra.value;
+		if (hybrid && (!username.value || !password.value || !authorize.checked)) {
+			toast('Enter both test-account fields and approve one sign-in, or choose Skip login.', 'bad');
+			return;
+		}
 		if (Object.keys(fields).length === 0) {
 			toast('Enter a username or password first.', 'bad');
 			return;
 		}
-		el.questionSlot.replaceChildren();
-		state.session.pendingQuestion = undefined;
+		submit.disabled = true;
 		try {
-			await api(`/sessions/${state.sessionId}/credentials`, { method: 'POST', body: JSON.stringify({ fields }) });
+			await api(`/sessions/${state.sessionId}/credentials`, { method: 'POST', body: JSON.stringify({ fields, ...(hybrid ? { authorizeLogin: authorize.checked, expectedUrl: expectedUrl.value.trim() } : {}) }) });
+			el.questionSlot.replaceChildren();
+			state.session.pendingQuestion = undefined;
+			password.value = ''; username.value = ''; extra.value = '';
 			toast('Credentials stored locally. The model only sees placeholders.', 'good');
 		} catch (error) {
 			fail(error);
-		}
+		} finally { submit.disabled = false; }
 	};
 
 	return form;
 }
 
 async function sendAnswer(answer) {
-	el.questionSlot.replaceChildren();
-	state.session.pendingQuestion = undefined;
-	await api(`/sessions/${state.sessionId}/answer`, {
+	try { await api(`/sessions/${state.sessionId}/answer`, {
 		method: 'POST',
 		body: JSON.stringify({ answer })
-	}).catch(fail);
+	});
+	el.questionSlot.replaceChildren();
+	state.session.pendingQuestion = undefined;
+	} catch (error) { fail(error); }
 }
 
 /* ── Live browser view ───────────────────────────────────────────── */
@@ -2749,7 +2786,17 @@ function fitStageFrame() {
 	el.stageInner.style.height = `${Math.max(1, frameHeight)}px`;
 }
 
+function renderViewportStatus() {
+	const node = $('viewport-test-status');
+	if (!node) return;
+	node.textContent = viewportStatusText(state.session?.hybrid?.viewport);
+	node.hidden = !node.textContent;
+}
+
 function applyFrame(frame) {
+	if (frame.viewportTesting && state.session?.hybrid) state.session.hybrid.viewport = frame.viewportTesting;
+	renderViewportStatus();
+	if (holdPrimaryPreview(frame, state.session)) return;
 	el.frame.src = `data:${frame.mimeType};base64,${frame.base64}`;
 	el.stageEmpty.hidden = true;
 	el.stageInner.hidden = false;
@@ -2761,6 +2808,7 @@ function applyFrame(frame) {
 		el.browserUrl.textContent = frame.url;
 	}
 	el.browserTitle.textContent = truncate(frame.title ?? '', 40);
+	if (state.activeRuntimeEnvironment) renderBrowserChrome(state.activeRuntimeEnvironment);
 	requestAnimationFrame(fitStageFrame);
 }
 
@@ -2769,6 +2817,7 @@ function applyFrame(frame) {
  * space, so they are scaled to however large the image is actually drawn.
  */
 function applyCursor(cursor) {
+	if (state.session?.hybrid?.viewport?.phase === 'responsive_sample') return;
 	if (cursor.viewport) {
 		state.viewport = cursor.viewport;
 	}
@@ -2880,26 +2929,30 @@ function upsertActivity(activity) {
 }
 
 function renderTodos() {
-	const todos = state.session.todos ?? [];
-	const done = todos.filter(todo => todo.status === 'completed').length;
+	const hybridPlan = hybridScenarioPlan(state.session);
+	const todos = hybridPlan || state.session.todos || [];
+	const done = hybridPlan ? hybridScenarioProgress(state.session).done : (qaPlanProgress(state.session)?.done ?? todos.filter(todo => todo.status === 'completed').length);
 	el.countPlan.textContent = todos.length > 0 ? `${done}/${todos.length}` : '';
 	el.planList.replaceChildren();
 	if (todos.length === 0) {
 		el.planList.innerHTML = '<div class="feed-empty">No test plan generated yet — the agent writes one at the start of each run.</div>';
+		const hybrid = renderHybridQa(state.session, document); if (hybrid) el.planList.prepend(hybrid);
 		return;
 	}
+	const hybrid = renderHybridQa(state.session, document); if (hybrid) el.planList.append(hybrid);
 	for (const todo of todos) {
+		const presentation = planPresentation(todo);
 		const node = document.createElement('div');
-		node.className = `todo ${todo.status}`;
+		node.className = `todo ${presentation.key}`;
 		node.setAttribute('role', 'listitem');
 		const mark = document.createElement('span');
 		mark.className = 'todo-mark';
-		mark.textContent = todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '◉' : '○';
+		mark.textContent = presentation.mark;
 		/* Status chip (UI Fix Phase 1): text label, not color-only — maps the
 		 * raw todo status onto the run vocabulary. */
 		const chip = document.createElement('span');
-		chip.className = `todo-chip todo-chip-${todo.status ?? 'pending'}`;
-		chip.textContent = { completed: 'Passed', in_progress: 'Running', failed: 'Failed', blocked: 'Blocked' }[todo.status ?? 'pending'] ?? 'Queued';
+		chip.className = `todo-chip todo-chip-${presentation.key}`;
+		chip.textContent = presentation.label;
 		const text = document.createElement('span');
 		text.className = 'todo-text';
 		text.textContent = todo.text;
@@ -3191,6 +3244,7 @@ function findingAsTicket(finding) {
 const VERDICTS = {
 	pass: { mark: '✓', label: 'Pass', tone: 'ok' },
 	pass_with_issues: { mark: '!', label: 'Pass with issues', tone: 'warn' },
+	partial: { mark: '…', label: 'Completed with gaps', tone: 'warn' },
 	fail: { mark: '✕', label: 'Fail', tone: 'bad' },
 	blocked: { mark: '—', label: 'Blocked', tone: 'dim' }
 };
@@ -3512,8 +3566,10 @@ function renderReport() {
 	const report = state.session.report;
 	if (!report) {
 		el.reportView.innerHTML = '<div class="feed-empty">No report available — it is published when a run finishes.</div>';
+		const hybrid = renderHybridQa(state.session, document); if (hybrid) el.reportView.prepend(hybrid);
 		return;
 	}
+	const hybrid = renderHybridQa(state.session, document); if (hybrid) el.reportView.append(hybrid);
 	el.reportView.append(renderResultsOverview(state.session, {
 		document,
 		onFindings: () => activateDetailTab($('tab-findings'), true),
@@ -3575,6 +3631,8 @@ function renderReport() {
 	const summarySection = section('Summary', paragraph(report.summary));
 	summarySection.classList.add('report-summary-detail');
 	el.reportView.append(summarySection);
+	const executionView = renderJevExecution(report.executionEvidence, document);
+	if (executionView) el.reportView.append(executionView);
 	if (report.recommendations?.length) {
 		const nextSection = section('Recommended next action', list(report.recommendations));
 		nextSection.classList.add('report-next-detail');
@@ -4698,8 +4756,9 @@ function handleEvent(event) {
 			}
 			upsertActivity(event.activity);
 			// The action doubles as the strip's caption when no reasoning streams.
-			if (event.activity.status === 'running') {
-				state.thinking.action = [event.activity.label, event.activity.detail]
+			{
+				const current = [...session.activities].reverse().find(item => item.status === 'running');
+				state.thinking.action = [current?.label, current?.detail]
 					.filter(Boolean).join(' — ');
 				updateThinkingStrip();
 				renderCurrentActivity();
@@ -4712,6 +4771,21 @@ function handleEvent(event) {
 			session.todos = event.todos;
 			renderTodos();
 			renderProgressCard();
+			break;
+
+		case 'hybrid.state':
+			session.hybrid = event.hybrid;
+			renderHeader();
+			renderTimerChip();
+			renderViewportStatus();
+			renderTodos();
+			renderProgressCard();
+			renderReport();
+			break;
+
+		case 'qa.viewport':
+			if (session.hybrid) session.hybrid.viewport = event.viewport;
+			renderViewportStatus();
 			break;
 
 		case 'context':
@@ -4857,7 +4931,6 @@ function handleEvent(event) {
 			void refreshRuns();
 			if (FEEDBACK_TERMINAL_STATUSES.has(event.status) && feedbackEligible(session)) {
 				renderReport();
-				showCompletedQaResults();
 				void syncFeedbackForSession(session);
 			}
 		}
@@ -4876,6 +4949,7 @@ function handleEvent(event) {
 			if (event.browser?.url) {
 				el.browserUrl.textContent = event.browser.url;
 			}
+			if (state.activeRuntimeEnvironment) renderBrowserChrome(state.activeRuntimeEnvironment);
 			break;
 
 		case 'session':
@@ -4905,6 +4979,7 @@ const qaUi = {
 	cancel: $('qa-cancel'),
 	submit: $('qa-submit'),
 	targetUrl: $('qa-target-url'),
+	executionMode: $('qa-execution-mode'),
 	testOn: $('qa-test-on'),
 	testOnChange: document.querySelector('#qa-start [data-test-on-change]'),
 	deviceLandscape: $('qa-device-landscape'),
@@ -4958,8 +5033,7 @@ let qaJourneyCustomSelection;
 
 function qaFocusedSelection() {
 	const available = qaMatrixState.index.filter(isSelectable);
-	const row = available.find(item => item.browserCode === 'chrome' && ['windows', 'macos', 'linux'].includes(item.platform))
-		?? available.find(item => item.browserCode === 'chrome') ?? available[0];
+	const row = focusedBrowserConfiguration(available, qaUi.executionMode?.value === 'hybrid');
 	if (!row) return createSelectionState();
 	const deviceKey = deviceKeyOf(row);
 	return createSelectionState({
@@ -5091,6 +5165,7 @@ function qaMatrixEffectiveSelection() {
 
 /** Apply a selection-state change, re-derive, persist, re-render. */
 function qaMatrixApplySelection(nextState, fromPreset = false) {
+	setQaFormError();
 	if (!fromPreset) { qaJourneySelectionMode = 'custom'; qaJourneyCustomSelection = nextState; }
 	syncJourneyPreset();
 	qaMatrixState.selection = nextState;
@@ -5188,6 +5263,7 @@ function syncQaSubmitState() {
 	const authorizationReady = !qaUi.dialog?.open || !qaSecuritySelected() || Boolean(qaUi.securityAuthorized?.checked);
 	qaUi.submit.disabled = selected === 0 || !urlValid || !authorizationReady || !matrixReady || qaUi.submit.dataset.busy === 'true';
 	const blockedReason = qaLaunchBlockedReason();
+	qaUi.submit.disabled ||= Boolean(blockedReason);
 	qaUi.submit.title = blockedReason ?? '';
 	if (qaUi.testsCount) {
 		qaUi.testsCount.textContent = `${selected} of ${qaUi.selectedTests.catalogSize ?? selected} selected`;
@@ -5207,6 +5283,7 @@ function qaLaunchBlockedReason() {
 	const target = qaUi.targetUrl?.value?.trim() ?? '';
 	if (!target) return 'Enter a website URL to start.';
 	if (!isValidTargetUrl(target)) return 'Enter a valid http(s) website URL.';
+	const agentChoice = qaLauncherSelectionProblem(qaUi.executionMode?.value, state.config); if (agentChoice) return agentChoice;
 	if (!state.qaTestCatalog) return 'Loading recommended checks…';
 	if (qaUi.selectedTests.size === 0) return 'Select at least one check.';
 	if (qaSecuritySelected() && !qaUi.securityAuthorized?.checked) {
@@ -5216,6 +5293,8 @@ function qaLaunchBlockedReason() {
 	if (qaMatrixState.fetchState === 'error') return 'Browsers and devices could not be loaded. Open Customize and retry.';
 	const configurations = qaMatrixState.selectedEnvIds.length;
 	if (configurations === 0) return 'Select at least one browser and one device.';
+	try { hybridLaunchOptions({ config: state.config, mode: qaUi.executionMode?.value, envIds: qaMatrixState.selectedEnvIds, configurations: qaMatrixState.index }); }
+	catch (error) { return error.message; }
 	// Pipeline Phase 1/2: oversized selections are NOT blocked — they run as
 	// sequential idempotent batches under one parent run (MATRIX_BATCH_SIZE
 	// is a per-batch execution limit). No over-cap reason here.
@@ -5224,6 +5303,8 @@ function qaLaunchBlockedReason() {
 
 /** Keep the compact launcher honest when availability or selection changes. */
 function syncQaSelectionSummary() {
+	renderQaBrowserStatus(qaBrowserStatus({ fetchState: qaMatrixState.fetchState, configurations: qaMatrixState.index,
+		envIds: qaMatrixState.selectedEnvIds, mode: qaUi.executionMode?.value, config: state.config }), document);
 	const summary = $('qa-selection-summary');
 	if (!summary) return;
 	const blockedReason = qaLaunchBlockedReason();
@@ -5475,9 +5556,11 @@ async function openQaStart() {
 function showQaStartPage() {
 	if (!qaUi.dialog) return;
 	qaJourney ??= createQaJourney({ document, changed: syncQaSubmitState, getState: () => ({
-		config: state.config,
+		config: { ...state.config, model: qaLauncherModeLabel(qaUi.executionMode?.value, state.config) },
 		checks: qaUi.selectedTests.size,
 		configurations: qaMatrixState.selectedEnvIds.length,
+		browserLabel: qaMatrixState.selectedEnvIds.length === 1 ? qaBrowserStatus({ fetchState: qaMatrixState.fetchState, configurations: qaMatrixState.index,
+			envIds: qaMatrixState.selectedEnvIds, mode: qaUi.executionMode?.value, config: state.config }).title : null,
 		busy: qaUi.submit.dataset.busy === 'true',
 		blocked: qaLaunchBlockedReason(),
 		coverageBlocked: !state.qaTestCatalog ? 'Loading available checks…'
@@ -5490,6 +5573,7 @@ function showQaStartPage() {
 	setQaFormError();
 	const draft = { url: qaUi.targetUrl.value, goal: $('qa-goal').value };
 	qaUi.form.reset();
+	const selectedMode = $('qa-selected-agent'); if (selectedMode) selectedMode.textContent = qaLauncherModeLabel(qaUi.executionMode?.value, state.config);
 	if (draft.url) qaUi.targetUrl.value = draft.url;
 	if (draft.goal) $('qa-goal').value = draft.goal;
 	// Studio context prefill first, then the matrix top bar's target URL wins
@@ -5595,6 +5679,19 @@ async function waitForFirstMatrixSession(createdRun, { timeoutMs = 15_000, pollM
 }
 
 if (qaUi.dialog) {
+	$('qa-browser-status-action')?.addEventListener('click', async event => {
+		setQaFormError();
+		const action = event.currentTarget.dataset.action;
+		if (action === 'recommended') {
+			$('journey-focused').click();
+			$('qa-browser-status-title').focus({ preventScroll: true });
+		} else if (action === 'change') {
+			$('journey-custom').click();
+			qaUi.matrix.fieldset?.scrollIntoView({ block: 'start' });
+			qaUi.matrix.search?.focus({ preventScroll: true });
+		} else if (action === 'reload') await loadQaMatrixCatalog();
+		else if (action === 'config') { try { paintConfig(await api('/config')); syncQaSubmitState(); } catch (error) { setQaFormError(error.message); } }
+	});
 	$('journey-focused')?.addEventListener('click', () => {
 		if (qaJourneySelectionMode !== 'quick') qaJourneyCustomSelection = qaMatrixState.selection;
 		qaJourneySelectionMode = 'quick';
@@ -5686,6 +5783,8 @@ if (qaUi.dialog) {
 		if (qaUi.submit.dataset.busy === 'true') return;
 		setQaFormError();
 		if (!qaUi.form.reportValidity()) return;
+		const agentChoice = qaLauncherSelectionProblem(qaUi.executionMode?.value, state.config);
+		if (agentChoice) { setQaFormError(agentChoice); qaJourney?.showCoverage(); return; }
 		if (!ensureModelConfigured('QA launcher')) return;
 		let targetUrl;
 		try {
@@ -5743,6 +5842,17 @@ if (qaUi.dialog) {
 		qaUi.submit.disabled = true;
 		qaUi.submit.textContent = 'Starting…';
 		try {
+			const hybridOptions = hybridLaunchOptions({ config: state.config, mode: qaUi.executionMode?.value, envIds: selectedEnvIds, configurations: qaMatrixState.index });
+			if (hybridOptions) {
+				await createQaRun({ targetUrl, device, deviceLandscape, selectedTests, securityAuthorization, kickoffText,
+					scopeSelection: scopeValues, testCaseId: qaUi._testCaseId, ...hybridOptions });
+				qaUi.targetUrl.value = ''; $('qa-goal').value = '';
+				closeQaStart({ updateRoute: false });
+				toast('Hybrid QA started — Opus 4.7 reasoning + JEV 1.13 classification.');
+				if (qaUi.founderMode?.checked) { await openFounderStart(); founderUi.targetUrl.value = targetUrl; }
+				else if (qaUi.compliance?.checked) { await openSqaStart(); sqaUi.targetUrl.value = targetUrl; }
+				return;
+			}
 			// Phase 3 (#14937): one matrix run carries EVERY selected
 			// configuration as an item — queued with controlled concurrency,
 			// progress/cancel/retry on the server. No silent reduction to a
@@ -6309,7 +6419,7 @@ const cfg = {
 };
 
 /** Providers whose endpoint the user supplies themselves. */
-const BASE_URL_REQUIRED = new Set(['custom', 'azureOpenAI']);
+const BASE_URL_REQUIRED = new Set(['custom', 'azureOpenAI', 'jev']);
 const BASE_URL_OPTIONAL = new Set(['openai', 'openrouter', 'nvidia', 'grok']);
 const CUSTOM_MODEL_VALUE = '__qase_custom_model__';
 const DEFAULT_CUSTOM_MODEL = 'z-ai/glm-5.2';
@@ -6355,6 +6465,11 @@ function fillModelOptions(models = [], selected = '') {
 
 function paintConfig(config) {
 	state.config = config;
+	const modeField = $('qa-execution-mode-field');
+	if (modeField) modeField.dataset.state = config.hybridQa?.available ? 'ready' : 'attention';
+	const hybridStatus = $('qa-hybrid-availability');
+	if (hybridStatus) hybridStatus.textContent = hybridAvailabilityMessage(config);
+	const selectedAgent = $('qa-selected-agent'); if (selectedAgent) selectedAgent.textContent = qaLauncherModeLabel(qaUi.executionMode?.value, config);
 	qaJourney?.sync();
 	if (qaJourney) syncQaSubmitState();
 	// #15643: the sidebar model badge was removed with the Advanced section;
@@ -6434,7 +6549,7 @@ function fillSettings(config) {
 	cfg.provider.replaceChildren(...config.providers.map(name => {
 		const option = document.createElement('option');
 		option.value = name;
-		option.textContent = name === 'custom' ? 'custom (OpenAI-compatible endpoint)' : name;
+		option.textContent = name === 'custom' ? 'custom (OpenAI-compatible endpoint)' : name === 'jev' ? 'JEV Decisions' : name;
 		return option;
 	}));
 	cfg.provider.value = config.provider;
@@ -6443,6 +6558,12 @@ function fillSettings(config) {
 	cfg.reasoning.value = config.reasoning ?? 'medium';
 	cfg.maxTurns.value = config.maxTurns ?? 120;
 	cfg.headless.checked = config.headless !== false;
+	cfg.provider.disabled = config.modelLocked === true;
+	cfg.model.disabled = config.modelLocked === true;
+	cfg.modelCustom.disabled = config.modelLocked === true;
+	cfg.baseUrl.disabled = config.modelLocked === true;
+	cfg.key.disabled = config.modelLocked === true;
+	cfg.reasoning.disabled = config.provider === 'jev';
 
 	// The stored key is never sent to the browser; leaving the box empty keeps it.
 	cfg.key.value = '';
@@ -6458,6 +6579,11 @@ function fillSettings(config) {
 
 function syncProviderFields() {
 	const provider = cfg.provider.value;
+	if (provider === 'jev') {
+		cfg.baseUrlField.hidden = false;
+		cfg.providerNote.textContent = 'JEV selects from observed browser actions and judges captured evidence. Reports use bounded host-authored templates; unsampled checks are identified as not tested.';
+		return;
+	}
 	const required = BASE_URL_REQUIRED.has(provider);
 	cfg.baseUrlField.hidden = !required && !BASE_URL_OPTIONAL.has(provider);
 	// The custom gateway is provisioned by the server (key comes from env) —
@@ -6553,7 +6679,7 @@ function renderResultsPageHeader() {
 	const displayStatus = runPresentationStatus(session);
 	$('results-page-status').textContent = displayStatus === 'blocked'
 		? 'Blocked'
-		: session.status === 'done' ? 'Complete' : 'Results available';
+		: displayStatus === 'partial' ? 'Completed with gaps' : session.status === 'done' ? 'Complete' : 'Results available';
 	$('results-page-status').dataset.status = displayStatus;
 	$('results-page-findings').textContent = `${findings} finding${findings === 1 ? '' : 's'}`;
 	let target = '';
@@ -6631,9 +6757,7 @@ async function applyPageRoute(route) {
 		}
 
 		const narrow = matchMedia('(max-width: 720px)').matches;
-		setWorkspaceView(narrow && state.session?.status === 'done'
-			? 'results'
-			: narrow && state.session?.status === 'running'
+		setWorkspaceView(narrow && state.session?.status === 'running'
 				? 'browser'
 				: 'agent');
 		document.title = 'Qase — autonomous QA agent';
@@ -7570,6 +7694,7 @@ function renderRunEnvBlock(session) {
 			?? (snap?.executionProvider === 'local' ? 'SIMULATED' : hasEnv ? 'VIRTUAL_DEVICE' : 'Not recorded');
 		const level = String(rawLevel).toLowerCase().replaceAll('_', ' ').replace(/^./, value => value.toUpperCase());
 		const runState = runPresentationStatus(session) === 'blocked' ? 'Blocked'
+			: runPresentationStatus(session) === 'partial' ? 'Completed with gaps'
 			: session?.status === 'done' ? 'Complete'
 			: session?.status === 'running' ? 'Running'
 				: session?.status === 'interrupted' ? 'Paused' : String(session?.status ?? 'Unknown');
@@ -8031,6 +8156,7 @@ el.stopRun.onclick = async () => {
 	}
 };
 el.resumeRun.onclick = async () => {
+	if (workflowStatus(state.session).resumeBlocked) { toast(workflowStatus(state.session).resumeBlocked, 'bad'); return; }
 	el.resumeRun.disabled = true;
 	try {
 		await api(`/sessions/${state.sessionId}/message`, {
@@ -8092,7 +8218,10 @@ function setWorkspaceView(view) {
 
 setWorkspaceView('agent');
 for (const button of document.querySelectorAll('.workspace-mobile-nav button')) {
-	button.addEventListener('click', () => setWorkspaceView(button.dataset.workspaceView));
+	button.addEventListener('click', () => {
+		if (button.dataset.workspaceView === 'results' && state.session?.status === 'done' && state.sessionId) void pageRouter.navigate({ name: 'results', runId: state.sessionId });
+		else setWorkspaceView(button.dataset.workspaceView);
+	});
 }
 
 function activateDetailTab(tab, moveFocus = false) {
@@ -8191,8 +8320,10 @@ async function bootWorkspace() {
 					await pageRouter.navigate(initialRoute, { replace: true, applyRoute: false });
 				}
 			}
-			if (initialRoute.name === 'runs') {
-				initialRoute = { name: state.session?.status === 'done' ? 'results' : 'run', runId: target.id };
+			if (initialRoute.name === 'runs' && state.sessionId === target.id) {
+				// Restoring a completed run is not a request to open Results.
+				// Keep result navigation behind an explicit user action or URL.
+				initialRoute = { name: 'run', runId: target.id };
 				await pageRouter.navigate(initialRoute, { replace: true, applyRoute: false });
 			}
 		} else {

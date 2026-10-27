@@ -28,7 +28,8 @@ export function createQaJourney({ document, getState, changed }) {
 	function go(next, validate = true) {
 		if (next > step && validate) {
 			if (!normalize()) { target.reportValidity(); target.focus(); return; }
-			if (next > 1 && getState().coverageBlocked) { $('journey-footer-hint').textContent = getState().coverageBlocked; return; }
+			const blocked = getState().coverageBlocked || getState().blocked;
+			if (next > 1 && blocked) { $('journey-footer-hint').textContent = blocked; return; }
 		}
 		step = Math.max(0, Math.min(2, next));
 		panels.forEach((panel, index) => { panel.hidden = index !== step; });
@@ -50,10 +51,12 @@ export function createQaJourney({ document, getState, changed }) {
 	function sync() {
 		const state = getState();
 		const ready = Boolean(state.config?.ready);
+		const blocked = state.coverageBlocked || state.blocked;
 		$('qa-submit').hidden = step !== 2;
+		$('qa-submit').disabled = Boolean(state.busy || !ready || blocked);
 		$('journey-review-url').textContent = normalizeWebsite(target.value) || 'Add a website';
 		$('journey-review-checks').textContent = `${state.checks} selected`;
-		$('journey-review-devices').textContent = `${state.configurations.toLocaleString()} separate ${state.configurations === 1 ? 'run' : 'runs'}`;
+		$('journey-review-devices').textContent = state.browserLabel || `${state.configurations.toLocaleString()} separate ${state.configurations === 1 ? 'run' : 'runs'}`;
 		$('journey-review-model').textContent = state.config?.model || 'Provided by Qase';
 		const goal = $('qa-goal').value.trim();
 		$('journey-review-goal-row').hidden = !goal;
@@ -62,10 +65,10 @@ export function createQaJourney({ document, getState, changed }) {
 		$('journey-volume-note').textContent = `${state.configurations.toLocaleString()} configurations will run separately. A broader selection takes longer and uses more model capacity. You can narrow it under Coverage.`;
 		const reason = state.busy ? 'Creating your run. This may take a moment…'
 			: step === 0 ? 'You can change these details before launch.'
-			: step === 1 ? state.coverageBlocked || `${state.configurations.toLocaleString()} ${state.configurations === 1 ? 'run' : 'runs'} selected. Review before launching.`
+			: step === 1 ? blocked || `${state.configurations.toLocaleString()} ${state.configurations === 1 ? 'run' : 'runs'} selected. Review before launching.`
 			: !ready ? 'Qase’s model service is unavailable. Please try again later or contact support. Your test setup is preserved.' : state.blocked || 'Everything is ready. Start when you are.';
 		if (reason !== lastAnnouncement) { $('journey-footer-hint').textContent = reason; lastAnnouncement = reason; }
-		$('journey-next').disabled = Boolean(state.busy) || (step === 1 && Boolean(state.coverageBlocked));
+		$('journey-next').disabled = Boolean(state.busy) || (step === 1 && Boolean(blocked));
 		$('journey-back').disabled = Boolean(state.busy);
 		steps.forEach(button => { button.disabled = Boolean(state.busy); });
 	}

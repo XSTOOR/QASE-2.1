@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { allowedToolNames, ensureRuntime, guardSqaBrowserTool, isFounderSynthesisReady, prepareFounderSynthesis, restoreWaitingSnapshot, runTurn, summariseResult } from './agent.js';
+import { allowedToolNames, ensureRuntime, guardSqaBrowserTool, isFounderSynthesisReady, prepareFounderSynthesis, restoreWaitingSnapshot, runTurn, summariseResult, activityLabel } from './agent.js';
 import { attachUsageCapture, createUsageLogger } from './usageCapture.js';
 import { createBrowserTools } from './browserTools.js';
 import { createFounderReviewTodos, FOUNDER_CATEGORY_IDS } from './founderService.js';
@@ -24,6 +24,13 @@ function runtimeFixture(overrides = {}) {
 	};
 	return { session, record, store, statuses };
 }
+
+test('fixed browser activities name their real action and atomic summaries use recorded assertion counts', () => {
+	assert.match(activityLabel('browser_qa_check', { action: 'navigation' }), /Clicked link/);
+	assert.match(activityLabel('browser_qa_scenario', { action: 'disclosure' }), /accordion/);
+	assert.equal(activityLabel('browser_open', {}), 'Opened page');
+	assert.match(summariseResult('browser_qa_scenario', { action: 'responsive', assertionCounts: { passed: 5, failed: 1 }, url: 'https://fixture.test/docs' }), /responsive: 6 assertions, 1 failed · https:\/\/fixture.test\/docs/);
+});
 
 function founderSynthesisFixture() {
 	const activities = ['browser_open', 'browser_snapshot', 'browser_diagnostics'].map((toolName, index) => ({ id: `evidence-${index}`, toolName, status: 'done', ts: Date.now() }));

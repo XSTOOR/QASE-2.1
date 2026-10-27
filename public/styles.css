@@ -2723,6 +2723,7 @@ a {
 .todo-chip-in_progress { border-color: rgba(104, 119, 255, 0.32); background: var(--accent-soft); color: #aeb7ff; }
 .todo-chip-failed { border-color: rgba(239, 121, 127, 0.32); background: var(--danger-soft); color: #ff9da1; }
 .todo-chip-blocked { border-color: rgba(232, 181, 95, 0.32); background: var(--warning-soft); color: var(--warning); }
+.todo-chip-partial, .todo-chip-not_tested, .todo-chip-not_observed { border-color: rgba(232, 181, 95, 0.32); background: var(--warning-soft); color: var(--warning); }
 
 .todo + .todo {
   margin-top: 3px;
@@ -2768,8 +2769,7 @@ a {
 }
 
 .todo.completed .todo-text {
-  text-decoration: line-through;
-  text-decoration-color: rgba(137, 148, 165, 0.42);
+  text-decoration: none;
 }
 
 /* Findings */

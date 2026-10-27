@@ -1005,7 +1005,7 @@ export async function fetchQaConfigurations({ fetcher = globalThis.fetch, signal
 /**
  * Fetch the full-catalog COMPACT INDEX: one small object per configuration
  * (envId, platform, manufacturer, device, os, osVersion, browser, browserCode,
- * browserVersion, availability, availabilityReason, executionType). The index
+ * browserVersion, executionEngine, availability, availabilityReason, executionType). The index
  * drives selection math, family checklist counts, facets and the summary; the
  * heavy tree renders only windowed slices (fetchConfigurationWindow).
  */

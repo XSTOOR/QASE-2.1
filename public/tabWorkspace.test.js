@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { planPresentation } from './planPresentation.js';
 
 /* UI Fix Phase 1 — regression guards for the center tab workspace features
  * that are otherwise browser-verified only: plan status chips and the
@@ -11,10 +12,17 @@ test('plan items carry readable status chips mapped to the run vocabulary', asyn
 	const app = await readFile('public/app.js', 'utf8');
 	const renderTodos = app.slice(app.indexOf('function renderTodos'), app.indexOf('const SEVERITY_ORDER'));
 	assert.match(renderTodos, /todo-chip/);
-	for (const [status, label] of [['completed', 'Passed'], ['in_progress', 'Running'], ['failed', 'Failed'], ['blocked', 'Blocked']]) {
-		assert.match(renderTodos, new RegExp(`${status}: '${label}'`), `missing ${status} → ${label}`);
+	for (const [status, label] of [['completed', 'Completed'], ['in_progress', 'Running'], ['failed', 'Failed'], ['blocked', 'Blocked']]) {
+		assert.equal(planPresentation({ status }).label, label);
 	}
-	assert.match(renderTodos, /\?\? 'Queued'/, 'pending falls back to Queued');
+	assert.equal(planPresentation({}).label, 'Queued');
+	for (const disposition of ['not_tested', 'not_observed', 'partial', 'tested']) {
+		const model = planPresentation({ status: 'completed', text: `Authentication — ${disposition}: Evidence` });
+		assert.equal(model.key, disposition);
+		assert.notEqual(model.label, 'Passed');
+		if (disposition !== 'tested') assert.equal(model.mark, '—');
+	}
+	assert.match(renderTodos, /planPresentation\(todo\)/);
 	// Chips are textContent-built (XSS-safe), never innerHTML.
 	const chipBlock = renderTodos.slice(renderTodos.indexOf('todo-chip'), renderTodos.indexOf('todo-text'));
 	assert.ok(!chipBlock.includes('innerHTML'), 'chip must not use innerHTML');
