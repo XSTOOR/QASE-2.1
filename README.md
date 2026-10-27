@@ -9,7 +9,7 @@ Production deployment targets `https://qase.drytis.com`. Never deploy the
 parent workspace or copy developer `.qase` state into production.
 
 This release adds hybrid QA (Opus reasoning, JEV classification, one CleanSlate
-loop) and UI `20261027-4`. Production activation requires gateway qualification
+loop) and UI `20261027-5`. Production activation requires gateway qualification
 on the execution host and an explicit opt-in; see [DEPLOYMENT_PROMPT.md](DEPLOYMENT_PROMPT.md).
 Existing PostgreSQL installations need migrations 041/042 before using hybrid
 state and partial QA reports.
@@ -203,12 +203,18 @@ QA asks through CleanSlate's native question flow. Use the secure credential
 form and explicitly approve one test-account sign-in, or choose **Skip login**
 to continue public-only. Never enter passwords into ordinary chat. The model
 receives placeholder names; the fixed `browser_authenticate` host tool reads
-the vault at the browser boundary and permits one same-origin sign-in POST.
+the vault at the browser boundary, waits for the rendered form, and permits one
+sign-in POST. If the site uses a separate authentication API, its exact HTTPS
+URL must be explicitly approved in the secure credential form.
 An optional expected signed-in URL helps verify access. This does not establish
 complete authentication/security coverage or authorize account creation,
-SSO/MFA, cross-origin sign-in, or other platform writes. After verified access,
+SSO/MFA, unapproved authentication APIs, or other platform writes. After verified access,
 the agent inspects and tests observed read-only platform routes. Uncertain
-sign-in dispatch is checkpointed and cannot be automatically replayed.
+sign-in dispatch is checkpointed and cannot be automatically replayed. A blocked
+or rejected sign-in requires a recovery question rather than silently finalizing
+authenticated scope. Signed-in route depth excludes stale anonymous pages while
+retaining the shared action/page budgets. A return to the observed sign-in form
+invalidates access and prompts for guidance.
 
 Local-mode credentials use an AES-256-GCM encrypted per-run vault under `.qase`,
 with a separate local key, so an ordinary restart preserves the secure handoff.

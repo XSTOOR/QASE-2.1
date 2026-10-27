@@ -5,7 +5,7 @@ import { JEV_BROWSER_CHECKS } from './jevBrowserChecks.js';
 
 export function createBrowserTools(getBridge) {
 	return [
-		{ name: 'browser_authenticate', category: 'browser', description: 'Perform one explicitly authorized same-origin test-account sign-in using host-vault credentials. No credential values or selectors are accepted. Open the observed sign-in page first. The host validates the form and allows one credential-bearing auth POST; all other target writes remain blocked. Login access is not a full authentication/security test.',
+		{ name: 'browser_authenticate', category: 'browser', description: 'Perform one explicitly authorized test-account sign-in using host-vault credentials. No credential values, endpoints or selectors are accepted from the model. Open the observed sign-in page first. The host waits for its rendered form, then allows one same-origin auth POST or an exact API endpoint explicitly approved in the secure form. Other writes remain blocked. Failed access requires a user recovery decision. Login access is not a full authentication/security test.',
 			parametersSchema: { type: 'object', properties: {}, additionalProperties: false },
 			async run(input = {}) { if (Object.keys(input).length) return { success: false, error: 'Sign-in takes no model-supplied credentials or permissions.' }; return getBridge().authenticate(); } },
 		{

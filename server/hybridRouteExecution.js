@@ -41,7 +41,7 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
     const routes = observe();
     return { ...hybridRoutePolicy(state),
       entryTested: routes.some(item => key(item.url) === key(session.targetUrl) && item.status === 'tested'),
-      minimum: Math.min(exploration.minimumPages, routes.length), target: Math.min(exploration.maxPages, routes.length), limit: exploration.maxPages };
+      minimum: Math.min(exploration.minimumPages, routes.length) };
   };
   async function scenarioFor(category, url) {
     if (suites) return state.scenarios.find(item => item.required && item.category === category);

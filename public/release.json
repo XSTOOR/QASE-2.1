@@ -1,6 +1,6 @@
 {
   "releaseId": "qase-2026-10-27-hybrid-production-r1",
-  "uiVersion": "20261027-4",
+  "uiVersion": "20261027-5",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Verified hybrid QA source based on the existing production handoff; UI 20261027-4"
+  "source": "Verified hybrid QA source based on the existing production handoff; UI 20261027-5"
 }

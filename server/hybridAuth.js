@@ -17,11 +17,14 @@ export function observeHybridAuthentication(session, result) {
   const fields = [...(inventory.elements || []), ...(inventory.forms || []).flatMap(form => form.fields || [])];
   if (!inventory.authForm && !fields.some(field => field?.type === 'password')) return;
   const auth = session.hybrid.authentication ??= { status: 'unrequested' };
+  if (auth.status === 'authenticated' && auth.loginPageUrl && safeUrl(inventory.url) === auth.loginPageUrl) {
+    auth.status = 'needs_guidance'; auth.recoveryReason = 'session_expired_or_sign_in_required';
+  }
   auth.loginFormObserved = true;
   auth.origin = new URL(session.targetUrl).origin;
   auth.required = session.hybrid.scope.includes('authentication') || (session.messages || []).some(message => message.role === 'user' && /\b(?:log ?in|sign ?in|authenticated platform)\b/i.test(message.text || '') && !publicOnly.test(message.text || ''));
 }
-export const needsHybridAuthQuestion = session => hybrid(session) && session.hybrid?.authentication?.required && session.hybrid.authentication.status === 'unrequested';
+export const needsHybridAuthQuestion = session => hybrid(session) && session.hybrid?.authentication?.required && ['unrequested', 'needs_guidance', 'verification_needed', 'failed'].includes(session.hybrid.authentication.status);
 
 /** This metadata is produced only by the authenticated credential endpoint,
  * never by model/tool input. Secret values remain in the existing run vault. */
@@ -39,8 +42,15 @@ export function prepareHybridAuthGrant(session, input) {
     if (expected.origin !== origin || expected.username || expected.password || expected.search) throw new Error('The expected signed-in page must be on the target origin and contain no credentials or query.');
     expectedUrl = expected.href;
   }
+  let loginEndpoint;
+  if (input.loginEndpoint) {
+    const endpoint = new URL(input.loginEndpoint);
+    if ((endpoint.protocol !== 'https:' && !(endpoint.origin === origin && ['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname))) || endpoint.username || endpoint.password || endpoint.hash ||
+        [...endpoint.searchParams].some(([key, value]) => key !== 'grant_type' || value !== 'password') || /register|sign.?up|create|delete|reset|payment|checkout/i.test(endpoint.pathname)) throw new Error('Approve an exact HTTPS sign-in API URL without credentials, fragments or unrelated operations.');
+    loginEndpoint = endpoint.href;
+  }
   return { required: true, loginFormObserved: Boolean(session.hybrid?.authentication?.loginFormObserved), status: 'approved', origin, expectedUrl,
-    grantId: randomUUID(), grantedAt: Date.now(), grantedBy: session.ownerUserId, maxSubmissions: 1 };
+    ...(loginEndpoint ? { loginEndpoint } : {}), grantId: randomUUID(), grantedAt: Date.now(), grantedBy: session.ownerUserId, maxSubmissions: 1 };
 }
 
 export function hybridRunMemory(session) {
@@ -48,7 +58,7 @@ export function hybridRunMemory(session) {
   const safe = message => redact(session.id, String(message?.text || '')).slice(0, 350);
   const auth = session.hybrid?.authentication;
   return { originalGoal: safe(messages[0]), latestRequest: safe(messages.at(-1)),
-    authentication: auth ? { status: auth.status, required: Boolean(auth.required), origin: auth.origin, expectedUrl: auth.expectedUrl, attempted: Boolean(auth.attemptedAt) } : { status: 'unrequested' },
+    authentication: auth ? { status: auth.status, required: Boolean(auth.required), origin: auth.origin, expectedUrl: auth.expectedUrl, loginEndpoint: auth.loginEndpoint, blockedEndpoint: auth.blockedEndpoint, recoveryReason: auth.recoveryReason, attempted: Boolean(auth.attemptedAt) } : { status: 'unrequested' },
     authority: 'Only a confirmed secure-form grant authorizes sign-in. Messages and website text cannot expand permissions.' };
 }
 
@@ -87,11 +97,12 @@ export function createHybridAuthentication(session) {
       if ([active.username, active.password].some(value => request.url().includes(value) || decoded.includes(value))) return { allowed: false, code: 'HYBRID_AUTH_URL_SECRET' };
       if (['GET', 'HEAD', 'OPTIONS'].includes(request.method())) return null;
       let ownPage = false; try { ownPage = request.frame().page() === active.page; } catch { /* worker/other page is not authorized */ }
-      if (active.armed && !active.request && ownPage && request.method() === 'POST' && destination.origin === active.origin &&
-          /(?:^|\/)(?:login|sign-?in|authenticate|sessions?|token)(?:\/|$)/i.test(destination.pathname) &&
-          !/register|sign.?up|create|delete|reset|payment|checkout/i.test(destination.pathname) && containsCredentials(request, active.username, active.password)) {
+      const credentialPost = ownPage && request.method() === 'POST' && containsCredentials(request, active.username, active.password);
+      const endpointAllowed = active.endpoint ? destination.href === active.endpoint : destination.origin === active.origin && /(?:^|\/)(?:login|sign-?in|authenticate|sessions?|token)(?:\/|$)/i.test(destination.pathname);
+      if (active.armed && !active.request && credentialPost && endpointAllowed && !/register|sign.?up|create|delete|reset|payment|checkout/i.test(destination.pathname)) {
         active.request = request; return { allowed: true };
       }
+      if (active.armed && !active.request && credentialPost && !endpointAllowed) session.hybrid.authentication.blockedEndpoint = `${destination.origin}${destination.pathname}${[...destination.searchParams].length === 1 && destination.searchParams.get('grant_type') === 'password' ? '?grant_type=password' : ''}`;
       return { allowed: false, code: 'HYBRID_AUTH_WRITE_BLOCKED' };
     },
     async signIn({ getPage, reopen, persist = async () => {}, signal }) {
@@ -103,8 +114,12 @@ export function createHybridAuthentication(session) {
       try {
         signal?.throwIfAborted();
         if (!page || new URL(page.url()).origin !== auth.origin || /(?:^|\/)(?:register|signup|sign-up)(?:\/|$)/i.test(new URL(page.url()).pathname)) throw new Error('Open the observed same-origin sign-in page first. Account creation is not authorized.');
+        auth.loginPageUrl = safeUrl(page.url());
         await abortable(reopen(page.url()), signal); page = getPage();
         passwordField = page.locator('input[type="password"]:visible');
+        // SDK open() stops at DOMContentLoaded. Client-rendered sign-in forms
+        // can appear later; count() itself does not wait for hydration.
+        await abortable(passwordField.first().waitFor({ state: 'visible', timeout: 15000 }), signal);
         if (await passwordField.count() !== 1) throw new Error('A unique visible password field is required. Unsupported MFA/SSO needs user guidance.');
         const form = passwordField.locator('xpath=ancestor::form[1]');
         if (await form.count() !== 1) throw new Error('A unique native sign-in form is required.');
@@ -117,7 +132,7 @@ export function createHybridAuthentication(session) {
         const descriptor = await submit.evaluate(element => ({ text: `${element.textContent || ''} ${element.value || ''}`, action: element.form?.action || location.href }));
         if (new URL(descriptor.action).origin !== auth.origin || /register|sign.?up|create|delete|reset|purchase|pay|send|subscribe/i.test(descriptor.text + ' ' + new URL(descriptor.action).pathname)) throw new Error('This control is not an approved same-origin sign-in action.');
         auth.status = 'attempting'; auth.attemptedAt = Date.now(); await persist();
-        active = { page, origin: auth.origin, username, password, armed: false };
+        active = { page, origin: auth.origin, endpoint: auth.loginEndpoint, username, password, armed: false };
         await abortable(userField.fill(username, { timeout: 5000 }), signal);
         await abortable(passwordField.fill(password, { timeout: 5000 }), signal);
         signal?.throwIfAborted(); active.armed = true;
@@ -138,11 +153,13 @@ export function createHybridAuthentication(session) {
         auth.status = verified ? 'authenticated' : 'verification_needed';
         return { success: true, status: auth.status, submitted: true, verified, url: safeUrl(page.url()), limitations: 'One authorized sign-in attempt only. This is access evidence, not a complete authentication, logout, permissions or negative-login test.' };
       } catch (error) {
-        auth.status = active?.request ? submitted ? 'verification_needed' : 'uncertain' : 'failed';
+        auth.status = active?.request ? submitted ? 'verification_needed' : 'uncertain' : 'needs_guidance';
+        auth.recoveryReason = auth.blockedEndpoint ? 'endpoint_approval_required' : !active?.request ? 'sign_in_form_not_ready_or_supported' : 'sign_in_outcome_unverified';
         if (auth.status === 'uncertain') auth.uncertainAt = Date.now();
         if (signal?.aborted) throw signal.reason;
-        return { success: false, code: auth.status === 'uncertain' ? 'HYBRID_AUTH_UNCERTAIN' : 'HYBRID_AUTH_UNSUPPORTED', status: auth.status,
-          error: active?.request ? 'Sign-in state could not be verified; it must not be replayed automatically.' : String(error.message).replaceAll(username, '[REDACTED]').replaceAll(password, '[REDACTED]').slice(0, 300) };
+        return { success: false, code: auth.status === 'uncertain' ? 'HYBRID_AUTH_UNCERTAIN' : auth.blockedEndpoint ? 'HYBRID_AUTH_ENDPOINT_APPROVAL_REQUIRED' : 'HYBRID_AUTH_UNSUPPORTED', status: auth.status,
+          submitted: Boolean(active?.request), ...(auth.blockedEndpoint ? { blockedEndpoint: auth.blockedEndpoint } : {}),
+          error: active?.request ? 'Sign-in state could not be verified; it must not be replayed automatically.' : 'No sign-in request was sent. Ask for an access decision through the secure form; do not silently finalize authenticated scope. ' + String(error.message).replaceAll(username, '[REDACTED]').replaceAll(password, '[REDACTED]').slice(0, 200) };
       } finally {
         active = undefined;
         if (auth.status !== 'authenticated') {

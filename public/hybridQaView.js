@@ -55,6 +55,10 @@ export function renderHybridQa(session, document) {
     `${model.counts.passed || 0} passed · ${model.counts.failed || 0} failed · ${model.counts.blocked || 0} blocked · ${model.counts.inconclusive || 0} inconclusive · ${(model.counts.planned || 0) + (model.counts.not_executed || 0)} unexecuted`,
     `Recorded scenario coverage: ${Math.round(Math.max(0, Math.min(1, model.coverage)) * 100)}% · ${model.confirmedDefects} confirmed defects · ${model.unresolved} unresolved observations`
   ];
+  const total = Object.values(model.counts).reduce((sum, value) => sum + value, 0);
+  const resolved = ['passed', 'failed', 'blocked', 'inconclusive', 'not_executed'].reduce((sum, status) => sum + (model.counts[status] || 0), 0);
+  if (total) rows.push(`Plan outcomes recorded: ${resolved}/${total}. Blocked, inconclusive and unexecuted outcomes close planning items but do not increase verified coverage.`);
+  if (model.authentication && (model.authentication.required || model.authentication.status !== 'unrequested')) rows.push(`Platform access: ${({ approved: 'Approved; preparing sign-in', attempting: 'Signing in', authenticated: 'Verified access; testing observed platform routes', needs_guidance: 'Needs an access decision', verification_needed: 'Sign-in response received; access still needs verification', failed: 'Sign-in rejected; needs user guidance', declined: 'Public-only review selected' })[model.authentication.status] || 'Awaiting access decision'}.`);
   if (model.telemetry) {
     rows.push(`${model.telemetry.browserActions || 0} browser actions · ${Math.round((model.telemetry.elapsedMs || 0) / 1000)} seconds active execution`);
     const timings = Object.entries(model.telemetry.browserTimings || {}).sort((a, b) => b[1].totalMs - a[1].totalMs).slice(0, 3);

@@ -24,6 +24,17 @@ test('launcher explains unavailable qualification instead of silently graying ou
   assert.match(hybridAvailabilityMessage({}), /unavailable/);
 });
 
+test('plan resolution and verified platform access are distinct from executed coverage', () => {
+  const nodes = [], document = { createElement() { const node = { textContent: '', setAttribute() {}, append() {} }; nodes.push(node); return node; } };
+  renderHybridQa({ mode: 'qa', qaExecutionMode: 'hybrid', hybrid: { authentication: { status: 'needs_guidance' }, counts: { passed: 1, blocked: 1, inconclusive: 1 }, scenarios: [], coverage: 1 / 3 } }, document);
+  const text = nodes.map(node => node.textContent).join(' ');
+  assert.match(text, /Plan outcomes recorded: 3\/3/); assert.match(text, /do not increase verified coverage/);
+  assert.match(text, /Platform access: Needs an access decision/); assert.match(text, /coverage: 33%/);
+  nodes.length = 0;
+  renderHybridQa({ mode: 'qa', qaExecutionMode: 'hybrid', hybrid: { authentication: { status: 'unrequested', required: false }, scenarios: [] } }, document);
+  assert.doesNotMatch(nodes.map(node => node.textContent).join(' '), /Platform access:/, 'A public run without an access prerequisite must not look blocked on credentials.');
+});
+
 test('temporary responsive samples cannot replace the selected-device preview or masquerade as another device', () => {
   const viewportTesting = { phase: 'responsive_sample', primary: { width: 1440, height: 900 }, current: { width: 390, height: 900 } };
   const frame = { viewportTesting, viewport: viewportTesting.current };

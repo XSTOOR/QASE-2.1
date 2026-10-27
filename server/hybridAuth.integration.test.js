@@ -24,36 +24,48 @@ test('installed CleanSlate asks, pauses, resumes through secure host grant and p
   const profile = hybridProfile(settings);
   fs.writeFileSync(qualification, JSON.stringify({ sdkVersion: HYBRID_SDK_VERSION, profileIdentity: profileIdentity(profile), checkedAt: Date.now(), capabilities: Object.fromEntries(REQUIRED_CAPABILITIES.map(key => [key, { passed: true }])) }));
   const received = [], events = [];
+  const dashboard = '<h1>Test dashboard</h1><button>Log out</button><div style="width:1800px;height:30px">Known authenticated layout defect</div><a href="/settings">Settings</a>';
   const server = http.createServer((req, res) => {
-    received.push({ method: req.method, url: req.url });
-    if (req.url === '/api/login' && req.method === 'POST') { req.resume(); res.setHeader('Set-Cookie', 'fixture_session=approved; HttpOnly; SameSite=Strict'); res.setHeader('Content-Type', 'application/json'); res.end('{}'); return; }
+    received.push({ method: req.method, url: req.url, private: Boolean(req.headers.cookie?.includes('fixture_session=approved')) });
+    if (req.url === '/api/login' && req.method === 'POST') { req.resume(); res.setHeader('Set-Cookie', 'fixture_session=approved; Path=/; HttpOnly; SameSite=Strict'); res.setHeader('Content-Type', 'application/json'); res.end('{}'); return; }
     res.setHeader('Content-Type', 'text/html');
-    res.end(`<title>Owned sign-in fixture</title><form id="login"><input type="email" name="email" required><input type="password" name="password" required><button type="submit">Sign in</button></form><script>
+    if (req.headers.cookie?.includes('fixture_session=approved')) { res.end(`<title>Private fixture</title>${dashboard}${req.url === '/settings' ? '<form><input type="email" required><button>Save</button></form>' : ''}`); return; }
+    res.end(`<title>Owned sign-in fixture</title><script>setTimeout(()=>{
+      document.body.insertAdjacentHTML('afterbegin','<form id="login"><input type="email" name="email" required><input type="password" name="password" required><button type="button">Show password</button><button type="submit">Sign in</button></form>');
       login.addEventListener('input', () => fetch('/autosave', {method:'POST',body:'must-not-send'}).catch(()=>{}));
       login.onsubmit=async event=>{event.preventDefault(); const values=Object.fromEntries(new FormData(login));
         await fetch('/api/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(values)});
         fetch('/api/login', {method:'POST',body:JSON.stringify(values)}).catch(()=>{});
         fetch('/leak?email='+encodeURIComponent(values.email)).catch(()=>{});
-        document.body.innerHTML='<h1>Test dashboard</h1><button>Log out</button>';
+        document.body.innerHTML=${JSON.stringify(dashboard)};
       };
-    </script>`);
+    },700);</script>`);
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => { server.closeAllConnections(); server.close(); });
-  const session = { id: randomUUID(), mode: 'qa', qaExecutionMode: 'hybrid', status: 'idle', targetUrl: `http://127.0.0.1:${server.address().port}/`, selectedTests: ['authentication'], messages: [], activities: [], findings: [], todos: [], secretNames: [], ownerUserId: 'fixture-owner' };
+  const session = { id: randomUUID(), mode: 'qa', qaExecutionMode: 'hybrid', status: 'idle', targetUrl: `http://127.0.0.1:${server.address().port}/`, selectedTests: ['authentication', 'responsive', 'forms', 'navigation'], messages: [], activities: [], findings: [], todos: [], secretNames: [], ownerUserId: 'fixture-owner' };
   const live = {}, store = { liveFor: () => live, listLive: () => [], publish(_s, type, value) { events.push({ type, value }); },
     async commit(s) { fs.writeFileSync(path.join(root, 'run.json'), JSON.stringify(s)); }, async setStatus(s, status, detail) { s.status = status; s.statusDetail = detail; },
     async addActivity(s, item) { const next = { id: randomUUID(), ts: Date.now(), ...item }; s.activities.push(next); return next; },
     async updateActivity(s, id, value) { Object.assign(s.activities.find(item => item.id === id), value); }, async addMessage(s, item) { s.messages.push(item); } };
   await withUserConfiguration(settings, async () => {}, async () => {
     const record = await ensureRuntime(session, store);
+    t.signal.addEventListener('abort', () => record.controller?.abort(new Error('Owned fixture timeout')), { once: true });
+    record.hybrid.router.classifier = async (_state, questions) => Object.fromEntries(Object.keys(questions).map(key => [key, { choice: key.startsWith('c') ? 'rendering' : 'investigate' }]));
     t.after(async () => { record.bridge.dispose(); await record.bridge.service.dispose?.(); record.dispose(); deleteRunSnapshot(session.id); clearSecrets(session.id); });
     let step = 0;
     record.runtime.cleanSlateService.chat = async (_messages, options) => (async function* () {
       record.hybrid.usage({ reservationId: options.qaseBudgetReservationId, callId: randomUUID(), inputTokens: 100, outputTokens: 20, estimated: false });
+      const privateRoute = session.hybrid.exploration.routes.find(route => route.authenticationContext === session.hybrid.authentication?.grantId && route.status === 'pending');
+      const failureScenario = session.hybrid.scenarios.find(scenario => scenario.assertions.some(assertion => assertion.outcome === 'fail' && assertion.reproduction?.confirmed));
       const calls = [['browser_open', { url: session.targetUrl }], ['browser_qa_check', { action: 'inspect' }],
         ['ask_question', { question: 'Provide authorized test account credentials through the secure form, or continue public-only?', options: ['Provide a test account securely', 'Continue public-only'] }],
         ['browser_authenticate', {}], ['browser_qa_check', { action: 'inspect' }],
-        ['ask_question', { question: 'Which dashboard workflow should be prioritized next?', options: ['Navigation', 'Keyboard access'] }]];
+        ['ask_question', { question: 'Which dashboard workflow should be prioritized next?', options: ['Navigation', 'Keyboard access'] }],
+        ['qa_route_frontier', { rank: false }], ['qa_test_routes', { route_ids: [privateRoute?.id] }],
+        ['qa_route_frontier', { rank: false }], ['qa_test_routes', { route_ids: [privateRoute?.id] }],
+        ['qa_close_scenario', { scenario_id: session.hybrid.scenarios.find(scenario => scenario.category === 'authentication').id, disposition: 'blocked', reason: 'Access was verified; negative sign-in, logout and role permissions were not authorized or tested.' }],
+        ['report_finding', { scenario_id: failureScenario?.id, assertion_id: failureScenario?.assertions.find(assertion => assertion.outcome === 'fail' && assertion.reproduction?.confirmed)?.id, title: 'Authenticated dashboard overflows the viewport', severity: 'medium' }],
+        ['finish_qa_report', { verdict: 'partial', summary: 'Host evidence is authoritative.' }]];
       if (step >= calls.length) { yield { type: 'text', content: 'Waiting for workflow choice.' }; return; }
       const [toolName, input] = calls[step++];
       if (toolName === 'ask_question') assert.ok(options.tools.some(tool => tool.name === toolName), 'Native question must be advertised.');
@@ -69,12 +81,20 @@ test('installed CleanSlate asks, pauses, resumes through secure host grant and p
     await runTurn(session, { resumeAnswer: 'Owner authorized one test-account sign-in through the secure form. Use browser_authenticate.' }, store);
     assert.equal(session.status, 'awaiting_input', session.statusDetail);
     assert.equal(session.hybrid.authentication.status, 'authenticated');
-    assert.deepEqual(received.filter(req => req.method === 'POST'), [{ method: 'POST', url: '/api/login' }]);
+    assert.deepEqual(received.filter(req => req.method === 'POST').map(({ method, url }) => ({ method, url })), [{ method: 'POST', url: '/api/login' }]);
+    assert.ok((await record.bridge.service.context.cookies()).some(cookie => cookie.name === 'fixture_session'), 'The fixture login must establish a real cookie, not just change its DOM.');
     assert.ok(!received.some(req => /leak|autosave/.test(req.url)));
     assert.ok(session.hybrid.evidence.some(item => item.toolName === 'browser_authenticate' && item.result.verified));
     assert.ok(session.hybrid.evidence.some(item => item.result.inventory?.text?.includes('Test dashboard')));
     assert.ok(!JSON.stringify({ session, events }).includes(fields.QA_PASSWORD));
     assert.equal(session.hybrid.scenarios[0].status, 'planned', 'Successful access does not pass the authentication suite.');
     const replay = await record.bridge.authenticate(); assert.equal(replay.code, 'HYBRID_AUTH_APPROVAL_REQUIRED');
+    await runTurn(session, { resumeAnswer: 'Prioritize navigation and input validation on the authenticated dashboard and settings, then finish with honest coverage.' }, store);
+    assert.equal(session.status, 'done', session.statusDetail);
+    assert.ok(session.findings.some(finding => /1800|overflow/i.test(JSON.stringify(finding))), JSON.stringify({ received, inventories: session.hybrid.evidence.filter(item => item.result.inventory).map(item => ({ title: item.result.inventory.title, url: item.result.inventory.url })), assertions: session.hybrid.scenarios.find(item => item.category === 'responsive').assertions.map(item => ({ actual: item.actual, outcome: item.outcome })), failures: session.activities.filter(item => item.status === 'failed').map(item => ({ tool: item.toolName, error: item.error })) }));
+    assert.ok(session.hybrid.scenarios.every(scenario => !['planned', 'running'].includes(scenario.status)), 'Every scenario must have a host-supported result or explicit gap.');
+    assert.ok(session.hybrid.evidence.some(item => item.result.formTesting?.fieldsFilled > 0 && item.result.formTesting?.negativeCases > 0));
+    assert.ok(session.hybrid.exploration.routes.some(route => route.url.endsWith('/settings') && route.status === 'tested'));
+    assert.equal(received.filter(req => req.method === 'POST').length, 1, 'Deep checks must not submit private-platform forms.');
   });
 });

@@ -1,6 +1,6 @@
 # QASE hybrid production candidate
 
-Release: `qase-2026-10-27-hybrid-production-r1`. UI: `20261027-4`.
+Release: `qase-2026-10-27-hybrid-production-r1`. UI: `20261027-5`.
 Target: `https://qase.drytis.com`. This is a source/image handoff, not a record
 of deployment or production activation.
 
@@ -34,6 +34,12 @@ changed during preparation.
   sign-in; successful access enables fresh signed-in route observations without
   treating access as a passed authentication suite. Scope decisions and bounded
   goal memory survive restart. Failed credential validation retains the form.
+- Sign-in waits for client rendering instead of inspecting immediately after
+  DOMContentLoaded. Explicit exact authentication-API consent supports a separate
+  backend without granting arbitrary cross-origin writes. Blocked access requires
+  a recovery decision; private route depth and session-expiry detection are scoped
+  to the current access state. Compact ledger-based closeout preserves more of the
+  existing budget for exploration. Plan resolution is shown separately from coverage.
 
 ## Deployment changes
 

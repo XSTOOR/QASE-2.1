@@ -2707,7 +2707,12 @@ function credentialForm() {
 	expectedUrl.type = 'url';
 	expectedUrl.placeholder = 'Expected signed-in page URL (optional)';
 	expectedUrl.setAttribute('aria-label', 'Expected signed-in page URL');
-	if (hybrid) note.textContent = 'Use a test account. Credentials are encrypted in this run’s vault; the model receives placeholders only. One same-origin sign-in is supported. Account creation and SSO/MFA are not automated. You can skip login and continue public-only.';
+	const loginEndpoint = document.createElement('input');
+	loginEndpoint.type = 'url';
+	loginEndpoint.placeholder = 'Sign-in API URL (optional; approve only a service you trust)';
+	loginEndpoint.setAttribute('aria-label', 'Approved sign-in API URL');
+	if (hybrid) consent.append(' If a sign-in API URL is supplied below, I also approve sending this test account to that exact endpoint once.');
+	if (hybrid) note.textContent = 'Use a test account. Credentials are encrypted in this run’s vault; the model receives placeholders only. One sign-in is allowed on this website or the exact API URL you approve. Account creation and SSO/MFA are not automated. You can skip login and continue public-only.';
 
 	const actions = document.createElement('div');
 	actions.className = 'cred-actions';
@@ -2722,7 +2727,7 @@ function credentialForm() {
 	submit.textContent = 'Store and continue';
 	actions.append(skip, submit);
 
-	form.append(row, ...(hybrid ? [expectedUrl, consent] : [extra]), note, actions);
+	form.append(row, ...(hybrid ? [expectedUrl, loginEndpoint, consent] : [extra]), note, actions);
 	form.onsubmit = async event => {
 		event.preventDefault();
 		const fields = {};
@@ -2739,7 +2744,7 @@ function credentialForm() {
 		}
 		submit.disabled = true;
 		try {
-			await api(`/sessions/${state.sessionId}/credentials`, { method: 'POST', body: JSON.stringify({ fields, ...(hybrid ? { authorizeLogin: authorize.checked, expectedUrl: expectedUrl.value.trim() } : {}) }) });
+			await api(`/sessions/${state.sessionId}/credentials`, { method: 'POST', body: JSON.stringify({ fields, ...(hybrid ? { authorizeLogin: authorize.checked, expectedUrl: expectedUrl.value.trim(), loginEndpoint: loginEndpoint.value.trim() } : {}) }) });
 			el.questionSlot.replaceChildren();
 			state.session.pendingQuestion = undefined;
 			password.value = ''; username.value = ''; extra.value = '';

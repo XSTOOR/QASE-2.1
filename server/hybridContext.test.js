@@ -174,7 +174,7 @@ test('depth-aware tool schemas use remaining capacity and closeout supersedes a 
   assert.equal(closing.closing, true);
   assert.ok(closing.options.tools.some(t => t.name === 'finish_qa_report'));
   assert.ok(closing.options.tools.every(t => !['qa_test_routes', 'qa_route_frontier'].includes(t.name)));
-  assert.match(closing.messages[0].content, /superseded by host budget closeout/);
+  assert.match(closing.messages.at(-1).content, /superseded by host budget closeout/);
   assert.match(closing.messages.at(-1).content, /no longer a publication prerequisite/);
   assert.equal(JSON.parse(history[0].content).code, 'HYBRID_DEPTH_PENDING', 'Durable SDK history remains untouched.');
   assert.deepEqual(closing.options.tools.find(tool => tool.name === 'qa_close_scenario').parametersSchema.properties.scenario_id.enum, session.hybrid.scenarios.map(scenario => scenario.id));
@@ -189,4 +189,23 @@ test('post-closeout guidance blocks repeat publication but permits finishing an 
   assert.equal(hybridRecoveryProblem(session).code, 'HYBRID_COVERAGE_CLOSED');
   session.hybrid.budgetFinalizing = false; assert.equal(hybridRecoveryProblem(session), null);
   session.qaExecutionMode = 'legacy'; session.hybrid.budgetFinalizing = true; assert.equal(hybridRecoveryProblem(session), null);
+});
+
+test('durable closeout projection preserves policy and human requirements without reserving duplicated tool history', () => {
+  const { session, runtime } = fixture();
+  Object.assign(session.hybrid.telemetry.reasoner, { inputTokens: 146670, outputTokens: 4370, calls: 10 });
+  const finish = createQaTools(session, { async commit() {} }).find(tool => tool.name === 'finish_qa_report');
+  const input = [{ role: 'system', content: 'SDK host policy. '.repeat(1200) }, { role: 'system', content: hybridHostContext(session) },
+    { role: 'user', content: 'Test the authenticated dashboard. Do not create accounts or submit payments.' },
+    { role: 'assistant', content: 'Prior investigation details. '.repeat(600) }, { role: 'tool', content: JSON.stringify({ inventory: 'Old rendered inventory. '.repeat(750) }) }];
+  const original = structuredClone(input), options = { tools: [finish, ...runtime.tools] };
+  assert.equal(prepareHybridInference(input, options, session).closing, false, 'Do not prematurely close at the reported 151k usage when compact closeout fits.');
+  session.hybrid.budgetFinalizing = true;
+  const result = prepareHybridInference(input, options, session);
+  assert.ok(JSON.stringify(result.messages).length < JSON.stringify(input).length * .65);
+  assert.ok(result.messages.some(item => item.content === original[0].content));
+  assert.ok(result.messages.some(item => item.content === original[2].content));
+  assert.ok(result.messages.every(item => !['assistant', 'tool'].includes(item.role)), 'Omit complete transcript pairs; do not leave orphan tool responses.');
+  assert.equal(session.hybrid.budgets.reasonerTokens, 300000);
+  assert.deepEqual(input, original);
 });

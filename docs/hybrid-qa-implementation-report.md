@@ -2013,3 +2013,77 @@ draining and rollback. Hybrid remains disabled in all default/production example
 configuration. Existing local opt-in is separate. No production configuration,
 data, traffic, model identity or credentials were changed, and no live gateway
 qualification was repeated for this host/UI-only change.
+
+## 28. Rendered sign-in, private-route depth and recovery (2026-10-27)
+
+The reported run `17a34121-12aa-47b6-948d-ffe7b740003f` did ask for
+credentials and receive secure-form authorization. Its saved host evidence
+records `HYBRID_AUTH_UNSUPPORTED: A unique visible password field is required`.
+No login request was sent: the failure preceded typing/submission. The installed
+SDK's `open()` returns at DOMContentLoaded, whereas the target renders its form
+later. The previous immediate locator `count()` therefore misclassified a
+temporarily absent form as unsupported. Read-only inspection of the public
+target confirmed a native email/password form; no real login was executed during
+this investigation.
+
+The implementation plan and completed changes are:
+
+1. Wait for the rendered visible password field within a bounded, cancellable
+   deadline before validating the unique form and safe submit control. The SDK
+   remains the single browser owner; no SDK internals or node_modules changed.
+2. Force a native access-recovery question after unsupported, rejected or
+   unverified sign-in while execution budget remains. A partial report cannot
+   silently replace the requested authenticated work. An explicit public-only
+   decision or genuine closeout still produces honest gaps.
+3. Support one exact HTTPS authentication API endpoint explicitly approved by
+   the owner in the secure credential form. Only one credential-bearing POST
+   from the selected page is eligible. Other origins/endpoints, duplicates,
+   autosaves, account creation and unrelated writes remain blocked. Uncertain
+   dispatch still cannot be automatically replayed. No model-supplied URL grants
+   this capability.
+4. Compute route depth for the current authenticated context, excluding stale
+   anonymous routes from its completion target while charging all attempts to
+   the same finite page/action budget. A return to the observed sign-in form
+   invalidates access and requires guidance; a private password-settings page
+   alone does not imply session expiry.
+5. Reserve closeout from a compact host-ledger projection instead of replaying
+   the entire tool transcript. SDK system policies and human requirements stay
+   intact; assistant/tool pairs are omitted together only in the inference copy.
+   Durable transcripts, exact provider usage, evidence and budget limits are
+   unchanged. Synthetic regression verifies continued exploration at the
+   reported 151k usage when compact closeout fits; no live cost improvement is
+   claimed without measurement.
+6. Show recorded plan outcomes separately from verified coverage and display
+   platform-access state. A blocked/inconclusive disposition closes a planning
+   item without passing its test. Asset version is now `20261027-5`.
+
+Actual validation:
+
+- `npm run verify` with temporary idle-sleep prevention: **2,040 passed,
+  26 skipped, zero failures/cancellations**, 2,066 tests, 31 suites, approximately
+  131 seconds (`/private/tmp/qase-auth-depth-final-awake-verify.log`). Syntax,
+  private-path ignore and high-confidence credential checks passed. An earlier
+  broad run was interrupted by system sleep and cancelled four browser tests;
+  it was not counted as a pass and no timeout was relaxed.
+- The installed CleanSlate end-to-end fixture waits for a delayed client-rendered
+  form, asks and pauses, resumes with secure consent, signs in once with a real
+  cookie, discovers private dashboard/settings routes, fills live input fields
+  with negative cases, reproduces a seeded overflow defect, files host evidence
+  and publishes with every scenario terminal or explicitly blocked. Scripted
+  inference uses the real SDK loop; this is not a live-model intelligence score.
+- A real-browser mocked-transport fixture proves exact cross-origin API consent,
+  CORS/preflight handling, one allowed credential POST, duplicate/unapproved
+  write blocking and no replay. There is no call to a real external auth service.
+- Dashboard/HTTP/SSE fixture passes secure consent, failed-form recovery,
+  remembered Skip login, desktop/mobile preview and explicit Results navigation,
+  with zero page errors (`/private/tmp/qase-auth-depth-dashboard.log`). Final
+  hybrid view tests pass **10/10**, including plan/coverage separation and public
+  runs not appearing blocked on credentials.
+
+Readiness remains conditional: the actual target still needs a fresh authorized
+test-account canary and evidence review. SSO/MFA, arbitrary custom/multistep forms,
+unapproved APIs, token refresh writes, general GraphQL POST queries and destructive
+or business-data mutations have not been made universally executable. Full
+authentication/permissions coverage is not inferred from successful access.
+Linux image/staging checks remain required. Production was not changed, hybrid
+defaults remain disabled, and publishing/deployment is held pending review.

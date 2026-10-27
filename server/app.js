@@ -2405,6 +2405,7 @@ export function createApplication(options = {}) {
 		const placeholders = names.map(name => `{{${name}}}`).join(', ');
 		const answer = [
 			'The credentials are stored in the host vault. You will not be shown the values.',
+			authGrant?.loginEndpoint && `The owner approved exactly this sign-in API endpoint for one credential POST: ${authGrant.loginEndpoint}. This does not authorize other writes or navigation outside the target origin.`,
 			authGrant ? 'The owner authorized one test-account sign-in on the target origin. Open the observed sign-in page, then use browser_authenticate with no arguments. Continue read-only testing after verified access. Other writes remain forbidden.' : `Fill the sign-in form using these literal placeholders as the browser_fill value: ${placeholders}.`,
 			'The host substitutes the real secret at the keyboard. Never print, repeat or report a credential value.',
 			note && `Note from the user: ${note}`

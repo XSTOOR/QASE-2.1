@@ -8,6 +8,7 @@ import { prepareHybridInference, hybridHostContext } from './hybridContext.js';
 import { validateHybridReport } from './qaCompletionGate.js';
 import { storeSecrets, clearSecrets, redact } from './secrets.js';
 import { hydrateHybrid, hybridStorage } from './hybridPersistence.js';
+import { hybridRoutePolicy } from './hybridRoutePolicy.js';
 
 function fixture() {
   const session = { id: randomUUID(), mode: 'qa', qaExecutionMode: 'hybrid', targetUrl: 'https://fixture.test/', selectedTests: ['authentication', 'navigation'], ownerUserId: 'owner', messages: [{ role: 'user', text: 'Test the authenticated dashboard.' }], findings: [], todos: [], secretNames: [] };
@@ -94,7 +95,7 @@ test('cancellation after sign-in dispatch retains uncertainty, blocks leaks/othe
   const controller = createHybridAuthentication(session), snapshots = [], cleared = [];
   const request = (method, path, body = fields, ownPage = true) => ({ method: () => method, url: () => new URL(path, session.targetUrl).href,
     postData: () => JSON.stringify(body), frame: () => ({ page: () => ownPage ? page : {} }) });
-  const field = name => ({ count: async () => 1, fill: async value => { if (!value) cleared.push(name); }, locator: () => form });
+  const field = name => ({ first: () => ({ waitFor: async () => {} }), count: async () => 1, fill: async value => { if (!value) cleared.push(name); }, locator: () => form });
   const submit = { count: async () => 1, evaluate: async () => ({ text: 'Sign in', action: 'https://fixture.test/login' }), async click() {
     assert.equal(controller.requestDecision(request('POST', '/autosave')).allowed, false);
     assert.equal(controller.requestDecision(request('POST', '/login', fields, false)).allowed, false);
@@ -112,4 +113,44 @@ test('cancellation after sign-in dispatch retains uncertainty, blocks leaks/othe
   assert.ok(cleared.includes('username') && cleared.includes('password'));
   assert.equal((await controller.signIn({ getPage() { throw new Error('Replay must not reach browser'); } })).code, 'HYBRID_AUTH_APPROVAL_REQUIRED');
   assert.ok(!JSON.stringify(snapshots).includes(fields.QA_PASSWORD));
+});
+
+test('blocked access forces a recovery question instead of silently publishing partial authenticated scope', () => {
+  const { session, options } = fixture();
+  session.hybrid.authentication = { required: true, status: 'needs_guidance', recoveryReason: 'sign_in_form_not_ready_or_supported' };
+  assert.deepEqual(prepareHybridInference([], options, session).options.tools.map(tool => tool.name), ['ask_question']);
+  assert.throws(() => validateHybridReport(session, { verdict: 'partial' }), { code: 'HYBRID_AUTH_QUESTION_REQUIRED' });
+  recordHybridAnswer(session, 'Continue public-only.');
+  assert.equal(needsHybridAuthQuestion(session), false);
+});
+
+test('explicit API approval is endpoint-specific and rejects account creation and secret-bearing URLs', () => {
+  const { session } = fixture(); session.pendingQuestion = { credentialLike: true };
+  const input = { authorizeLogin: true, fields: { QA_USERNAME: 'test@example.invalid', QA_PASSWORD: 'fixture-password' } };
+  assert.equal(prepareHybridAuthGrant(session, { ...input, loginEndpoint: 'https://auth.fixture.test/auth/v1/token?grant_type=password' }).loginEndpoint, 'https://auth.fixture.test/auth/v1/token?grant_type=password');
+  for (const loginEndpoint of ['http://outside.test/login', 'https://auth.fixture.test/register', 'https://auth.fixture.test/login?password=secret', 'https://user:secret@auth.fixture.test/login']) assert.throws(() => prepareHybridAuthGrant(session, { ...input, loginEndpoint }), /exact HTTPS/);
+});
+
+test('private route depth excludes stale anonymous pages while preserving the shared page budget', () => {
+  const { session } = fixture(); session.hybrid.authentication = { status: 'authenticated', grantId: 'approved' };
+  session.hybrid.exploration.routes = [
+    { status: 'tested' }, { status: 'tested' }, { status: 'pending' },
+    { status: 'pending', authenticationContext: 'approved' }, { status: 'pending', authenticationContext: 'approved' }
+  ];
+  let policy = hybridRoutePolicy(session.hybrid);
+  assert.equal(policy.remainingSlots, 6); assert.equal(policy.target, 2); assert.equal(policy.publicationAllowed, false);
+  for (const route of session.hybrid.exploration.routes.slice(3)) route.status = 'tested';
+  policy = hybridRoutePolicy(session.hybrid);
+  assert.equal(policy.totalAttempted, 4); assert.equal(policy.remainingSlots, 4); assert.equal(policy.publicationAllowed, true);
+});
+
+test('return to the observed sign-in form invalidates access, while a private password-settings form does not', () => {
+  const { session } = fixture();
+  session.hybrid.authentication = { status: 'authenticated', grantId: 'approved', loginPageUrl: 'https://fixture.test/login', required: true };
+  recordHybridAnswer(session, 'Prioritize dashboard navigation.');
+  observeHybridAuthentication(session, { inventory: { url: 'https://fixture.test/settings/password', authForm: true } });
+  assert.equal(session.hybrid.authentication.status, 'authenticated');
+  observeHybridAuthentication(session, { inventory: { url: 'https://fixture.test/login', authForm: true } });
+  assert.equal(session.hybrid.authentication.status, 'needs_guidance'); assert.equal(needsHybridAuthQuestion(session), true);
+  assert.equal(session.hybrid.authentication.recoveryReason, 'session_expired_or_sign_in_required');
 });

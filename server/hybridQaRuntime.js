@@ -212,8 +212,8 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           // convert a late result into a passing assertion or replay it.
           if (activeSignal?.aborted) throw activeSignal.reason;
           const evidence = await ledger.record(action, result);
-          evidence.authenticationContext = state.authentication?.status === 'authenticated' ? state.authentication.grantId : 'public';
           observeHybridAuthentication(session, result);
+          evidence.authenticationContext = state.authentication?.status === 'authenticated' ? state.authentication.grantId : 'public';
           if (result?.code === 'HYBRID_AUTH_UNCERTAIN') throw new HybridPause('HYBRID_AUTH_UNCERTAIN', 'Sign-in was dispatched but its outcome is uncertain. Progress is saved; verify the account state before any further sign-in attempt.');
           if (result?.inventory) routes.observe();
           if (tool.name === 'browser_snapshot' || result?.inventory) {
