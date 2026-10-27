@@ -17,6 +17,7 @@ import { authThrottleKey, createAuthThrottle } from './authThrottle.js';
 import { InviteError } from './invites.js';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
 import { prepareHybridAuthGrant, recordHybridAnswer } from './hybridAuth.js';
+import { applyHostDecision } from './hybridContinuation.js';
 import {
 	FOUNDER_CATEGORIES,
 	FOUNDER_CAVEAT,
@@ -2369,6 +2370,11 @@ export function createApplication(options = {}) {
 			recordFounderPublicOnlyDecision(session);
 			answer = FOUNDER_PUBLIC_ONLY_ANSWER;
 		}
+		try {
+			const applied = applyHostDecision(session, answer);
+			if (session.pendingQuestion.hybridDecision && !applied) { response.status(409).json({ error: 'This host decision has already been answered. Refresh the saved run.' }); return; }
+		}
+		catch (error) { response.status(400).json({ error: error.message }); return; }
 		await services.runs.addMessage(session, { role: 'user', text: answer, kind: 'answer' });
 		recordHybridAnswer(session, answer);
 		startTurn(session, { resumeAnswer: answer });
@@ -2400,6 +2406,7 @@ export function createApplication(options = {}) {
 		}
 		session.secretNames = await services.secrets.names(session.id);
 		if (authGrant) session.hybrid.authentication = authGrant;
+		if (authGrant && session.hybrid.pendingDecision?.kind === 'credentials') session.hybrid.pendingDecision = undefined;
 
 		const note = String(request.body?.note ?? '').trim();
 		const placeholders = names.map(name => `{{${name}}}`).join(', ');

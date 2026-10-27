@@ -2087,3 +2087,90 @@ or business-data mutations have not been made universally executable. Full
 authentication/permissions coverage is not inferred from successful access.
 Linux image/staging checks remain required. Production was not changed, hybrid
 defaults remain disabled, and publishing/deployment is held pending review.
+
+
+## 29. Enforced completion handoffs and bounded continuation (2026-10-27)
+
+Audit of the reported run `58820558-3e8e-40e4-b9e9-9ad403c3e011`
+found a successful sign-in HTTP response and navigation into a private workspace,
+but no visible logout marker. Access remained `verification_needed`. The model
+ignored a question-only inference schema because dispatch did not enforce that
+prerequisite. Fourteen reasoner calls consumed 200,876 provider-reported tokens;
+the compact budget policy then finalized only one sampled page with incomplete
+suites. This was neither a full-platform test nor evidence that the platform had
+no bugs. The saved report has not been altered.
+
+Implemented changes:
+
+1. `hybridContinuation.js` creates immutable host questions and validates their
+   exact owner answers. The existing SDK ask_question stream pauses the same
+   loop with no model request. While a decision is pending, dispatch rejects
+   other tools and altered question payloads. Native questions distinguish secure
+   credentials, platform access, coverage prerequisites and additional budget.
+2. Sign-in may recognize a bounded JSON session receipt plus a rendered changed
+   same-origin page without a password form. Only boolean verification metadata
+   is retained, never response tokens. HTTP 200 alone does not verify access.
+   If automatic verification is incomplete, the owner may explicitly confirm
+   the displayed signed-in platform. This enables read-only exploration and
+   never passes an authentication/permissions test. The same URL can be exercised
+   anew in the approved access context without losing anonymous results.
+3. Before closeout, new policy-version-1 runs ask the owner to continue or
+   explicitly publish coverage gaps. One displayed extension adds up to 300,000
+   Opus tokens, 50,000 JEV tokens, 40/20 respective calls, 15 active minutes, 180
+   browser actions and eight page attempts. Lifetime ceilings remain 2,000,000 /
+   500,000 tokens, 200/100 calls, 60 active minutes, 1,000 actions and 80 page
+   attempts. Usage, reservation receipts, actions, evidence and previous scenario
+   results are retained; no counter resets. Generic 'continue' cannot approve
+   an extension. Duplicate/replayed HTTP answers cannot start another turn.
+4. Known hard budget stops use the supported SDK pending-question API. Both
+   thrown and normally terminated aborted streams checkpoint as awaiting input.
+   Final cleanup no longer overwrites that handoff as Interrupted or clears its
+   vault. Missing/uncertain usage receipts still fail closed and cannot be
+   reconciled by clicking an approval button.
+5. An explicit owner request for a gap report sets report-only closeout. Exact
+   host-issued native scenario-disposition/report calls can complete at an
+   exhausted budget without another reasoner or browser request. Remaining work
+   is inconclusive/blocked, not passed. Existing assertions, structural checks,
+   security outcomes and final completion validation remain in force. Recorded
+   assertions from inconclusive scenarios can be described as exercised evidence
+   without implying passing scenario coverage.
+6. Prose-only hybrid stops receive the existing bounded same-runtime automatic
+   continuation. A real stop, uncertain state, gateway failure or repeated lack
+   of progress still checkpoints safely. Existing unversioned runs keep their
+   prior lifecycle; no existing report or production state is migrated.
+7. The dashboard renders budget/access choices as decision buttons rather than
+   credential fields. Existing secure form, preview, viewport and explicit
+   Results navigation remain intact. UI asset version: `20261027-6`.
+
+Actual validation:
+
+- Full `npm run verify`: **2,056 passed, 26 skipped, zero failures or
+  cancellations**, 2,082 tests, 31 suites, approximately 131 seconds.
+  Syntax, private-path ignore rules and high-confidence credential scan passed
+  (`/private/tmp/qase-completion-final-verify.log`).
+- Final HTTP/native-SDK/continuation/UI-version contract checks: **57/57 passed**
+  (`/private/tmp/qase-completion-final-contracts.log`). This includes the final
+  duplicate-answer guard added after the broad suite's HTTP cases had executed.
+- The installed SDK fixture pauses without a model call, resumes after exact
+  budget approval with prior receipts intact, and independently publishes an
+  owner-selected gap report at an exhausted budget with zero new model calls.
+  A question or owner access confirmation never passes a scenario.
+- Browser fixtures verify recognized JSON session receipt, no-logout access,
+  rejection of HTTP-200-only authentication, one authorized credential POST,
+  delayed rendering, live negative input cases and a reproduced seeded defect
+  behind a fixture login. No real platform login or model benchmark was run.
+- Actual dashboard/SSE fixture passes the new approval button and preserves the
+  190,000-token fixture counter after extending its cap, with zero page errors
+  (`/private/tmp/qase-completion-dashboard-final.log`). Earlier fixture failures
+  exposed an abort-cleanup status overwrite and an incorrectly unnormalized UI
+  test question; both were corrected and rerun successfully.
+
+Readiness: locally testable, not a guarantee of exhaustive platform coverage.
+A fresh authorized target run is still needed. Missing expected copy/design,
+SSO/MFA, unapproved writes/APIs, unavailable services and unresolved usage can
+still require human input. The system must expose these facts rather than
+silently increasing spending, bypassing authentication or inventing passes.
+Production defaults remain disabled; legacy/JEV-only, SQA and Founder regression
+coverage passed. No SDK internals, node_modules, production configuration or
+production data changed. No deployment or GitHub push was performed for this
+fix. Linux image/staging and opt-in database/integration checks remain required.

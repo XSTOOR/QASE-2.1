@@ -49,11 +49,13 @@ test('installed CleanSlate asks, pauses, resumes through secure host grant and p
     async updateActivity(s, id, value) { Object.assign(s.activities.find(item => item.id === id), value); }, async addMessage(s, item) { s.messages.push(item); } };
   await withUserConfiguration(settings, async () => {}, async () => {
     const record = await ensureRuntime(session, store);
+    session.hybrid.partialReportApproved = { by: session.ownerUserId, at: Date.now() };
     t.signal.addEventListener('abort', () => record.controller?.abort(new Error('Owned fixture timeout')), { once: true });
     record.hybrid.router.classifier = async (_state, questions) => Object.fromEntries(Object.keys(questions).map(key => [key, { choice: key.startsWith('c') ? 'rendering' : 'investigate' }]));
     t.after(async () => { record.bridge.dispose(); await record.bridge.service.dispose?.(); record.dispose(); deleteRunSnapshot(session.id); clearSecrets(session.id); });
     let step = 0;
     record.runtime.cleanSlateService.chat = async (_messages, options) => (async function* () {
+      if (step === 2 && session.hybrid.authentication?.status === 'approved') step = 3; // The host asked the prerequisite through the same native SDK tool.
       record.hybrid.usage({ reservationId: options.qaseBudgetReservationId, callId: randomUUID(), inputTokens: 100, outputTokens: 20, estimated: false });
       const privateRoute = session.hybrid.exploration.routes.find(route => route.authenticationContext === session.hybrid.authentication?.grantId && route.status === 'pending');
       const failureScenario = session.hybrid.scenarios.find(scenario => scenario.assertions.some(assertion => assertion.outcome === 'fail' && assertion.reproduction?.confirmed));
@@ -77,6 +79,7 @@ test('installed CleanSlate asks, pauses, resumes through secure host grant and p
     assert.equal(received.filter(req => req.method === 'POST').length, 0);
     const fields = { QA_USERNAME: 'sdk-test@example.invalid', QA_PASSWORD: 'fixture-private+password' };
     session.hybrid.authentication = prepareHybridAuthGrant(session, { fields, authorizeLogin: true }); storeSecrets(session.id, fields);
+    session.hybrid.pendingDecision = undefined;
     session.secretNames = Object.keys(fields);
     await runTurn(session, { resumeAnswer: 'Owner authorized one test-account sign-in through the secure form. Use browser_authenticate.' }, store);
     assert.equal(session.status, 'awaiting_input', session.statusDetail);

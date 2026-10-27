@@ -42,6 +42,7 @@ for (const closeout of [false, true]) test(`installed SDK publishes without dept
   };
   await withUserConfiguration(settings, async () => { throw Error('Configuration changes forbidden'); }, async () => {
     const record = await ensureRuntime(session, store);
+    session.hybrid.partialReportApproved = { by: session.ownerUserId, at: Date.now() };
     t.after(async () => { await record.bridge.service.dispose?.(); record.dispose(); deleteRunSnapshot(session.id); });
     assert.equal(record.runtime.run, Object.getPrototypeOf(record.runtime).run);
     let turn = 0;

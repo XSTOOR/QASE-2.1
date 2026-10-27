@@ -1,11 +1,12 @@
 /** One host definition of route capacity and depth. Attempts consume slots
  * even when navigation fails; they never imply successful test coverage. */
 export const HYBRID_ROUTE_CHECKS = Object.freeze(['navigation', 'responsive', 'forms', 'search', 'media', 'accessibility', 'console_health', 'broken_links']);
+import { hasConfirmedAccess } from './hybridAuth.js';
 
 export function hybridRoutePolicy(state) {
   const exploration = state?.exploration;
   const allRoutes = exploration?.routes || [];
-  const access = state?.authentication?.status === 'authenticated' ? state.authentication.grantId : 'public';
+  const access = hasConfirmedAccess(state) ? state.authentication.grantId : 'public';
   const routes = allRoutes.filter(route => (route.authenticationContext || 'public') === access);
   const limit = exploration?.maxPages || 0;
   const attempted = routes.filter(route => ['running', 'tested', 'failed', 'interrupted'].includes(route.status)).length;

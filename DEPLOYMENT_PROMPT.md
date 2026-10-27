@@ -5,7 +5,7 @@ This is the operator runbook for the reviewed release targeting **https://qase.d
 ## Required release
 
 - Release ID: `qase-2026-10-27-hybrid-production-r1`.
-- UI version: `20261027-5`, including hybrid-only QA setup, precise coverage/closeout, explicit Results navigation and the completed-run startup fix.
+- UI version: `20261027-6`, including hybrid-only QA setup, precise coverage/closeout, explicit Results navigation, host continuation decisions and the completed-run startup fix.
 - The application root is the extracted folder containing `package.json`, `public/`, and `server/`. It is a Node.js Express application serving static ES modules, NOT a Next.js or Vite build. Do not deploy the parent workspace, an old `apps/` project, or a generated `dist/` directory.
 - Run Node.js 22 or 24. Keep `package-lock.json` and Playwright `1.62.0` unchanged; use `npm ci`, not dependency upgrades.
 - Preserve all current QA, SQA, Founder, authentication, reports, browser/runtime, device matrix, and UI functionality. Do not redesign or replace the application during deployment.
@@ -134,7 +134,7 @@ This checks HTTPS health/readiness, the exact release ID, and SHA-256 for six pu
 In a clean browser, verify:
 
 1. TLS and canonical hostname; login, logout, account isolation, closed registration, and SMTP recovery. Unauthenticated `/api/sessions` must not return private runs. Production `/demo` must not expose test fixtures.
-2. Current QASE branding, status lights, readable buttons and responsive layout. Confirm `app.js?v=20261027-5` is served. Test hybrid-only setup, selected browser, pause/recovery, root entry/refresh staying on the run workspace, explicit Results/Back navigation and the stable selected-device preview.
+2. Current QASE branding, status lights, readable buttons and responsive layout. Confirm `app.js?v=20261027-6` is served. Test hybrid-only setup, selected browser, pause/recovery, root entry/refresh staying on the run workspace, explicit Results/Back navigation and the stable selected-device preview.
 3. With an authorized staging test account and an explicitly owned test target, run bounded QA, SQA, and Founder canaries. Confirm actual browser actions, live activity/SSE, questions/credential requests, persistence after refresh, stopping, and recorded evidence/report downloads. In hybrid, test secure-form consent, one approved sign-in, explicitly consented separate authentication API, rejected duplicate/unrelated writes, remembered Skip login, fresh signed-in observations and no replay after uncertain dispatch. Native-form username/password sign-in is supported; SSO/MFA and unapproved cross-origin sign-in are explicit limitations, not compatibility claims. Never use a production target for destructive tests, payments, signup spam, intrusive exploitation, or uncontrolled paid AI generation.
 4. Model requests actually succeed from the execution host. A ready API without gateway connectivity or browser executables is not acceptance.
 5. Agent streams stay live through the ingress/CDN. Disable proxy buffering and inappropriate caching for `/api/*` and SSE; do not impose a short execution/request timeout on live streams. The Caddy baseline uses `flush_interval -1`. Do not cache private API data.

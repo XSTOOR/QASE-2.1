@@ -4,6 +4,7 @@ import { digestEvidence } from './qaScenarioLedger.js';
 import { jevRouteCandidates, jevPrioritizeRoutes } from './jevQaRunner.js';
 import { scenarioSummary, assertionSummary } from './hybridSummaries.js';
 import { hybridRoutePolicy, HYBRID_ROUTE_CHECKS } from './hybridRoutePolicy.js';
+import { hasConfirmedAccess } from './hybridAuth.js';
 
 const supported = HYBRID_ROUTE_CHECKS;
 const key = url => { const value = new URL(url); value.hash = ''; return value.href; };
@@ -19,7 +20,7 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
   const owners = new AsyncLocalStorage(); let owner;
   const access = () => !owner || owners.getStore() === owner;
   function observe() {
-    const authenticationContext = state.authentication?.status === 'authenticated' ? state.authentication.grantId : 'public';
+    const authenticationContext = hasConfirmedAccess(state) ? state.authentication.grantId : 'public';
     for (const evidence of state.evidence) {
       const inventory = evidence.result?.inventory;
       if (!evidence.success || !inventory?.url || evidence.digest !== digestEvidence(evidence.result)) continue;

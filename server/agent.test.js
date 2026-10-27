@@ -854,3 +854,40 @@ test('a user stop still ends interrupted when completions are healthy', async ()
 	assert.equal(session.status, 'interrupted', 'user stop keeps the historical outcome');
 	release();
 });
+
+test('hybrid prose-only turns continue the same SDK session rather than marking unfinished work interrupted', async () => {
+  const { session, record, store } = runtimeFixture({ qaExecutionMode: 'hybrid', hybrid: { scenarios: [] } });
+  const checkpoints = []; let calls = 0;
+  record.hybrid = { async beginTurn() {}, async endTurn(status) { checkpoints.push(status); }, context() { return ''; } };
+  record.runtime.getSessionSnapshot = () => ({});
+  record.runtime.run = async function* () {
+    calls++;
+    if (calls === 1) { yield { type: 'chat_text', content: 'The next scoped test is ready.' }; return; }
+    session.report = { ts: 42, verdict: 'partial', summary: 'Fixture finished with explicit gaps.' };
+    yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true } };
+  };
+  await runTurn(session, { task: 'Finish the scoped tests.' }, store);
+  assert.equal(calls, 2); assert.equal(session.status, 'done');
+  assert.deepEqual(checkpoints, ['running', 'done']);
+});
+
+for (const throws of [false, true]) test(`a hybrid budget abort that ${throws ? 'throws' : 'ends normally'} checkpoints a native approval question`, async () => {
+  const { hybridProfile } = await import('./hybridConfig.js');
+  const { session, record, store } = runtimeFixture({ qaExecutionMode: 'hybrid', ownerUserId: 'owner', hybrid: {
+    continuationPolicyVersion: 1, budgets: hybridProfile({ apiKey: 'fixture-key' }, {}).budgets,
+    telemetry: { reasoner: {}, classifier: {} }, scenarios: [], modelBudget: { roles: {} }
+  } });
+  const checkpoints = [];
+  record.hybrid = { async beginTurn() {}, async endTurn(status) { checkpoints.push(status); }, context() { return ''; } };
+  record.runtime.getSessionSnapshot = () => ({});
+  record.runtime.agentSession = { pauseForQuestion() {} };
+  record.runtime.run = async function* () {
+    record.hybridPause = Object.assign(new Error('Fixture time budget reached'), { code: 'HYBRID_TIME_BUDGET' });
+    record.controller.abort(record.hybridPause);
+    if (throws) throw record.hybridPause;
+  };
+  await runTurn(session, { task: 'Run the scoped tests.' }, store);
+  assert.equal(session.status, 'awaiting_input'); assert.equal(session.pendingQuestion.hybridDecision, 'budget');
+  assert.equal(session.pendingQuestion.credentialLike, false);
+  assert.equal(checkpoints.at(-1), 'awaiting_input'); assert.equal(session.hybrid.budgets.reasonerTokens, 300000);
+});

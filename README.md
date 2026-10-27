@@ -9,8 +9,13 @@ Production deployment targets `https://qase.drytis.com`. Never deploy the
 parent workspace or copy developer `.qase` state into production.
 
 This release adds hybrid QA (Opus reasoning, JEV classification, one CleanSlate
-loop) and UI `20261027-5`. Production activation requires gateway qualification
+loop) and UI `20261027-6`. Production activation requires gateway qualification
 on the execution host and an explicit opt-in; see [DEPLOYMENT_PROMPT.md](DEPLOYMENT_PROMPT.md).
+New hybrid runs retain progress when access, requirements or more budget are
+needed. Answer the on-screen question to continue; an additional budget requires
+approval of its displayed limits. Publishing incomplete coverage also requires
+an explicit choice. Existing saved reports are not reopened or relabeled.
+
 Existing PostgreSQL installations need migrations 041/042 before using hybrid
 state and partial QA reports.
 

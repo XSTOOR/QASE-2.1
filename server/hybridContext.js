@@ -108,7 +108,8 @@ Scenarios: ${JSON.stringify(state.scenarios.map(scenarioSummary))}
   const reservation = (value, definitions) => Buffer.byteLength(JSON.stringify(value)) + Buffer.byteLength(JSON.stringify(definitions)) + 2048 + state.budgets.outputTokens;
   const remaining = state.budgets.reasonerTokens - metric.inputTokens - metric.outputTokens - metric.reservedTokens;
   const shouldClose = state.budgetFinalizing || (closingTools.some(tool => tool.name === 'finish_qa_report') &&
-    (remaining < reservation(messages, tools) + 2 * reservation(closing, closingTools) || state.budgets.reasonerCalls - metric.calls <= 2));
+    (remaining < reservation(messages, tools) + 2 * reservation(closing, closingTools) || state.budgets.reasonerCalls - metric.calls <= 2 ||
+      (state.continuationPolicyVersion === 1 && ((depth.canExplore && state.budgets.browserActions - state.telemetry.browserActions < 24) || state.budgets.durationMs - state.telemetry.elapsedMs < 90000))));
   const explorationTools = tools.filter(tool => !(tool.name === 'finish_qa_report' && !session.testCaseSnapshot && depth.target > 1 && !depth.publicationAllowed)
     && !(tool.name === 'qa_test_routes' && depth.observed > 0 && !depth.canExplore));
   const questionNeeded = !shouldClose && needsHybridAuthQuestion(session);

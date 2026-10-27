@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { chromium } from 'playwright';
 import { createApplication } from '../server/app.js';
+import { hybridProfile } from '../server/hybridConfig.js';
+import { prepareHostDecision } from '../server/hybridContinuation.js';
 
 const session = { id: randomUUID(), title: 'Live preview fixture', mode: 'qa', qaExecutionMode: 'hybrid', status: 'running',
   targetUrl: 'https://fixture.test/', device: 'desktop', engine: 'chromium', createdAt: Date.now(), updatedAt: Date.now(), runStartedAt: Date.now(),
@@ -156,10 +158,27 @@ try {
   await credentialForm.waitFor({ state: 'detached' });
   assert.equal(session.hybrid.authentication.status, 'declined');
   assert.deepEqual(errors, []);
+  // Host continuation decisions must remain normal option buttons, even
+  // when access/account wording would otherwise select the credential form.
+  session.ownerUserId = services.tenantContext.actorUserId;
+  session.hybrid = { continuationPolicyVersion: 1, budgets: hybridProfile({ apiKey: 'fixture-key' }, {}).budgets,
+    telemetry: { reasoner: { inputTokens: 190000 }, classifier: {}, elapsedMs: 1000 }, modelBudget: { roles: {} }, scenarios: [] };
+  const decision = prepareHostDecision(session, { closing: true });
+  session.pendingQuestion = { toolCallId: decision.id, ...decision.input, options: decision.input.options.map(label => ({ label })), hybridDecision: 'budget', credentialLike: false };
+  session.status = 'awaiting_input'; await page.reload();
+  await page.getByRole('button', { name: decision.input.options[0], exact: true }).waitFor();
+  assert.equal(await page.locator('.cred-form').count(), 0);
+  const choice = page.waitForResponse(response => response.url().endsWith('/answer') && response.status() === 200);
+  await page.getByRole('button', { name: decision.input.options[0], exact: true }).click(); await choice;
+  assert.equal(session.hybrid.budgets.reasonerTokens, 600000);
+  assert.equal(session.hybrid.telemetry.reasoner.inputTokens, 190000);
+  assert.equal(session.hybrid.budgetApprovals.length, 1);
+  assert.equal(new URL(page.url()).hash, `#/runs/${session.id}`);
+  assert.deepEqual(errors, []);
   console.log(JSON.stringify({ passed: true, liveProgress: true, chromeUrlUpdated: true, responsivePreviewStable: true, responsiveStatusClearedAfterRestore: true, nestedActivityUpdated: true, honestLegacyCoverage: true, explicitAgentIdentity: true,
     receiptRecoveryExplained: true, pausedTimerStableAfterReload: true, completionKeepsDesktopAndMobileView: true, explicitResultsNavigation: true,
     completedRunStartupAndRefreshStayOnRun: true, latestRunFallbackStaysOnRun: true, launchHandleStaysOnRun: true, explicitResultsRefreshPreserved: true,
-    secureCredentialConsent: true, failedCredentialQuestionPreserved: true, publicOnlyDecisionRemembered: true, pageErrors: errors }));
+    budgetContinuationOptionUsable: true, exactBudgetApprovalPreservesUsage: true, secureCredentialConsent: true, failedCredentialQuestionPreserved: true, publicOnlyDecisionRemembered: true, pageErrors: errors }));
 } finally {
   for (const response of streams) if (!response.writableEnded) response.end();
   await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));

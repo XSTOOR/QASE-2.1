@@ -55,6 +55,7 @@ test('actual CleanSlate loop drives guarded hybrid tools, rejects injection/subm
         'Even with qualification, an invalid shared-key source must fail before constructing a runtime.');
     });
     const record = await ensureRuntime(session, store);
+    session.hybrid.partialReportApproved = { by: session.ownerUserId, at: Date.now() };
     t.after(async () => { await record.bridge.service.dispose?.(); record.dispose(); deleteRunSnapshot(session.id); });
     assert.equal(Object.getPrototypeOf(record.runtime).run, record.runtime.run, 'Hybrid must preserve CleanSlate.run.');
     let classifications = 0;

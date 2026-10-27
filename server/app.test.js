@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { createApplication } from './app.js';
+import { prepareHostDecision } from './hybridContinuation.js';
+import { hybridProfile } from './hybridConfig.js';
 import { PublicInputError } from './publicErrors.js';
 import { createInstanceAccess } from './instanceAccess.js';
 import { finishSqaAssessment } from './sqaService.js';
@@ -1120,6 +1122,23 @@ test('hybrid secure access requires consent, stores no values in transcript, and
   session.pendingQuestion = { credentialLike: true };
   assert.equal((await fixture.request(`/api/sessions/${session.id}/answer`, { method: 'POST', json: { answer: 'Continue public-only. No credentials.' } })).status, 200);
   await fixture.whenIdle(); assert.equal(session.hybrid.authentication.status, 'declined');
+});
+
+test('the owned answer endpoint requires explicit displayed continuation approval before extending budgets', async t => {
+  const fixture = await startFixture(); t.after(() => fixture.close());
+  const session = fixture.services.runs.create();
+  Object.assign(session, { mode: 'qa', qaExecutionMode: 'hybrid', status: 'awaiting_input', targetUrl: 'https://example.test/',
+    hybrid: { continuationPolicyVersion: 1, budgets: hybridProfile({}, {}).budgets, exploration: { maxPages: 8 }, scenarios: [], modelBudget: { roles: {} }, telemetry: { reasoner: { inputTokens: 190000, outputTokens: 1000 } } } });
+  const decision = prepareHostDecision(session, { closing: true });
+  session.pendingQuestion = { toolCallId: decision.id, hybridDecision: 'budget', credentialLike: false };
+  assert.equal((await fixture.request(`/api/sessions/${session.id}/answer`, { method: 'POST', json: { answer: 'continue' } })).status, 400);
+  assert.equal(session.hybrid.budgets.reasonerTokens, 300000); assert.equal(fixture.state.runCalls.length, 0);
+  assert.equal((await fixture.request(`/api/sessions/${session.id}/answer`, { method: 'POST', json: { answer: decision.input.options[0] } })).status, 200);
+  await fixture.whenIdle();
+  assert.equal(session.hybrid.budgets.reasonerTokens, 600000); assert.equal(session.hybrid.telemetry.reasoner.inputTokens, 190000);
+  assert.equal(session.hybrid.budgetApprovals.length, 1); assert.equal(fixture.state.runCalls.length, 1);
+  assert.equal((await fixture.request(`/api/sessions/${session.id}/answer`, { method: 'POST', json: { answer: decision.input.options[0] } })).status, 409);
+  assert.equal(session.hybrid.budgetApprovals.length, 1); assert.equal(fixture.state.runCalls.length, 1);
 });
 
 test('Founder credential refusal persists a public-only boundary and cannot re-open the login gate', async t => {

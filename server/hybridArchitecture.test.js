@@ -20,6 +20,9 @@ function fixture(selectedTests = ['responsive']) {
   const store = { async commit() {} };
   const record = { bridge: { async authorizeHybridAction() {} } };
   const runtime = createHybridRuntime({ session, runStore: store, profile, record });
+  // These evidence-gate fixtures explicitly permit a bounded report with gaps.
+  // Host decision/continuation consent is exercised independently.
+  session.hybrid.partialReportApproved = { by: 'owner', at: Date.now() };
   return { session, profile, store, record, runtime, ledger: runtime.ledger };
 }
 

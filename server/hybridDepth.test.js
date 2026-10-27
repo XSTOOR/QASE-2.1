@@ -13,6 +13,7 @@ function fixture(selectedTests = ['navigation', 'broken_links', 'responsive'], v
   const session = { id: randomUUID(), mode: 'qa', qaExecutionMode: 'hybrid', targetUrl: 'https://fixture.test/', selectedTests, messages: [], findings: [], activities: [], todos: [], secretNames: [] };
   const record = { bridge: { authorizeHybridAction: async () => {} } }, profile = hybridProfile({ apiKey: 'fixture' }, {});
   let runtime = createHybridRuntime({ session, runStore: { async commit() {} }, profile, record });
+  session.hybrid.partialReportApproved = { by: 'fixture-owner', at: Date.now() };
   if (version === 1) {
     session.hybrid.exploration.version = 1;
     runtime = createHybridRuntime({ session, runStore: { async commit() {} }, profile, record });

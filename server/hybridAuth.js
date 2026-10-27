@@ -25,6 +25,7 @@ export function observeHybridAuthentication(session, result) {
   auth.required = session.hybrid.scope.includes('authentication') || (session.messages || []).some(message => message.role === 'user' && /\b(?:log ?in|sign ?in|authenticated platform)\b/i.test(message.text || '') && !publicOnly.test(message.text || ''));
 }
 export const needsHybridAuthQuestion = session => hybrid(session) && session.hybrid?.authentication?.required && ['unrequested', 'needs_guidance', 'verification_needed', 'failed'].includes(session.hybrid.authentication.status);
+export const hasConfirmedAccess = state => ['authenticated', 'owner_confirmed'].includes(state?.authentication?.status);
 
 /** This metadata is produced only by the authenticated credential endpoint,
  * never by model/tool input. Secret values remain in the existing run vault. */
@@ -82,6 +83,23 @@ function containsCredentials(request, username, password) {
     collect(data); values = found;
   } catch { values = [...new URLSearchParams(body).values()]; }
   return values.includes(username) && values.includes(password);
+}
+
+async function sessionReceipt(response) {
+  // Inspect only a bounded, declared JSON response; retain a boolean, never
+  // tokens, user records or response bodies in evidence/model context.
+  const headers = response.headers?.() || {}, size = Number(headers['content-length']);
+  if (!/application\/json/i.test(headers['content-type'] || '') || !Number.isSafeInteger(size) || size <= 0 || size > 65536) return false;
+  let timer;
+  try {
+    const body = await Promise.race([response.body(), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Session receipt timeout')), 1500); })]);
+    if (body.length > 65536) return false;
+    const value = JSON.parse(body.toString('utf8'));
+    if (value?.error || value?.success === false) return false;
+    const session = value?.session || value?.data?.session || value;
+    return Boolean((typeof session?.access_token === 'string' && session.access_token.length >= 16 && (typeof session.refresh_token === 'string' || session.token_type === 'bearer')) ||
+      (typeof value?.idToken === 'string' && value.idToken.length >= 16 && typeof value.localId === 'string'));
+  } catch { return false; } finally { clearTimeout(timer); }
 }
 
 /** Owns only a single approved sign-in operation. Every other non-GET request
@@ -142,14 +160,21 @@ export function createHybridAuthentication(session) {
         const response = await abortable(receipt, signal); submitted = true;
         auth.responseStatus = response.status();
         if (response.status() < 200 || response.status() >= 400) { auth.status = 'failed'; return { success: false, code: 'HYBRID_AUTH_REJECTED', status: auth.status, httpStatus: response.status(), error: 'Sign-in was rejected. No automatic retry was attempted; ask the user to review the test account.' }; }
-        await abortable(page.waitForFunction(({ origin, expected }) => {
+        const acknowledgedSession = await abortable(sessionReceipt(response), signal);
+        await abortable(page.waitForFunction(({ origin, expected, sessionReceipt, loginPage }) => {
           if (location.origin !== origin || [...document.querySelectorAll('input[type=password]')].some(element => element.getBoundingClientRect().width && element.getBoundingClientRect().height)) return false;
           if (expected) return location.origin + location.pathname + location.hash === expected;
-          return [...document.querySelectorAll('a,button')].some(element => element.getBoundingClientRect().width && /^(?:log\s*out|sign\s*out)$/i.test((element.textContent || '').trim()));
-        }, { origin: auth.origin, expected: auth.expectedUrl }, { timeout: 10000 }), signal).catch(error => { if (signal?.aborted) throw error; });
-        const verified = await page.evaluate(({ origin, expected }) => location.origin === origin &&
-          ![...document.querySelectorAll('input[type=password]')].some(e => e.getBoundingClientRect().width && e.getBoundingClientRect().height) &&
-          (expected ? location.origin + location.pathname + location.hash === expected : [...document.querySelectorAll('a,button')].some(e => e.getBoundingClientRect().width && /^(?:log\s*out|sign\s*out)$/i.test((e.textContent || '').trim()))), { origin: auth.origin, expected: auth.expectedUrl });
+          return (sessionReceipt && location.origin + location.pathname + location.hash !== loginPage && Boolean(document.body?.innerText.trim())) || [...document.querySelectorAll('a,button')].some(element => element.getBoundingClientRect().width && /^(?:log\s*out|sign\s*out)$/i.test((element.textContent || '').trim()));
+        }, { origin: auth.origin, expected: auth.expectedUrl, sessionReceipt: acknowledgedSession, loginPage: auth.loginPageUrl }, { timeout: 10000 }), signal).catch(error => { if (signal?.aborted) throw error; });
+        const observation = await page.evaluate(({ origin, expected, sessionReceipt, loginPage }) => {
+          const sameOrigin = location.origin === origin, noPassword = ![...document.querySelectorAll('input[type=password]')].some(e => e.getBoundingClientRect().width && e.getBoundingClientRect().height);
+          const matched = expected ? location.origin + location.pathname + location.hash === expected :
+            (sessionReceipt && location.origin + location.pathname + location.hash !== loginPage && Boolean(document.body?.innerText.trim())) || [...document.querySelectorAll('a,button')].some(e => e.getBoundingClientRect().width && /^(?:log\s*out|sign\s*out)$/i.test((e.textContent || '').trim()));
+          return { sameOrigin, noPassword, verified: Boolean(sameOrigin && noPassword && matched) };
+        }, { origin: auth.origin, expected: auth.expectedUrl, sessionReceipt: acknowledgedSession, loginPage: auth.loginPageUrl });
+        const verified = observation.verified;
+        auth.verificationObservation = { ...observation, url: safeUrl(page.url()), at: Date.now() };
+        auth.verificationMethod = verified ? auth.expectedUrl ? 'owner_expected_url' : acknowledgedSession ? 'session_receipt_and_rendered_route' : 'visible_sign_out_control' : 'needs_owner_confirmation';
         auth.status = verified ? 'authenticated' : 'verification_needed';
         return { success: true, status: auth.status, submitted: true, verified, url: safeUrl(page.url()), limitations: 'One authorized sign-in attempt only. This is access evidence, not a complete authentication, logout, permissions or negative-login test.' };
       } catch (error) {

@@ -1,6 +1,6 @@
 # QASE hybrid production candidate
 
-Release: `qase-2026-10-27-hybrid-production-r1`. UI: `20261027-5`.
+Release: `qase-2026-10-27-hybrid-production-r1`. UI: `20261027-6`.
 Target: `https://qase.drytis.com`. This is a source/image handoff, not a record
 of deployment or production activation.
 
@@ -40,6 +40,20 @@ changed during preparation.
   a recovery decision; private route depth and session-expiry detection are scoped
   to the current access state. Compact ledger-based closeout preserves more of the
   existing budget for exploration. Plan resolution is shown separately from coverage.
+
+- New runs enforce host-authored access and continuation questions through the
+  native SDK pause/resume lifecycle. Budget limits no longer silently publish
+  unfinished work: the owner can approve a displayed bounded extension or
+  explicitly request a gap report. Exact usage and prior evidence are retained.
+- Premature prose-only stops get bounded automatic continuation. Budget abort
+  cleanup preserves the pending decision and vault; duplicate approvals are
+  rejected. Explicit closeout uses the same native ledger/report tools without
+  another paid model request, including at an exhausted budget.
+- Sign-in can recognize a bounded successful session receipt plus a rendered
+  changed route, with an explicit owner confirmation fallback. HTTP 200 alone
+  cannot prove access. Anonymous and signed-in executions of the same URL are
+  tracked separately. These controls apply to new continuation-policy runs;
+  existing closed reports are preserved.
 
 ## Deployment changes
 

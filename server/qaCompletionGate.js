@@ -78,7 +78,7 @@ export function hybridCompletion(session) {
   return { version: 1, counts, verdict, confirmedDefects: findings.length, unresolved: unresolved.length,
     unresolvedObservations: unresolved.slice(0, 20).map(({ id, kind, title, detail, evidenceRefs }) => ({ id, kind, title, detail, evidenceRefs })),
     passedAssertions: assertions.filter(item => item.outcome === 'pass').length, failedAssertions: assertions.filter(item => item.outcome === 'fail').length,
-    covered: state.scenarios.filter(item => ['passed', 'failed'].includes(item.status)).map(item => `${item.category}: ${item.status}. Executed assertions: ${[...new Set(item.assertions.map(assertion => assertion.name))].join('; ')}`),
+    covered: state.scenarios.filter(item => item.assertions.length && item.executedActionIds.length).map(item => `${item.category}: ${item.status}. Executed assertions: ${[...new Set(item.assertions.map(assertion => assertion.name))].join('; ')}`),
     gaps: [...new Set(gaps)], coverage: state.scenarios.length ? completeCoverage / state.scenarios.length : 0,
     summary: `Hybrid QA executed ${executed}/${state.scenarios.length} scenarios; ${counts.passed} passed, ${counts.failed} failed, ${counts.blocked} blocked, ${counts.inconclusive} inconclusive. ${findings.length} confirmed defects and ${unresolved.length} unresolved observations. Coverage is limited to the recorded scenarios.` };
 }
@@ -90,6 +90,7 @@ export function validateHybridReport(session, input) {
   if (result.counts.running || result.counts.planned) throw new Error('Required scenarios still need executed assertions or explicit blocked/inconclusive/not-executed dispositions before publication.');
   const depth = hybridRoutePolicy(session.hybrid);
   if (!session.testCaseSnapshot && depth.target > 1 && !depth.publicationAllowed) throw Object.assign(new Error(`The observed-route depth contract requires ${depth.target} attempted pages before publication (${depth.attempted} attempted; ${depth.remainingSlots} slots remain). Use qa_test_routes with up to ${depth.nextBatchSize} pending route IDs. During host budget closeout the depth shortfall becomes a coverage gap, not a publication blocker.`), { code: 'HYBRID_DEPTH_PENDING', coverage: depth });
+  if (session.hybrid.continuationPolicyVersion === 1 && result.gaps.length && !session.hybrid.partialReportApproved) throw Object.assign(new Error('Testing has coverage gaps. A host user decision is required before publishing an incomplete report.'), { code: 'HYBRID_COMPLETION_DECISION_REQUIRED' });
   return { ...input, verdict: result.verdict, summary: result.summary, covered: result.covered, not_covered: result.gaps,
     hybridEvidence: result };
 }

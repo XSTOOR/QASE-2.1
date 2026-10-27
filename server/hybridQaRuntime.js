@@ -12,7 +12,8 @@ import { createHybridRouteExecution } from './hybridRouteExecution.js';
 import { checkPrimaryViewport } from './qaViewport.js';
 import { hybridRecoveryProblem } from './hybridRecoveryGate.js';
 import { hybridRoutePolicy } from './hybridRoutePolicy.js';
-import { observeHybridAuthentication, needsHybridAuthQuestion } from './hybridAuth.js';
+import { observeHybridAuthentication, needsHybridAuthQuestion, hasConfirmedAccess } from './hybridAuth.js';
+import { prepareHostDecision, hostCloseoutCalls } from './hybridContinuation.js';
 
 const discovery = new Set(['browser_authenticate', 'browser_open', 'browser_snapshot', 'browser_get_url', 'browser_screenshot', 'browser_diagnostics', 'browser_tabs']);
 const forbidden = new Set(['security_check', 'browser_dialog', 'browser_media', 'browser_test_meeting_link']);
@@ -40,7 +41,7 @@ export function initializeHybridState(session, profile) {
   if (session.hybrid && session.hybrid.profileIdentity !== identity) throw new Error('Hybrid model/key identity changed. Requalify and create a new run; an in-progress run cannot switch models.');
   session.hybrid ??= { version: 1, profileIdentity: identity, sdkVersion: profile.sdkVersion,
     reasoner: { model: profile.reasoner.model, endpoint: profile.reasoner.endpoint }, classifier: { model: profile.classifier.model, endpoint: profile.classifier.endpoint },
-    budgets: structuredClone(profile.budgets), allowWithoutClassifier: profile.allowWithoutClassifier, status: 'ready', createdAt: Date.now() };
+    budgets: structuredClone(profile.budgets), allowWithoutClassifier: profile.allowWithoutClassifier, continuationPolicyVersion: 1, status: 'ready', createdAt: Date.now() };
   // Budgets and degradation policy are pinned to the run, not changed by env on resume.
   profile.budgets = structuredClone(session.hybrid.budgets);
   profile.allowWithoutClassifier = session.hybrid.allowWithoutClassifier;
@@ -57,7 +58,7 @@ export function publicHybridState(session) {
   const depth = hybridRoutePolicy(state);
   const recovery = { ...state.recovery, ...(problem ? { resumeBlockedReason: problem.reason } : {}) };
   return { version: state.version, status: state.status, reasoner: state.reasoner, classifier: state.classifier,
-    authentication: state.authentication ? { status: state.authentication.status, required: state.authentication.required, origin: state.authentication.origin, attemptedAt: state.authentication.attemptedAt } : undefined,
+    authentication: state.authentication ? { status: state.authentication.status, verificationMethod: state.authentication.verificationMethod, required: state.authentication.required, origin: state.authentication.origin, attemptedAt: state.authentication.attemptedAt } : undefined,
     currentScenarioId: state.currentScenarioId, viewport: state.viewport, counts: completion?.counts, coverage: completion?.coverage || 0,
     confirmedDefects: completion?.confirmedDefects || 0, unresolved: completion?.unresolved || 0,
     unresolvedObservations: completion?.unresolvedObservations || [],
@@ -92,6 +93,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
   tools.push(...routes.tools);
   let catalog = [];
   let modelToolsReady = Promise.resolve(true);
+  let closeoutCalls = [];
   tools.push({ name: 'qa_load_tools', category: 'qa', description: 'Expose extra approved SDK tools for a specific investigation. This grants no new permissions. Empty names lists the available approved tools.',
     parametersSchema: { type: 'object', additionalProperties: false, properties: { names: { type: 'array', maxItems: 12, items: { type: 'string' } } } },
     async run(input = {}) {
@@ -125,11 +127,29 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
         let release;
         modelToolsReady = new Promise(resolve => { release = resolve; });
         try {
+        const closeout = hostCloseoutCalls(session);
+        if (closeout) {
+          closeoutCalls = closeout;
+          await checkpoint();
+          return (async function* () {
+            try { for (const call of closeout) yield { type: 'tool_call', call }; }
+            finally { release(true); }
+          })();
+        }
         const clean = redact(session.id, messages);
         const page = record.bridge?.service?.activePage;
         const liveUrl = page && !page.isClosed() ? page.url() : record.bridge?.saved?.url;
         const projected = projectHybridMessages(clean, session, redact(session.id, hybridHostContext(session, liveUrl)));
         const prepared = prepareHybridInference(projected, options, session);
+        const decision = prepareHostDecision(session, { closing: prepared.closing });
+        if (decision) {
+          telemetry.event('host_question_requested', { kind: decision.kind, decisionId: decision.id });
+          await checkpoint();
+          return (async function* () {
+            try { yield { type: 'tool_call', call: { id: decision.id, toolName: 'ask_question', input: decision.input } }; }
+            finally { release(true); }
+          })();
+        }
         if (prepared.closing && !state.budgetFinalizing) { state.budgetFinalizing = true; state.status = 'finalizing_budget'; telemetry.event('budget_closeout_started'); }
         telemetry.event('model_context_projected', { originalBytes: Buffer.byteLength(JSON.stringify(clean)), projectedBytes: Buffer.byteLength(JSON.stringify(prepared.messages)), messages: prepared.messages.length });
         const source = await router.reasoner(original, prepared.messages, prepared.options);
@@ -144,7 +164,15 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
     wrapTool(tool) {
       if (!tool.name.startsWith('browser_')) return { ...tool, async run(input, context) {
         try {
-          signal?.throwIfAborted(); router.check();
+          signal?.throwIfAborted();
+          if (state.pendingDecision && (tool.name !== 'ask_question' || digestEvidence(input) !== digestEvidence(state.pendingDecision.input))) throw new Error('A host decision is pending. Only its native user question may execute.');
+          const closeout = state.finishRequested && state.partialReportApproved?.decisionId;
+          if (closeout) {
+            // Match the exact host-issued call, not a model-supplied permission flag.
+            const index = closeoutCalls.findIndex(call => call.toolName === tool.name && digestEvidence(call.input) === digestEvidence(input));
+            if (index < 0 || !hostCloseoutCalls(session)) throw new Error('Owner-requested closeout permits only the exact host-issued ledger/report tool calls.');
+            closeoutCalls.splice(index, 1);
+          } else if (!(tool.name === 'ask_question' && state.pendingDecision)) router.check();
           if (!routes.access()) throw new Error('An approved route batch owns the browser/scenario lifecycle; wait for its result.');
           if (state.budgetFinalizing && !['qa_close_scenario', 'update_todo', 'report_finding', 'finish_qa_report'].includes(tool.name)) throw new Error('Budget closeout permits only scenario dispositions, evidenced findings, todo dispositions and final report publication.');
           if (browserOperationActive && ['qa_start_scenario', 'qa_close_scenario'].includes(tool.name)) throw new Error('Wait for the active browser operation before changing scenario ownership.');
@@ -161,7 +189,9 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
         let ownsPreviewLock = false;
         try {
           const activeSignal = context.signal || signal;
-          activeSignal?.throwIfAborted(); router.check();
+          activeSignal?.throwIfAborted();
+          if (state.pendingDecision) throw new Error('A host decision is pending; browser execution waits for the user answer.');
+          router.check();
           if (!routes.access()) throw new Error('An approved route batch owns the browser; wait for its result.');
           if (state.budgetFinalizing) throw new Error('Browser exploration has stopped for budget closeout. Record remaining coverage gaps and publish the host-validated report.');
           if (['browser_qa_check', 'browser_qa_scenario'].includes(tool.name)) {
@@ -213,7 +243,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           if (activeSignal?.aborted) throw activeSignal.reason;
           const evidence = await ledger.record(action, result);
           observeHybridAuthentication(session, result);
-          evidence.authenticationContext = state.authentication?.status === 'authenticated' ? state.authentication.grantId : 'public';
+          evidence.authenticationContext = hasConfirmedAccess(state) ? state.authentication.grantId : 'public';
           if (result?.code === 'HYBRID_AUTH_UNCERTAIN') throw new HybridPause('HYBRID_AUTH_UNCERTAIN', 'Sign-in was dispatched but its outcome is uncertain. Progress is saved; verify the account state before any further sign-in attempt.');
           if (result?.inventory) routes.observe();
           if (tool.name === 'browser_snapshot' || result?.inventory) {
@@ -252,7 +282,11 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
     },
     async beginTurn(abortSignal) {
       abortSignal.throwIfAborted();
-      router.check();
+      // Only owner-approved durable extensions change pinned limits. Retain
+      // the same budget object used by the existing model router.
+      Object.assign(profile.budgets, state.budgets);
+      const closeout = hostCloseoutCalls(session);
+      if (!closeout) router.check();
       signal = abortSignal;
       delete state.pauseReason; record.hybridPause = undefined;
       // Recreate elapsed-time baseline at each human continuation, excluding
@@ -262,7 +296,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
       for (const action of state.actions.filter(item => item.status === 'running')) { action.status = 'uncertain'; state.recovery = { verificationRequired: true, uncertainActionId: action.id }; }
       if (state.recovery?.verificationRequired) telemetry.event('recovery_requested');
       const remaining = profile.budgets.durationMs - state.telemetry.elapsedMs;
-      modelTimer = setTimeout(() => { record.hybridPause = new HybridPause('HYBRID_TIME_BUDGET', 'Execution time budget exhausted.'); record.controller?.abort(record.hybridPause); }, Math.max(1, remaining));
+      if (!closeout) modelTimer = setTimeout(() => { record.hybridPause = new HybridPause('HYBRID_TIME_BUDGET', 'Execution time budget exhausted.'); record.controller?.abort(record.hybridPause); }, Math.max(1, remaining));
       signal.addEventListener('abort', () => telemetry.event('cancelled'), { once: true });
       await checkpoint();
     },

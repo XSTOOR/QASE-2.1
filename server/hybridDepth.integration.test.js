@@ -35,6 +35,7 @@ test('one installed SDK loop discovers hidden/lazy routes and confirms nine defe
   let turnObserved = 0;
   await withUserConfiguration(settings, async () => {}, async () => {
     const record = await ensureRuntime(session, store);
+    session.hybrid.partialReportApproved = { by: session.ownerUserId, at: Date.now() };
     t.after(async () => { await record.bridge.service.dispose?.(); record.dispose(); deleteRunSnapshot(session.id); });
     assert.equal(record.runtime.run, Object.getPrototypeOf(record.runtime).run);
     let ranks = 0, turn = 0;

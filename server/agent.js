@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { availableParallelism, cpus, totalmem } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { ALL_TOOLS, CleanSlateNodeAgentRuntime, createNodeProviderConfiguration } from '@cleanslate/sdk';
+import { pauseForBudgetApproval } from './hybridContinuation.js';
 import { chromium } from 'playwright';
 import { attachBrowserBridge } from './browserBridge.js';
 import { createBrowserTools } from './browserTools.js';
@@ -1187,7 +1188,12 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		// The loop ends either because the work is done or because ask_question
 		// suspended it. Only the runtime knows which.
 		const pending = runtime.getPendingQuestion();
-		if (controller.signal.aborted) {
+		const budgetDecision = controller.signal.aborted && record.hybrid && !successfulFinalizer ? await pauseForBudgetApproval(session, runtime, record.hybridPause) : null;
+		if (budgetDecision) {
+			session.pendingQuestion = { toolCallId: budgetDecision.id, ...normaliseQuestion(budgetDecision.input), hybridDecision: 'budget', credentialLike: false };
+			await runStore.commit(session, 'question', { question: session.pendingQuestion });
+			await runStore.setStatus(session, 'awaiting_input', 'Execution budget reached. Approve continuation or choose an explicit gap report.');
+		} else if (controller.signal.aborted) {
 			// #16225 follow-up: a loop abort is a model-gateway failure, not a
 			// user stop — the honest terminal state is error so the matrix
 			// item's slot frees immediately and the run is retriable.
@@ -1212,9 +1218,11 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 			continueIncompleteRun=true;
 			await runStore.setStatus(session,'running','Evidence collection complete. Preparing the Founder report.');
 		} else if (pending) {
+			const hostDecision = session.hybrid?.pendingDecision?.id === pending.toolCallId ? session.hybrid.pendingDecision : null;
 			session.pendingQuestion = {
 				toolCallId: pending.toolCallId,
-				...normaliseQuestion(pending.question)
+				...normaliseQuestion(pending.question),
+				...(hostDecision ? { hybridDecision: hostDecision.kind, credentialLike: hostDecision.kind === 'credentials' } : {})
 			};
 			await runStore.commit(session, 'question', { question: session.pendingQuestion });
 			await runStore.setStatus(session, 'awaiting_input');
@@ -1225,6 +1233,9 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 			// invoking ask_question. No QA run has started yet, so continuing
 			// automatically would only repeat the request and lock the composer.
 			await runStore.setStatus(session, 'awaiting_input', 'Waiting for a target URL.');
+		} else if (record.hybrid && incompleteAttempt < INCOMPLETE_RUN_CONTINUATIONS && !record.hybridPause) {
+			continueIncompleteRun = true;
+			await runStore.setStatus(session, 'running', 'Continuing the remaining QA scenarios from saved evidence.');
 		} else if (record.hybrid) {
 			await record.hybrid.endTurn('paused');
 			persistRunSnapshot(session.id, runtime.getSessionSnapshot(), session.ownerUserId);
@@ -1250,9 +1261,14 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		}
 	} catch (error) {
 		await commitTurnUsage().catch(() => undefined);
+		const budgetDecision = record.hybrid && !successfulFinalizer ? await pauseForBudgetApproval(session, runtime, record.hybridPause || error) : null;
 		if (successfulFinalizer) {
 			await completeRun();
 			deleteRunSnapshot(session.id);
+		} else if (budgetDecision) {
+			session.pendingQuestion = { toolCallId: budgetDecision.id, ...normaliseQuestion(budgetDecision.input), hybridDecision: 'budget', credentialLike: false };
+			await runStore.commit(session, 'question', { question: session.pendingQuestion });
+			await runStore.setStatus(session, 'awaiting_input', 'Execution budget reached. Approve continuation or choose an explicit gap report.');
 		} else if (controller.signal.aborted) {
 			if (record.emptyLoopAbort) {
 				const message = 'The model gateway returned empty responses for several turns in a row. The run was stopped to prevent a retry loop — try again, or pick a different model in Settings.';
@@ -1290,7 +1306,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	} finally {
 		closeThinking();
 		if (record.hybrid) {
-			const status = successfulFinalizer ? 'done' : controller.signal.aborted ? (record.hybridPause ? 'paused' : 'cancelled') : session.status === 'awaiting_input' ? 'awaiting_input' : 'paused';
+			const status = successfulFinalizer ? 'done' : session.status === 'awaiting_input' && session.hybrid.pendingDecision ? 'awaiting_input' : controller.signal.aborted ? (record.hybridPause ? 'paused' : 'cancelled') : session.status === 'awaiting_input' ? 'awaiting_input' : continueIncompleteRun ? 'running' : 'paused';
 			await record.hybrid.endTurn(status);
 			if (status !== 'done') persistRunSnapshot(session.id, runtime.getSessionSnapshot(), session.ownerUserId);
 		}
@@ -1376,7 +1392,9 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		session.secretNames = [];
 	};
 	if (controller.signal.aborted) {
-		await stoppedBeforeContinuation();
+		// A host budget handoff is waiting for the owner, not a user stop.
+		// Preserve its native pending question and vault for the same run.
+		if (session.status !== 'awaiting_input' || session.hybrid?.pendingDecision?.kind !== 'budget') await stoppedBeforeContinuation();
 		return;
 	}
 

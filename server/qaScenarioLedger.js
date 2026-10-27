@@ -70,8 +70,9 @@ export function createQaScenarioLedger(session, { persist = async () => {}, now 
           new URL(url).origin !== new URL(session.targetUrl).origin || state.budgetFinalizing || state.recovery?.verificationRequired ||
           state.currentScenarioId || state.actions.some(action => action.scenarioId === id && ['running', 'uncertain'].includes(action.status))) throw new Error('Suite continuation requires a fresh owned observed route and verified state.');
       item.routeRuns ??= [];
-      if (item.routeRuns.some(run => run.url === url)) return null;
-      item.routeRuns.push({ url, status: 'running', assertionOffset: item.assertions.length, actionOffset: item.executedActionIds.length, startedAt: now() });
+      const authenticationContext = state.exploration.routes.find(route => route.url === url && route.status === 'running').authenticationContext || 'public';
+      if (item.routeRuns.some(run => run.url === url && (run.authenticationContext || 'public') === authenticationContext)) return null;
+      item.routeRuns.push({ url, authenticationContext, status: 'running', assertionOffset: item.assertions.length, actionOffset: item.executedActionIds.length, startedAt: now() });
       item.status = 'running'; item.updatedAt = now(); state.currentScenarioId = id; await persist(); return item;
     },
     async close(id, disposition, reason) {

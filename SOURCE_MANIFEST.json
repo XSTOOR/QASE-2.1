@@ -88,7 +88,7 @@
     },
     {
       "path": "DEPLOYMENT_PROMPT.md",
-      "sha256": "3fa2f40425b4abc49f4d623ce77e1fb2a7c5c9f62d8a3ee62dbd22dfc186fbac"
+      "sha256": "1177202fae8842a58f1bce1792f36230dab7be4ae059061b2ef925f8a46e808d"
     },
     {
       "path": "Dockerfile",
@@ -168,7 +168,7 @@
     },
     {
       "path": "docs/hybrid-qa-implementation-report.md",
-      "sha256": "55465a094eb9fd4f3bdfa9909eb0cfe49f1ef5164990421a9cfe5c10387fa7aa"
+      "sha256": "89da1669ba5c2130106ecf98995ac657ed4f7234454df61018d3fee50f634bdc"
     },
     {
       "path": "docs/hybrid-qa-implementation.md",
@@ -476,7 +476,7 @@
     },
     {
       "path": "public/hybridQaView.js",
-      "sha256": "0442be6939085add698455f41fcccb041ee7cd858eed2676790e56ce66667968"
+      "sha256": "1ef173ac2a0cddf47242b912877cd239af1a0c4398eefadee0251d2a08c9def4"
     },
     {
       "path": "public/hybridQaView.test.js",
@@ -484,7 +484,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "3801f7fd43b02dbd091d6fd8666d9c04f728a6b1dec5b49506c45024324292fa"
+      "sha256": "ae25d163ae05f60d7b1fa5580c7f6529ecf910b1dbc1b4441c28092ed33b4996"
     },
     {
       "path": "public/jevExecutionView.js",
@@ -648,7 +648,7 @@
     },
     {
       "path": "public/questionPresentation.js",
-      "sha256": "42e183c11d7e1bf5aab133a4193c09c159e75317c2bdef3936f384ae7af59d27"
+      "sha256": "d7686b768c064253980e6824e790e39c2b3c89aab90701e2125017c523e9fed3"
     },
     {
       "path": "public/release.json",
@@ -772,11 +772,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "e0ac01f9c15baee308822a4c726fdce3a4539fc0f1ee41a649c7dab136b1c6c4"
+      "sha256": "50acb51c40a20c72f15d96f6402b449e637237ab5292ff698e4a98325e1eb3a0"
     },
     {
       "path": "RELEASE_NOTES.md",
-      "sha256": "fcd7270913825ce6a82043af872cff908258c523c6ee210d7c9057500881ab62"
+      "sha256": "ddf414c746df2278dc5b8cbfe0aff7246286a3e502b1b602db0499ad26e5fdca"
     },
     {
       "path": "run-jev.command",
@@ -900,7 +900,7 @@
     },
     {
       "path": "scripts/qualify-live-preview.mjs",
-      "sha256": "5a08c320d96e68ada4933d8d9d3e6041d2780da57b685a7ecffee7dc1fe21829"
+      "sha256": "992876821d1d22ff9e41ca905d9fac7dc8d00e2fae191107db97d283e5690683"
     },
     {
       "path": "scripts/qualify-studio-demo.mjs",
@@ -1008,11 +1008,11 @@
     },
     {
       "path": "server/agent.js",
-      "sha256": "c3563dde17c05f37e6f21c1b5b60c0b44106ee07c22eb6cc0e8bb0af80309811"
+      "sha256": "844439a20aa4b30cf1bcef24bd1d6a5f3f9b50230b76b206abd03d5fc8bab0a8"
     },
     {
       "path": "server/agent.test.js",
-      "sha256": "ae67d54b64bd761bbbd873c6c692d4885c8d3e9b6beacdf9200ada04a7e0de8d"
+      "sha256": "798bf62fc06779b4b5a1e0bbae05f4529640879620db6186aa94ec5d8f4f4bd3"
     },
     {
       "path": "server/analytics.js",
@@ -1020,11 +1020,11 @@
     },
     {
       "path": "server/app.js",
-      "sha256": "ceb5090437f1cc8202721ee66c5b5b0a0b6db1d9564ca1b49742f0a4ce585b68"
+      "sha256": "e0d37c055c0188584ddac44aa2bbfeda71a50f63b533cda29fa8abffe9aed2c0"
     },
     {
       "path": "server/app.test.js",
-      "sha256": "ea609bee307f6b9416a91f771a68bf52b7cb7388aec10f7944e74e3843931fbd"
+      "sha256": "18b805d2e0197d53a2686eac6a57d451181bf5c7b2cf822435abddd11961af43"
     },
     {
       "path": "server/appQaSelection.js",
@@ -1644,19 +1644,19 @@
     },
     {
       "path": "server/hybridArchitecture.test.js",
-      "sha256": "5e6dc771640f817276dbf4edfb82895264596cdf804f3c90a90313451b271e38"
+      "sha256": "d17713d7e98d1a5f5c0c5f3c406d9441a63df2c20631d43c531e0cffe2cef6f3"
     },
     {
       "path": "server/hybridAuth.browser.test.js",
-      "sha256": "c996584d8f257573d88d5bd8e89d5945b105834b221c195a70bec477eead0695"
+      "sha256": "2531d8a07ad144b9f1856d3e113af80a71e2d23e8dcdcc631f26a2ed424b244d"
     },
     {
       "path": "server/hybridAuth.integration.test.js",
-      "sha256": "9d9a985390dff5415dd3b6b8063e818fb5f7ee76a8453f8d5731aee7e90c7cc2"
+      "sha256": "8560ab8b8477cb0810ce80b7f8ac4727be320f07f43cc8df0e2994d690b17f0e"
     },
     {
       "path": "server/hybridAuth.js",
-      "sha256": "667820ee586764eb1a1b715c743005be7bffdaaa79e922e5c4d4f20eabaf13e3"
+      "sha256": "1c91367c75c242b295222ebacea143bfcc97e9f693c575d0b2bd06a7ab4f44b8"
     },
     {
       "path": "server/hybridAuth.test.js",
@@ -1688,19 +1688,31 @@
     },
     {
       "path": "server/hybridContext.js",
-      "sha256": "1c568e392abd0e1b38717ecbeca42df3831bb1ca0e8f768f2c678055ad950ee1"
+      "sha256": "482baf1c5ece98bcd9985d2843f93a56a3db41349621229b146704f3b7a068d0"
     },
     {
       "path": "server/hybridContext.test.js",
       "sha256": "a3c56337f642e4daceb480bf32a64c836354a8de287254bb87323fced05b723e"
     },
     {
+      "path": "server/hybridContinuation.integration.test.js",
+      "sha256": "eb0a2a4cea62737271f8919ea62762b9992c91f0e0edf918eb00ba974458c60d"
+    },
+    {
+      "path": "server/hybridContinuation.js",
+      "sha256": "4b9eb82a9e3867384cc5f7a1c8a9aa2fffaa0d087568b796a1f8bad786b23cfc"
+    },
+    {
+      "path": "server/hybridContinuation.test.js",
+      "sha256": "71248deba67c6d18552c1355aa0564aef42cbf70964728a35208cc5bd19ce5fd"
+    },
+    {
       "path": "server/hybridDepth.integration.test.js",
-      "sha256": "a1338a3a726370b1d00b24491b3e853107b1480e6f5a2b1250f39ead32c70eb2"
+      "sha256": "32f9d4e2884bfb3eda7ea58d70758081317277f82b6a455b432d6a2de4250265"
     },
     {
       "path": "server/hybridDepth.test.js",
-      "sha256": "3f2c36ecf539152967305ce93e2a5b5dcffa2fe57b1a958decddcb8725ae54ce"
+      "sha256": "ac26420f7f15c7234433af006cbd5c61054cccc6922d173ffefbde261c728ae3"
     },
     {
       "path": "server/hybridDepthFixture.js",
@@ -1724,7 +1736,7 @@
     },
     {
       "path": "server/hybridQaRuntime.js",
-      "sha256": "12f05e67e6f789ce80d78d062a81c4a059bd999fe1bdce4cd82068d1c48cbe37"
+      "sha256": "c563f2ca8ac3deee17e3ecbcaa605e1886098205a156bd35f1d912bf8756f354"
     },
     {
       "path": "server/hybridQaTools.js",
@@ -1736,19 +1748,19 @@
     },
     {
       "path": "server/hybridRouteCapacity.integration.test.js",
-      "sha256": "b21c66601bcf4140053a3970823bde3b9e30536253794198193103e9a17ae884"
+      "sha256": "aa263b6bf726668d9f9aeac8970884adcfe9e48e73ab4d5bc869bb93ad84337e"
     },
     {
       "path": "server/hybridRouteExecution.js",
-      "sha256": "92e8373316050c73fc80c70e02eccc7556cb69aaae82682e8ced8401473b41d0"
+      "sha256": "89b8e63385c957d9eae3fe1b10f63d4e8f38ccf6dccf536f16e93ab54ce7b29a"
     },
     {
       "path": "server/hybridRoutePolicy.js",
-      "sha256": "4442a177b91456d28b32c0f7a1065abeca01976a43a3f930afb0629a74bed5d6"
+      "sha256": "70da01dca43a9a144e86593978e403577fa2f8c41737c7bdeb841e8e19a6057b"
     },
     {
       "path": "server/hybridSdk.integration.test.js",
-      "sha256": "38aaaf232ad46b8e90b2f75a0d6e97be24593974dd5203f9802a59f09ab55460"
+      "sha256": "6b035fec1cb86edf5319207694d5f6fbe9b8648267a9cb22dd1a3e597ac04ef2"
     },
     {
       "path": "server/hybridSummaries.js",
@@ -2336,7 +2348,7 @@
     },
     {
       "path": "server/qaCompletionGate.js",
-      "sha256": "f2286a0ee51e8d10cf957fa3d2dfa9dfbf79547f1ef1abb53ec86ef37a003cf6"
+      "sha256": "103edf6001a31082c7882cc57a0309d738b796fde0a3f633e7126c0a04159906"
     },
     {
       "path": "server/qaConfigurations.js",
@@ -2364,7 +2376,7 @@
     },
     {
       "path": "server/qaScenarioLedger.js",
-      "sha256": "271b6a35a4912d57b49e47d48edbdcf378aaab31d9c9f8a8d7771244812494da"
+      "sha256": "428e7e88f6116ec4b10e319ab4738c77646928074dca2f218c30fbbb57465b83"
     },
     {
       "path": "server/qaSecurityOutcomes.test.js",
@@ -2732,7 +2744,7 @@
     },
     {
       "path": "server/uiVersion.test.js",
-      "sha256": "ea9eb764f2e930ec753d63d4a2df4337dad8b95d497d67fb94c4f4cfb4d43727"
+      "sha256": "e432b06afc3c3f03783f4949c90905df578cc2bab9a71b94bc5504fd520e5356"
     },
     {
       "path": "server/usageCapture.js",

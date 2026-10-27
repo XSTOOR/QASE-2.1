@@ -6,6 +6,7 @@ const CREDENTIAL_HINT = /\b(credentials?|password|passcode|username|user name|lo
  * a mixed "credentials or public-only" decision is handled safely.
  */
 export function isCredentialQuestion(question = {}) {
+	if (['access', 'budget', 'coverage'].includes(question.hybridDecision)) return false;
 	if (question.credentialLike === true) return true;
 	const payload = question.planning_question ?? question;
 	const options = Array.isArray(payload.options) ? payload.options : [];
