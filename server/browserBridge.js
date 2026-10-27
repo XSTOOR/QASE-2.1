@@ -1,3 +1,4 @@
+import { safeBrowserRoute } from './browserRouteSafety.js';
 import { hasUnresolvedPlaceholder, resolveSecrets, redact } from './secrets.js';
 import nodeFs from 'node:fs';
 import nodePath from 'node:path';
@@ -693,7 +694,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 				message: 'Service worker registration is disabled in production so network policy cannot be bypassed.'
 			}, { resourceType: 'serviceworker' });
 		}
-		await context.route('**/*', async route => {
+		await context.route('**/*', safeBrowserRoute(async route => {
 			const request = route.request();
 			const authDecision = session.qaExecutionMode === 'hybrid' ? authentication.requestDecision(request) : null;
 			if (authDecision?.allowed === false) {
@@ -740,7 +741,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 				url: request.url()
 			});
 			await route.abort('blockedbyclient').catch(() => undefined);
-		});
+		}, decision => recordSecurityBlock(decision)));
 		if (typeof context.routeWebSocket === 'function') {
 			await context.routeWebSocket('**/*', async socket => {
 				if (session.qaExecutionMode === 'hybrid') { await socket.close({ code: 1008, reason: 'Hybrid public QA does not authorize WebSocket writes.' }).catch(() => undefined); return; }

@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-10-27-hybrid-production-r2",
-  "uiVersion": "20261027-7",
+  "releaseId": "qase-2026-10-28-hybrid-production-r3",
+  "uiVersion": "20261028-1",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Autonomous hybrid QA with bounded context, guarded navigation and automatic evidence-based completion; UI 20261027-7"
+  "source": "Hybrid QA with guarded late-overlay recovery, cancellation-safe request routing and honest connection status; UI 20261028-1"
 }

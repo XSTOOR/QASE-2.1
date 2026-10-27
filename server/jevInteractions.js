@@ -1,3 +1,4 @@
+import { safeBrowserRoute } from './browserRouteSafety.js';
 // Fixed interaction oracles for explicitly declared UI contracts. Model text
 // cannot supply scripts. Requests are blocked during local-only trials: a
 // dependency becomes a coverage gap, never a manufactured application defect.
@@ -10,14 +11,14 @@ const result = (check, name, pass, expected, actual, second, kind) => ({
 export async function isolated(page, task) {
   const originalUrl = page.url();
   const blocked = [];
-  const guard = route => {
+  const guard = safeBrowserRoute(route => {
     const request = route.request();
     // Lazy styles/images are normal rendering dependencies. Let the existing
     // context security policy decide them; never bypass it with continue().
     if (request.method() === 'GET' && ['image', 'font', 'stylesheet', 'script', 'media'].includes(request.resourceType())) return route.fallback();
     blocked.push({ method: request.method(), url: request.url() });
     return route.abort('blockedbyclient');
-  };
+  });
   await page.route('**/*', guard);
   const restorePage = async () => {
     // A hash-link can replace the entire document's UI (e.g. an article
@@ -136,22 +137,30 @@ export async function runJevTabs(page, { inspect, settle, prepare, authorizeCont
 
 /** Read-only navigation buttons declared inside a navigation region. The
  * observed selector is revalidated; labels cannot grant writes or scripts. */
-export async function runJevNavigationControl(page, input, { inspect, settle, authorizeControl, onAction }) {
+export async function runJevNavigationControl(page, input, { inspect, settle, authorizeControl, onAction, signal }) {
+  signal?.throwIfAborted();
   const original = await inspect(page), control = original.navigationControls?.find(item => item.selector === input.selector);
   if (!control || risky.test(control.label)) throw new Error('Choose a fresh observed non-form navigation button.');
+  const obstructed = inventory => ({ success: false, code: 'QA_CONTROL_OBSTRUCTED', dispatched: false, assertions: [], inventory, gaps: ['An overlay or non-actionable control prevents navigation. Inspect and dismiss an observed safe close control before retrying.'] });
+  if (original.overlays?.length) return obstructed(original);
   const source = new URL(page.url()), blocked = [];
-  const guard = async route => {
+  const guard = safeBrowserRoute(async route => {
     const request = route.request(), destination = new URL(request.url());
     if (!['GET', 'HEAD'].includes(request.method()) || (['document', 'xhr', 'fetch'].includes(request.resourceType()) && (destination.origin !== source.origin || risky.test(destination.pathname)))) {
       blocked.push({ method: request.method(), url: destination.origin + destination.pathname }); await route.abort(); return;
     }
     await route.fallback();
-  };
+  });
   let destination, changed = false, restored = false;
   await authorizeControl?.(control.selector);
+  await onAction?.({ phase: 'before', action: 'click', selector: control.selector });
+  signal?.throwIfAborted();
+  try { await page.locator(control.selector).click({ trial: true, timeout: 800 }); }
+  catch (error) { signal?.throwIfAborted(); if (error.name !== 'TimeoutError') throw error; return obstructed(await inspect(page)); }
+  signal?.throwIfAborted();
   await page.route('**/*', guard);
   try {
-    await onAction?.({ phase: 'before', action: 'click', selector: control.selector });
+    signal?.throwIfAborted();
     await page.locator(control.selector).click({ timeout: 3000 }); await settle(page);
     destination = await inspect(page);
     changed = destination.url !== original.url || destination.text !== original.text;

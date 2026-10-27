@@ -2279,3 +2279,81 @@ Production hybrid remains disabled by default; Linux image/staging and opt-in
 PostgreSQL/integration checks still require the deployment host. The new release
 was not deployed to qase.drytis.com during this work. Use a fresh run to select
 the automatic policy; saved interactive runs are not silently given new limits.
+
+
+## 31. Late-onboarding obstruction and API-process crash (2026-10-28)
+
+Release `qase-2026-10-28-hybrid-production-r3`, UI `20261028-1`.
+
+The reported run `05ed471e-07a2-44eb-a6f9-6bdcb49753c0` was not merely
+waiting for slow reasoning. Saved evidence shows that the initial inventory
+contained no overlay, but the welcome tour appeared before the Projects button
+was exercised. The source reload restored that overlay. The log then ends with
+an unhandled Playwright `route.continue: Route is already handled!` rejection at
+the context request handler. The Node server exited, leaving the browser's last
+known Running/Working view unchanged. A classifier request had a pending
+reservation with no verified usage receipt at the crash boundary.
+
+Changes:
+
+1. `browserRouteSafety.js` contains expected request-cancellation/already-handled
+   errors inside asynchronous routing callbacks. Unknown dispatch failures
+   attempt abort and emit sanitized diagnostics; no retry or forwarding bypass
+   is introduced. The same wrapper protects context routing and fixed-check
+   page guards so a cancellation/unroute race cannot escape into an unhandled
+   rejection and terminate the API process.
+2. Navigation controls check fresh observations and perform a bounded trial
+   click before dispatch. A newly obstructed control returns
+   `QA_CONTROL_OBSTRUCTED`, explicitly `dispatched:false`, with no assertions
+   or source reload. No force click is used.
+3. The existing host route composition refreshes inventory, dismisses only
+   validated safe close controls, and chooses fresh unique navigation selectors.
+   One retry is allowed only for an explicitly undispatched obstruction.
+   Actual or uncertain actions are never replayed automatically. Onboarding
+   preparation can execute without a cosmetic scenario-planning step; actual
+   checks still require scoped scenario/evidence validation. Restoration and
+   mutating-check boundaries also refresh safe overlay preparation. Child
+   control identity keeps legitimate setup steps separate in the loop guard.
+4. The dashboard exposes Reconnecting and last-received-state guidance on SSE
+   loss instead of continuing to promise active work. It freezes extrapolated
+   hybrid elapsed time while disconnected and resynchronizes an authoritative
+   snapshot when the stream returns. Server run status is not fabricated, Stop
+   priority is preserved, and Results navigation remains explicit.
+5. The existing startup recovery marks crashed work interrupted and preserves
+   evidence. The old classifier reservation has not been erased or estimated as
+   authoritative usage. Its receipt is unavailable in local logs, so that run
+   cannot safely be automatically replayed; a fresh run or exact provider
+   reconciliation is required. No target credentials were requested or exposed
+   during this investigation.
+
+Actual validation:
+
+- Full repository verification: **2,077 passed, 26 skipped, zero failures or cancellations**, 2,103 tests, 31 suites, approximately 147 seconds. Syntax, ignore rules and high-confidence credential checks passed.
+- Focused SDK/browser checks: **10/10 passed**, including initial and delayed
+  onboarding with actual browser actions, field filling/negative paths,
+  reproduced seeded evidence and final publication. A separate late-modal
+  fixture inserts the overlay after initial inspection but before the click:
+  the first operation returns undispatched, performs no reload, then an observed
+  dismissal enables destination discovery and source restoration.
+- Context-handler and routing tests prove already-consumed requests do not
+  reject outward, unknown failures abort, blocked writes remain blocked and
+  diagnostic-sink failures cannot create another unhandled rejection.
+- Actual dashboard/SSE checks pass disconnect/reconnect and snapshot resync,
+  with zero page errors. Existing secure consent, failed-form recovery, primary
+  viewport, Stop and explicit Results/navigation checks remain intact.
+- The first broad run passed 2,076 tests but failed one existing static status
+  wiring assertion because the connection condition preceded Stop. Stop was
+  restored as the first status priority, its three checks reran successfully,
+  and the final full suite was rerun. The failed run was not counted as a pass.
+
+Logs: `/private/tmp/qase-stall-release-verify.log`,
+`/private/tmp/qase-stall-browser-tests.log`,
+`/private/tmp/qase-stall-dashboard-final.log`,
+`/private/tmp/qase-stall-core-tests.log`.
+
+Readiness: the patched local service is restarted with hybrid qualification and
+operator limits intact. Existing evidence is preserved; unknown model receipts
+still require reconciliation rather than invented accounting. Production was
+not deployed or reconfigured. Linux image/staging and opt-in integrations remain
+deployment-host gates. No SDK internals or node_modules were changed, and the
+single SDK/browser execution lifecycle is retained.

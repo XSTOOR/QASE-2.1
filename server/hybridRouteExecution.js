@@ -73,9 +73,22 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
     await invoke('browser_qa_scenario', { scenario_id: scenario.id, action, ...input }, context.signal);
     return scenario;
   }
+  async function readyInventory(inventory, context) {
+    if (!autonomous(state)) return inventory;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      context.signal?.throwIfAborted();
+      const overlay = inventory?.overlays?.find(item => item.close);
+      if (!overlay) return inventory;
+      const result = await invoke('browser_qa_check', { action: 'dismiss_overlay', selector: overlay.close.selector }, context.signal);
+      if (result.success === false || !result.inventory) return inventory;
+      inventory = result.inventory;
+    }
+    return inventory;
+  }
   async function controls(inventory, route, context) {
     if (!suites) return;
     exploration.interactions ??= [];
+    inventory = await readyInventory(inventory, context);
     // Exercise substantive FAQ/accordion controls before repeated site menus.
     // Keep room for the remaining page checks; every trial still consumes the
     // unchanged browser action budget through the native SDK executor.
@@ -93,18 +106,30 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
       } catch (error) { trial.status = 'interrupted'; throw error; }
       finally { await checkpoint(); }
     }
-    if (autonomous(state)) for (const control of (inventory.navigationControls || []).slice(0, 4)) {
+    if (autonomous(state)) for (let index = 0; index < 4; index++) {
       context.signal?.throwIfAborted();
-      const id = digestEvidence([route.url, route.authenticationContext, 'navigation_control', control.selector]);
-      if (exploration.interactions.some(item => item.id === id)) continue;
-      const trial = { id, url: route.url, action: 'navigation_control', selector: control.selector, status: 'running' };
-      exploration.interactions.push(trial); await checkpoint();
+      const observed = await invoke('browser_qa_check', { action: 'inspect' }, context.signal);
+      inventory = await readyInventory(observed.inventory || {}, context);
+      const control = (inventory.navigationControls || []).find(item => !exploration.interactions.some(trial => trial.id === digestEvidence([route.url, route.authenticationContext, 'navigation_control', item.label])));
+      if (!control || inventory.overlays?.length) break;
+      const id = digestEvidence([route.url, route.authenticationContext, 'navigation_control', control.label]);
+      const trial = { id, url: route.url, action: 'navigation_control', selector: control.selector, label: control.label, status: 'running' };
+      exploration.interactions.push(trial); exploration.currentControlId = id; await checkpoint();
       try {
-        const result = await invoke('browser_qa_check', { action: 'navigation_control', selector: control.selector }, context.signal);
+        let result = await invoke('browser_qa_check', { action: 'navigation_control', selector: control.selector }, context.signal);
+        // A pre-dispatch trial may reveal a newly mounted overlay. Dismiss it
+        // and choose a freshly observed unique control once; never replay an
+        // action with an uncertain or already-dispatched outcome.
+        if (result.code === 'QA_CONTROL_OBSTRUCTED' && result.dispatched === false && result.inventory?.overlays?.some(item => item.close)) {
+          const fresh = await readyInventory(result.inventory, context);
+          const matches = (fresh.navigationControls || []).filter(item => item.label === control.label);
+          if (!fresh.overlays?.length && matches.length === 1) result = await invoke('browser_qa_check', { action: 'navigation_control', selector: matches[0].selector }, context.signal);
+        }
         trial.status = result.success === false || result.gaps?.length ? 'inconclusive' : 'executed'; trial.evidenceId = result.hostEvidenceId; trial.reason = result.error || result.gaps?.join(' ');
         observe();
+        if (result.restoredInventory) await readyInventory(result.restoredInventory, context);
       } catch (error) { trial.status = 'interrupted'; throw error; }
-      finally { await checkpoint(); }
+      finally { delete exploration.currentControlId; await checkpoint(); }
     }
     if (inventory.tabs?.length) {
       const result = await invoke('browser_qa_check', { action: 'tabs' }, context.signal);
@@ -237,6 +262,10 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
               const order = category => category === 'console_health' ? 3 : category === 'forms' ? 2 : category === 'responsive' ? 1 : 0;
               const orderedChecks = suites ? [...checks].sort((a, b) => order(a) - order(b)) : checks;
               for (const category of orderedChecks) {
+                if (autonomous(state) && ['responsive', 'forms', 'search'].includes(category)) {
+                  const current = await invoke('browser_qa_check', { action: 'inspect' }, context.signal);
+                  await readyInventory(current.inventory || {}, context);
+                }
                 if (category === 'navigation') {
                   if (!suites && !navigationEvidence) await check(category, 'anchors', route.url, {}, context);
                 } else if (category === 'broken_links' && navigationEvidence) {

@@ -1,8 +1,9 @@
 import { runPresentationStatus } from './runPresentation.js';
 
 /** Guidance derived from actual run state, never elapsed-time guesses. */
-export function workflowStatus(session) {
+export function workflowStatus(session, connection) {
 	const status = runPresentationStatus(session);
+	if (status === 'running' && ['reconnecting', 'syncing'].includes(connection)) return { tone: 'attention', title: 'Reconnecting to your run', description: 'The server connection was interrupted. The preview and progress shown are the last received state. Qase will check saved progress when the connection returns.', action: 'View saved progress', destination: 'progress' };
 	if (session?.pendingQuestion || status === 'awaiting_input') return { tone: 'attention', title: 'Qase needs your input', description: 'Answer the question below so testing can continue.', action: 'Answer question', destination: 'question' };
 	if (status === 'blocked') return { tone: 'attention', title: 'Testing needs a prerequisite', description: 'Open the report to see what prevented testing and what to provide next.', action: 'Review blocker', destination: 'results' };
 	if (status === 'partial') return { tone: 'attention', title: 'Testing completed with coverage gaps', description: session?.qaExecutionMode === 'hybrid' && session.hybrid?.budgetFinalizing

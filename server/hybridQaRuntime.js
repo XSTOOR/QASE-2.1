@@ -212,7 +212,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           if (state.budgetFinalizing) throw new Error('Browser exploration has stopped for budget closeout. Record remaining coverage gaps and publish the host-validated report.');
           if (['browser_qa_check', 'browser_qa_scenario'].includes(tool.name)) {
             const categories = { navigation: ['navigation', 'broken_links'], navigation_control: ['navigation'], anchors: ['navigation', 'broken_links'], disclosure: ['navigation'], tabs: ['navigation'], dismiss_overlay: ['navigation'], responsive: ['responsive'], forms: ['forms'], search: ['search'], media: ['media'], accessibility: ['accessibility'] };
-            if (categories[input?.action] && !categories[input.action].some(category => state.scope.includes(category))) throw new Error('The fixed check is outside the selected test scope or selected scenario category.');
+            if (!(autonomous(state) && input?.action === 'dismiss_overlay') && categories[input?.action] && !categories[input.action].some(category => state.scope.includes(category))) throw new Error('The fixed check is outside the selected test scope or selected scenario category.');
           }
           if (state.recovery?.verificationRequired && !['browser_open', 'browser_snapshot', 'browser_get_url'].includes(tool.name)) throw new HybridPause('HYBRID_VERIFY_STATE', 'Recovery requires a fresh browser open and snapshot before actions.');
           const viewportProblem = checkPrimaryViewport(session, record.bridge?.service?.activePage);
@@ -226,7 +226,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
             if (scenario.status === 'planned') await ledger.start(scenario.id);
             else if (scenario.status !== 'running') throw new Error('Only planned or currently running scenarios can execute; completed scenarios are not replayed automatically.');
           }
-          if (!discovery.has(tool.name) && !state.currentScenarioId && !(tool.name === 'browser_qa_check' && ['inspect', 'scroll'].includes(input?.action))) throw new Error('Start a validated QA scenario before this browser action.');
+          if (!discovery.has(tool.name) && !state.currentScenarioId && !(tool.name === 'browser_qa_check' && (['inspect', 'scroll'].includes(input?.action) || autonomous(state) && input?.action === 'dismiss_overlay'))) throw new Error('Start a validated QA scenario before this browser action.');
           const actionCost = tool.name === 'browser_authenticate' ? 5 : 1;
           if (ensureAutonomousCapacity(state, { browserActions: state.telemetry.browserActions + actionCost })) Object.assign(profile.budgets, state.budgets);
           if (state.telemetry.browserActions + actionCost > profile.budgets.browserActions) throw new HybridPause('HYBRID_BROWSER_BUDGET', 'Browser action budget exhausted.');
@@ -243,7 +243,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           await record.bridge?.authorizeHybridAction?.(tool.name, input);
           if (['browser_click', 'browser_fill', 'browser_type', 'browser_check', 'browser_select', 'browser_key'].includes(tool.name) && state.actions.some(action => action.status === 'uncertain' && action.toolName === tool.name && digestEvidence(action.input) === digestEvidence(redact(session.id, input)))) throw new HybridPause('HYBRID_UNCERTAIN_ACTION', 'This action has an uncertain prior receipt. Inspect state and choose a different verified step or record the blocker; it cannot be automatically replayed.');
           const activeRoute = state.exploration?.batches?.findLast(batch => batch.status === 'running')?.currentRouteId;
-          const key = digestEvidence([tool.name, redact(session.id, input), state.currentScenarioId, activeRoute, state.lastObservedState || 'unobserved']);
+          const key = digestEvidence([tool.name, redact(session.id, input), state.currentScenarioId, activeRoute, state.exploration?.currentControlId, state.lastObservedState || 'unobserved']);
           if (mutates(tool.name) && !(tool.name === 'browser_qa_check' && input?.action === 'inspect')) {
             let repeated = state.repeatActions.find(item => item.key === key);
             if (!repeated) { repeated = { key, count: 0, toolName: tool.name }; state.repeatActions.push(repeated); if (state.repeatActions.length > 128) state.repeatActions.shift(); }

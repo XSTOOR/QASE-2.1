@@ -67,6 +67,15 @@ try {
   await page.waitForFunction(() => document.querySelector('#current-activity-state')?.textContent.includes('Tested menu or accordion'));
   activity({ id: 'child', status: 'done', label: 'Tested menu or accordion', ts: Date.now() });
   await page.waitForFunction(() => document.querySelector('#current-activity-state')?.textContent === 'Tested observed routes');
+  // Transport loss must never leave an indefinitely reassuring Working label.
+  const outage = route => route.abort('connectionfailed');
+  await page.route('**/api/sessions/*/events', outage);
+  for (const response of streams) if (!response.writableEnded) response.end();
+  await page.waitForFunction(() => document.querySelector('#status-chip')?.textContent === 'Reconnecting…' && document.querySelector('#thinking-label')?.textContent === 'Reconnecting');
+  assert.match(await page.locator('#journey-run-description').textContent(), /last received state/);
+  assert.equal(session.status, 'running', 'The UI must not invent a server terminal state.');
+  await page.unroute('**/api/sessions/*/events', outage);
+  await page.waitForFunction(() => document.querySelector('#status-chip')?.textContent === 'Running');
   session.hybrid.telemetry = { elapsedMs: 137706, browserActions: 18, reasoner: {}, classifier: {} };
   session.hybrid.status = 'paused'; session.hybrid.recovery = { resumeBlockedReason: 'usage_unverified' };
   session.status = 'interrupted';
@@ -176,7 +185,7 @@ try {
   assert.equal(new URL(page.url()).hash, `#/runs/${session.id}`);
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ passed: true, liveProgress: true, chromeUrlUpdated: true, responsivePreviewStable: true, responsiveStatusClearedAfterRestore: true, nestedActivityUpdated: true, honestLegacyCoverage: true, explicitAgentIdentity: true,
-    receiptRecoveryExplained: true, pausedTimerStableAfterReload: true, completionKeepsDesktopAndMobileView: true, explicitResultsNavigation: true,
+    disconnectExplainedAndResynced: true, receiptRecoveryExplained: true, pausedTimerStableAfterReload: true, completionKeepsDesktopAndMobileView: true, explicitResultsNavigation: true,
     completedRunStartupAndRefreshStayOnRun: true, latestRunFallbackStaysOnRun: true, launchHandleStaysOnRun: true, explicitResultsRefreshPreserved: true,
     budgetContinuationOptionUsable: true, exactBudgetApprovalPreservesUsage: true, secureCredentialConsent: true, failedCredentialQuestionPreserved: true, publicOnlyDecisionRemembered: true, pageErrors: errors }));
 } finally {

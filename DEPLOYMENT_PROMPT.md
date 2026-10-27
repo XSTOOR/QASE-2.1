@@ -4,8 +4,8 @@ This is the operator runbook for the reviewed release targeting **https://qase.d
 
 ## Required release
 
-- Release ID: `qase-2026-10-27-hybrid-production-r2`.
-- UI version: `20261027-7`, including hybrid-only QA setup, precise coverage/closeout, explicit Results navigation, host continuation decisions and the completed-run startup fix.
+- Release ID: `qase-2026-10-28-hybrid-production-r3`.
+- UI version: `20261028-1`, including hybrid-only QA setup, precise coverage/closeout, explicit Results navigation, host continuation decisions and the completed-run startup fix.
 - The application root is the extracted folder containing `package.json`, `public/`, and `server/`. It is a Node.js Express application serving static ES modules, NOT a Next.js or Vite build. Do not deploy the parent workspace, an old `apps/` project, or a generated `dist/` directory.
 - Run Node.js 22 or 24. Keep `package-lock.json` and Playwright `1.62.0` unchanged; use `npm ci`, not dependency upgrades.
 - Preserve all current QA, SQA, Founder, authentication, reports, browser/runtime, device matrix, and UI functionality. Do not redesign or replace the application during deployment.
@@ -105,6 +105,17 @@ configured-limit automatic closeout and user cancellation. Confirm an unknown
 receipt or uncertain restoration still stops safely. Do not claim success from
 a model saying it tested everything.
 
+## r3 stalled-run canary
+
+Before promotion, exercise an onboarding modal that appears after the initial
+inventory, verify pre-dispatch obstruction detection, safe dismissal, fresh
+selector selection and forward progress. Request cancellation/unroute races
+must not crash the API process; unknown request failures must still block.
+Disconnect the dashboard stream and verify Reconnecting/last-received-state
+messaging, followed by snapshot resynchronization. Preserve unknown provider
+receipts from previously interrupted runs; do not clear reservations to resume
+them. New sessions and safely resumable work must remain functional.
+
 ## Deploy using Compose when that topology is appropriate
 
 Use an always-on Linux host with Docker Engine and Compose. Size CPU, memory, disk, browser concurrency, and model quotas from a staging canary; start conservatively with one concurrent browser assessment. Browser-heavy runs need more resources than a static website.
@@ -112,7 +123,7 @@ Use an always-on Linux host with Docker Engine and Compose. Size CPU, memory, di
 The commands below run from the extracted source root. Provision `deploy/production/.env.production` from `deploy/production/.env.example` through the secret manager, replace every placeholder, and restrict its permissions before continuing. The Compose file explicitly enforces closed registration, authentication, local storage, the public URL, and production mode.
 
 ```bash
-export QASE_IMAGE=qase:qase-2026-10-27-hybrid-production-r2
+export QASE_IMAGE=qase:qase-2026-10-28-hybrid-production-r3
 node scripts/verify-release.mjs
 docker build --pull --build-arg QASE_SOURCE_REVISION="$(git rev-parse HEAD)" --tag "$QASE_IMAGE" .
 node scripts/smoke-production-image.mjs "$QASE_IMAGE"
@@ -153,7 +164,7 @@ This checks HTTPS health/readiness, the exact release ID, and SHA-256 for six pu
 In a clean browser, verify:
 
 1. TLS and canonical hostname; login, logout, account isolation, closed registration, and SMTP recovery. Unauthenticated `/api/sessions` must not return private runs. Production `/demo` must not expose test fixtures.
-2. Current QASE branding, status lights, readable buttons and responsive layout. Confirm `app.js?v=20261027-7` is served. Test hybrid-only setup, selected browser, pause/recovery, root entry/refresh staying on the run workspace, explicit Results/Back navigation and the stable selected-device preview.
+2. Current QASE branding, status lights, readable buttons and responsive layout. Confirm `app.js?v=20261028-1` is served. Test hybrid-only setup, selected browser, pause/recovery, root entry/refresh staying on the run workspace, explicit Results/Back navigation and the stable selected-device preview.
 3. With an authorized staging test account and an explicitly owned test target, run bounded QA, SQA, and Founder canaries. Confirm actual browser actions, live activity/SSE, questions/credential requests, persistence after refresh, stopping, and recorded evidence/report downloads. In hybrid, test secure-form consent, one approved sign-in, explicitly consented separate authentication API, rejected duplicate/unrelated writes, remembered Skip login, fresh signed-in observations and no replay after uncertain dispatch. Native-form username/password sign-in is supported; SSO/MFA and unapproved cross-origin sign-in are explicit limitations, not compatibility claims. Never use a production target for destructive tests, payments, signup spam, intrusive exploitation, or uncontrolled paid AI generation.
 4. Model requests actually succeed from the execution host. A ready API without gateway connectivity or browser executables is not acceptance.
 5. Agent streams stay live through the ingress/CDN. Disable proxy buffering and inappropriate caching for `/api/*` and SSE; do not impose a short execution/request timeout on live streams. The Caddy baseline uses `flush_interval -1`. Do not cache private API data.

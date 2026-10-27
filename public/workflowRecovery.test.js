@@ -22,3 +22,13 @@ test('completion offers an explicit results action and preserves partial coverag
   const closed = workflowStatus({ mode: 'qa', qaExecutionMode: 'hybrid', status: 'done', report: { verdict: 'partial' }, hybrid: { budgetFinalizing: true } });
   assert.match(closed.description, /Start a new test/); assert.equal(closed.destination, 'results');
 });
+
+test('a disconnected running view reports reconnection without inventing a terminal run status', () => {
+  const session = { mode: 'qa', status: 'running' };
+  for (const connection of ['reconnecting', 'syncing']) {
+    const view = workflowStatus(session, connection);
+    assert.match(view.title, /Reconnecting/); assert.match(view.description, /last received state/);
+    assert.equal(session.status, 'running');
+  }
+  assert.equal(workflowStatus(session, 'live').hidden, true);
+});

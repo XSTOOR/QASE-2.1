@@ -1,6 +1,6 @@
 # QASE hybrid production candidate
 
-Release: `qase-2026-10-27-hybrid-production-r2`. UI: `20261027-7`.
+Release: `qase-2026-10-28-hybrid-production-r3`. UI: `20261028-1`.
 Target: `https://qase.drytis.com`. This is a source/image handoff, not a record
 of deployment or production activation.
 
@@ -76,6 +76,24 @@ observed navigation-region buttons reveal routes that anchor-only discovery
 missed; writes remain blocked and navigation restores its source. A failed
 restore requires state verification. No complete-site or exhaustive workflow
 coverage is inferred from these bounded checks.
+
+## Stalled-run repair in r3
+
+A delayed onboarding modal could obstruct a navigation control after the initial
+inspection. The host now refreshes observations and dismisses supported safe
+close controls at action boundaries, including before trial-clicking. Only a
+confirmed pre-dispatch obstruction can be retried once; dispatched or uncertain
+actions are never replayed. Onboarding preparation no longer requires a model
+to create a separate plan item. Actual checks still require their scenario and
+host evidence.
+
+Cancelled/already-handled Playwright requests no longer escape asynchronous
+routing handlers and terminate the API process. Unexpected routing failures
+abort fail-closed and produce sanitized diagnostics. The dashboard explicitly
+shows reconnection and last-received progress during stream loss, then
+resynchronizes the authoritative state without navigating to Results. A prior
+run whose crash lost a provider receipt still needs exact reconciliation; the
+fix does not erase billing exposure or invent successful completion.
 
 ## Deployment changes
 

@@ -1,3 +1,4 @@
+import { safeBrowserRoute } from './browserRouteSafety.js';
 /** Fixed, bounded browser scenarios. No model-written scripts or selectors.
  * All actions use the already policy-guarded browser context. No form is
  * submitted and no credentials, purchases or persistent records are created.
@@ -300,7 +301,7 @@ async function search(page) {
     }, contract.resultsId);
     // Run local filter trials only, under a request guard. A remote dependency
     // makes the trial inconclusive, never a target defect or an implicit pass.
-    const guard = route => { blockedRequests.push({ url: route.request().url(), method: route.request().method() }); return route.abort('blockedbyclient'); };
+    const guard = safeBrowserRoute(route => { blockedRequests.push({ url: route.request().url(), method: route.request().method() }); return route.abort('blockedbyclient'); });
     const requestStart = blockedRequests.length;
     await page.route('**/*', guard);
     try {
@@ -507,7 +508,7 @@ export async function runJevBrowserCheck(page, input, { signal, authorizeControl
       case 'dismiss_overlay': result = await dismissOverlay(page, input); break;
       case 'anchors': result = await runJevAnchors(page, { inspect: inspectJevPage, settle: settleJevPage, prepare: prepareJevControl, authorizeControl, onAction }); break;
       case 'tabs': result = await runJevTabs(page, { inspect: inspectJevPage, settle: settleJevPage, prepare: prepareJevControl, authorizeControl, onAction }); break;
-      case 'navigation_control': result = await runJevNavigationControl(page, input, { inspect: inspectJevPage, settle: settleJevPage, authorizeControl, onAction }); break;
+      case 'navigation_control': result = await runJevNavigationControl(page, input, { inspect: inspectJevPage, settle: settleJevPage, authorizeControl, onAction, signal }); break;
       case 'scroll': result = await exploreScroll(page, signal); break;
     }
     signal?.throwIfAborted();

@@ -176,3 +176,28 @@ test('navigation button discovery excludes outside/form/destructive controls and
   assert.equal(writes, 0); assert.equal(blocked.assertions.length, 0); assert.ok(blocked.blockedRequests.length);
   assert.match(blocked.gaps.join(' '), /blocked write/); assert.equal(await page.locator('main').textContent(), 'Initial content');
 });
+
+test('a late modal is reported before navigation dispatch, then a safe dismissal permits progress without forced clicking', { timeout: 20000 }, async t => {
+  let visits = 0;
+  const server = http.createServer((_req, res) => {
+    visits++; res.setHeader('Content-Type', 'text/html');
+    res.end('<title>Late overlay fixture</title><nav><button id="projects" onclick="location.href=\'/destination\'">Projects</button></nav><main>Workspace</main>');
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => { server.closeAllConnections(); server.close(); });
+  const browser = await chromium.launch(); t.after(() => browser.close()); const page = await browser.newPage();
+  const base = `http://127.0.0.1:${server.address().port}`; await page.goto(base);
+  let shown = false;
+  const options = { onAction: async step => {
+    if (shown || step.phase !== 'before') return; shown = true;
+    await page.evaluate(() => { const overlay = document.createElement('div'); overlay.id = 'late'; overlay.setAttribute('role', 'dialog'); overlay.style = 'position:fixed;inset:0;z-index:9999;background:white'; overlay.innerHTML = '<h2>Welcome</h2><button id="close-late">Close welcome</button>'; document.body.append(overlay); document.querySelector('#close-late').onclick = () => overlay.remove(); });
+  } };
+  const before = visits, blocked = await runJevBrowserCheck(page, { action: 'navigation_control', selector: '#projects' }, options);
+  assert.equal(blocked.code, 'QA_CONTROL_OBSTRUCTED'); assert.equal(blocked.dispatched, false); assert.equal(blocked.assertions.length, 0);
+  assert.equal(visits, before, 'A blocked pre-dispatch trial must not reload or re-open onboarding.');
+  assert.equal(new URL(page.url()).pathname, '/');
+  const dismissed = await runJevBrowserCheck(page, { action: 'dismiss_overlay', selector: blocked.inventory.overlays[0].close.selector });
+  assert.equal(dismissed.assertions[0].outcome, 'pass');
+  const progressed = await runJevBrowserCheck(page, { action: 'navigation_control', selector: '#projects' });
+  assert.equal(progressed.success, true); assert.equal(new URL(progressed.inventory.url).pathname, '/destination');
+  assert.equal(new URL(page.url()).pathname, '/', 'Source restoration remains intact.');
+});

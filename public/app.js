@@ -221,6 +221,8 @@ const state = {
 	session: undefined,
 	config: undefined,
 	stream: undefined,
+	streamConnection: undefined,
+	connectionLostAt: undefined,
 	/** Run IDs with a cancellation request in flight. */
 	stopRequests: new Set(),
 	openFindings: new Set(),
@@ -1653,9 +1655,9 @@ function renderHeader() {
 	const executionLabel = $('qa-agent-mode');
 	if (executionLabel) { executionLabel.textContent = qaExecutionModeLabel(session); executionLabel.hidden = !executionLabel.textContent; }
 	const guide = $('journey-run-guide');
-	guide.hidden = !state.sessionId || Boolean(workflowStatus(session).hidden);
+	guide.hidden = !state.sessionId || Boolean(workflowStatus(session, state.streamConnection).hidden);
 	if (state.sessionId) {
-		const guidance = workflowStatus(session);
+		const guidance = workflowStatus(session, state.streamConnection);
 		guide.dataset.tone = guidance.tone;
 		$('journey-run-title').textContent = guidance.title;
 		$('journey-run-description').textContent = guidance.description;
@@ -1795,7 +1797,7 @@ function setStatus(status) {
 	el.statusChip.dataset.status = displayStatus;
 	el.statusChip.textContent = stopping ? 'Stopping…' : status === 'awaiting_input'
 		? 'waiting for you'
-		: status === 'running' ? 'Running'
+		: status === 'running' ? (['reconnecting', 'syncing'].includes(state.streamConnection) ? 'Reconnecting…' : 'Running')
 			: displayStatus === 'blocked' ? 'Blocked'
 				: displayStatus === 'partial' ? 'Completed with gaps'
 				: status === 'done' ? 'Complete'
@@ -1849,7 +1851,8 @@ function runElapsedMs() {
 		if (timer.measuredMs !== measured || timer.measuredStatus !== state.session.status) {
 			timer.measuredMs = measured; timer.measuredStatus = state.session.status; timer.measuredAt = Date.now();
 		}
-		return measured + (state.session.status === 'running' ? Math.max(0, Date.now() - timer.measuredAt) : 0);
+		const now = state.connectionLostAt || Date.now();
+		return measured + (state.session.status === 'running' ? Math.max(0, now - timer.measuredAt) : 0);
 	}
 	if (typeof timer.startedAt !== 'number') return undefined;
 	return (typeof timer.endedAt === 'number' ? timer.endedAt : Date.now()) - timer.startedAt;
@@ -2524,6 +2527,12 @@ function updateThinkingStrip() {
 	}
 
 	el.thinkingStrip.hidden = false;
+	if (['reconnecting', 'syncing'].includes(state.streamConnection)) {
+		el.thinkingLabel.textContent = 'Reconnecting'; el.thinkingPeek.textContent = 'Checking the server connection; showing last saved progress.';
+		el.thinkingStrip.classList.remove('has-detail', 'is-open'); el.thinkingCaret.hidden = true; el.thinkingHead.setAttribute('aria-expanded', 'false');
+		const badge = $('ldv-live'); if (badge) { badge.textContent = 'Reconnecting'; badge.dataset.live = 'false'; }
+		return;
+	}
 	el.thinkingLabel.textContent = text ? 'Thinking' : 'Working';
 	el.thinkingPeek.textContent = text ? tailOf(text) : action;
 
@@ -4666,6 +4675,13 @@ function connect(id) {
 	state.stream?.close();
 	const stream = new EventSource(`/api/sessions/${id}/events`);
 	state.stream = stream;
+	state.streamConnection = 'connecting'; state.connectionLostAt = undefined;
+	const connection = next => {
+		if (state.stream !== stream || state.sessionId !== id) return;
+		state.streamConnection = next;
+		if (next === 'live') state.connectionLostAt = undefined; else state.connectionLostAt ??= Date.now();
+		if (state.session) renderHeader();
+	};
 	let finishReady;
 	const ready = new Promise(resolve => { finishReady = resolve; });
 	// An unavailable stream must not lock the workspace; EventSource will keep
@@ -4686,6 +4702,7 @@ function connect(id) {
 				resyncTimer = setTimeout(resync, 250);
 				return;
 			}
+			connection('live');
 			applySessionSnapshot(snapshot);
 		} catch {
 			if (state.stream === stream) resyncTimer = setTimeout(resync, 1000);
@@ -4697,9 +4714,12 @@ function connect(id) {
 	stream.onopen = () => {
 		if (state.stream !== stream) return;
 		clearTimeout(resyncTimer);
+		if (state.connectionLostAt) connection('syncing');
 		void resync();
 	};
 	stream.onerror = () => {
+		if (state.stream !== stream) return;
+		connection('reconnecting');
 		connected();
 		clearTimeout(resyncTimer);
 	};

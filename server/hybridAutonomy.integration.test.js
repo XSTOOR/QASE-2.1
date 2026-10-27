@@ -12,7 +12,7 @@ import { JEV_ENDPOINT } from './jevClient.js';
 import { withUserConfiguration } from './config.js';
 import { validateHybridFinding } from './qaCompletionGate.js';
 
-test('autonomous installed SDK skips onboarding, discovers button-only routes, fills negative inputs and publishes evidence without budget/coverage questions', { timeout: 90000 }, async t => {
+for (const late of [false, true]) test(`autonomous SDK ${late ? 'late' : 'initial'} onboarding: discovers button routes, fills negatives and publishes without questions`, { timeout: 90000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-autonomous-sdk-'));
   const env = { NODE_ENV: 'development', QASE_ALLOW_PRIVATE_NETWORK: 'true', QASE_HYBRID_QA_ENABLED: 'true', QASE_LOCK_MODEL: 'false', QASE_HYBRID_AUTONOMOUS_COMPLETION: 'true', JEV_API_KEY: 'autonomous-fixture', QASE_HYBRID_QUALIFICATION_FILE: path.join(root, 'qualification.json') };
   const saved = Object.fromEntries(Object.keys(env).map(name => [name, process.env[name]])); Object.assign(process.env, env);
@@ -27,7 +27,7 @@ test('autonomous installed SDK skips onboarding, discovers button-only routes, f
     const projects = req.url === '/projects';
     res.end(`<title>Owned autonomous fixture</title><nav><button id="projects" ${projects ? 'aria-current="page"' : ''} onclick="location.href='/projects'">Projects</button></nav>
       <main><h1>${projects ? 'Projects workspace' : 'Welcome workspace'}</h1>${projects ? `<div style="width:1800px;height:20px;background:red">Seeded overflow</div><label>Project name<input id="name" required minlength="3"></label><label>Search projects<input id="search" type="search"></label><ul id="results"><li>Alpha project</li><li>Beta project</li></ul><script>document.querySelector('#search').oninput=e=>{for(const row of document.querySelectorAll('#results li'))row.hidden=!row.textContent.toLowerCase().includes(e.target.value.toLowerCase())}</script>` : ''}</main>
-      <script>if(!sessionStorage.getItem('tour-dismissed')){const layer=document.createElement('div');layer.style='position:fixed;inset:0;z-index:100;background:#0008;display:grid;place-items:center';layer.innerHTML='<div id="welcome" style="background:white;width:320px;padding:24px"><div>Welcome to the test platform</div><p>Take a quick tour.</p><button id="skip-tour">Skip</button></div>';document.body.append(layer);document.querySelector('#skip-tour').onclick=()=>{sessionStorage.setItem('tour-dismissed','1');layer.remove()}}</script>`);
+      <script>setTimeout(()=>{if(!sessionStorage.getItem('tour-dismissed')){const layer=document.createElement('div');layer.style='position:fixed;inset:0;z-index:100;background:#0008;display:grid;place-items:center';layer.innerHTML='<div id="welcome" style="background:white;width:320px;padding:24px"><div>Welcome to the test platform</div><p>Take a quick tour.</p><button id="skip-tour">Skip</button></div>';document.body.append(layer);document.querySelector('#skip-tour').onclick=()=>{sessionStorage.setItem('tour-dismissed','1');layer.remove()}}},${late ? 650 : 0})</script>`);
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => { server.closeAllConnections(); server.close(); });
   const session = { id: randomUUID(), ownerUserId: 'owner', mode: 'qa', qaExecutionMode: 'hybrid', status: 'idle', targetUrl: `http://127.0.0.1:${server.address().port}/`, selectedTests: ['navigation', 'responsive', 'forms', 'search', 'accessibility', 'content'], messages: [], activities: [], findings: [], todos: [], secretNames: [] };
