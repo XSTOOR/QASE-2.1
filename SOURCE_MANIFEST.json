@@ -292,7 +292,7 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "a3f8f261ab4236a69da46be2d9fc0e3f2d83bd3a6357e3e034c409fdba56b061"
+      "sha256": "5a0d345b55c4c3db033e5cc5da7c61919ee2f16101f7c2b78863b622e3a30dbc"
     },
     {
       "path": "public/auth.css",
@@ -772,7 +772,7 @@
     },
     {
       "path": "public/studioHierarchyContract.test.js",
-      "sha256": "2ecdcd5dc88d5e59f8bde7b96248be7ce26a5efc8efc8226a5a300d0f84aa4f8"
+      "sha256": "b741c80590cd74809dcf73f077f2272bbe8c7fbe51e50f068b0f76d677c1baa2"
     },
     {
       "path": "public/studioMode.js",
