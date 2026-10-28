@@ -5432,7 +5432,18 @@ function qaLaunchBlockedReason() {
 	if (qaSecuritySelected() && !qaUi.securityAuthorized?.checked) {
 		return 'Confirm that you are authorized to test this site.';
 	}
-	if (qaJourneySelectionMode === 'quick') return null;
+	if (qaJourneySelectionMode === 'quick') {
+		// Quick mode hides the matrix, so its derived focused selection must
+		// still satisfy the hybrid one-browser contract before the review step
+		// claims readiness. Legacy quick mode always runs on the platform's
+		// automatic browser and needs no catalog check here.
+		if (qaUi.executionMode?.value !== 'hybrid') return null;
+		if (qaMatrixState.fetchState === 'loading') return 'Loading browsers and devices…';
+		if (qaMatrixState.fetchState === 'error') return 'Browsers and devices could not be loaded. Retry the browser list.';
+		try { hybridLaunchOptions({ config: state.config, mode: 'hybrid', envIds: sanitizeSelection(qaMatrixState.index, qaMatrixEffectiveSelection()), configurations: qaMatrixState.index }); }
+		catch (error) { return error.message; }
+		return null;
+	}
 	if (qaMatrixState.fetchState === 'loading') return 'Loading browsers and devices…';
 	if (qaMatrixState.fetchState === 'error') return 'Browsers and devices could not be loaded. Open Customize and retry.';
 	const configurations = qaMatrixState.selectedEnvIds.length;
@@ -5709,10 +5720,11 @@ function showQaStartPage() {
 		coverageBlocked: !state.qaTestCatalog ? 'Loading available checks…'
 			: !qaUi.selectedTests.size ? 'Choose at least one check to continue.'
 			: qaSecuritySelected() && !qaUi.securityAuthorized?.checked ? 'Confirm security testing authorization below.'
-			: qaJourneySelectionMode === 'quick' ? null
+			: qaJourneySelectionMode !== 'quick' ? null
+			: qaUi.executionMode?.value !== 'hybrid' ? null
 			: qaMatrixState.fetchState === 'loading' ? 'Loading browsers and devices…'
-			: qaMatrixState.fetchState === 'error' ? 'The device catalog could not load. Open customization and retry.'
-			: !qaMatrixState.selectedEnvIds.length ? 'Choose at least one available browser and device.' : null
+			: qaMatrixState.fetchState === 'error' ? 'The device catalog could not load. Retry the browser list.'
+			: qaLaunchBlockedReason() ?? null
 	}) });
 	setQaFormError();
 	const draft = { url: qaUi.targetUrl.value, goal: $('qa-goal').value };
@@ -5933,17 +5945,31 @@ if (qaUi.dialog) {
 			$('qa-customize').open = true;
 			return;
 		}
+		const device = activeTestEnvStore?.get?.()?.device || pendingDeviceId();
+		const deviceLandscape = (qaUi.deviceLandscape?.checked) === true;
 		const goal = $('qa-goal')?.value.trim();
 		const kickoffText = [targetUrl, scopeMessage, goal ? `User focus for this run: ${goal}` : ''].filter(Boolean).join('\n');
 		// QA matrix (#15013): the run set is the selected device–OS–browser–version
 		// configurations. At least one configuration must be selected and validated.
 		const automatic = qaJourneySelectionMode === 'quick';
+		const hybridRequested = qaUi.executionMode?.value === 'hybrid';
 		if (!automatic && qaMatrixState.selectedEnvIds.length === 0) {
 			setQaFormError('Select at least one browser configuration.');
 			$('qa-customize').open = true;
 			return;
 		}
-		const selectedEnvIds = automatic ? [] : sanitizeSelection(qaMatrixState.index, qaMatrixState.selectedEnvIds);
+		// Quick mode carries a DERIVED focused selection (qaFocusedSelection ran
+		// when the catalog loaded); hybrid needs that one exact environment to
+		// attach qaExecutionMode + environmentId. Legacy quick mode still submits
+		// browserMode automatic with no env list.
+		const selectedEnvIds = automatic
+			? (hybridRequested ? sanitizeSelection(qaMatrixState.index, qaMatrixEffectiveSelection()) : [])
+			: sanitizeSelection(qaMatrixState.index, qaMatrixState.selectedEnvIds);
+		if (hybridRequested && selectedEnvIds.length !== 1) {
+			setQaFormError('For hybrid testing, choose Focused check with one browser configuration. Multi-browser hybrid dispatch is not enabled.');
+			$('qa-customize').open = true;
+			return;
+		}
 		if (!automatic && selectedEnvIds.length !== 1) {
 			setQaFormError('The selected configurations are no longer available. Reload the catalog and pick again.');
 			return;

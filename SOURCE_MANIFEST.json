@@ -292,7 +292,7 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "5a0d345b55c4c3db033e5cc5da7c61919ee2f16101f7c2b78863b622e3a30dbc"
+      "sha256": "368e0e9fe81076b70c0ad885813b000f831ec80227ee2187f77fa063c34db0eb"
     },
     {
       "path": "public/auth.css",
@@ -500,7 +500,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "abf83c0bd6dbeb21676d276abcc77aabbe64a3c783c3d07e79bac80ce83f6f93"
+      "sha256": "ab81a6f939a63801fe92e8e89c0f1ad5eb7eeee12360bfddf0b1f0d18a992201"
     },
     {
       "path": "public/jevExecutionView.js",
@@ -688,7 +688,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "e9359058ceb4604120a131164941a0f98211d1f42650b108099ce8150d71dd45"
+      "sha256": "fe2db5313c2f878c9726c0e1c6925a9ab33d09663bfd29eb23208b2eb4199783"
     },
     {
       "path": "public/renderHealth.js",
@@ -1811,6 +1811,10 @@
       "sha256": "c805304c5f8b610274376b66c5489606580d571ebe77ad39bc7426782f42e667"
     },
     {
+      "path": "server/hybridQuickLaunch.test.js",
+      "sha256": "363ba6c26a012ccc4d64c0ba3924a48789fc55b61b7536b928a4c5a69452600d"
+    },
+    {
       "path": "server/hybridRecoveryGate.js",
       "sha256": "d6ab21153d1d35bed2e4faea5b857d583a9dfc93c00850bf352a1ecd5ebf6a98"
     },
@@ -2840,7 +2844,7 @@
     },
     {
       "path": "server/uiVersion.test.js",
-      "sha256": "e432b06afc3c3f03783f4949c90905df578cc2bab9a71b94bc5504fd520e5356"
+      "sha256": "dfa9400e265e40bd18f9f118dd161110ffd98d966e136643b0253769e9671159"
     },
     {
       "path": "server/usageCapture.js",
