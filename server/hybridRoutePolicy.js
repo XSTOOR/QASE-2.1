@@ -19,6 +19,7 @@ export function hybridRoutePolicy(state) {
   const executableScope = !Array.isArray(state?.scope) || state.scope.some(category => HYBRID_ROUTE_CHECKS.includes(category));
   const canExplore = executableScope && !closeout && remainingSlots > 0 && pending > 0;
   return { observed: routes.length, attempted, totalAttempted, tested, pending, limit, target, remainingSlots,
+    observedPages: routes.filter(route => route.kind !== 'feature').length, observedFeatures: routes.filter(route => route.kind === 'feature').length,
     nextBatchSize: canExplore ? Math.min(3, remainingSlots, pending) : 0,
     canExplore, depthPending: attempted < target,
     publicationAllowed: closeout || !executableScope || attempted >= target,

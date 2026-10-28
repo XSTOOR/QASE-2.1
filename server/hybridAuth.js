@@ -25,7 +25,10 @@ export function observeHybridAuthentication(session, result) {
   auth.required = session.hybrid.scope.includes('authentication') || (session.messages || []).some(message => message.role === 'user' && /\b(?:log ?in|sign ?in|authenticated platform)\b/i.test(message.text || '') && !publicOnly.test(message.text || ''));
 }
 export const needsHybridAuthQuestion = session => hybrid(session) && session.hybrid?.authentication?.required && ['unrequested', 'needs_guidance', 'verification_needed', 'failed'].includes(session.hybrid.authentication.status);
-export const hasConfirmedAccess = state => ['authenticated', 'owner_confirmed'].includes(state?.authentication?.status);
+// An approved sign-in followed by a rendered platform permits continued reads
+// without asking the owner to confirm the same authorization twice. It does
+// not establish a passing authentication or permission assertion.
+export const hasConfirmedAccess = state => ['authenticated', 'owner_confirmed', 'access_observed'].includes(state?.authentication?.status);
 
 /** This metadata is produced only by the authenticated credential endpoint,
  * never by model/tool input. Secret values remain in the existing run vault. */
@@ -161,21 +164,26 @@ export function createHybridAuthentication(session) {
         auth.responseStatus = response.status();
         if (response.status() < 200 || response.status() >= 400) { auth.status = 'failed'; return { success: false, code: 'HYBRID_AUTH_REJECTED', status: auth.status, httpStatus: response.status(), error: 'Sign-in was rejected. No automatic retry was attempted; ask the user to review the test account.' }; }
         const acknowledgedSession = await abortable(sessionReceipt(response), signal);
-        await abortable(page.waitForFunction(({ origin, expected, sessionReceipt, loginPage }) => {
+        await abortable(page.waitForFunction(({ origin, expected, sessionReceipt, loginPage, readAccessAllowed }) => {
           if (location.origin !== origin || [...document.querySelectorAll('input[type=password]')].some(element => element.getBoundingClientRect().width && element.getBoundingClientRect().height)) return false;
           if (expected) return location.origin + location.pathname + location.hash === expected;
+          if (readAccessAllowed && location.origin + location.pathname + location.hash !== loginPage && document.body?.innerText.trim() && document.querySelector('nav,aside,[role="navigation"],[role="tablist"]')) return true;
           return (sessionReceipt && location.origin + location.pathname + location.hash !== loginPage && Boolean(document.body?.innerText.trim())) || [...document.querySelectorAll('a,button')].some(element => element.getBoundingClientRect().width && /^(?:log\s*out|sign\s*out)$/i.test((element.textContent || '').trim()));
-        }, { origin: auth.origin, expected: auth.expectedUrl, sessionReceipt: acknowledgedSession, loginPage: auth.loginPageUrl }, { timeout: 10000 }), signal).catch(error => { if (signal?.aborted) throw error; });
+        }, { origin: auth.origin, expected: auth.expectedUrl, sessionReceipt: acknowledgedSession, loginPage: auth.loginPageUrl, readAccessAllowed: session.hybrid.continuationPolicyVersion >= 2 }, { timeout: 10000 }), signal).catch(error => { if (signal?.aborted) throw error; });
         const observation = await page.evaluate(({ origin, expected, sessionReceipt, loginPage }) => {
           const sameOrigin = location.origin === origin, noPassword = ![...document.querySelectorAll('input[type=password]')].some(e => e.getBoundingClientRect().width && e.getBoundingClientRect().height);
           const matched = expected ? location.origin + location.pathname + location.hash === expected :
             (sessionReceipt && location.origin + location.pathname + location.hash !== loginPage && Boolean(document.body?.innerText.trim())) || [...document.querySelectorAll('a,button')].some(e => e.getBoundingClientRect().width && /^(?:log\s*out|sign\s*out)$/i.test((e.textContent || '').trim()));
-          return { sameOrigin, noPassword, verified: Boolean(sameOrigin && noPassword && matched) };
+          const changedRoute = location.origin + location.pathname + location.hash !== loginPage;
+          const navigation = Boolean(document.querySelector('nav,aside,[role="navigation"],[role="tablist"]'));
+          return { sameOrigin, noPassword, changedRoute, navigation, rendered: Boolean(document.body?.innerText.trim()), verified: Boolean(sameOrigin && noPassword && matched) };
         }, { origin: auth.origin, expected: auth.expectedUrl, sessionReceipt: acknowledgedSession, loginPage: auth.loginPageUrl });
         const verified = observation.verified;
         auth.verificationObservation = { ...observation, url: safeUrl(page.url()), at: Date.now() };
         auth.verificationMethod = verified ? auth.expectedUrl ? 'owner_expected_url' : acknowledgedSession ? 'session_receipt_and_rendered_route' : 'visible_sign_out_control' : 'needs_owner_confirmation';
-        auth.status = verified ? 'authenticated' : 'verification_needed';
+        const readable = session.hybrid.continuationPolicyVersion >= 2 && observation.sameOrigin && observation.noPassword && observation.changedRoute && observation.navigation && observation.rendered;
+        auth.status = verified ? 'authenticated' : readable ? 'access_observed' : 'verification_needed';
+        if (!verified && readable) auth.verificationMethod = 'approved_signin_and_observed_platform';
         return { success: true, status: auth.status, submitted: true, verified, url: safeUrl(page.url()), limitations: 'One authorized sign-in attempt only. This is access evidence, not a complete authentication, logout, permissions or negative-login test.' };
       } catch (error) {
         auth.status = active?.request ? submitted ? 'verification_needed' : 'uncertain' : 'needs_guidance';

@@ -9,6 +9,11 @@ import { createInstanceAccess } from './instanceAccess.js';
 import { finishSqaAssessment } from './sqaService.js';
 import { aggregateSessionFindings, setFindingStatus } from './store.js';
 import { createCoverageService } from './coverageService.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { withUserConfiguration } from './config.js';
+import { profileIdentity, REQUIRED_CAPABILITIES, HYBRID_SDK_VERSION } from './hybridConfig.js';
 
 const TEST_TENANT = Object.freeze({
 	organizationId: '55c15025-8ef4-4ce8-8ad5-4562f33f1852',
@@ -106,6 +111,7 @@ function createMemoryServices(options = {}) {
 		const now = Date.now();
 		const session = {
 			id: randomUUID(),
+			mode: 'qa',
 			title,
 			createdAt: now,
 			updatedAt: now,
@@ -465,6 +471,28 @@ test('hybrid creation is disabled by default and cannot be enabled by request-bo
   assert.equal(response.status, 400); assert.match((await body(response)).error, /disabled/);
   assert.equal((await body(await fixture.request('/api/sessions'))).length, 0);
   assert.equal((await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'legacy' } })).status, 201);
+  assert.equal((await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'legacy', allowTestWrites: true } })).status, 400);
+  assert.equal((await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'legacy', allowTestWrites: 'true' } })).status, 400);
+});
+
+test('hybrid test-write authorization is pinned by the owner request and ignores forged grant fields', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-api-write-grant-'));
+  const env = { QASE_HYBRID_QA_ENABLED: 'true', QASE_LOCK_MODEL: 'false', QASE_HYBRID_QUALIFICATION_FILE: path.join(root, 'qualification.json') };
+  const old = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]])); Object.assign(process.env, env);
+  t.after(() => { for (const [key, value] of Object.entries(old)) if (value === undefined) delete process.env[key]; else process.env[key] = value; fs.rmSync(root, { recursive: true, force: true }); });
+  const settings = { apiKey: 'api-write-fixture', provider: 'jev', model: 'jev-1.13' };
+  await withUserConfiguration(settings, async () => {}, async () => {
+    const profile = hybridProfile(settings);
+    fs.writeFileSync(env.QASE_HYBRID_QUALIFICATION_FILE, JSON.stringify({ sdkVersion: HYBRID_SDK_VERSION, profileIdentity: profileIdentity(profile), checkedAt: Date.now(), capabilities: Object.fromEntries(REQUIRED_CAPABILITIES.map(name => [name, { passed: true }])) }));
+    const fixture = await startFixture(); t.after(() => fixture.close());
+    const result = await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'hybrid', selectedTests: ['forms'], allowTestWrites: true, writeAuthorization: { ownerUserId: 'forged', maximumSubmissions: 100000 } } });
+    assert.equal(result.status, 201);
+    const created = await body(result), grant = created.hybrid.writeAuthorization;
+    assert.equal(grant.runId, created.id); assert.equal(grant.ownerUserId, created.ownerUserId); assert.notEqual(grant.ownerUserId, 'forged');
+    assert.equal(grant.maximumSubmissions, 10); assert.equal(grant.enabled, true);
+    const readonly = await body(await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'hybrid', selectedTests: ['forms'], writeAuthorization: { enabled: true } } }));
+    assert.equal(readonly.hybrid?.writeAuthorization, undefined);
+  });
 });
 
 test('standard QA run creation persists a whitelisted coverage scope selection', async t => {

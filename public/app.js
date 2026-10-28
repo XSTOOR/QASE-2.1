@@ -1350,7 +1350,7 @@ async function startRun() { openQaStart(); }
 
 async function createQaRun({
 	targetUrl, device, deviceLandscape, selectedTests, securityAuthorization,
-	kickoffText, engine = 'chromium', coreFlowsOnly = false, environmentId, scopeSelection, qaExecutionMode, testCaseId
+	kickoffText, engine = 'chromium', coreFlowsOnly = false, environmentId, scopeSelection, qaExecutionMode, testCaseId, allowTestWrites = false
 }) {
 	void markOnboarded();
 	const session = await api('/sessions', {
@@ -1361,6 +1361,7 @@ async function createQaRun({
 			engine,
 			selectedTests,
 			...(qaExecutionMode ? { qaExecutionMode } : {}),
+			...(allowTestWrites ? { allowTestWrites: true } : {}),
 			...(testCaseId ? { testCaseId } : {}),
 			...(securityAuthorization ? { securityAuthorization } : {}),
 			...(environmentId ? { environmentId } : {}),
@@ -5881,7 +5882,7 @@ if (qaUi.dialog) {
 			const hybridOptions = hybridLaunchOptions({ config: state.config, mode: qaUi.executionMode?.value, envIds: selectedEnvIds, configurations: qaMatrixState.index });
 			if (hybridOptions) {
 				await createQaRun({ targetUrl, device, deviceLandscape, selectedTests, securityAuthorization, kickoffText,
-					scopeSelection: scopeValues, testCaseId: qaUi._testCaseId, ...hybridOptions });
+					scopeSelection: scopeValues, testCaseId: qaUi._testCaseId, allowTestWrites: $('qa-allow-test-writes')?.checked === true, ...hybridOptions });
 				qaUi.targetUrl.value = ''; $('qa-goal').value = '';
 				closeQaStart({ updateRoute: false });
 				toast('Hybrid QA started — Opus 4.7 reasoning + JEV 1.13 classification.');

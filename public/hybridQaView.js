@@ -29,7 +29,7 @@ export function hybridScenarioPlan(session) {
   return (session.hybrid.scenarios || []).map(item => {
     const pages = item.routeCounts || (item.routeRuns ? { attempted: item.routeRuns.length, gaps: item.routeRuns.filter(run => !['passed', 'failed'].includes(run.status)).length } : null);
     const status = item.status === 'passed' && pages?.gaps ? 'partial' : item.status;
-    return { text: `${item.category}${item.routeUrl ? ` · ${item.routeUrl}` : ''} — ${status}${pages ? ` · ${pages.attempted} page trials, ${pages.gaps} gaps` : ''}${item.uncertainty?.length ? ': ' + item.uncertainty.join(' ') : ''}`,
+    return { text: `${item.category}${item.routeUrl ? ` · ${item.routeUrl}` : ''} — ${status}${pages ? ` · ${pages.attempted} ${pages.features ? 'page/state' : 'page'} trials, ${pages.gaps} gaps` : ''}${item.uncertainty?.length ? ': ' + item.uncertainty.join(' ') : ''}`,
       status: ({ planned: 'pending', running: 'in_progress', not_executed: 'not_tested' })[status] || status };
   });
 }
@@ -55,11 +55,17 @@ export function renderHybridQa(session, document) {
     `${model.counts.passed || 0} passed · ${model.counts.failed || 0} failed · ${model.counts.blocked || 0} blocked · ${model.counts.inconclusive || 0} inconclusive · ${(model.counts.planned || 0) + (model.counts.not_executed || 0)} unexecuted`,
     `Recorded scenario coverage: ${Math.round(Math.max(0, Math.min(1, model.coverage)) * 100)}% · ${model.confirmedDefects} confirmed defects · ${model.unresolved} unresolved observations`
   ];
+  if (model.writeTesting?.enabled) {
+    const trials = model.writeTesting.trials || [];
+    rows.push(`Test data writes: authorized at setup · ${trials.filter(item => item.status === 'responded').length} submissions acknowledged · ${trials.filter(item => ['dispatched', 'uncertain'].includes(item.status)).length} uncertain. Acknowledgment is not a verified business outcome.`);
+    const labels = [...new Set(trials.filter(item => ['responded', 'dispatched', 'uncertain'].includes(item.status)).map(item => item.testDataPrefix).filter(Boolean))];
+    if (labels.length) rows.push(`Test record labels for review/cleanup: ${labels.join(', ')}. Records may persist.`);
+  }
   if (model.executionPolicy?.mode === 'autonomous') rows.push('Automatic testing: Qase uses the supplied context and continues without budget or coverage approval prompts. Secure access can still require your input. Remaining limitations are included in the final report.');
   const total = Object.values(model.counts).reduce((sum, value) => sum + value, 0);
   const resolved = ['passed', 'failed', 'blocked', 'inconclusive', 'not_executed'].reduce((sum, status) => sum + (model.counts[status] || 0), 0);
   if (total) rows.push(`Plan outcomes recorded: ${resolved}/${total}. Blocked, inconclusive and unexecuted outcomes close planning items but do not increase verified coverage.`);
-  if (model.authentication && (model.authentication.required || model.authentication.status !== 'unrequested')) rows.push(`Platform access: ${({ approved: 'Approved; preparing sign-in', attempting: 'Signing in', authenticated: 'Verified access; testing observed platform routes', owner_confirmed: 'Access confirmed by you; continuing read-only tests', needs_guidance: 'Needs an access decision', verification_needed: 'Sign-in response received; access still needs verification', failed: 'Sign-in rejected; needs user guidance', declined: 'Public-only review selected' })[model.authentication.status] || 'Awaiting access decision'}.`);
+  if (model.authentication && (model.authentication.required || model.authentication.status !== 'unrequested')) rows.push(`Platform access: ${({ approved: 'Approved; preparing sign-in', attempting: 'Signing in', authenticated: 'Verified access; testing observed platform routes', access_observed: 'Platform observed after approved sign-in; continuing tests', owner_confirmed: 'Access confirmed by you; continuing read-only tests', needs_guidance: 'Needs an access decision', verification_needed: 'Sign-in response received; access still needs verification', failed: 'Sign-in rejected; needs user guidance', declined: 'Public-only review selected' })[model.authentication.status] || 'Awaiting access decision'}.`);
   if (model.telemetry) {
     rows.push(`${model.telemetry.browserActions || 0} browser actions · ${Math.round((model.telemetry.elapsedMs || 0) / 1000)} seconds active execution`);
     const timings = Object.entries(model.telemetry.browserTimings || {}).sort((a, b) => b[1].totalMs - a[1].totalMs).slice(0, 3);
@@ -70,7 +76,7 @@ export function renderHybridQa(session, document) {
       if (model.budgets?.[`${role}Tokens`]) rows.push(`${label} budget: ${(usage.inputTokens || 0) + (usage.outputTokens || 0)} / ${model.budgets[`${role}Tokens`]} provider-reported tokens · ${usage.reservedTokens || 0} pending reservation tokens`);
     }
   }
-  if (model.exploration) rows.push(`Route depth: ${model.exploration.tested || 0}/${model.exploration.observed || 0} observed pages tested · ${model.exploration.pending || 0} pending. This is not whole-site coverage.`);
+  if (model.exploration) rows.push(`Route depth: ${model.exploration.tested || 0}/${model.exploration.observed || 0} observed ${model.exploration.observedFeatures ? 'pages and feature states' : 'pages'} tested · ${model.exploration.pending || 0} pending. This is not whole-site coverage.`);
   if (Number.isInteger(model.exploration?.target)) rows.push(`Page target: ${model.exploration.attempted || 0}/${model.exploration.target} attempted. ${model.exploration.stopReason === 'budget_closeout'
     ? 'Exploration stopped to reserve the report budget. Unmet depth remains a coverage gap; it does not prevent publication.'
     : model.exploration.canExplore ? `${model.exploration.remainingSlots} page slots remain in this run.` : 'Remaining observed routes are recorded as untested scope.'} Attempts include failed/interrupted pages and are not passing results.`);

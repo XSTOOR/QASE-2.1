@@ -2421,3 +2421,114 @@ The local r4 listener passes health checks, serves UI `20261028-2`, and its
 configured hybrid profile is enabled, qualified and available. Authenticated
 configuration APIs continue to reject anonymous access. No real private-site
 test was replayed or claimed completed during this follow-up.
+
+## 33. Functional feature depth and scoped test writes (2026-10-28, r5)
+
+Audit: the reported new run finished voluntarily after approximately 173 seconds,
+30 browser actions and 13 Opus calls. It had substantial unused operator capacity,
+one observed URL, only three executed suite outcomes, and eight incomplete
+dispositions. Navigation trials blocked background reads and SPA state changes
+were not separate frontier entries. A high-severity finding produced verdict
+`fail`, which the UI presented as Complete despite gaps. This was premature
+functional coverage, not a gateway timeout or budget interruption.
+
+Implemented:
+
+- `qaFeatureState.js` gives structural state identity without hashing private
+  body copy, field values or timestamps. Same-URL features, nested tabs and
+  observed native test-form openers become bounded frontier entries with intact
+  transition evidence and native replay paths. Path execution validates source,
+  unique freshly observed controls, destination, run ownership and provenance.
+  One SDK/browser owner remains; no second agent/crawler was introduced.
+- Default batches exercise feature states before publication, using the same
+  category suites and state-specific durable route runs. The existing depth gate
+  now sees those states. Form dialogs remain open for testing instead of being
+  mistaken for dismissible onboarding. Ordinary guarded background reads are
+  permitted during navigation trials; unsafe endpoints and writes remain guarded.
+- An owner-approved sign-in followed by an observed same-origin platform can
+  continue reads under `access_observed` without another confirmation. It is
+  explicitly not a verified authentication assertion. Legacy interactive access
+  verification, uncertain sign-in protection and genuine credential/MFA needs
+  remain intact.
+- Setup and review offer **Allow test data writes**, disabled unless selected.
+  The authenticated creation route pins owner/run identity and a maximum of ten
+  native POST-form attempts. `qaTestWrites.js` fills empty non-sensitive fields
+  with run-scoped synthetic values. Requests must match those exact plain field
+  values (plus observed CSRF/nonce fields); nested operations, unrelated payloads,
+  account/communication/commerce/destructive operations and cross-origin writes
+  are excluded. Intent is durable before dispatch. Attempted forms, including
+  uncertain ones, cannot be replayed. Cancellation retains uncertainty.
+- Test submissions are observed before returning to the known source state.
+  A POST receiver is not manufactured into another GET exploration entry.
+  HTTP acknowledgment creates no passing business assertion. Reports retain
+  unverified business outcomes and cleanup requirements, and the UI shows the
+  synthetic record labels for owner review. Custom API/rich-editor workflows
+  need an application-specific contract; they are not silently authorized.
+- Detailed and local/PostgreSQL summary UI distinguish coverage gaps from defect
+  severity, so a severe finding cannot hide 3/11 coverage behind Complete. The
+  PostgreSQL change is a read-only optional-column-safe projection; no migration
+  or production data change was performed. SDK internals remain unchanged.
+
+Actual validation:
+
+- SDK/browser fixture with read-only and authorized-write variants: both passed.
+  It explores Projects, Reports, nested Details and form dialogs at one URL,
+  exercises real negative inputs, detects the seeded defect, sends zero writes
+  in read-only mode and exactly two namespaced submissions in write mode. Suites
+  remain three, rather than expanding into one plan item per state.
+- API/sign-in/SDK fixture group: **58 passed** before adding modal coverage;
+  final modal SDK fixture: **2 passed**. Policy/storage/status checks: **88 passed**.
+- Full repository rerun: **2,091 passed, 26 skipped, zero failures or
+  cancellations**, 2,117 tests, 31 suites, approximately 221 seconds. Syntax,
+  private-path ignore and source credential checks passed. An earlier broad run
+  failed the existing compact-context limit; the host brief was condensed and
+  its 13 focused checks and the full suite were rerun successfully. The limit
+  was not raised.
+- Final frozen-code verification, including exact-endpoint/plain-field write
+  guards and all new tests: **2,093 passed, 26 skipped, zero failures or
+  cancellations**; 2,119 tests, 31 suites, approximately 244 seconds. A prior
+  final attempt was interrupted by confirmed macOS sleep, cancelling timed
+  browser fixtures; that attempt is not a passing result. The successful rerun
+  used a temporary keep-awake assertion without persistent power changes.
+- Final API/authentication/SDK/write fixture group: **55 passed**. The subsequent
+  exact-endpoint/payload guard rerun: **5 passed**, including wrong endpoint,
+  nested operation, hidden method, wrong-owner and uncertain replay rejection.
+  UI/model-context focused checks: **25 passed**.
+- Actual dashboard/SSE checks passed with zero page errors, including secure
+  credential handling, stable preview, no automatic Results navigation and safe
+  fresh setup. Final test-write payload checks are recorded separately below.
+- Launcher qualification passed on desktop and 390px mobile: test writes default
+  off, the permission fits the existing layout, review states the selected
+  access, and only an explicit selection reaches the intercepted creation API.
+  No model or real target run was created by these UI checks.
+- Live paid Opus/JEV canary on the owned disposable SPA fixture completed in
+  **132,268 ms**, with **150 native SDK browser calls**, **six tested states at
+  one URL**, **three suites**, **three filled fields / five negative cases**, and
+  **two authorized test submissions**. It confirmed the one seeded accessibility
+  group and no unexpected groups; no question was asked. Opus: ten calls,
+  129,907 input and 2,561 output tokens. JEV: nine calls, 8,017 input and 1,194
+  output tokens. Both roles ended with zero pending token reservations. This is
+  a fixture result, not a claim of exhaustive production recall or zero false
+  positives on arbitrary applications. Form business outcomes remain explicitly
+  inconclusive where only transport acknowledgment was demonstrated.
+
+Reproduce the live feature canary through `scripts/qualify-hybrid-depth.mjs`
+with `QASE_LIVE_HYBRID_EXECUTION=true`, `QASE_HYBRID_FEATURE_FIXTURE=true`, and
+optionally `QASE_LIVE_TEST_WRITES=true`; hybrid qualification and bounded operator
+budgets are still mandatory. The optional writes reach only the disposable
+fixture server. `hybridFeatureFixture.js` is shared with the SDK regression tests.
+
+Logs: `/private/tmp/qase-features-live-canary.log`,
+`/private/tmp/qase-features-release-awake.log` (final complete verification),
+`/private/tmp/qase-features-verify-final.log`,
+`/private/tmp/qase-feature-modal-sdk.log`,
+`/private/tmp/qase-features-dashboard.log`,
+`/private/tmp/qase-features-write-final.log`,
+`/private/tmp/qase-features-payload-final.log`,
+`/private/tmp/qase-features-launcher.log`.
+
+Readiness: tested local production candidate, not deployed. Hybrid remains
+disabled in production examples and existing execution modes remain pinned.
+Neither arbitrary live-platform writes nor exhaustive edge-case completion is
+claimed. Production image/staging and opt-in integrations remain deployment-host
+gates; historical missing usage receipts still require exact reconciliation.

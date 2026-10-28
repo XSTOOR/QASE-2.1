@@ -2,6 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { hybridQaModel, renderHybridQa, hybridLaunchOptions, hybridScenarioProgress, hybridScenarioPlan, hybridAvailabilityMessage, holdPrimaryPreview, viewportStatusText } from './hybridQaView.js';
 
+test('owner-authorized test writes show acknowledged vs uncertain outcomes and cleanup labels', () => {
+  const nodes = [], document = { createElement() { const node = { textContent: '', setAttribute() {}, append() {} }; nodes.push(node); return node; } };
+  renderHybridQa({ mode: 'qa', qaExecutionMode: 'hybrid', hybrid: { writeTesting: { enabled: true, trials: [{ status: 'responded', testDataPrefix: 'QASE-fixture-1' }, { status: 'uncertain', testDataPrefix: 'QASE-fixture-2' }] } } }, document);
+  const text = nodes.map(node => node.textContent).join(' ');
+  assert.match(text, /1 submissions acknowledged.*1 uncertain/);
+  assert.match(text, /QASE-fixture-1, QASE-fixture-2/);
+  assert.match(text, /not a verified business outcome/);
+});
+
 test('hybrid launcher is explicit, qualified and exactly one observed available configuration', () => {
   const config = { hybridQa: { enabled: true, available: true } };
   const configurations = [{ envId: 'fixture-env', availability: 'AVAILABLE', browserSupport: { engine: 'chromium' } }];

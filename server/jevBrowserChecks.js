@@ -8,8 +8,9 @@ import { runJevAnchors, runJevTabs, runJevNavigationControl, isolated } from './
 import { responsiveWidths } from './qaViewport.js';
 import { settleQaControl } from './qaRenderReadiness.js';
 import { runLiveFormChecks } from './qaLiveForms.js';
+import { featureStateKey } from './qaFeatureState.js';
 
-export const JEV_BROWSER_CHECKS = ['inspect', 'navigation', 'responsive', 'forms', 'search', 'media', 'disclosure', 'accessibility', 'dismiss_overlay', 'anchors', 'tabs', 'scroll', 'navigation_control'];
+export const JEV_BROWSER_CHECKS = ['inspect', 'navigation', 'responsive', 'forms', 'search', 'media', 'disclosure', 'accessibility', 'dismiss_overlay', 'anchors', 'tabs', 'scroll', 'navigation_control', 'open_test_form', 'submit_test_form'];
 const risky = /delete|remove|logout|log.?out|sign.?out|reset|cancel|purchase|checkout|payment|subscribe|send|invite|publish|deploy|save|create|destroy|revoke|confirm|unsubscribe/i;
 const trim = value => String(value ?? '').slice(0, 1500);
 const sameUrl = (a, b) => new URL(a).href.replace(/\/$/, '') === new URL(b).href.replace(/\/$/, '');
@@ -68,7 +69,7 @@ export async function inspectJevPage(page) {
     };
     const label = element => (element.getAttribute('aria-label') || element.innerText || element.getAttribute('title') || '').replace(/\s+/g, ' ').trim().slice(0, 180);
     const links = [...document.querySelectorAll('a[href]')].filter(visible).map(element => ({ selector: selector(element), href: element.href, label: label(element), target: element.target, download: element.hasAttribute('download') }));
-    const forms = [...document.forms].map(form => ({ method: form.method, action: form.action, fields: form.querySelectorAll('input,select,textarea').length }));
+    const forms = [...document.forms].map(form => ({ selector: selector(form), method: form.method, action: form.action, fields: form.querySelectorAll('input,select,textarea').length }));
     const search = [...document.querySelectorAll('input[type="search"],input[name="q"],input[name="query"],input[placeholder*="search" i],input[aria-label*="search" i],[role="searchbox"]')].filter(visible).filter(element => element.tagName === 'INPUT' && ['text', 'search'].includes(element.type)).map(element => ({ selector: selector(element), name: element.name, formMethod: element.form?.method, formAction: element.form?.action }));
     const auth = [...document.querySelectorAll('input[type="password"]')].filter(visible).length > 0 || links.some(link => /\b(log ?in|sign ?in|sign ?up)\b/i.test(link.label));
     const disclosures = [...document.querySelectorAll('summary,button,[role="button"]')].filter(visible).filter(element => element.getAttribute('role') !== 'tab' && !element.disabled && !element.form && element.getAttribute('aria-disabled') !== 'true').filter(element => /^(open |close |toggle |show |hide )?(menu|navigation|details|more|faq|help|filters?|accordion)\b/i.test(label(element)) || element.tagName === 'SUMMARY' || (element.hasAttribute('aria-controls') && element.hasAttribute('aria-expanded')) || (element.closest('[class*="faq" i],[class*="accordion" i]') && /\?/.test(label(element)))).map(element => ({ selector: selector(element), label: label(element) }));
@@ -89,11 +90,13 @@ export async function inspectJevPage(page) {
     const overlays = dialogs.map(dialog => {
       const onboarding = /welcome|quick tour|getting started|onboarding/i.test(label(dialog));
       const close = [...dialog.querySelectorAll('button,[role="button"]')].find(element => visible(element) && !element.disabled && !element.form && (/^(close|dismiss)(?:\b|$)/i.test(label(element)) || onboarding && /^skip(?: (?:the )?tour)?$/i.test(label(element))));
-      return { selector: selector(dialog), title: label(dialog).slice(0, 120), close: close ? { selector: selector(close), label: label(close) } : null };
+      return { containsForm: Boolean(dialog.querySelector('form,input:not([type="hidden"]),textarea')), selector: selector(dialog), title: label(dialog).slice(0, 120), close: close ? { selector: selector(close), label: label(close) } : null };
     });
-    const navigationControls = [...document.querySelectorAll('nav button,[role="navigation"] button,aside button,nav [role="button"],[role="navigation"] [role="button"]')].filter(visible).filter(element => !element.form && !element.disabled && element.getAttribute('aria-disabled') !== 'true' && !element.getAttribute('aria-current') && element.getAttribute('aria-selected') !== 'true' && /^(?:home|dashboard|projects?|meetings?|chat|settings|search|documents?|docs|teams?|overview|activity|reports?)$/i.test(label(element))).map(element => ({ selector: selector(element), label: label(element) }));
-    return { url: location.href, title: document.title, text: document.body.innerText.slice(0, 6000), viewport: { width: innerWidth, height: innerHeight }, links: links.slice(0, 100), totalLinks: links.length, forms, fieldCount: [...document.querySelectorAll('input:not([type="hidden"]),select,textarea')].filter(visible).length, search, auth, authForm: [...document.querySelectorAll('input[type="password"]')].some(visible), disclosures: disclosures.slice(0, 24), totalDisclosures: disclosures.length, tabs: tabs.slice(0, 24), overlays, navigationControls: navigationControls.slice(0, 24), totalNavigationControls: navigationControls.length, images: document.images.length, players: document.querySelectorAll('audio,video').length };
+    const formOpeners = [...document.querySelectorAll('button,[role="button"]')].filter(visible).filter(element => !element.form && !element.disabled && /^(new|add|create|edit)(?: (?:a|an|the))? (project|record|item|note|task|document|folder|entry|draft)$/i.test(label(element))).map(element => ({ selector: selector(element), label: label(element) }));
+    const navigationControls = [...document.querySelectorAll('nav button,[role="navigation"] button,aside button,nav [role="button"],[role="navigation"] [role="button"],button[role="tab"],[role="tablist"] [role="tab"]')].filter(visible).filter(element => !element.form && !element.disabled && element.getAttribute('aria-disabled') !== 'true' && !element.getAttribute('aria-current') && element.getAttribute('aria-selected') !== 'true' && /^(?:home|dashboard|projects?|meetings?|chat|settings|search|documents?|docs|teams?|overview|activity|reports?|about|files?|members?|analytics|templates?|integrations?|profile|account|general|appearance|notifications|history|favorites?|all|mine|shared|details|permissions)$/i.test(label(element))).map(element => ({ selector: selector(element), label: label(element) }));
+    return { headings: [...document.querySelectorAll('h1,h2,[role="heading"]')].filter(visible).map(label).slice(0, 12), selectedNavigation: [...document.querySelectorAll('[aria-current],[role="tab"][aria-selected="true"]')].filter(visible).map(label).slice(0, 12), url: location.href, title: document.title, text: document.body.innerText.slice(0, 6000), viewport: { width: innerWidth, height: innerHeight }, links: links.slice(0, 100), totalLinks: links.length, forms, fieldCount: [...document.querySelectorAll('input:not([type="hidden"]),select,textarea')].filter(visible).length, search, auth, authForm: [...document.querySelectorAll('input[type="password"]')].some(visible), disclosures: disclosures.slice(0, 24), totalDisclosures: disclosures.length, tabs: tabs.slice(0, 24), overlays, formOpeners: formOpeners.slice(0, 12), navigationControls: navigationControls.slice(0, 24), totalNavigationControls: navigationControls.length, images: document.images.length, players: document.querySelectorAll('audio,video').length };
   });
+  inventory.stateKey = featureStateKey(inventory);
   return inventory;
 }
 
@@ -488,7 +491,7 @@ async function dismissOverlay(page, input) {
   return { assertions: [assertion('navigation', 'Observed dialog closes after its close control is activated', closed, 'The original dialog becomes hidden or is detached; any replacement is inspected separately', { label: overlay.close.label, closed })], inventory: await inspectJevPage(page) };
 }
 
-export async function runJevBrowserCheck(page, input, { signal, authorizeControl, onAction, onViewport, responsiveBoundaries = false, liveForms = false, requireLiveForms = false, protectInputs } = {}) {
+export async function runJevBrowserCheck(page, input, { signal, authorizeControl, onAction, onViewport, responsiveBoundaries = false, liveForms = false, requireLiveForms = false, protectInputs, executeTestForm } = {}) {
   const startedAt = Date.now();
   if (!page || page.isClosed()) return { success: false, action: input?.action, error: 'No live browser page.' };
   if (!JEV_BROWSER_CHECKS.includes(input?.action)) return { success: false, error: 'Unknown QA scenario.' };
@@ -497,6 +500,7 @@ export async function runJevBrowserCheck(page, input, { signal, authorizeControl
   try {
     let result;
     switch (input.action) {
+      case 'submit_test_form': result = executeTestForm ? await executeTestForm(input.selector, signal) : { success: false, assertions: [], gaps: ['No test-write authorization is available.'] }; break;
       case 'inspect': result = { inventory: await inspectJevPage(page), assertions: [] }; break;
       case 'navigation': result = await navigation(page, input, onAction); break;
       case 'responsive': result = await responsive(page, { authorizeControl, signal, onAction, onViewport, responsiveBoundaries }); break;
@@ -508,6 +512,7 @@ export async function runJevBrowserCheck(page, input, { signal, authorizeControl
       case 'dismiss_overlay': result = await dismissOverlay(page, input); break;
       case 'anchors': result = await runJevAnchors(page, { inspect: inspectJevPage, settle: settleJevPage, prepare: prepareJevControl, authorizeControl, onAction }); break;
       case 'tabs': result = await runJevTabs(page, { inspect: inspectJevPage, settle: settleJevPage, prepare: prepareJevControl, authorizeControl, onAction }); break;
+      case 'open_test_form':
       case 'navigation_control': result = await runJevNavigationControl(page, input, { inspect: inspectJevPage, settle: settleJevPage, authorizeControl, onAction, signal }); break;
       case 'scroll': result = await exploreScroll(page, signal); break;
     }

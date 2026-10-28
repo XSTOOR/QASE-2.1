@@ -1,6 +1,6 @@
 # QASE hybrid production candidate
 
-Release: `qase-2026-10-28-hybrid-production-r4`. UI: `20261028-2`.
+Release: `qase-2026-10-28-hybrid-production-r5`. UI: `20261028-3`.
 Target: `https://qase.drytis.com`. This is a source/image handoff, not a record
 of deployment or production activation.
 
@@ -16,6 +16,16 @@ changed during preparation.
 
 ## Application changes since the previous GitHub release
 
+- Same-URL feature and subfeature exploration through verified native control
+  paths, including tabs and test-form dialogs, extends category suites without
+  inflating the plan. Pending feature states gate publication. Normal guarded
+  background reads work during navigation trials.
+- Optional owner-authorized marked test-record submissions are pinned at run
+  setup and shown in review. Durable dispatch intent, bounded per-form attempts,
+  no uncertain-write replay, and explicit business-outcome/cleanup gaps remain.
+- Approved sign-in followed by an observed platform can continue read tests
+  without a second access confirmation; this is not a passed authentication
+  assertion. Severe findings no longer hide incomplete coverage behind Complete.
 - Startup recovery preflights unresolved model receipts before constructing a
   runtime, preserves retry counts and evidence, and does not log failed recovery
   as success. Missing-receipt guidance offers an explicit fresh setup for the

@@ -17,6 +17,7 @@ import { authThrottleKey, createAuthThrottle } from './authThrottle.js';
 import { InviteError } from './invites.js';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
 import { prepareHybridAuthGrant, recordHybridAnswer } from './hybridAuth.js';
+import { initializeHybridState } from './hybridQaRuntime.js';
 import { applyHostDecision } from './hybridContinuation.js';
 import {
 	FOUNDER_CATEGORIES,
@@ -2005,6 +2006,8 @@ export function createApplication(options = {}) {
 				selectedTests = validateQaSelectedTests(request.body?.selectedTests);
 				securityAuthorization = validateSecurityAuthorization(request.body?.securityAuthorization, selectedTests);
 				qaExecutionMode = selectQaExecutionMode(request.body?.qaExecutionMode);
+				if (request.body?.allowTestWrites !== undefined && typeof request.body.allowTestWrites !== 'boolean') throw new Error('Test-write authorization must be a boolean.');
+				if (request.body?.allowTestWrites === true && qaExecutionMode !== 'hybrid') throw new Error('Test-write authorization is available only for hybrid QA.');
 				if (qaExecutionMode === 'hybrid') loadQualification(hybridProfile(getConfig()));
 			} catch (error) {
 				response.status(400).json({ error: error instanceof Error ? error.message : 'Invalid test selection.' });
@@ -2027,6 +2030,11 @@ export function createApplication(options = {}) {
 					...(scopeSelection ? { scopeSelection } : {})
 				}
 			);
+			if (request.body?.allowTestWrites === true) {
+				const state = initializeHybridState(session, hybridProfile(getConfig()));
+				state.writeAuthorization = { enabled: true, runId: session.id, ownerUserId: session.ownerUserId, grantedAt: Date.now(), maximumSubmissions: 10, trials: [] };
+				await services.runs.commit(session, 'hybrid.state', {});
+			}
 			track('run_created', { mode: session.mode, ...cohortFor(request.auth?.role) });
 			response.status(201).json(session);
 		} catch (error) {

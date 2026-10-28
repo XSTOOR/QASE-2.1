@@ -4,7 +4,7 @@ import http from 'node:http';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { chromium } from 'playwright';
-import { createHybridAuthentication, prepareHybridAuthGrant } from './hybridAuth.js';
+import { createHybridAuthentication, prepareHybridAuthGrant, needsHybridAuthQuestion, hasConfirmedAccess } from './hybridAuth.js';
 import { storeSecrets, clearSecrets } from './secrets.js';
 
 test('an exact owner-approved authentication API permits one cross-origin sign-in without widening other writes', { timeout: 25000 }, async t => {
@@ -49,14 +49,14 @@ test('an exact owner-approved authentication API permits one cross-origin sign-i
   assert.equal((await controller.signIn({ getPage: () => page })).code, 'HYBRID_AUTH_APPROVAL_REQUIRED');
 });
 
-for (const recognized of [true, false]) test(`sign-in without a logout marker ${recognized ? 'recognizes a bounded session receipt' : 'does not treat HTTP 200 as authenticated access'}`, { timeout: 25000 }, async t => {
+for (const recognized of [true, false, 'readable']) test(`sign-in without a logout marker: ${recognized}`, { timeout: 25000 }, async t => {
   const endpoint = 'https://auth.fixture.test/session/login';
   const server = http.createServer((_req, res) => {
     res.setHeader('Content-Type', 'text/html');
     res.end(`<form><input type="email" required><input type="password" required><button type="submit">Sign in</button></form><script>
       document.querySelector('form').onsubmit=async event=>{ event.preventDefault();
         await fetch(${JSON.stringify(endpoint)},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.querySelector('input[type=email]').value,password:document.querySelector('input[type=password]').value})});
-        history.replaceState({},'', '/private'); document.body.innerHTML='<h1>Platform workspace</h1>';
+        history.replaceState({},'', '/private'); document.body.innerHTML='<h1>Platform workspace</h1>${recognized === 'readable' ? '<nav><button>Projects</button></nav>' : ''}';
       };
     </script>`);
   });
@@ -64,12 +64,13 @@ for (const recognized of [true, false]) test(`sign-in without a logout marker ${
   t.after(() => { server.closeAllConnections(); server.close(); });
   const origin = `http://127.0.0.1:${server.address().port}`;
   const session = { id: randomUUID(), mode: 'qa', qaExecutionMode: 'hybrid', ownerUserId: 'owner', targetUrl: `${origin}/login`, hybrid: {}, pendingQuestion: { credentialLike: true } };
+  if (recognized === 'readable') session.hybrid.continuationPolicyVersion = 2;
   const fields = { QA_USERNAME: 'test@example.invalid', QA_PASSWORD: 'fixture-private-password' };
   session.hybrid.authentication = prepareHybridAuthGrant(session, { authorizeLogin: true, fields, loginEndpoint: endpoint });
   storeSecrets(session.id, fields); t.after(() => clearSecrets(session.id));
   const controller = createHybridAuthentication(session), browser = await chromium.launch(); t.after(() => browser.close());
   const context = await browser.newContext({ serviceWorkers: 'block' });
-  const responseBody = JSON.stringify(recognized ? { access_token: 'fixture-session-token-123456789', token_type: 'bearer' } : { error: 'fixture login not established' });
+  const responseBody = JSON.stringify(recognized === true ? { access_token: 'fixture-session-token-123456789', token_type: 'bearer' } : { acknowledged: true });
   await context.route('**/*', async route => {
     const request = route.request(), decision = controller.requestDecision(request);
     if (decision?.allowed === false) return route.abort();
@@ -81,8 +82,9 @@ for (const recognized of [true, false]) test(`sign-in without a logout marker ${
   });
   const page = await context.newPage(); await page.goto(session.targetUrl);
   const result = await controller.signIn({ getPage: () => page, reopen: url => page.goto(url, { waitUntil: 'domcontentloaded' }) });
-  assert.equal(result.status, recognized ? 'authenticated' : 'verification_needed', JSON.stringify(result));
-  assert.equal(Boolean(result.verified), recognized);
+  assert.equal(result.status, recognized === true ? 'authenticated' : recognized === 'readable' ? 'access_observed' : 'verification_needed', JSON.stringify(result));
+  assert.equal(Boolean(result.verified), recognized === true);
+  if (recognized === 'readable') { assert.equal(needsHybridAuthQuestion(session), false); assert.equal(hasConfirmedAccess(session.hybrid), true); }
   assert.ok(!JSON.stringify(session.hybrid.authentication).includes('fixture-session-token'));
   assert.ok(!JSON.stringify(result).includes(fields.QA_PASSWORD));
 });

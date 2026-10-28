@@ -6,6 +6,7 @@ import { scenarioSummary, assertionSummary } from './hybridSummaries.js';
 import { hybridRoutePolicy, HYBRID_ROUTE_CHECKS } from './hybridRoutePolicy.js';
 import { autonomous } from './hybridAutonomy.js';
 import { hasConfirmedAccess } from './hybridAuth.js';
+import { featureRouteFromTransition } from './qaFeatureState.js';
 
 const supported = HYBRID_ROUTE_CHECKS;
 const key = url => { const value = new URL(url); value.hash = ''; return value.href; };
@@ -20,6 +21,31 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
   for (const route of exploration.routes) if (route.status === 'running') route.status = 'interrupted';
   const owners = new AsyncLocalStorage(); let owner;
   const access = () => !owner || owners.getStore() === owner;
+  function addFeature(route, result) {
+    const feature = featureRouteFromTransition(route, result, route.authenticationContext || 'public');
+    if (!feature || exploration.routes.length >= 80 || exploration.routes.some(item => item.stateKey === feature.stateKey && item.url === feature.url && item.authenticationContext === feature.authenticationContext)) return;
+    exploration.routes.push(feature);
+  }
+  function verifyFeature(route) {
+    if (route.kind !== 'feature') return;
+    if (!route.featurePath?.length || route.featurePath.length > 4 || new URL(route.rootUrl).origin !== new URL(session.targetUrl).origin) throw new Error('Feature exploration needs a bounded observed path on the authorized origin.');
+    for (const step of route.featurePath) {
+      const receipt = ledger.evidence(step.evidenceId), change = receipt?.result?.transition;
+      if (!receipt?.success || receipt.runId !== session.id || receipt.digest !== digestEvidence(receipt.result) || !change || change.from !== step.from || change.to !== step.to || change.control.label !== step.label || change.control.selector !== step.selector || change.control.kind !== step.kind) throw new Error('Feature transition provenance is missing or changed.');
+    }
+  }
+  async function enterFeature(route, signal) {
+    verifyFeature(route);
+    for (const step of route.featurePath || []) {
+      const fresh = await invoke('browser_qa_check', { action: 'inspect' }, signal);
+      const inventory = await readyInventory(fresh.inventory || {}, { signal });
+      const matches = (step.kind === 'form_opener' ? inventory.formOpeners : inventory.navigationControls)?.filter(item => item.label === step.label) || [];
+      if (inventory.stateKey !== step.from || matches.length !== 1) return false;
+      const result = await invoke('browser_qa_check', { action: step.kind === 'form_opener' ? 'open_test_form' : 'navigation_control', selector: matches[0].selector, restore: false }, signal);
+      if (result.success === false || result.inventory?.stateKey !== step.to) return false;
+    }
+    return true;
+  }
   function observe() {
     const authenticationContext = hasConfirmedAccess(state) ? state.authentication.grantId : 'public';
     for (const evidence of state.evidence) {
@@ -29,7 +55,7 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
       const observedUrl = new URL(inventory.url);
       if (observedUrl.origin !== new URL(session.targetUrl).origin || observedUrl.username || observedUrl.password || observedUrl.search) continue;
       const page = { url: key(inventory.url), source: inventory.url, label: inventory.title || 'Observed page', kind: 'page' };
-      for (const route of [page, ...jevRouteCandidates(inventory, session.targetUrl)]) {
+      for (const route of [...(evidence.postWriteObservation ? [] : [page]), ...jevRouteCandidates(inventory, session.targetUrl)]) {
         if (exploration.routes.some(item => key(item.url) === key(route.url) && (item.authenticationContext || 'public') === authenticationContext)) continue;
         if (exploration.routes.length >= 80) break;
         const reveal = route.selector && evidence.result.action === 'disclosure' && evidence.result.selector &&
@@ -68,6 +94,26 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
   async function check(category, action, url, input, context) {
     const scenario = suites ? await start(category, url) : await scenarioFor(category, url);
     if (!scenario) return;
+    if (suites && category === 'forms' && state.writeAuthorization?.enabled) {
+      const result = await invoke('browser_qa_check', { action: 'forms', ...input }, context.signal);
+      const observed = await invoke('browser_qa_check', { action: 'inspect' }, context.signal);
+      for (const form of (observed.inventory?.forms || []).filter(form => form.selector).slice(0, 2)) {
+        const submission = await invoke('browser_qa_check', { action: 'submit_test_form', selector: form.selector }, context.signal);
+        if (submission.writeTesting?.submitted) {
+          // Observe the result without mistaking a POST receiver for a new
+          // GET entry point. Explicit observed links are still discoverable.
+          exploration.observingWriteResult = true;
+          try { await invoke('browser_qa_check', { action: 'inspect' }, context.signal); }
+          finally { delete exploration.observingWriteResult; }
+          const route = exploration.routes.find(route => route.status === 'running');
+          await invoke('browser_open', { url: route?.rootUrl || url }, context.signal);
+          if (route?.kind === 'feature' && !await enterFeature(route, context.signal)) throw new Error('Feature restoration after test submission could not be verified.');
+          break; // The form/DOM may have changed; no replay or stale second submit.
+        }
+      }
+      await ledger.close(scenario.id, scenario.assertions.length > scenario.routeRuns.at(-1).assertionOffset ? 'complete' : 'inconclusive', 'No supported live form assertions were produced.');
+      return result;
+    }
     if (suites) return invoke('browser_qa_scenario', { scenario_id: scenario.id, action, ...input }, context.signal);
     if (scenario.status !== 'planned') return scenario;
     await invoke('browser_qa_scenario', { scenario_id: scenario.id, action, ...input }, context.signal);
@@ -77,7 +123,7 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
     if (!autonomous(state)) return inventory;
     for (let attempt = 0; attempt < 3; attempt++) {
       context.signal?.throwIfAborted();
-      const overlay = inventory?.overlays?.find(item => item.close);
+      const overlay = inventory?.overlays?.find(item => item.close && !item.containsForm);
       if (!overlay) return inventory;
       const result = await invoke('browser_qa_check', { action: 'dismiss_overlay', selector: overlay.close.selector }, context.signal);
       if (result.success === false || !result.inventory) return inventory;
@@ -106,27 +152,32 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
       } catch (error) { trial.status = 'interrupted'; throw error; }
       finally { await checkpoint(); }
     }
-    if (autonomous(state)) for (let index = 0; index < 4; index++) {
+    if (autonomous(state)) for (let index = 0; index < 12; index++) {
       context.signal?.throwIfAborted();
       const observed = await invoke('browser_qa_check', { action: 'inspect' }, context.signal);
       inventory = await readyInventory(observed.inventory || {}, context);
-      const control = (inventory.navigationControls || []).find(item => !exploration.interactions.some(trial => trial.id === digestEvidence([route.url, route.authenticationContext, 'navigation_control', item.label])));
+      const control = [...(inventory.navigationControls || []), ...(inventory.formOpeners || []).map(item => ({ ...item, kind: 'form_opener' }))].find(item => !exploration.interactions.some(trial => trial.id === digestEvidence([route.id, route.authenticationContext, 'navigation_control', item.label])));
       if (!control || inventory.overlays?.length) break;
-      const id = digestEvidence([route.url, route.authenticationContext, 'navigation_control', control.label]);
+      const id = digestEvidence([route.id, route.authenticationContext, 'navigation_control', control.label]);
       const trial = { id, url: route.url, action: 'navigation_control', selector: control.selector, label: control.label, status: 'running' };
       exploration.interactions.push(trial); exploration.currentControlId = id; await checkpoint();
       try {
-        let result = await invoke('browser_qa_check', { action: 'navigation_control', selector: control.selector }, context.signal);
+        const action = control.kind === 'form_opener' ? 'open_test_form' : 'navigation_control';
+        let result = await invoke('browser_qa_check', { action, selector: control.selector, ...(route.kind === 'feature' ? { restore: false } : {}) }, context.signal);
         // A pre-dispatch trial may reveal a newly mounted overlay. Dismiss it
         // and choose a freshly observed unique control once; never replay an
         // action with an uncertain or already-dispatched outcome.
         if (result.code === 'QA_CONTROL_OBSTRUCTED' && result.dispatched === false && result.inventory?.overlays?.some(item => item.close)) {
           const fresh = await readyInventory(result.inventory, context);
           const matches = (fresh.navigationControls || []).filter(item => item.label === control.label);
-          if (!fresh.overlays?.length && matches.length === 1) result = await invoke('browser_qa_check', { action: 'navigation_control', selector: matches[0].selector }, context.signal);
+          if (!fresh.overlays?.length && matches.length === 1) result = await invoke('browser_qa_check', { action: 'navigation_control', selector: matches[0].selector, ...(route.kind === 'feature' ? { restore: false } : {}) }, context.signal);
         }
         trial.status = result.success === false || result.gaps?.length ? 'inconclusive' : 'executed'; trial.evidenceId = result.hostEvidenceId; trial.reason = result.error || result.gaps?.join(' ');
-        observe();
+        addFeature(route, result); observe();
+        if (route.kind === 'feature' && result.dispatched !== false) {
+          await invoke('browser_open', { url: route.rootUrl }, context.signal);
+          if (!await enterFeature(route, context.signal)) throw new Error('Observed feature restoration failed; inspect state before continuing.');
+        }
         if (result.restoredInventory) await readyInventory(result.restoredInventory, context);
       } catch (error) { trial.status = 'interrupted'; throw error; }
       finally { delete exploration.currentControlId; await checkpoint(); }
@@ -139,7 +190,7 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
     if (omitted) exploration.interactions.push({ id: randomUUID(), url: route.url, action: 'remaining_controls', status: 'not_executed', count: omitted, reason: 'Bounded interaction sample exhausted; remaining observed controls are untested.' });
   }
   const tools = [
-    { name: 'qa_route_frontier', category: 'qa', description: 'Discover observed safe same-origin page IDs and coverage. Optional JEV ranking is advisory only. Choose diverse functional routes; no invented URLs. Batch their checks with qa_test_routes.',
+    { name: 'qa_route_frontier', category: 'qa', description: 'Discover observed same-origin pages AND same-URL feature/subfeature IDs. Feature IDs carry verified native navigation paths and require their own checks. Optional JEV ranking is advisory. No invented URLs. Batch their checks with qa_test_routes.',
       parametersSchema: { type: 'object', additionalProperties: false, properties: { rank: { type: 'boolean' } } },
       async run(input = {}, context = {}) {
         const counts = stats();
@@ -171,6 +222,7 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
         let chosen = requested;
         if (chosen.some(item => !item || item.status !== 'pending')) throw new Error('Routes must be observed, pending and not previously attempted. Interrupted routes are not replayed.');
         for (const route of chosen) {
+          if (route.kind === 'feature') { verifyFeature(route); continue; }
           const receipt = ledger.evidence(route.evidenceId), inventory = receipt?.result?.inventory;
           if (!receipt?.success || !inventory || receipt.digest !== digestEvidence(receipt.result) ||
               ![{ url: key(inventory.url), source: inventory.url }, ...jevRouteCandidates(inventory, session.targetUrl)].some(item => item.url === route.url && item.source === route.source && item.selector === route.selector)) throw new Error('Observed route provenance is missing, changed or outside its validated inventory.');
@@ -195,14 +247,21 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
               batch.currentRouteId = route.id; route.status = 'running'; await checkpoint();
               if (checks.includes('console_health')) await invoke('browser_diagnostics', { clear: true }, context.signal);
               const navigationCategory = checks.includes('navigation') ? 'navigation' : checks.includes('broken_links') ? 'broken_links' : null;
-              const sourceUrl = route.selector && navigationCategory ? route.source : route.url;
+              const sourceUrl = route.kind === 'feature' ? route.rootUrl : route.selector && navigationCategory ? route.source : route.url;
               const opened = await invoke('browser_open', { url: sourceUrl }, context.signal);
               if (opened.success === false || !opened.url || key(opened.url) !== key(sourceUrl)) { route.status = 'failed'; route.reason = 'Opening the observed route failed or redirected; no page coverage was inferred.'; await checkpoint(); continue; }
               let navigationEvidence, navigationScenario;
+              if (route.kind === 'feature') {
+                navigationScenario = await start('navigation', route.url);
+                if (!await enterFeature(route, context.signal)) {
+                  if (navigationScenario) await ledger.close(navigationScenario.id, 'inconclusive', 'The observed feature path changed or could not be restored; no replay of an uncertain mutation.');
+                  route.status = 'failed'; route.reason = 'Feature path could not be verified.'; await checkpoint(); continue;
+                }
+              }
               if (autonomous(state) && checks.includes('navigation')) {
                 let observed = await invoke('browser_qa_check', { action: 'inspect' }, context.signal);
                 for (let attempt = 0; attempt < 3; attempt++) {
-                  const overlay = observed.inventory?.overlays?.find(item => item.close);
+                  const overlay = observed.inventory?.overlays?.find(item => item.close && !item.containsForm);
                   if (!overlay) break;
                   navigationScenario ??= await start('navigation', route.url);
                   observed = await invoke('browser_qa_check', { action: 'dismiss_overlay', selector: overlay.close.selector }, context.signal);
@@ -246,6 +305,7 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
                 route.status = 'failed'; route.reason = 'A usable inventory could not be obtained.'; continue;
               }
               observe();
+              route.stateKey ??= inventory.inventory?.stateKey;
               if (inventory.remainingScroll > 1) route.remainingScroll = { pixels: inventory.remainingScroll, evidenceId: inventory.hostEvidenceId };
               let fragmentEvidence;
               if (suites && checks.includes('navigation')) {

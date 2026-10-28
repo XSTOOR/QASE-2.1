@@ -913,6 +913,8 @@ export function createPostgresRunRepository({
 					(SELECT verdict FROM qa_reports
 						WHERE organization_id = $1 AND project_id = $2 AND run_id = qa_runs.id AND is_current = true
 						LIMIT 1) AS report_verdict,
+					(COALESCE(to_jsonb(qa_runs)->'hybrid_qa'->>'executionMode', '') = 'hybrid' AND EXISTS
+						(SELECT 1 FROM qa_reports WHERE organization_id = $1 AND project_id = $2 AND run_id = qa_runs.id AND is_current = true AND cardinality(not_covered) > 0)) AS coverage_incomplete,
 					(SELECT COUNT(*)::int FROM qa_plan_items
 						WHERE organization_id = $1 AND project_id = $2 AND run_id = id) AS todo_total,
 					(SELECT COUNT(*)::int FROM qa_plan_items
@@ -943,6 +945,7 @@ export function createPostgresRunRepository({
 				findingCount: Number(row.finding_count ?? 0),
 				messageCount: Number(row.message_count ?? 0),
 				...(row.report_verdict ? { reportVerdict: row.report_verdict } : {}),
+				...(row.coverage_incomplete === true ? { coverageIncomplete: true } : {}),
 				// Plan progress for the sidebar card — derived from the child table.
 				todoTotal: Number(row.todo_total ?? 0),
 				todoCompleted: Number(row.todo_completed ?? 0),

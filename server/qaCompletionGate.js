@@ -50,6 +50,10 @@ export function hybridCompletion(session) {
   const unresolved = state.observations.filter(item => item.status !== 'confirmed');
   if (unresolved.length) gaps.push(`${unresolved.length} observations remain unresolved.`);
   if (state.degradedClassification) gaps.push('Classification degraded: JEV could not classify all eligible observations.');
+  if (state.authentication?.status === 'access_observed') gaps.push('Platform access was observed after an authorized sign-in; this permits continued testing but is not an independently verified authentication assertion.');
+  const writeTrials = state.writeAuthorization?.trials || [];
+  if (writeTrials.some(trial => trial.status === 'uncertain' || trial.status === 'dispatched')) gaps.push('A test-write outcome remains uncertain. It was not replayed and is not a passing workflow.');
+  if (writeTrials.some(trial => trial.status === 'responded')) gaps.push('Namespaced test records were submitted with owner authorization. Verify business outcomes and remove retained test records; HTTP acknowledgment is not proof of a completed workflow.');
   const routes = state.exploration?.routes || [];
   const depth = hybridRoutePolicy(state);
   if (depth.stopReason === 'budget_closeout' && depth.depthPending) gaps.push(`Budget closeout ended route exploration at ${depth.attempted}/${depth.target} attempted pages; ${depth.pending} observed routes remain pending. The depth target is unmet, not a publication prerequisite during closeout.`);

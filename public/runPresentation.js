@@ -5,6 +5,7 @@
 export function runPresentationStatus(session) {
 	const status = String(session?.status ?? '').toLowerCase();
 	const verdict = String(session?.report?.verdict ?? session?.reportVerdict ?? '').toLowerCase();
+	if (status === 'done' && (session.coverageIncomplete || session?.qaExecutionMode === 'hybrid' && session.report?.notCovered?.length)) return verdict === 'blocked' ? 'blocked' : 'partial';
 	return status === 'done' && ['blocked', 'partial'].includes(verdict) ? verdict : status;
 }
 

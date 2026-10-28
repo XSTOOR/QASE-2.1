@@ -684,6 +684,7 @@ test('token usage round-trips on the run row and surfaces in list summaries', as
 			context_usage: null,
 			token_usage: usage,
 			report_verdict: 'blocked',
+			coverage_incomplete: true,
 			secret_names: [],
 			created_at: new Date(NOW - 1_000),
 			updated_at: new Date(NOW),
@@ -758,6 +759,7 @@ test('token usage round-trips on the run row and surfaces in list summaries', as
 	const summaries = await repository.list();
 	assert.deepEqual(summaries[0].tokenUsage, usage);
 	assert.equal(summaries[0].reportVerdict, 'blocked');
+	assert.equal(summaries[0].coverageIncomplete, true);
 	const verdictQuery = fake.calls.find(call => call.text.includes('FROM qa_runs') && call.text.includes('AS report_verdict'));
 	assert.ok(verdictQuery, 'list SELECT carries the current report verdict for blocked-run presentation');
 

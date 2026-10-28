@@ -10,15 +10,18 @@ import { ensureRuntime, runTurn, deleteRunSnapshot } from '../server/agent.js';
 import { getConfig, withUserConfiguration } from '../server/config.js';
 import { hybridProfile, loadQualification } from '../server/hybridConfig.js';
 import { hybridDepthFixture } from '../server/hybridDepthFixture.js';
+import { hybridFeatureFixture } from '../server/hybridFeatureFixture.js';
 
 assert.equal(process.env.QASE_LIVE_HYBRID_EXECUTION, 'true', 'Explicit opt-in required: this invokes configured paid models.');
 assert.notEqual(process.env.NODE_ENV, 'production');
 assert.equal(process.env.QASE_HYBRID_QA_ENABLED, 'true');
 const settings = getConfig(); loadQualification(hybridProfile(settings));
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-live-depth-'));
-const fixture = hybridDepthFixture({ interactions: true }); fixture.server.listen(0, '127.0.0.1'); await once(fixture.server, 'listening');
+const featureMode = process.env.QASE_HYBRID_FEATURE_FIXTURE === 'true';
+const testWrites = featureMode && process.env.QASE_LIVE_TEST_WRITES === 'true';
+const fixture = featureMode ? hybridFeatureFixture() : hybridDepthFixture({ interactions: true }); fixture.server.listen(0, '127.0.0.1'); await once(fixture.server, 'listening');
 const session = { id: randomUUID(), ownerUserId: 'isolated-live-depth', mode: 'qa', qaExecutionMode: 'hybrid', status: 'idle',
-  targetUrl: `http://127.0.0.1:${fixture.server.address().port}/`, selectedTests: ['navigation', 'broken_links', 'responsive', 'forms', 'media', 'accessibility', 'console_health'], messages: [], activities: [], findings: [], todos: [], secretNames: [] };
+  targetUrl: `http://127.0.0.1:${fixture.server.address().port}/`, selectedTests: featureMode ? ['navigation', 'forms', 'accessibility'] : ['navigation', 'broken_links', 'responsive', 'forms', 'media', 'accessibility', 'console_health'], messages: [], activities: [], findings: [], todos: [], secretNames: [] };
 const live = {}, preview = { frames: 0, urls: new Set(), clickTargets: 0 }, store = {
   liveFor: () => live, listLive: () => [], publish(_session, type, payload) {
     if (type === 'frame') { preview.frames++; preview.urls.add(payload.frame.url); }
@@ -34,7 +37,10 @@ let record; const began = Date.now();
 try {
   await withUserConfiguration(settings, async () => { throw new Error('Configuration changes forbidden.'); }, async () => {
     record = await ensureRuntime(session, store);
-    await runTurn(session, { task: `Deeply test the authorized read-only fixture at ${session.targetUrl}. Cover ALL observed routes up to the bounded frontier target and all supported selected checks. Use default qa_test_routes checks, investigate and report each distinct reproduced issue, then publish the host-validated report. Do not submit forms or expand outside this origin. Use evidence, not labels or model agreement.` }, store);
+    if (testWrites) session.hybrid.writeAuthorization = { enabled: true, runId: session.id, ownerUserId: session.ownerUserId, maximumSubmissions: 10, trials: [] };
+    await runTurn(session, { task: featureMode
+      ? `Deeply test the owned disposable platform at ${session.targetUrl}. Explore all observed features and nested subfeatures at this same URL, including tabs and form-opening controls. Use default qa_test_routes checks until the feature frontier is exhausted; fill real fields and execute negative cases. ${testWrites ? 'The owner has enabled namespaced test-record submissions in the host grant. Exercise eligible forms through submit_test_form; do not repeat uncertain writes.' : 'Do not submit forms.'} Reproduce seeded defects from host evidence and publish the report. No extra read-only confirmation is needed.`
+      : `Deeply test the authorized read-only fixture at ${session.targetUrl}. Cover ALL observed routes up to the bounded frontier target and all supported selected checks. Use default qa_test_routes checks, investigate and report each distinct reproduced issue, then publish the host-validated report. Do not submit forms or expand outside this origin. Use evidence, not labels or model agreement.` }, store);
   });
   const actualGroups = [...new Set(session.findings.filter(item => item.hybridEvidence).map(item => {
     const scenario = session.hybrid.scenarios.find(s => s.id === item.hybridEvidence.scenarioId);
@@ -45,6 +51,7 @@ try {
     reasoner: session.hybrid.telemetry.reasoner, classifier: session.hybrid.telemetry.classifier,
     browserActions: session.hybrid.telemetry.browserActions, sdkBrowserCalls: record.runtime.getResult().toolCalls.filter(item => item.toolName.startsWith('browser_')).length,
     pagesTested: session.hybrid.exploration.routes.filter(route => route.status === 'tested').length,
+    ...(featureMode ? { featureStates: session.hybrid.exploration.routes.filter(route => route.kind === 'feature').map(({ label, status }) => ({ label, status })) } : {}),
     inputTrials: session.hybrid.evidence.map(item => item.result?.formTesting).filter(Boolean),
     viewport: session.hybrid.viewport,
     preview: { frames: preview.frames, routes: [...new Set([...preview.urls].map(url => new URL(url).pathname))], clickTargets: preview.clickTargets },
@@ -57,12 +64,14 @@ try {
   fs.writeFileSync(path.join(root, 'result.json'), JSON.stringify(result, null, 2), { mode: 0o600 });
   console.log(JSON.stringify(result, null, 2));
   assert.equal(session.status, 'done', session.statusDetail);
-  assert.equal(result.pagesTested, fixture.expectedPages); assert.ok(result.browserActions >= 25);
+  if (featureMode) for (const label of fixture.expectedFeatures) assert.ok(result.featureStates.some(feature => feature.label === label && feature.status === 'tested'), `Untested feature: ${label}`);
+  else assert.equal(result.pagesTested, fixture.expectedPages);
+  assert.ok(result.browserActions >= 25);
   assert.equal(result.scenarios, session.hybrid.scope.length);
   assert.equal(result.viewport.phase, 'selected_device'); assert.equal(result.viewport.restored, true);
   assert.deepEqual(result.viewport.current, result.viewport.primary);
   assert.equal(detected.length, fixture.expectedGroups.length); assert.equal(unexpected.length, 0);
-  assert.equal(result.writes, 0);
+  assert.equal(result.writes, testWrites ? 2 : 0);
   assert.ok(result.inputTrials.some(item => item.fieldsFilled > 0 && item.negativeCases > 0), 'Hybrid must fill actual eligible controls and execute negative inputs.');
   assert.ok(result.inputTrials.every(item => item.submissionExecuted === false && item.restored !== false));
   assert.ok(result.preview.frames >= fixture.expectedPages && result.preview.routes.length >= fixture.expectedPages, 'Preview must reflect the actual fixture pages.');

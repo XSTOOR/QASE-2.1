@@ -63,8 +63,8 @@ export function publicHybridState(session) {
     currentScenarioId: state.currentScenarioId, viewport: state.viewport, counts: completion?.counts, coverage: completion?.coverage || 0,
     confirmedDefects: completion?.confirmedDefects || 0, unresolved: completion?.unresolved || 0,
     unresolvedObservations: completion?.unresolvedObservations || [],
-    inputTesting: { fieldsFilled: inputTrials.reduce((sum, item) => sum + item.fieldsFilled, 0), casesExecuted: inputTrials.reduce((sum, item) => sum + item.casesExecuted, 0), negativeCases: inputTrials.reduce((sum, item) => sum + item.negativeCases, 0), submissionExecuted: false },
-    gaps: completion?.gaps || [], telemetry: state.telemetry, budgets: state.budgets, exploration: state.exploration ? { version: state.exploration.version, observed: depth.observed, tested: depth.tested, pending: depth.pending,
+    inputTesting: { fieldsFilled: inputTrials.reduce((sum, item) => sum + item.fieldsFilled, 0), casesExecuted: inputTrials.reduce((sum, item) => sum + item.casesExecuted, 0), negativeCases: inputTrials.reduce((sum, item) => sum + item.negativeCases, 0), submissionExecuted: (state.writeAuthorization?.trials || []).some(trial => ['responded', 'uncertain', 'dispatched'].includes(trial.status)) }, writeTesting: state.writeAuthorization ? { enabled: state.writeAuthorization.enabled, maximumSubmissions: state.writeAuthorization.maximumSubmissions, trials: state.writeAuthorization.trials.map(({ id, status, endpoint, httpStatus, testDataPrefix }) => ({ id, status, endpoint, httpStatus, testDataPrefix })) } : undefined,
+    gaps: completion?.gaps || [], telemetry: state.telemetry, budgets: state.budgets, exploration: state.exploration ? { version: state.exploration.version, observed: depth.observed, observedPages: depth.observedPages, observedFeatures: depth.observedFeatures, tested: depth.tested, pending: depth.pending,
       attempted: depth.attempted, target: depth.target, remainingSlots: depth.remainingSlots, canExplore: depth.canExplore, stopReason: depth.stopReason, publicationAllowed: depth.publicationAllowed,
       interactions: { attempted: state.exploration.interactions?.length || 0, executed: state.exploration.interactions?.filter(item => item.status === 'executed').length || 0 } } : undefined, budgetFinalizing: Boolean(state.budgetFinalizing), pauseReason: state.pauseReason, recovery,
     scenarios: (state.scenarios || []).map(item => ({ id: item.id, objective: item.objective, category: item.category, routeUrl: item.routeUrl, status: item.status, uncertainty: item.uncertainty, assertions: item.assertions.length, routeCounts: scenarioSummary(item).routeCounts })) };
@@ -211,7 +211,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           if (!routes.access()) throw new Error('An approved route batch owns the browser; wait for its result.');
           if (state.budgetFinalizing) throw new Error('Browser exploration has stopped for budget closeout. Record remaining coverage gaps and publish the host-validated report.');
           if (['browser_qa_check', 'browser_qa_scenario'].includes(tool.name)) {
-            const categories = { navigation: ['navigation', 'broken_links'], navigation_control: ['navigation'], anchors: ['navigation', 'broken_links'], disclosure: ['navigation'], tabs: ['navigation'], dismiss_overlay: ['navigation'], responsive: ['responsive'], forms: ['forms'], search: ['search'], media: ['media'], accessibility: ['accessibility'] };
+            const categories = { navigation: ['navigation', 'broken_links'], navigation_control: ['navigation'], open_test_form: ['navigation'], anchors: ['navigation', 'broken_links'], disclosure: ['navigation'], tabs: ['navigation'], dismiss_overlay: ['navigation'], submit_test_form: ['forms'], responsive: ['responsive'], forms: ['forms'], search: ['search'], media: ['media'], accessibility: ['accessibility'] };
             if (!(autonomous(state) && input?.action === 'dismiss_overlay') && categories[input?.action] && !categories[input.action].some(category => state.scope.includes(category))) throw new Error('The fixed check is outside the selected test scope or selected scenario category.');
           }
           if (state.recovery?.verificationRequired && !['browser_open', 'browser_snapshot', 'browser_get_url'].includes(tool.name)) throw new HybridPause('HYBRID_VERIFY_STATE', 'Recovery requires a fresh browser open and snapshot before actions.');
@@ -219,7 +219,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           if (viewportProblem) { state.recovery = { ...state.recovery, verificationRequired: true }; throw new HybridPause('HYBRID_VIEWPORT_DRIFT', viewportProblem); }
           if (atomicScenario) {
             const scenario = ledger.scenario(input.scenario_id);
-            const compatible = { navigation: ['navigation', 'navigation_control', 'disclosure', 'anchors', 'tabs'], broken_links: ['navigation', 'anchors'], responsive: ['responsive'], forms: ['forms'], search: ['search'], media: ['media'], accessibility: ['accessibility'] };
+            const compatible = { navigation: ['navigation', 'navigation_control', 'open_test_form', 'disclosure', 'anchors', 'tabs'], broken_links: ['navigation', 'anchors'], responsive: ['responsive'], forms: ['forms', 'submit_test_form'], search: ['search'], media: ['media'], accessibility: ['accessibility'] };
             if (!compatible[scenario.category]?.includes(input.action)) throw new Error('This action cannot establish the selected scenario category; use its matching fixed check or record a concrete coverage gap.');
             if (state.actions.some(action => action.status === 'uncertain' && action.toolName === 'browser_qa_check' && action.scenarioId === scenario.id)) throw new HybridPause('HYBRID_UNCERTAIN_ACTION', 'The scenario has an uncertain prior browser-check receipt. It cannot be automatically replayed. Record the blocker or choose a separately verified investigation.');
             if (state.currentScenarioId && state.currentScenarioId !== scenario.id) throw new Error('Close the active scenario before executing another.');
@@ -261,6 +261,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           // convert a late result into a passing assertion or replay it.
           if (activeSignal?.aborted) throw activeSignal.reason;
           const evidence = await ledger.record(action, result);
+          if (state.exploration?.observingWriteResult && result?.inventory) evidence.postWriteObservation = true;
           observeHybridAuthentication(session, result);
           evidence.authenticationContext = hasConfirmedAccess(state) ? state.authentication.grantId : 'public';
           if (result?.code === 'HYBRID_AUTH_UNCERTAIN') throw new HybridPause('HYBRID_AUTH_UNCERTAIN', 'Sign-in was dispatched but its outcome is uncertain. Progress is saved; verify the account state before any further sign-in attempt.');

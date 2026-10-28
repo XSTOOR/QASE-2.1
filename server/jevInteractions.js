@@ -1,4 +1,5 @@
 import { safeBrowserRoute } from './browserRouteSafety.js';
+import { featureStateKey } from './qaFeatureState.js';
 // Fixed interaction oracles for explicitly declared UI contracts. Model text
 // cannot supply scripts. Requests are blocked during local-only trials: a
 // dependency becomes a coverage gap, never a manufactured application defect.
@@ -15,7 +16,7 @@ export async function isolated(page, task) {
     const request = route.request();
     // Lazy styles/images are normal rendering dependencies. Let the existing
     // context security policy decide them; never bypass it with continue().
-    if (request.method() === 'GET' && ['image', 'font', 'stylesheet', 'script', 'media'].includes(request.resourceType())) return route.fallback();
+    if (['GET', 'HEAD', 'OPTIONS'].includes(request.method()) && request.resourceType() !== 'document' && !risky.test(new URL(request.url()).pathname)) return route.fallback();
     blocked.push({ method: request.method(), url: request.url() });
     return route.abort('blockedbyclient');
   });
@@ -139,14 +140,14 @@ export async function runJevTabs(page, { inspect, settle, prepare, authorizeCont
  * observed selector is revalidated; labels cannot grant writes or scripts. */
 export async function runJevNavigationControl(page, input, { inspect, settle, authorizeControl, onAction, signal }) {
   signal?.throwIfAborted();
-  const original = await inspect(page), control = original.navigationControls?.find(item => item.selector === input.selector);
-  if (!control || risky.test(control.label)) throw new Error('Choose a fresh observed non-form navigation button.');
+  const original = await inspect(page), control = (input.action === 'open_test_form' ? original.formOpeners : original.navigationControls)?.find(item => item.selector === input.selector);
+  if (!control || (input.action !== 'open_test_form' && risky.test(control.label))) throw new Error('Choose a fresh observed navigation button or test-form opener.');
   const obstructed = inventory => ({ success: false, code: 'QA_CONTROL_OBSTRUCTED', dispatched: false, assertions: [], inventory, gaps: ['An overlay or non-actionable control prevents navigation. Inspect and dismiss an observed safe close control before retrying.'] });
   if (original.overlays?.length) return obstructed(original);
   const source = new URL(page.url()), blocked = [];
   const guard = safeBrowserRoute(async route => {
     const request = route.request(), destination = new URL(request.url());
-    if (!['GET', 'HEAD'].includes(request.method()) || (['document', 'xhr', 'fetch'].includes(request.resourceType()) && (destination.origin !== source.origin || risky.test(destination.pathname)))) {
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method()) || risky.test(destination.pathname) || (request.resourceType() === 'document' && destination.origin !== source.origin)) {
       blocked.push({ method: request.method(), url: destination.origin + destination.pathname }); await route.abort(); return;
     }
     await route.fallback();
@@ -166,7 +167,10 @@ export async function runJevNavigationControl(page, input, { inspect, settle, au
     changed = destination.url !== original.url || destination.text !== original.text;
     await onAction?.({ phase: 'after', action: 'click', selector: control.selector });
   } finally {
-    try { await page.goto(original.url, { waitUntil: 'domcontentloaded', timeout: 15000 }); await settle(page); restored = page.url() === original.url; }
+    try {
+      if (input.restore === false) restored = true;
+      else { await page.goto(original.url, { waitUntil: 'domcontentloaded', timeout: 15000 }); await settle(page); restored = page.url() === original.url; }
+    }
     catch { restored = false; }
     finally { await page.unroute('**/*', guard); }
   }
@@ -174,8 +178,9 @@ export async function runJevNavigationControl(page, input, { inspect, settle, au
   const inventory = await inspect(page);
   const gaps = blocked.length ? ['Navigation requires a blocked write or unapproved dependency; no correctness verdict was inferred.'] : !changed ? ['The observed control did not produce a verifiable new state; no pass or confirmed defect was inferred.'] : [];
   if (!restored) gaps.push('Source restoration was not verified.');
-  if (changed && destination.url === original.url) gaps.push('A distinct same-URL state was observed; deeper state-specific workflows require a separate scenario.');
+  const from = featureStateKey(original), to = destination && featureStateKey(destination);
   return { assertions: changed && restored && !blocked.length ? [result('navigation', 'Observed navigation button changes a rendered state', true, 'A route or rendered content transition after an observed navigation control', { label: control.label, changed, restored })] : [],
-    inventory: destination && changed && !blocked.length ? destination : inventory, restoredInventory: inventory,
+    inventory: destination && changed ? destination : inventory, ...(input.restore === false ? {} : { restoredInventory: inventory }),
+    ...(changed && to !== from ? { transition: { from, to, control: { selector: control.selector, label: control.label, ...(input.action === 'open_test_form' ? { kind: 'form_opener' } : {}) } } } : {}),
     blockedRequests: blocked, ...(gaps.length ? { gaps } : {}), limitations: 'Observed read-only navigation and source restoration only. No submitted workflow, permissions test or same-URL state coverage is implied.' };
 }
