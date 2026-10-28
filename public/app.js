@@ -2016,6 +2016,14 @@ function showRunningQaPlan() {
 	activateDetailTab($('tab-plan'));
 }
 
+function showCompletedQaResults() {
+	const session = state.session;
+	if (!session || session.mode === 'sqa' || session.mode === 'founder' || session.status !== 'done') return;
+	if (state.shownQaResults === session.id) return;
+	state.shownQaResults = session.id;
+	activateDetailTab((session.findings?.length ?? 0) > 0 ? $('tab-findings') : el.reportTab);
+}
+
 function syncStageCollapse(status) {
 	// Status events must not undo an explicit user choice during a live run.
 	renderStageCollapse();
@@ -3690,8 +3698,7 @@ function renderReport() {
 		const hybrid = renderHybridQa(state.session, document); if (hybrid) el.reportView.prepend(hybrid);
 		return;
 	}
-	const hybrid = renderHybridQa(state.session, document); if (hybrid) el.reportView.append(hybrid);
-	el.reportView.append(renderResultsOverview(state.session, {
+	const hybrid = renderHybridQa(state.session, document); if (hybrid) el.reportView.append(hybrid);	el.reportView.append(renderResultsOverview(state.session, {
 		document,
 		onFindings: () => activateDetailTab($('tab-findings'), true),
 		onWorkspace: () => { void pageRouter.navigate({ name: 'run', runId: state.sessionId }); }
@@ -5060,6 +5067,7 @@ function handleEvent(event) {
 			void refreshRuns();
 			if (FEEDBACK_TERMINAL_STATUSES.has(event.status) && feedbackEligible(session)) {
 				renderReport();
+				showCompletedQaResults();
 				void syncFeedbackForSession(session);
 				// #16655: auto pop-up once per run per browser session, after
 				// the completion view renders (QA + SQA share this branch).

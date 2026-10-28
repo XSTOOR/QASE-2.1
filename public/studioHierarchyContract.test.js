@@ -31,8 +31,8 @@ test('running header and current activity use clear customer language', () => {
 	assert.match(workspaceStyles, /current-activity \.ca-label[\s\S]*text-transform: none/);
 });
 
-test('completed QA preserves the current tab and keeps explicit preview preferences', () => {
-	assert.doesNotMatch(app, /showCompletedQaResults/);
+test('completed QA selects Findings for issues and Report for a clean run', () => {
+	assert.match(app, /activateDetailTab\(\(session\.findings\?\.length \?\? 0\) > 0 \? \$\('tab-findings'\) : el\.reportTab\)/);
 	assert.match(app, /const collapsed = previewCollapsed\(/);
 	assert.match(app, /state\.stageCollapsePreferences\.get\(state\.sessionId\)/);
 });
