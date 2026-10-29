@@ -16,6 +16,10 @@ import { createInviteService } from './invites.js';
 // RT1 (#14680): local branded-browser registry feeds browser executability.
 import { probeLocalBrowsers, playwrightLaunchProbe } from './localBrowserRegistry.js';
 import { setLocalRegistrySnapshot } from './browserSupportResolution.js';
+// #17924: gateway qualification receipts expire after 24h; without an
+// in-process refresher every deployment dead-ends the hybrid launcher
+// ("Review test run" blocked) a day later.
+import { startQualificationKeeper } from './hybridQualificationKeeper.js';
 import * as path from 'node:path';
 
 /** Local analytics counters live beside the session store. */
@@ -124,6 +128,18 @@ const drytisIntegration = createConfiguredDrytisIntegration({
 	logger
 });
 
+// Hybrid qualification keeper (#17924): started here (not inside listen) so
+// its shutdown step is part of installShutdownHandlers below. The first
+// qualification attempt fires 1s after start — the server is already up by
+// then; heavy qualification runs off the request path entirely.
+let hybridKeeper = null;
+try {
+	hybridKeeper = startQualificationKeeper({ logger });
+	if (!hybridKeeper.started) hybridKeeper = null;
+} catch (error) {
+	logger.warn?.('hybrid.qualification.keeper.start-failed', { error: String(error?.message || error).slice(0, 200) });
+}
+
 let shuttingDown = false;
 const { app, demoEnabled } = createApplication({
 	services, access, executionQueue, operations, logger,
@@ -148,6 +164,10 @@ installShutdownHandlers({
 	},
 	steps: [
 		() => { keepalive.stop(); },
+		// Hybrid qualification keeper (#17924): refresh expired/near-expiry
+		// gateway receipts automatically. Fail-safe; a failure only means
+		// availability stays honestly "expired" until the next tick.
+		() => { hybridKeeper?.stop(); },
 		() => drainHttpServer(server),
 		() => closeApplicationBrowsers(services),
 		() => services.lifecycle.close()
