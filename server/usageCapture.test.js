@@ -6,6 +6,7 @@ import {
 	createUsageLogger,
 	parseAzureUsageLine,
 	parseStageCompleteLine,
+	subtractUsage,
 	sumUsage
 } from './usageCapture.js';
 
@@ -45,7 +46,8 @@ test('sumUsage adds components and recomputes totals', () => {
 test('applyUsage accumulates per-run totals, keeps the last known total, and marks estimates', () => {
 	const base = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
 	let usage = applyUsage(base, { inputTokens: 1000, outputTokens: 200, totalTokens: 1200 });
-	assert.deepEqual(usage, { inputTokens: 1000, outputTokens: 200, totalTokens: 1200, cachedInputTokens: 0, estimated: false, updatedAt: usage.updatedAt });
+	const { byModel: _byModel, ...usageFlat } = usage;
+	assert.deepEqual(usageFlat, { inputTokens: 1000, outputTokens: 200, totalTokens: 1200, cachedInputTokens: 0, estimated: false, updatedAt: usage.updatedAt });
 	usage = applyUsage(usage, { inputTokens: 500, outputTokens: 100, totalTokens: 600, cachedInputTokens: 50 });
 	assert.equal(usage.inputTokens, 1500);
 	assert.equal(usage.outputTokens, 300);
@@ -59,6 +61,25 @@ test('applyUsage accumulates per-run totals, keeps the last known total, and mar
 	const estimate = applyUsage(base, { inputTokens: 5, outputTokens: 5, estimated: true });
 	assert.equal(estimate.estimated, true);
 	assert.equal(estimate.totalTokens, 10);
+});
+
+// #17934 — shared token accounting: per-model breakdown.
+test('applyUsage attributes usage per model and subtractUsage rolls it back exactly once', () => {
+	const base = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
+	let usage = applyUsage(base, { model: 'z-ai/glm-5.2', inputTokens: 1000, outputTokens: 200 });
+	usage = applyUsage(usage, { model: 'z-ai/glm-5.2', inputTokens: 300, outputTokens: 50 });
+	usage = applyUsage(usage, { model: 'drytis/jev-1.13', inputTokens: 10, outputTokens: 5 });
+	assert.equal(usage.byModel['z-ai/glm-5.2'].inputTokens, 1300);
+	assert.equal(usage.byModel['z-ai/glm-5.2'].outputTokens, 250);
+	assert.equal(usage.byModel['drytis/jev-1.13'].inputTokens, 10);
+	assert.equal(usage.totalTokens, 1565);
+	// Rollback of a superseded estimate removes it from the SAME model's row.
+	const rolled = subtractUsage(usage, { model: 'z-ai/glm-5.2', inputTokens: 300, outputTokens: 50 });
+	assert.equal(rolled.byModel['z-ai/glm-5.2'].inputTokens, 1000);
+	assert.equal(rolled.totalTokens, 1215);
+	// Rolling a model row to zero drops it entirely.
+	const dropped = subtractUsage(usage, { model: 'drytis/jev-1.13', inputTokens: 10, outputTokens: 5 });
+	assert.equal(dropped.byModel['drytis/jev-1.13'], undefined);
 });
 
 test('attachUsageCapture wraps logProviderReportedUsage and harvests every provider call', () => {

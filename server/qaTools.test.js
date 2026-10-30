@@ -132,6 +132,24 @@ test('QA finish requires completed work and model force cannot bypass it', async
 	assert.equal(target.commits.length, 0);
 });
 
+// #17997: validation failures must name the actual cause. E2E hybrid run
+// a3418492 showed the generic message sending the agent into a 6-call retry
+// loop during budget closeout.
+test('QA finish rejects bad verdicts and empty summaries with actionable errors', async () => {
+	const target = fixture();
+	const badVerdict = await target.finish.run({ ...report, verdict: 'passed' });
+	assert.equal(badVerdict.success, false);
+	assert.match(badVerdict.error, /verdict "passed"/);
+	assert.match(badVerdict.error, /pass_with_issues/);
+	const missingSummary = await target.finish.run({ verdict: 'pass' });
+	assert.equal(missingSummary.success, false);
+	assert.match(missingSummary.error, /nonempty summary/);
+	const nonObject = await target.finish.run('finish');
+	assert.equal(nonObject.success, false);
+	assert.match(nonObject.error, /object with a verdict/);
+	assert.equal(target.session.report, undefined);
+});
+
 test('QA cannot publish success without a plan, successful browser evidence, or declared coverage', async () => {
 	for (const overrides of [{ todos: [] }, { activities: [] }, { activities: [{ toolName: 'browser_open', status: 'failed' }] }]) {
 		const target = fixture(overrides);

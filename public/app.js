@@ -239,6 +239,7 @@ const state = {
 	founderCatalogPromise: undefined,
 	qaTestCatalog: undefined,
 	qaTestCatalogPromise: undefined,
+	qaTestCatalogFailed: false,
 	/** Live reasoning for the current turn. Never kept once the agent replies. */
 	thinking: { text: '', action: '' },
 	runTimer: { interval: undefined, startedAt: undefined, endedAt: undefined },
@@ -1699,14 +1700,44 @@ function renderHeader() {
 			else el.composerInput.focus();
 		};
 	}
-	// Customer-facing progress stays simple. Model usage remains in Run details.
+	// #17934: the header chip carries the LIVE token usage for every mode
+	// (Founder, QA, QA Run, SQA) — restored after the UI rebuild dropped it.
+	// session.tokenUsage is server-authoritative (SSE 'usage' events, fed by
+	// the gateway's own usage reports); nothing here fabricates values: no
+	// usage events yet → explicit pending/absent state, never a fake 0.
 	const hasRun = Boolean(state.sessionId && (session.targetUrl || session.title));
 	document.body.dataset.hasRun = String(hasRun);
 	el.statusChip.hidden = !hasRun;
 	el.runSummary.hidden = !hasRun;
-	el.tokenText.classList.remove('is-pending');
-	el.tokenText.textContent = 'Run progress';
-	el.tokenText.title = '';
+	const usageSummary = tokenSummaryText(session?.tokenUsage);
+	if (usageSummary) {
+		// Authoritative counts exist — show them.
+		el.tokenText.classList.remove('is-pending');
+		el.tokenText.textContent = usageSummary;
+		el.tokenText.title = session?.tokenUsage?.estimated === true
+			? 'Estimated from the model gateway (authoritative billing usage not yet reported).'
+			: 'Token usage reported by the model gateway.';
+	} else if (session?.status === 'running') {
+		// Run in flight, no usage event yet — pending, not zero.
+		el.tokenText.classList.add('is-pending');
+		el.tokenText.textContent = 'Tokens: awaiting usage report…';
+		el.tokenText.title = 'The model gateway has not reported usage for this run yet.';
+	} else {
+		el.tokenText.classList.remove('is-pending');
+		el.tokenText.textContent = 'Token usage unavailable';
+		el.tokenText.title = 'No token usage was reported for this run.';
+	}
+	// #17934: per-model attribution in the tooltip (e.g. primary agent vs
+	// JEV classification) — the breakdown comes from authoritative usage
+	// events carrying the model that spent them.
+	const perModel = session?.tokenUsage?.byModel;
+	if (usageSummary && perModel && Object.keys(perModel).length > 0) {
+		const modelLines = Object.entries(perModel)
+			.sort((a, b) => (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens))
+			.map(([model, u]) => `${model}: ${formatTokens(u.inputTokens ?? 0)} in · ${formatTokens(u.outputTokens ?? 0)} out`)
+			.join('\n');
+		el.tokenText.title = `${el.tokenText.title}\n${modelLines}`;
+	}
 	// LIVE pill: only while the run is actively working.
 	el.livePill.hidden = session.status !== 'running';
 	renderMiniSummary();
@@ -3703,6 +3734,25 @@ function renderReport() {
 		onFindings: () => activateDetailTab($('tab-findings'), true),
 		onWorkspace: () => { void pageRouter.navigate({ name: 'run', runId: state.sessionId }); }
 	}));
+	// #17934: final token consumption on the completed report — the run's
+	// authoritative accumulated usage, per model where reported.
+	const finalUsage = tokenSummaryText(state.session.tokenUsage);
+	if (finalUsage) {
+		const usageRow = document.createElement('div');
+		usageRow.className = 'sqa-tokens';
+		usageRow.textContent = `Total model usage for this run: ${finalUsage}`;
+		usageRow.title = state.session.tokenUsage.estimated === true
+			? 'Estimated from the model gateway (authoritative usage not reported).'
+			: 'Token usage reported by the model gateway.';
+		const perModel = state.session.tokenUsage.byModel;
+		if (perModel && Object.keys(perModel).length > 0) {
+			usageRow.title += '\n' + Object.entries(perModel)
+				.sort((a, b) => (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens))
+				.map(([model, u]) => `${model}: ${formatTokens(u.inputTokens ?? 0)} in · ${formatTokens(u.outputTokens ?? 0)} out`)
+				.join('\n');
+		}
+		el.reportView.append(usageRow);
+	}
 
 	/* Export report (UI Fix Phase 1): JSON download of the finished report —
 	 * presented once, inside the Report tab workspace. */
@@ -4248,6 +4298,34 @@ function renderSqa() {
 	const assessment = sqa.assessment;
 	const lifecycle = describeSqaLifecycle(sqa, state.session.status, state.session.activities?.length ?? 0);
 	el.countSqa.textContent = lifecycle.badge;
+
+	// #17934: live token usage row for SQA Mode — same authoritative source
+	// (SSE 'usage' → session.tokenUsage) as the header chip. Includes the
+	// per-model breakdown so JEV vs primary-model spend is visible (#17936).
+	const sqaTokens = document.createElement('div');
+	sqaTokens.className = 'sqa-tokens';
+	const usageSummary = tokenSummaryText(state.session.tokenUsage);
+	if (usageSummary) {
+		sqaTokens.textContent = `Model usage: ${usageSummary}`;
+		sqaTokens.title = state.session.tokenUsage.estimated === true
+			? 'Estimated from the model gateway (authoritative usage not yet reported).'
+			: 'Token usage reported by the model gateway.';
+		const perModel = state.session.tokenUsage.byModel;
+		if (perModel && Object.keys(perModel).length > 0) {
+			const modelLines = Object.entries(perModel)
+				.sort((a, b) => (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens))
+				.map(([model, u]) => `${model}: ${formatTokens(u.inputTokens ?? 0)} in · ${formatTokens(u.outputTokens ?? 0)} out`)
+				.join('\n');
+			sqaTokens.title = `${sqaTokens.title}\n${modelLines}`;
+		}
+	} else if (state.session.status === 'running') {
+		sqaTokens.textContent = 'Tokens: awaiting usage report…';
+		sqaTokens.title = 'The model gateway has not reported usage for this run yet.';
+	} else {
+		sqaTokens.textContent = 'Token usage unavailable';
+		sqaTokens.title = 'No token usage was reported for this run.';
+	}
+	el.sqaView.append(sqaTokens);
 
 	const notice = document.createElement('aside');
 	notice.className = 'sqa-notice';
@@ -5643,13 +5721,38 @@ async function loadQaTestCatalog() {
 					throw new Error('The standard test catalog response is invalid.');
 				}
 				state.qaTestCatalog = catalog;
+				state.qaTestCatalogFailed = false;
 				return catalog;
+			})
+			.catch(error => {
+				// #17933: record the failure so the Coverage step explains a
+				// dead catalog HONESTLY ("could not be loaded") instead of a
+				// misleading permanent "Loading available checks…" that keeps
+				// the Review Test Run button disabled with no way forward.
+				state.qaTestCatalogFailed = true;
+				throw error;
 			})
 			.finally(() => {
 				state.qaTestCatalogPromise = undefined;
 			});
 	}
 	return state.qaTestCatalogPromise;
+}
+
+/** #17933: explicit retry for a failed catalog load — re-runs the fetch,
+ *  repaints the catalog, and re-syncs the journey gates. */
+function retryQaTestCatalog() {
+	state.qaTestCatalogFailed = false;
+	return loadQaTestCatalog()
+		.then(catalog => {
+			paintQaTestCatalog(catalog);
+			setQaFormError();
+			syncQaSubmitState();
+		})
+		.catch(error => {
+			setQaFormError(error instanceof Error ? error.message : String(error));
+			syncQaSubmitState();
+		});
 }
 
 /** The built-in deliberately-broken demo site, when this instance serves one. */
@@ -5707,7 +5810,16 @@ function showQaStartPage() {
 	if (!qaUi.dialog) return;
 	qaJourneySelectionMode = 'quick';
 	syncJourneyPreset();
-	qaJourney ??= createQaJourney({ document, changed: syncQaSubmitState, getState: () => ({
+	qaJourney ??= createQaJourney({ document, changed: syncQaSubmitState, onBlocked: reason => {
+		// #17933: a blocked advance must never be silent. The journey writes
+		// the footer hint; we ALSO surface it on the form error element with
+		// a retry action when the catalog fetch failed.
+		if (state.qaTestCatalogFailed) {
+			setQaFormError('The standard checks could not be loaded. Close this window and try again, or reload the page.');
+			return;
+		}
+		setQaFormError(reason);
+	}, getState: () => ({
 		config: { ...state.config, model: qaLauncherModeLabel(qaUi.executionMode?.value, state.config) },
 		checks: qaUi.selectedTests.size,
 		automatic: qaJourneySelectionMode === 'quick',
@@ -5717,7 +5829,7 @@ function showQaStartPage() {
 			envIds: qaMatrixState.selectedEnvIds, mode: qaUi.executionMode?.value, config: state.config }).title : null,
 		busy: qaUi.submit.dataset.busy === 'true',
 		blocked: qaLaunchBlockedReason(),
-		coverageBlocked: !state.qaTestCatalog ? 'Loading available checks…'
+		coverageBlocked: !state.qaTestCatalog ? (state.qaTestCatalogFailed ? 'The standard checks could not be loaded. Retry, then continue.' : 'Loading available checks…')
 			: !qaUi.selectedTests.size ? 'Choose at least one check to continue.'
 			: qaSecuritySelected() && !qaUi.securityAuthorized?.checked ? 'Confirm security testing authorization below.'
 			: qaJourneySelectionMode !== 'quick' ? null
@@ -5728,10 +5840,16 @@ function showQaStartPage() {
 	}) });
 	setQaFormError();
 	const draft = { url: qaUi.targetUrl.value, goal: $('qa-goal').value };
+	// #17933: form.reset() would silently wipe the user's check selection
+	// (the checkboxes live inside this form) — snapshot and restore them so
+	// coverage configuration persists across dialog re-opens and steps.
+	const draftChecks = [...qaUi.selectedTests];
 	qaUi.form.reset();
 	const selectedMode = $('qa-selected-agent'); if (selectedMode) selectedMode.textContent = qaLauncherModeLabel(qaUi.executionMode?.value, state.config);
 	if (draft.url) qaUi.targetUrl.value = draft.url;
 	if (draft.goal) $('qa-goal').value = draft.goal;
+	for (const input of qaSelectableInputs()) input.checked = draftChecks.includes(input.value);
+	refreshQaSelection();
 	// Studio context prefill first, then the matrix top bar's target URL wins
 	// if set (M4 #14423): applied AFTER reset() so it survives it.
 	applyStudioTarget(qaUi.targetUrl);
@@ -5789,10 +5907,24 @@ function showQaStartPage() {
 		.then(paintQaTestCatalog)
 		.catch(error => {
 			qaUi.testsState.hidden = false;
-			qaUi.testsState.textContent = 'The standard test catalog could not be loaded.';
+			// #17933: actionable recovery — a Retry button replaces the dead
+			// "close this window" advice, and re-syncs the journey gates.
+			qaUi.testsState.replaceChildren();
+			const message = document.createElement('span');
+			message.textContent = 'The standard test catalog could not be loaded. ';
+			const retry = document.createElement('button');
+			retry.type = 'button';
+			retry.className = 'link-btn';
+			retry.textContent = 'Retry loading checks';
+			retry.addEventListener('click', () => {
+				qaUi.testsState.textContent = 'Retrying…';
+				qaUi.testsState.hidden = false;
+				void retryQaTestCatalog();
+			});
+			qaUi.testsState.append(message, retry);
 			setQaFormError(error instanceof Error ? error.message : String(error));
 			$('qa-customize').open = true;
-			$('qa-selection-summary').textContent = 'Checks could not be loaded. Close this window and try again.';
+			$('qa-selection-summary').textContent = 'Checks could not be loaded. Retry above.';
 			syncQaSubmitState();
 		});
 }

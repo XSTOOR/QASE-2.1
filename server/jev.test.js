@@ -29,6 +29,21 @@ test('JEV client uses the native contract and real usage, never chat or a fallba
   assert.equal(usage[0].totalTokens, 28);
   assert.throws(() => createJevClient({ apiKey: 'test', baseUrl: 'https://attacker.test' }), /fixed/);
 });
+
+// #17997 regression: the SQA verifier passes { apiKey, baseUrl: undefined, model: 'jev-1.13' }.
+// Explicit undefined must NOT override the fixed endpoint — it previously produced
+// fetch(undefined) → ERR_INVALID_URL → wrapped as JEV_CONNECTION_FAILED, so JEV
+// was never actually invoked in SQA mode.
+test('JEV client ignores undefined configuration keys instead of overriding defaults', async () => {
+  const calls = [];
+  const client = createJevClient({ apiKey: 'test', baseUrl: undefined, model: undefined }, {
+    fetchImpl: async (url, options) => { calls.push({ url, options }); return Response.json(reply({ ready: { type: 'noul', noul: 0.5 } })); }
+  });
+  await client.decide({ evidence: 'ready' }, questions, { sessionId: 'run-undef' });
+  assert.equal(calls[0].url, JEV_ENDPOINT, 'undefined baseUrl must fall back to the fixed endpoint');
+  const body = JSON.parse(calls[0].options.body);
+  assert.equal(body.model, 'jev-1.13', 'undefined model must fall back to the default model');
+});
 test('JEV refuses malformed, missing, wrong-model, and invented-choice answers', () => {
   assert.throws(() => validateJevResponse(reply({}), questions), /omitted/);
   assert.throws(() => validateJevResponse(reply({ ready: { type: 'noul', noul: 2 } }), questions), /probability/);

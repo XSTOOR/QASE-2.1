@@ -71,10 +71,21 @@ export function applyUsage(current, incoming) {
 	const inputTokens = base.inputTokens + (incoming.inputTokens ?? 0);
 	const outputTokens = base.outputTokens + (incoming.outputTokens ?? 0);
 	const cachedInputTokens = base.cachedInputTokens + (incoming.cachedInputTokens ?? 0);
+	// #17934: per-model breakdown (additive). Each model's usage accumulates
+	// alongside the run total so the UI can attribute tokens to the model
+	// that spent them (primary agent vs JEV vs hybrid roles).
+	const modelKey = incoming.model || 'unknown';
+	const byModel = { ...(base.byModel ?? {}) };
+	const modelUsage = byModel[modelKey] ?? { inputTokens: 0, outputTokens: 0 };
+	byModel[modelKey] = {
+		inputTokens: modelUsage.inputTokens + (incoming.inputTokens ?? 0),
+		outputTokens: modelUsage.outputTokens + (incoming.outputTokens ?? 0)
+	};
 	return {
 		inputTokens,
 		outputTokens,
 		cachedInputTokens,
+		byModel,
 		totalTokens: inputTokens + outputTokens,
 		estimated: real ? false : (base.estimated ?? true),
 		updatedAt: Date.now()
@@ -89,10 +100,27 @@ export function applyUsage(current, incoming) {
  */
 export function subtractUsage(current, delta) {
 	if (!current || !delta) return current;
+	// #17934: roll the per-model breakdown back too, so a superseded
+	// estimate leaves no phantom per-model tokens.
+	const byModel = current.byModel ? { ...current.byModel } : undefined;
+	if (byModel && delta.model) {
+		const key = delta.model || 'unknown';
+		const modelUsage = byModel[key];
+		if (modelUsage) {
+			const nextInput = Math.max(0, modelUsage.inputTokens - (delta.inputTokens ?? 0));
+			const nextOutput = Math.max(0, modelUsage.outputTokens - (delta.outputTokens ?? 0));
+			if (nextInput === 0 && nextOutput === 0) delete byModel[key];
+			else byModel[key] = { inputTokens: nextInput, outputTokens: nextOutput };
+		}
+	}
+	const inputTokens = Math.max(0, current.inputTokens - (delta.inputTokens ?? 0));
+	const outputTokens = Math.max(0, current.outputTokens - (delta.outputTokens ?? 0));
 	return {
 		...current,
-		inputTokens: Math.max(0, current.inputTokens - (delta.inputTokens ?? 0)),
-		outputTokens: Math.max(0, current.outputTokens - (delta.outputTokens ?? 0)),
+		...(byModel ? { byModel } : {}),
+		inputTokens,
+		outputTokens,
+		totalTokens: inputTokens + outputTokens,
 		cachedInputTokens: Math.max(0, (current.cachedInputTokens ?? 0) - (delta.cachedInputTokens ?? 0))
 	};
 }
