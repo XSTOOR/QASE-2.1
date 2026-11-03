@@ -27,7 +27,7 @@ test('#18479 contract: paintConfig falls back to legacy when hybrid QA is disabl
 	// disabled is permanent for the operator's choice; qualification issues
 	// still surface as attention but the mode default only follows the flag.
 	assert.match(body, /qaUi\.executionMode\.value === 'hybrid'/, 'must detect the shipped hybrid default');
-	assert.match(body, /config\.hybridQa && !config\.hybridQa\.enabled/, 'must gate on hybridQa.enabled');
+	assert.match(body, /!config\.hybridQa\?\.enabled/, 'must gate on hybridQa.enabled');
 	assert.match(body, /qaUi\.executionMode\.value = 'legacy'/, 'must fall back to legacy');
 	// The fallback must happen BEFORE qaJourney.sync()/syncQaSubmitState()
 	// repaint the gate states, otherwise the button re-syncs with the stale

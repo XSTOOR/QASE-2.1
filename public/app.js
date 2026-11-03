@@ -6683,7 +6683,7 @@ function paintConfig(config) {
 	// selectQaExecutionMode(undefined) default when hybrid is disabled. The
 	// run then takes the /api/qa-matrix-runs path. A user who explicitly chose
 	// a mode is never overridden — this only corrects the uncorrected default.
-	if (qaUi.executionMode && qaUi.executionMode.value === 'hybrid' && config.hybridQa && !config.hybridQa.enabled) {
+	if (qaUi.executionMode && qaUi.executionMode.value === 'hybrid' && !config.hybridQa?.enabled) {
 		qaUi.executionMode.value = 'legacy';
 	}
 	const hybridStatus = $('qa-hybrid-availability');
