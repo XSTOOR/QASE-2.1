@@ -6674,6 +6674,18 @@ function paintConfig(config) {
 	state.config = config;
 	const modeField = $('qa-execution-mode-field');
 	if (modeField) modeField.dataset.state = config.hybridQa?.available ? 'ready' : 'attention';
+	// The launcher's execution mode ships as "hybrid" in the markup. When the
+	// server reports hybrid QA unavailable (feature flag off / qualification
+	// missing), keeping mode=hybrid wedges the launcher gate permanently —
+	// "Review test run" never enables because hybridLaunchOptions() rejects the
+	// mode on every gate check, with no way for the user to proceed. Fall back
+	// to legacy single-model QA, matching the server's own
+	// selectQaExecutionMode(undefined) default when hybrid is disabled. The
+	// run then takes the /api/qa-matrix-runs path. A user who explicitly chose
+	// a mode is never overridden — this only corrects the uncorrected default.
+	if (qaUi.executionMode && qaUi.executionMode.value === 'hybrid' && config.hybridQa && !config.hybridQa.enabled) {
+		qaUi.executionMode.value = 'legacy';
+	}
 	const hybridStatus = $('qa-hybrid-availability');
 	if (hybridStatus) hybridStatus.textContent = hybridAvailabilityMessage(config);
 	const selectedAgent = $('qa-selected-agent'); if (selectedAgent) selectedAgent.textContent = qaLauncherModeLabel(qaUi.executionMode?.value, config);
