@@ -314,6 +314,8 @@ export function createSession(title = 'New test run', options = {}) {
 		/** Selected standard QA test ids; undefined = full coverage. */
 		selectedTests: options.selectedTests ? [...options.selectedTests] : undefined,
 		qaExecutionMode: options.qaExecutionMode === 'hybrid' ? 'hybrid' : undefined,
+		// Execution contracts are pinned at creation; saved runs keep theirs.
+		qaDiscoveryVersion: options.qaExecutionMode === 'hybrid' ? 1 : undefined,
 		/** Security testing authorization for runs with security checks. */
 		securityAuthorization: options.securityAuthorization
 			? structuredClone(options.securityAuthorization)

@@ -44,6 +44,13 @@ test('plan resolution and verified platform access are distinct from executed co
   assert.doesNotMatch(nodes.map(node => node.textContent).join(' '), /Platform access:/, 'A public run without an access prerequisite must not look blocked on credentials.');
 });
 
+test('discovery, executed attempts, accountable dispositions and conclusive coverage are shown separately',()=>{
+ const nodes=[],document={createElement(){const n={textContent:'',setAttribute(){},append(){}};nodes.push(n);return n;}};
+ renderHybridQa({mode:'qa',qaExecutionMode:'hybrid',hybrid:{counts:{passed:1,inconclusive:10},coverage:1/11,accountability:{total:11,attempted:8,accounted:9,pending:2},discovery:{status:'ready',features:17,observations:4}}},document);
+ const text=nodes.map(n=>n.textContent).join(' ');
+ assert.match(text,/Conclusive scenario coverage: 9%/);assert.match(text,/8\/11 scenarios attempted/);assert.match(text,/9\/11 accounted for/);assert.match(text,/17 observed features/);
+});
+
 test('temporary responsive samples cannot replace the selected-device preview or masquerade as another device', () => {
   const viewportTesting = { phase: 'responsive_sample', primary: { width: 1440, height: 900 }, current: { width: 390, height: 900 } };
   const frame = { viewportTesting, viewport: viewportTesting.current };

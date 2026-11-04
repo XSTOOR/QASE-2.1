@@ -172,7 +172,7 @@ test('repository requires a frozen trusted tenant context', () => {
 });
 
 test('bootstrap uses transaction-local scope and creates owner tenancy in one transaction', async () => {
-	const fake = scriptedPool(call => /INSERT INTO (organizations|users|organization_memberships|projects)/.test(call.text)
+	const fake = scriptedPool(call => /INSERT INTO (organizations|users|organization_memberships|projects)|UPDATE users/.test(call.text)
 		? { rows: [{ status: 'active' }], rowCount: 1 }
 		: { rows: [], rowCount: 0 });
 	const repository = createPostgresRunRepository({ pool: fake.pool, tenantContext: TENANT, now: () => NOW });
@@ -186,11 +186,12 @@ test('bootstrap uses transaction-local scope and creates owner tenancy in one tr
 	});
 	assert.equal(fake.calls[0].text, 'BEGIN');
 	assert.match(fake.calls[1].text, /set_config\('qase\.organization_id'/);
-	assert.deepEqual(fake.calls[1].params, [TENANT.organizationId, TENANT.projectId]);
+	assert.deepEqual(fake.calls[1].params, [TENANT.organizationId, TENANT.projectId, TENANT.actorUserId]);
 	assert.match(fake.calls[2].text, /INSERT INTO organizations/);
 	assert.match(fake.calls[3].text, /INSERT INTO users/);
 	assert.match(fake.calls[4].text, /INSERT INTO organization_memberships/);
-	assert.match(fake.calls[5].text, /INSERT INTO projects/);
+	assert.match(fake.calls[5].text, /UPDATE users/);
+	assert.match(fake.calls[6].text, /INSERT INTO projects/);
 	assert.equal(fake.calls.at(-1).text, 'COMMIT');
 	assert.equal(fake.state.releases, 1);
 });

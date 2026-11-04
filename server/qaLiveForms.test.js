@@ -8,6 +8,8 @@ import { createQaInputIsolation } from './qaInputIsolation.js';
 import { createQaScenarioLedger } from './qaScenarioLedger.js';
 import { validateHybridFinding } from './qaCompletionGate.js';
 import { runJevBrowserCheck } from './jevBrowserChecks.js';
+import {inspectJevPage} from './jevBrowserChecks.js';
+import {runJevAccessibility} from './jevAccessibility.js';
 
 async function fixture(t, content) {
   const requests = [];
@@ -45,6 +47,7 @@ test('real inputs and negative paths run without submission, preserve private fi
   assert.equal(await f.page.locator('#text').inputValue(), ''); assert.equal(await f.page.locator('#email').inputValue(), '');
   assert.equal(await f.page.locator('#private').inputValue(), 'private-original-value'); assert.equal(await f.page.locator('#token').inputValue(), '');
   assert.ok(!JSON.stringify(result).includes('private-original-value'));
+  assert.deepEqual(result.coverageLimitations.map(({code,excludedControls})=>({code,excludedControls})),[{code:'QA_INPUT_SAMPLE_LIMIT',excludedControls:2}]);
   await new Promise(resolve => setTimeout(resolve, 1100));
   assert.ok(!f.requests.some(request => /save|late/.test(request.url)));
   assert.ok(result.blockedRequests.length); assert.ok(result.gaps.some(gap => /network dependencies/.test(gap)));
@@ -81,6 +84,28 @@ test('number boundaries, textareas and observed select options are exercised and
   assert.ok(result.fields.find(field => field.field === 'choice').trials.some(trial => trial.kind === 'observed_option'));
   for (const id of ['quantity', 'notes', 'choice']) assert.equal(await f.page.locator(`#${id}`).inputValue(), '');
   assert.equal(result.assertions.filter(item => item.outcome === 'fail').length, 0);
+});
+
+test('search inputs receive live text edge cases rather than becoming unsupported form gaps', { timeout:15000 },async t=>{
+ const f=await fixture(t,'<label>Search tasks<input id="query" type="search" required minlength="3"></label>');
+ const result=await runLiveFormChecks(f.page,f.options);
+ assert.equal(result.formTesting.fieldsFilled,1);assert.ok(result.formTesting.negativeCases>=2);
+ assert.ok(result.fields[0].trials.some(trial=>trial.kind==='unicode'));
+ assert.deepEqual(result.coverageLimitations,[]);assert.equal(await f.page.locator('#query').inputValue(),'');
+ assert.equal(f.requests.filter(r=>r.method!=='GET').length,0);
+});
+
+test('native modal ownership excludes inert background inputs, tabs and naming checks', { timeout:15000 },async t=>{
+ const f=await fixture(t,`<div role="tablist"><button id="background-tab" role="tab" aria-selected="false">Details</button></div><form><input id="background" value="private-value"><button id="unnamed"></button></form><dialog id="modal"><form><label>Record name<input id="record" name="record" required minlength="3"></label></form><button type="button" onclick="modal.close()">Close</button></dialog><script>modal.showModal()</script>`);
+ const inventory=await inspectJevPage(f.page);
+ assert.equal(inventory.tabs.length,0);assert.equal(inventory.fieldCount,1);assert.equal(inventory.forms.length,1);
+ const result=await runLiveFormChecks(f.page,f.options);
+ assert.equal(result.formTesting.fieldsFilled,1);assert.equal(result.gaps.length,0);assert.equal(result.fields[0].field,'record');
+ assert.equal(await f.page.locator('#record').inputValue(),'');assert.equal(await f.page.locator('#background').inputValue(),'private-value');
+ const naming=await runJevAccessibility(f.page);
+ assert.ok(naming.assertions.length>0&&naming.assertions.every(a=>a.outcome==='pass'));
+ await f.page.locator('dialog button').click();
+ assert.equal((await inspectJevPage(f.page)).tabs.length,1,'Closing the modal restores the background inventory.');
 });
 
 test('cancellation restores filled values and retains egress quarantine; missing isolation never edits fields', { timeout: 15000 }, async t => {

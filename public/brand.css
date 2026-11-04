@@ -465,3 +465,31 @@ body.studio-workspace .journey-run-guide[data-tone="attention"] #journey-run-act
 body.studio-workspace .journey-run-guide[data-tone="complete"] #journey-run-action:not(:disabled) {
   background: #dcf3e9; border-color: #a7d6c1; color: #205c46;
 }
+/* Founder reports share the workspace palette in both tabs and exports.
+   Preserve the existing sections and cards while keeping light-mode text
+   readable; the legacy report palette was hard-coded for a dark canvas. */
+body.studio-workspace #report-view:has(> .founder-hero) {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+body.studio-workspace :is(.founder-hero, .founder-section, .founder-scope, .founder-card, .founder-priority, .founder-roadmap-item, .founder-evidence-grid > div) {
+  color: var(--text-secondary);
+  border-color: var(--border);
+  background: var(--surface-1);
+}
+body.studio-workspace .founder-scope { background: var(--border); }
+body.studio-workspace .founder-scope > div { background: var(--surface-2); }
+body.studio-workspace :is(.founder-hero h2, .founder-section h3, .founder-scope strong, .founder-card strong, .founder-priority strong, .founder-roadmap-item strong, .founder-evidence-grid dd) {
+  color: var(--text);
+}
+body.studio-workspace :is(.founder-copy, .founder-card p, .founder-priority p, .founder-roadmap-item p, .founder-list, .founder-assumption-list) {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.65;
+}
+body.studio-workspace :is(.founder-hero p, .founder-section > header p, .founder-scope span, .founder-evidence-grid dt, .founder-evidence-note) {
+  color: var(--text-muted);
+}
+body.studio-workspace .founder-status { background: var(--surface-2); }
+body.studio-workspace .founder-status[data-status="complete"] { color: var(--success); }

@@ -141,7 +141,8 @@ export async function runJevTabs(page, { inspect, settle, prepare, authorizeCont
 export async function runJevNavigationControl(page, input, { inspect, settle, authorizeControl, onAction, signal }) {
   signal?.throwIfAborted();
   const original = await inspect(page), control = (input.action === 'open_test_form' ? original.formOpeners : original.navigationControls)?.find(item => item.selector === input.selector);
-  if (!control || (input.action !== 'open_test_form' && risky.test(control.label))) throw new Error('Choose a fresh observed navigation button or test-form opener.');
+  if (!control) return { success: false, code: 'QA_CONTROL_STALE', dispatched: false, assertions: [], inventory: original, error: 'Choose a fresh observed navigation button or test-form opener.' };
+  if (input.action !== 'open_test_form' && risky.test(control.label)) throw new Error('Choose a fresh observed navigation button or test-form opener.');
   const obstructed = inventory => ({ success: false, code: 'QA_CONTROL_OBSTRUCTED', dispatched: false, assertions: [], inventory, gaps: ['An overlay or non-actionable control prevents navigation. Inspect and dismiss an observed safe close control before retrying.'] });
   if (original.overlays?.length) return obstructed(original);
   const source = new URL(page.url()), blocked = [];
@@ -164,23 +165,26 @@ export async function runJevNavigationControl(page, input, { inspect, settle, au
     signal?.throwIfAborted();
     await page.locator(control.selector).click({ timeout: 3000 }); await settle(page);
     destination = await inspect(page);
-    changed = destination.url !== original.url || destination.text !== original.text;
+    changed = destination.url !== original.url || featureStateKey(destination) !== featureStateKey(original);
     await onAction?.({ phase: 'after', action: 'click', selector: control.selector });
   } finally {
+    // The trial guard must not quarantine the source page's bootstrap or
+    // teardown during restoration. The underlying host policy remains active.
+    await page.unroute('**/*', guard);
     try {
       if (input.restore === false) restored = true;
       else { await page.goto(original.url, { waitUntil: 'domcontentloaded', timeout: 15000 }); await settle(page); restored = page.url() === original.url; }
     }
     catch { restored = false; }
-    finally { await page.unroute('**/*', guard); }
   }
   if (!restored) return { success: false, code: 'QA_NAVIGATION_RESTORE_FAILED', assertions: [], gaps: ['Source restoration could not be verified; inspect browser state before any further action.'] };
   const inventory = await inspect(page);
-  const gaps = blocked.length ? ['Navigation requires a blocked write or unapproved dependency; no correctness verdict was inferred.'] : !changed ? ['The observed control did not produce a verifiable new state; no pass or confirmed defect was inferred.'] : [];
+  const ready = destination?.readiness?.ready !== false;
+  const gaps = !ready ? ['Navigation reached a loading or busy shell; no destination coverage or feature absence was inferred.'] : blocked.length ? ['Requests were blocked during navigation; their causal relationship to the UI is unverified. No correctness verdict was inferred for a blocked write or dependency.'] : !changed ? ['The observed control did not produce a verifiable new state; no pass or confirmed defect was inferred.'] : [];
   if (!restored) gaps.push('Source restoration was not verified.');
   const from = featureStateKey(original), to = destination && featureStateKey(destination);
-  return { assertions: changed && restored && !blocked.length ? [result('navigation', 'Observed navigation button changes a rendered state', true, 'A route or rendered content transition after an observed navigation control', { label: control.label, changed, restored })] : [],
+  return { assertions: changed && ready && restored && !blocked.length ? [result('navigation', 'Observed navigation button changes a rendered state', true, 'A route or rendered content transition after an observed navigation control', { label: control.label, changed, restored })] : [],
     inventory: destination && changed ? destination : inventory, ...(input.restore === false ? {} : { restoredInventory: inventory }),
-    ...(changed && to !== from ? { transition: { from, to, control: { selector: control.selector, label: control.label, ...(input.action === 'open_test_form' ? { kind: 'form_opener' } : {}) } } } : {}),
+    ...(changed && ready && to !== from ? { transition: { from, to, control: { selector: control.selector, label: control.label, ...(input.action === 'open_test_form' ? { kind: 'form_opener' } : {}) } } } : {}),
     blockedRequests: blocked, ...(gaps.length ? { gaps } : {}), limitations: 'Observed read-only navigation and source restoration only. No submitted workflow, permissions test or same-URL state coverage is implied.' };
 }

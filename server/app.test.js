@@ -1240,6 +1240,26 @@ test('stop, report, configuration, malformed JSON, and API 404 contracts remain 
 	assert.deepEqual(await body(await fixture.request('/api/unknown')), { error: 'API route not found.' });
 });
 
+test('hybrid qualification renewal uses only saved operator configuration and rejects cross-origin and payload overrides',async t=>{
+ const memory=createMemoryServices();let calls=0;
+ memory.services.configuration.qualifyHybrid=async()=>{calls++;return{hybridQa:{available:false,status:'qualification_running'}};};
+ const fixture=await startFixture({memory});t.after(()=>fixture.close());
+ const accepted=await fixture.request('/api/config/hybrid/qualification',{method:'POST',json:{}});
+ assert.equal(accepted.status,202);assert.equal((await body(accepted)).hybridQa.status,'qualification_running');assert.equal(calls,1);
+ const override=await fixture.request('/api/config/hybrid/qualification',{method:'POST',json:{apiKey:'untrusted',endpoint:'https://outside.test/'}});
+ assert.equal(override.status,400);assert.equal(calls,1);
+ const crossOrigin=await fixture.request('/api/config/hybrid/qualification',{method:'POST',json:{},headers:{origin:'https://outside.test'}});
+ assert.equal(crossOrigin.status,403);assert.equal(calls,1);
+});
+
+for(const role of ['pilot','viewer','unknown'])test(`${role} users cannot trigger billable qualification checks`,async t=>{
+ const memory=createMemoryServices();let calls=0;
+ memory.services.configuration.qualifyHybrid=async()=>{calls++;return{};};
+ const access={mount(app){app.use('/api',(request,_response,next)=>{request.auth={...TEST_TENANT,role};next();});}};
+ const fixture=await startFixture({memory,access});t.after(()=>fixture.close());
+ assert.equal((await fixture.request('/api/config/hybrid/qualification',{method:'POST',json:{}})).status,403);assert.equal(calls,0);
+});
+
 test('SSE stays live without login sessions and removes its subscription on disconnect', { timeout: 5_000 }, async t => {
 	const fixture = await startFixture();
 	t.after(() => fixture.close());

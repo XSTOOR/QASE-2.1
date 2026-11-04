@@ -1,3 +1,5 @@
+import { hasConfirmedAccess } from './hybridAuth.js';
+
 /** Run policy is pinned at creation. Allocation may grow only inside its fixed
  * operator-defined ceiling; exact receipts and lifetime counters never reset. */
 export const autonomous = state => state?.continuationPolicyVersion === 2 && state.executionPolicy?.mode === 'autonomous';
@@ -20,7 +22,7 @@ export function hasUnknownUsage(state) {
 }
 export function requestAutomaticCloseout(session, reason) {
   const state = session.hybrid;
-  if (!autonomous(state) || hasUnknownUsage(state) || state.finishRequested) return false;
+  if (!autonomous(state) || state.executionPolicy.incompleteOutcome==='pause' || hasUnknownUsage(state) || state.finishRequested) return false;
   state.finishRequested = true; state.budgetFinalizing = true;
   state.closeoutAuthorization = { source: 'pinned_run_policy', reason, at: Date.now() };
   return true;
@@ -30,13 +32,19 @@ export function requestAutomaticCloseout(session, reason) {
  * that an already-authorized signed-in platform remains inaccessible. */
 export function synchronizeAccessPhase(state) {
   const auth = state.authentication;
-  const context = ['authenticated', 'owner_confirmed'].includes(auth?.status) ? auth.grantId : 'public';
+  const context = hasConfirmedAccess(state) ? auth.grantId : 'public';
   state.accessContext ??= 'public';
   if (state.accessContext === context) return false;
   const previous = state.accessContext;
   state.accessContext = context;
   if (context === 'public') return true;
   for (const scenario of state.scenarios) {
+    if (state.discovery?.version === 1 && scenario.status === 'running' && !state.actions.some(a => a.scenarioId === scenario.id && ['running','uncertain'].includes(a.status))) {
+      scenario.priorDispositions ??= [];
+      scenario.priorDispositions.push({ accessContext: previous, status: 'running', uncertainty: ['Access context changed; discovery must be verified before continuing this scope.'], at: Date.now() });
+      scenario.status = 'planned';
+      if (state.currentScenarioId === scenario.id) state.currentScenarioId = undefined;
+    }
     if (scenario.uncertainty.length) {
       scenario.priorDispositions ??= [];
       scenario.priorDispositions.push({ accessContext: previous, status: scenario.status, uncertainty: [...scenario.uncertainty], at: Date.now() });

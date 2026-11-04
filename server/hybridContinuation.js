@@ -13,8 +13,8 @@ const PUBLIC = 'Continue public-only; do not attempt another sign-in';
 
 export function continuationOffer(session) {
   const state = session.hybrid;
-  const changes = Object.fromEntries(Object.entries(increments).map(([key, amount]) => [key, Math.max(0, Math.min(amount, ceilings[key] - state.budgets[key]))]));
-  const pages = Math.max(0, Math.min(8, 80 - (state.exploration?.maxPages || 0)));
+  const changes = Object.fromEntries(Object.entries(increments).map(([key, amount]) => [key, Math.max(0, Math.min(amount, Math.min(ceilings[key],state.executionPolicy?.limits?.[key]??ceilings[key]) - state.budgets[key]))]));
+  const pages = Math.max(0, Math.min(8, Math.min(80,state.executionPolicy?.maxPages??80) - (state.exploration?.maxPages || 0)));
   const available = ['reasoner', 'classifier'].every(role => {
     const metric = state.telemetry?.[role] || {};
     return state.budgets[`${role}Calls`] + changes[`${role}Calls`] > (metric.calls || 0) && state.budgets[`${role}Tokens`] + changes[`${role}Tokens`] > (metric.inputTokens || 0) + (metric.outputTokens || 0);
@@ -25,7 +25,7 @@ export function continuationOffer(session) {
 
 /** Host-authored prerequisites enter the existing SDK question tool. They do
  * not spend model tokens or create another agent loop. */
-export function prepareHostDecision(session, { closing = false, forcedBudget = false } = {}) {
+export function prepareHostDecision(session, { closing = false, forcedBudget = false, forcedCoverage = false } = {}) {
   const state = session.hybrid;
   if (![1, 2].includes(state.continuationPolicyVersion)) return null;
   if (state.pendingDecision && (!forcedBudget || state.pendingDecision.kind === 'budget')) return state.pendingDecision;
@@ -41,12 +41,12 @@ export function prepareHostDecision(session, { closing = false, forcedBudget = f
       question = `Authenticated testing needs test account credentials or an access recovery decision. Use the secure form, or continue public-only.${auth.blockedEndpoint ? ` The site attempted this authentication API; approve its exact URL only if trusted: ${auth.blockedEndpoint}` : ''}`;
       options = ['Provide an authorized test account securely', PUBLIC];
     }
-  } else if (autonomous(state)) return null;
+  } else if (autonomous(state)&&!forcedCoverage&&!(closing&&state.executionPolicy.incompleteOutcome==='pause')) return null;
   else if (closing && !state.partialReportApproved) {
     kind = 'budget'; offer = continuationOffer(session);
     question = 'Testing is unfinished. Progress and exact usage are saved. Approve a bounded additional budget to continue the remaining tests, or explicitly choose a report with coverage gaps.';
     options = offer.available && offer.changes.reasonerTokens > 0 && offer.changes.durationMs > 0 ? [offer.label, FINISH] : [FINISH];
-  } else if (!state.partialReportApproved && state.scenarios.length && state.scenarios.every(item => !['planned', 'running'].includes(item.status)) && hybridRoutePolicy(state).publicationAllowed && hybridCompletion(session).gaps.length) {
+  } else if (!state.partialReportApproved && (forcedCoverage || state.scenarios.length && state.scenarios.every(item => !['planned', 'running'].includes(item.status)) && hybridRoutePolicy(state).publicationAllowed && hybridCompletion(session).gaps.length)) {
     kind = 'coverage';
     question = 'Some requested checks still lack requirements, access or execution evidence. Provide the missing context to continue, or explicitly publish the report with those coverage gaps.';
     options = ['I will provide the missing requirements or access context', FINISH];
@@ -60,11 +60,11 @@ export function prepareHostDecision(session, { closing = false, forcedBudget = f
  * Use the supported SDK pending-question API, as the existing JEV controller
  * does. Unknown usage or action state is never reconciled by this approval. */
 export async function pauseForBudgetApproval(session, runtime, error) {
-  if (autonomous(session.hybrid)) {
+  if (autonomous(session.hybrid)&&session.hybrid.executionPolicy.incompleteOutcome!=='pause') {
     if (['HYBRID_MODEL_BUDGET', 'HYBRID_TIME_BUDGET', 'HYBRID_BROWSER_BUDGET'].includes(error?.code) && requestAutomaticCloseout(session, error.code)) return { automatic: true };
     return null;
   }
-  if (session.hybrid?.continuationPolicyVersion !== 1 || !['HYBRID_MODEL_BUDGET', 'HYBRID_TIME_BUDGET', 'HYBRID_BROWSER_BUDGET'].includes(error?.code) ||
+  if (![1,2].includes(session.hybrid?.continuationPolicyVersion) || !['HYBRID_MODEL_BUDGET', 'HYBRID_TIME_BUDGET', 'HYBRID_BROWSER_BUDGET'].includes(error?.code) ||
       typeof runtime.agentSession?.pauseForQuestion !== 'function' || Object.values(session.hybrid.modelBudget?.roles || {}).some(role => role.legacyCalls > 0 || role.reservations?.some(item => ['uncertain', 'pending'].includes(item.status)))) return null;
   const decision = prepareHostDecision(session, { closing: true, forcedBudget: true });
   if (!decision) return null;
@@ -114,7 +114,7 @@ export function applyHostDecision(session, answer) {
  * No model/browser request or extra budget is permitted in this path. */
 export function hostCloseoutCalls(session) {
   const state = session.hybrid;
-  const approved = state?.continuationPolicyVersion === 1 && state.partialReportApproved?.decisionId && state.partialReportApproved.by === session.ownerUserId;
+  const approved = [1,2].includes(state?.continuationPolicyVersion) && state.partialReportApproved?.decisionId && state.partialReportApproved.by === session.ownerUserId;
   const automatic = autonomous(state) && state.closeoutAuthorization?.source === 'pinned_run_policy';
   if (!state?.finishRequested || !(approved || automatic)) return null;
   if (Object.values(state.modelBudget?.roles || {}).some(role => role.legacyCalls > 0 || role.reservations?.some(item => ['pending', 'uncertain'].includes(item.status)))) throw new Error('Usage receipts must be reconciled before host closeout.');

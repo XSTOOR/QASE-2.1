@@ -72,7 +72,7 @@ test('native synthetic microphone exercises denied capture, signal, application 
 	assert.equal(negativeProbe.probe.tracksStopped, true);
 	assert.equal((await bridge.media({ action: 'set_permission', permission: 'granted' })).permission, 'granted');
 	const probe = await bridge.media({ action: 'probe', durationMs: 1600 });
-	assert.equal(probe.probe.outcome, 'captured');
+	assert.equal(probe.probe.outcome, 'captured', JSON.stringify(probe.probe));
 	assert.equal(probe.probe.audioTracks, 1);
 	assert.equal(probe.probe.signalDetected, true, JSON.stringify(probe.probe));
 	assert.equal(probe.probe.tracksStopped, true);

@@ -48,7 +48,9 @@ export function createRunResume(overrides = {}) {
 		if (session.interruptedFromRun !== true) return false;
 		if (session.status !== 'interrupted') return false;
 		if ((session.autoResumeCount ?? 0) >= MAX_AUTO_RESUME_ATTEMPTS) return false;
-		if (session.report?.publishedAt) return false;
+		// QA's persisted artifact uses ts; publishedAt is a legacy variant.
+		// A crash between report commit and status=done must not repeat testing.
+		if (session.report?.publishedAt || session.report?.ts) return false;
 		if (session.mode === 'sqa' && session.sqa?.finalizedAt) return false;
 		if (session.mode === 'founder' && session.founder?.finalizedAt) return false;
 		return true;

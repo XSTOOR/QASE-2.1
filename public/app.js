@@ -60,7 +60,9 @@ import { renderJevExecution } from './jevExecutionView.js';
 import { planPresentation } from './planPresentation.js';
 import { qaPlanProgress, qaExecutionModeLabel, qaLauncherModeLabel, qaLauncherSelectionProblem } from './qaExecutionView.js';
 import { renderHybridQa, hybridLaunchOptions, hybridScenarioProgress, hybridScenarioPlan, hybridAvailabilityMessage, holdPrimaryPreview, viewportStatusText } from './hybridQaView.js';
+import { renderModeReasoning } from './modeReasoningView.js';
 import { focusedBrowserConfiguration, qaBrowserStatus, renderQaBrowserStatus } from './qaBrowserStatus.js';
+import { renewHybridQualification } from './hybridQualification.js';
 
 /**
  * Qase dashboard.
@@ -1072,6 +1074,12 @@ async function selectSession(id, { updateRoute = true } = {}) {
 
 	const session = await api(`/sessions/${id}`);
 	if (state.sessionId !== id) return;
+	// Commit the selected run's URL before rendering it. SSE subscription can
+	// take time; a refresh in that interval must reload this run, not the old
+	// workspace or launcher. Route rendering still finishes after connection.
+	if (updateRoute && pageRouter.started) {
+		await pageRouter.navigate({ name: 'run', runId: id }, { applyRoute: false });
+	}
 	applySessionSnapshot(session);
 	if (session.mode === 'founder') {
 		void founderLoadProjectState().then(() => renderFounder());
@@ -1079,7 +1087,7 @@ async function selectSession(id, { updateRoute = true } = {}) {
 		state.founderProjectState = null;
 	}	await connect(id);
 	await refreshRuns();
-	if (updateRoute && pageRouter.started) {
+	if (updateRoute && pageRouter.started && state.sessionId === id) {
 		await pageRouter.navigate({ name: 'run', runId: id });
 	}
 }
@@ -4144,6 +4152,8 @@ function renderSqa() {
 	const sqa = state.session.sqa ?? {};
 	const scope = sqa.scope ?? {};
 	const assessment = sqa.assessment;
+	const executionNotice=renderModeReasoning(state.session);
+	if(executionNotice)el.sqaView.append(executionNotice);
 	const lifecycle = describeSqaLifecycle(sqa, state.session.status, state.session.activities?.length ?? 0);
 	el.countSqa.textContent = lifecycle.badge;
 
@@ -4860,6 +4870,7 @@ function handleEvent(event) {
 
 		case 'sqa':
 			session.mode = 'sqa';
+			if (Array.isArray(event.todos)) { session.todos = event.todos; renderTodos(); }
 			session.sqa ??= { scope: {} };
 			session.sqa.assessment = event.assessment;
 			if (event.final) session.sqa.finalizedAt = new Date(event.ts ?? Date.now()).toISOString();
@@ -4913,6 +4924,7 @@ function handleEvent(event) {
 
 		case 'founder.finalized':
 			session.mode = 'founder';
+			if (Array.isArray(event.todos)) { session.todos = event.todos; renderTodos(); }
 			session.founder ??= { scope: {}, observations: [] };
 			session.founder.report = event.report;
 			session.founder.finalizedAt = event.report?.generatedAt ?? new Date(event.ts ?? Date.now()).toISOString();
@@ -5339,9 +5351,10 @@ function qaLaunchBlockedReason() {
 }
 
 /** Keep the compact launcher honest when availability or selection changes. */
+let qaQualificationChecking = false;
 function syncQaSelectionSummary() {
 	renderQaBrowserStatus(qaBrowserStatus({ fetchState: qaMatrixState.fetchState, configurations: qaMatrixState.index,
-		envIds: qaMatrixState.selectedEnvIds, mode: qaUi.executionMode?.value, config: state.config }), document);
+		envIds: qaMatrixState.selectedEnvIds, mode: qaUi.executionMode?.value, config: state.config, qualificationChecking: qaQualificationChecking }), document);
 	const summary = $('qa-selection-summary');
 	if (!summary) return;
 	const blockedReason = qaLaunchBlockedReason();
@@ -5727,7 +5740,16 @@ if (qaUi.dialog) {
 			qaUi.matrix.fieldset?.scrollIntoView({ block: 'start' });
 			qaUi.matrix.search?.focus({ preventScroll: true });
 		} else if (action === 'reload') await loadQaMatrixCatalog();
-		else if (action === 'config') { try { paintConfig(await api('/config')); syncQaSubmitState(); } catch (error) { setQaFormError(error.message); } }
+		else if (action === 'config') {
+			if (qaQualificationChecking) return;
+			qaQualificationChecking = true;
+			const button = event.currentTarget;
+			button.disabled = true; button.textContent = 'Checking compatibility…';
+			try {
+				await renewHybridQualification({ api, onConfig: config => { paintConfig(config); syncQaSubmitState(); } });
+			} catch (error) { setQaFormError(error.message); }
+			finally { qaQualificationChecking = false; syncQaSelectionSummary(); syncQaSubmitState(); }
+		}
 	});
 	$('journey-focused')?.addEventListener('click', () => {
 		if (qaJourneySelectionMode !== 'quick') qaJourneyCustomSelection = qaMatrixState.selection;

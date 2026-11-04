@@ -68,7 +68,8 @@ export function createQaTestWrites(session, persist) {
           if (signal?.aborted) abort();
         })]);
         trial.status = 'responded'; trial.httpStatus = response.status(); trial.completedAt = Date.now(); await persist();
-        return { success: true, assertions: [], writeTesting: { submitted: true, status: trial.status, httpStatus: trial.httpStatus, testDataPrefix: prefix }, gaps: ['A namespaced test submission was executed. HTTP acknowledgment alone does not prove business success; verify the rendered result against the scenario expectation. Test records may persist and need owner cleanup.'] };
+        const message='A namespaced test submission was executed. HTTP acknowledgment alone does not prove business success; verify the rendered result against the scenario expectation. Test records may persist and need owner cleanup.';
+        return { success: true, assertions: [], writeTesting: { submitted: true, status: trial.status, httpStatus: trial.httpStatus, testDataPrefix: prefix }, gaps: [message],coverageLimitations:[{code:'QA_SUBMISSION_ORACLE_REQUIRED',message}] };
       } catch (error) {
         trial.status = active.request ? 'uncertain' : 'not_dispatched'; trial.completedAt = Date.now(); await persist();
         if (signal?.aborted) throw signal.reason;

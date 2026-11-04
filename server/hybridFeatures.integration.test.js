@@ -10,6 +10,7 @@ import { ensureRuntime, runTurn, deleteRunSnapshot } from './agent.js';
 import { hybridProfile, profileIdentity, REQUIRED_CAPABILITIES, HYBRID_SDK_VERSION } from './hybridConfig.js';
 import { JEV_ENDPOINT } from './jevClient.js';
 import { withUserConfiguration } from './config.js';
+import {hybridUnreportedFindings} from './qaCompletionGate.js';
 
 for (const allowWrites of [false, true]) test(`one native SDK loop explores same-URL features with test writes ${allowWrites ? 'enabled' : 'disabled'}`, { timeout: 180000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-features-sdk-'));
@@ -45,7 +46,8 @@ for (const allowWrites of [false, true]) test(`one native SDK loop explores same
         if (pending) call = ['qa_test_routes', { route_ids: [pending.id] }];
         else {
           const planned = session.hybrid.scenarios.find(s => ['planned', 'running'].includes(s.status));
-          call = planned ? ['qa_close_scenario', { scenario_id: planned.id, disposition: 'not_executed', reason: 'No eligible controls observed on this fixture.' }]
+          const finding=hybridUnreportedFindings(session)[0];
+          call = finding ? ['report_finding',{scenario_id:finding.scenarioId,assertion_id:finding.assertionId,title:'Observed feature control lacks an accessible name',severity:'medium'}] : planned ? ['qa_close_scenario', { scenario_id: planned.id, disposition: 'not_executed', reason: 'No eligible controls observed on this fixture.' }]
             : ['finish_qa_report', { verdict: 'partial', summary: 'Fixture host evidence.' }];
         }
       }
@@ -54,7 +56,7 @@ for (const allowWrites of [false, true]) test(`one native SDK loop explores same
     })();
     record.hybrid.wrapChat(record.runtime.cleanSlateService);
     await runTurn(session, { task: 'Explore observed workspace features and subfeatures, including inputs and negative paths; do not ask for read-only confirmation.' }, store);
-    assert.equal(session.status, 'done', session.statusDetail); assert.equal(questions.length, 0);
+    assert.equal(session.status, 'done', JSON.stringify({detail:session.statusDetail,gaps:session.hybrid.scenarios.map(s=>({category:s.category,gaps:s.executionGaps})),errors:session.activities.filter(a=>a.status==='failed').map(a=>({tool:a.toolName,error:a.error}))})); assert.equal(questions.length, 0);
     const features = session.hybrid.exploration.routes.filter(route => route.kind === 'feature');
     assert.ok(features.some(route => route.label.includes('Projects') && route.status === 'tested'));
     assert.ok(features.some(route => route.label.includes('Details') && route.status === 'tested'), JSON.stringify(features.map(r => [r.label, r.status, r.reason])));
@@ -62,6 +64,7 @@ for (const allowWrites of [false, true]) test(`one native SDK loop explores same
     assert.ok(session.hybrid.evidence.some(e => e.result.formTesting?.negativeCases > 0));
     assert.ok(session.hybrid.scenarios.find(s => s.category === 'forms').routeRuns.some(run => run.featureId));
     assert.ok(session.hybrid.scenarios.find(s => s.category === 'accessibility').assertions.some(a => a.outcome === 'fail'));
+    assert.ok(session.findings.some(f=>f.hybridEvidence),'Reproduced failures must be filed before publication.');
     assert.equal(session.hybrid.scenarios.length, 3, 'Subfeatures extend existing suites, not cosmetic planning items.');
     assert.ok(features.some(route => route.label.includes('Add record') && route.status === 'tested'));
     assert.ok(fixture.reads() > 0); assert.equal(fixture.writes(), allowWrites ? 2 : 0);

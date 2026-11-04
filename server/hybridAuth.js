@@ -168,6 +168,11 @@ export function createHybridAuthentication(session) {
           if (location.origin !== origin || [...document.querySelectorAll('input[type=password]')].some(element => element.getBoundingClientRect().width && element.getBoundingClientRect().height)) return false;
           if (expected) return location.origin + location.pathname + location.hash === expected;
           if (readAccessAllowed && location.origin + location.pathname + location.hash !== loginPage && document.body?.innerText.trim() && document.querySelector('nav,aside,[role="navigation"],[role="tablist"]')) return true;
+          // A completed, changed response surface without a session receipt is
+          // ready for classification as verification_needed. Waiting for a
+          // proof it does not supply only stalls the negative path. The separate
+          // verification below still requires the same authoritative signals.
+          if (!sessionReceipt && location.origin + location.pathname + location.hash !== loginPage && document.readyState !== 'loading' && document.body?.innerText.trim()) return true;
           return (sessionReceipt && location.origin + location.pathname + location.hash !== loginPage && Boolean(document.body?.innerText.trim())) || [...document.querySelectorAll('a,button')].some(element => element.getBoundingClientRect().width && /^(?:log\s*out|sign\s*out)$/i.test((element.textContent || '').trim()));
         }, { origin: auth.origin, expected: auth.expectedUrl, sessionReceipt: acknowledgedSession, loginPage: auth.loginPageUrl, readAccessAllowed: session.hybrid.continuationPolicyVersion >= 2 }, { timeout: 10000 }), signal).catch(error => { if (signal?.aborted) throw error; });
         const observation = await page.evaluate(({ origin, expected, sessionReceipt, loginPage }) => {
@@ -196,8 +201,11 @@ export function createHybridAuthentication(session) {
       } finally {
         active = undefined;
         if (auth.status !== 'authenticated') {
-          await passwordField?.fill('', { timeout: 1000 }).catch(() => {});
-          await userField?.fill('', { timeout: 1000 }).catch(() => {});
+          // count() does not auto-wait. Submitted forms may already be removed;
+          // never wait for their credential fields to reappear on a new route.
+          for (const field of [passwordField, userField]) {
+            if (field && await field.count().catch(() => 0)) await field.fill('', { timeout: 1000 }).catch(() => {});
+          }
         }
         auth.completedAt = Date.now(); await persist();
       }

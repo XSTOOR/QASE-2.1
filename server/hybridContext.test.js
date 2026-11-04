@@ -122,15 +122,16 @@ test('atomic checks cannot relabel scope, fabricate passes without assertions, b
   assert.equal(dispatches, 1);
 });
 
-test('manual scenario ownership cannot change while an atomic browser operation is in flight', async () => {
+test('manual scenario closure waits for the atomic browser operation', async () => {
   const { session, runtime } = fixture(); let release;
   const tool = runtime.wrapTool(createHybridScenarioTool({ name: 'browser_qa_check', parametersSchema: { properties: {} }, async run() { await new Promise(resolve => { release = resolve; }); return { success: true, assertions: [] }; } }));
   const first = tool.run({ scenario_id: session.hybrid.scenarios[0].id, action: 'navigation' });
   await new Promise(resolve => setTimeout(resolve, 0));
   const close = runtime.wrapTool(runtime.tools.find(item => item.name === 'qa_close_scenario'));
-  await assert.rejects(close.run({ scenario_id: session.hybrid.scenarios[0].id, disposition: 'blocked', reason: 'Concurrent closure must not occur.' }), /active browser operation/);
-  release(); await first;
-  assert.equal(session.hybrid.scenarios[0].status, 'inconclusive');
+  const closing = close.run({ scenario_id: session.hybrid.scenarios[0].id, disposition: 'blocked', reason: 'Browser returned an incomplete receipt.' });
+  assert.equal(session.hybrid.scenarios[0].status, 'running');
+  release(); await first; await closing;
+  assert.equal(session.hybrid.scenarios[0].status, 'blocked');
 });
 
 test('model schemas advertise the host verdict rather than inviting repeated unsupported pass attempts', () => {

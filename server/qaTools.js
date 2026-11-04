@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { guardFinalization } from './finalizationGuard.js';
 import { redact } from './secrets.js';
 import { isEngineId } from './browserEngines.js';
 import { verifyRuntimeIdentity } from './runtimeIdentity.js';
@@ -141,7 +142,13 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 			if (session.qaExecutionMode === 'hybrid') {
 				try { hybridEvidence = validateHybridFinding(session, input || {}); }
 				catch (error) { return { success: false, error: error.message }; }
-				const existing = session.findings.find(item => item.hybridEvidence?.assertionId === hybridEvidence.assertionId || item.hybridEvidence?.failureKey === hybridEvidence.failureKey);
+				const existing = session.findings.find(item => {
+					if(item.hybridEvidence?.assertionId === hybridEvidence.assertionId || item.hybridEvidence?.failureKey === hybridEvidence.failureKey)return true;
+					// Old checkpoints used a key without the surface URL. Recompute
+					// from intact evidence rather than discarding or duplicating them.
+					if(!item.hybridEvidence)return false;
+					try{return validateHybridFinding(session,{scenario_id:item.hybridEvidence.scenarioId,assertion_id:item.hybridEvidence.assertionId}).failureKey===hybridEvidence.failureKey;}catch{return false;}
+				});
 				if (existing) return { success: true, finding_id: existing.id, total_findings: session.findings.length };
 				input = { ...input, expected: hybridEvidence.expected, actual: hybridEvidence.actual, url: hybridEvidence.url, evidence: hybridEvidence.evidence };
 			}
@@ -238,7 +245,7 @@ const finishReport = {
 			}
 			if (session.qaExecutionMode === 'hybrid') {
 				try { input = validateHybridReport(session, input); }
-				catch (error) { return { success: false, error: error.message, ...(error.code === 'HYBRID_DEPTH_PENDING' ? { code: error.code, coverage: error.coverage } : {}) }; }
+				catch (error) { return { success: false, error: error.message, ...(String(error.code||'').startsWith('HYBRID_')?{code:error.code}:{}), ...(error.code === 'HYBRID_DEPTH_PENDING' ? { coverage: error.coverage } : {}) }; }
 			}
 			for (const field of ['covered', 'not_covered', 'recommendations']) {
 				if (input[field] !== undefined && (!Array.isArray(input[field]) || !input[field].every(hasText))) {
@@ -417,5 +424,5 @@ const finishReport = {
 		}
 	};
 
-	return [reportFinding, finishReport];
+	return [reportFinding, guardFinalization(finishReport, session, { isCancelled })];
 }

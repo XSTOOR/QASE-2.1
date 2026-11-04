@@ -1,6 +1,6 @@
 {
   "releaseId": "qase-2026-10-28-hybrid-production-r5",
-  "uiVersion": "20261028-3",
+  "uiVersion": "20261105-1",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Hybrid QA with same-URL feature exploration, owner-scoped test records, automatic read continuation and honest coverage; UI 20261028-3"
+  "source": "Hybrid QA with same-URL feature exploration, owner-scoped test records, automatic read continuation, honest coverage and gateway qualification renewal; UI 20261105-1"
 }

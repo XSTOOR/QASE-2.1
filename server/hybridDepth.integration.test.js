@@ -42,7 +42,7 @@ test('one installed SDK loop discovers hidden/lazy routes and confirms nine defe
     record.hybrid.router.classifier = async (_state, questions) => { ranks++; return Object.fromEntries(Object.entries(questions).map(([id, question]) => [id, { choice: Object.keys(question.criteria)[0] }])); };
     record.runtime.cleanSlateService.chat = async (_messages, options) => (async function* () {
       record.hybrid.usage({ reservationId: options.qaseBudgetReservationId, callId: randomUUID(), inputTokens: 100, outputTokens: 30, estimated: false });
-      assert.ok(options.tools.length <= 10);
+      assert.ok(options.tools.length <= 13, 'The bounded catalog includes schedule and investigation tools.');
       let calls;
       if (turn === 0) calls = [['browser_open', { url: session.targetUrl }]];
       else if (turn === 1) calls = [['browser_qa_check', { action: 'inspect' }]];

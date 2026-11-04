@@ -49,14 +49,15 @@ test('an exact owner-approved authentication API permits one cross-origin sign-i
   assert.equal((await controller.signIn({ getPage: () => page })).code, 'HYBRID_AUTH_APPROVAL_REQUIRED');
 });
 
-for (const recognized of [true, false, 'readable']) test(`sign-in without a logout marker: ${recognized}`, { timeout: 25000 }, async t => {
+const repetitions = Math.min(10, Math.max(1, Number(process.env.QASE_AUTH_FIXTURE_REPETITIONS) || 1));
+for (let repeat=0;repeat<repetitions;repeat++) for (const recognized of [true, false, 'readable']) test(`sign-in without a logout marker: ${recognized} (repetition ${repeat+1})`, { timeout: 25000 }, async t => {
   const endpoint = 'https://auth.fixture.test/session/login';
   const server = http.createServer((_req, res) => {
     res.setHeader('Content-Type', 'text/html');
     res.end(`<form><input type="email" required><input type="password" required><button type="submit">Sign in</button></form><script>
       document.querySelector('form').onsubmit=async event=>{ event.preventDefault();
         await fetch(${JSON.stringify(endpoint)},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.querySelector('input[type=email]').value,password:document.querySelector('input[type=password]').value})});
-        history.replaceState({},'', '/private'); document.body.innerHTML='<h1>Platform workspace</h1>${recognized === 'readable' ? '<nav><button>Projects</button></nav>' : ''}';
+        setTimeout(()=>{history.replaceState({},'', '/private'); document.body.innerHTML='<h1>Platform workspace</h1>${recognized === 'readable' ? '<nav><button>Projects</button></nav>' : ''}';}, ${Math.min(1000,Math.max(0,Number(process.env.QASE_AUTH_FIXTURE_RENDER_DELAY_MS)||0))});
       };
     </script>`);
   });

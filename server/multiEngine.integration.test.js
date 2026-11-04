@@ -4,6 +4,8 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import express from 'express';
 import { once } from 'node:events';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { attachBrowserBridge } from './browserBridge.js';
 import { createBrowserPolicy } from './browserPolicy.js';
 import { mountDemoSite } from './demoSite.js';
@@ -88,18 +90,14 @@ test('chromium still launches through the bridge unchanged', { skip: !browserTes
 	assert.match(title, /Guestbook search/);
 });
 
-test('an unavailable engine fails browser_open with ENGINE_UNAVAILABLE, not a crash', { skip: !browserTests, timeout: 30000 }, async t => {
-	// Force unavailability: request webkit with the GTK bundle hidden via env.
-	const savedHome = process.env.PLAYWRIGHT_BROWSERS_PATH;
-	process.env.PLAYWRIGHT_BROWSERS_PATH = '/nonexistent-playwright-path';
-	try {
-		// Re-import a fresh copy of the module so the env is read anew.
-		const { resolveEngine: fresh } = await import(`./browserEngines.js?probe=${Date.now()}`);
-		const engine = await fresh('webkit');
-		assert.equal(engine.available, false);
-		assert.ok(engine.reason);
-	} finally {
-		if (savedHome === undefined) delete process.env.PLAYWRIGHT_BROWSERS_PATH;
-		else process.env.PLAYWRIGHT_BROWSERS_PATH = savedHome;
-	}
+test('a fresh process reports a missing WebKit bundle without silently selecting Chromium', { skip: !browserTests, timeout: 30000 }, async t => {
+	// Playwright caches its registry when imported. Changing this variable in
+	// the current process cannot hide an already resolved native installation.
+	const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
+		import { resolveEngine } from ${JSON.stringify(new URL('./browserEngines.js', import.meta.url).href)};
+		const engine = await resolveEngine('webkit');
+		console.log(JSON.stringify({ id: engine.id, available: engine.available, reason: engine.reason }));
+	`], { env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: '/nonexistent-playwright-path' } });
+	const engine = JSON.parse(stdout);
+	assert.equal(engine.id, 'webkit'); assert.equal(engine.available, false); assert.ok(engine.reason);
 });

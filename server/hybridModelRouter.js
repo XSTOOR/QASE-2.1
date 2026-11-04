@@ -18,9 +18,9 @@ function boundedRace(promise, signal) {
   });
 }
 
-export function createHybridModelRouter({ session, profile, telemetry, checkpoint, onUsage, fetchImpl }) {
+export function createHybridModelRouter({ session, profile, telemetry, checkpoint, onUsage, fetchImpl, state = session.hybrid }) {
   const budget = profile.budgets;
-  const accounting = createHybridBudgetLedger(session.hybrid, telemetry);
+  const accounting = createHybridBudgetLedger(state, telemetry);
   const deadlines = new Map();
   const modelFailure = error => {
     if (error instanceof HybridPause) return error;
@@ -35,19 +35,19 @@ export function createHybridModelRouter({ session, profile, telemetry, checkpoin
   const waiters = [];
   const client = createJevClient({ apiKey: profile.classifier.apiKey, baseUrl: profile.classifier.endpoint, model: profile.classifier.model }, { fetchImpl, timeoutMs: budget.classifierTimeoutMs });
   const check = () => {
-    if (ensureAutonomousCapacity(session.hybrid, { durationMs: telemetry.tick() + 30000 })) Object.assign(budget, session.hybrid.budgets);
+    if (ensureAutonomousCapacity(state, { durationMs: telemetry.tick() + 30000 })) Object.assign(budget, state.budgets);
     if (telemetry.tick() >= budget.durationMs) throw new HybridPause('HYBRID_TIME_BUDGET', 'Execution time budget exhausted.');
     for (const role of ['reasoner', 'classifier']) {
       if (accounting.unresolved(role) && !(role === 'classifier' && profile.allowWithoutClassifier)) throw new HybridPause('HYBRID_USAGE_UNRESOLVED', `${role} has an unverified prior usage receipt. Progress is saved; usage must be reconciled before continuing.`);
       const metric = telemetry.metrics[role];
-      if (ensureAutonomousCapacity(session.hybrid, { [`${role}Tokens`]: metric.inputTokens + metric.outputTokens + metric.reservedTokens })) Object.assign(budget, session.hybrid.budgets);
+      if (ensureAutonomousCapacity(state, { [`${role}Tokens`]: metric.inputTokens + metric.outputTokens + metric.reservedTokens })) Object.assign(budget, state.budgets);
       if (metric.inputTokens + metric.outputTokens + metric.reservedTokens > budget[`${role}Tokens`]) throw new HybridPause('HYBRID_MODEL_BUDGET', `${role} provider usage plus pending reservations exceeded its token budget. Progress is saved; start a new run with an explicitly approved budget.`);
     }
   };
   function reserve(role, inputTokens) {
     check();
     if (accounting.unresolved(role)) throw new HybridPause('HYBRID_USAGE_UNRESOLVED', `${role} has unverified usage; another request cannot be dispatched.`);
-    if (ensureAutonomousCapacity(session.hybrid, { [`${role}Tokens`]: telemetry.metrics[role].inputTokens + telemetry.metrics[role].outputTokens + telemetry.metrics[role].reservedTokens + inputTokens + budget.outputTokens, [`${role}Calls`]: telemetry.metrics[role].calls + 1 })) Object.assign(budget, session.hybrid.budgets);
+    if (ensureAutonomousCapacity(state, { [`${role}Tokens`]: telemetry.metrics[role].inputTokens + telemetry.metrics[role].outputTokens + telemetry.metrics[role].reservedTokens + inputTokens + budget.outputTokens, [`${role}Calls`]: telemetry.metrics[role].calls + 1 })) Object.assign(budget, state.budgets);
     const metric = telemetry.metrics[role], maxCalls = role === 'reasoner' ? budget.reasonerCalls : budget.classifierCalls;
     const maxTokens = role === 'reasoner' ? budget.reasonerTokens : budget.classifierTokens;
     const reserve = inputTokens + budget.outputTokens;
@@ -64,7 +64,7 @@ export function createHybridModelRouter({ session, profile, telemetry, checkpoin
     async classifier(observations, questions, signal) {
       signal?.throwIfAborted();
       if (accounting.unresolved('classifier') && profile.allowWithoutClassifier) {
-        session.hybrid.degradedClassification = true;
+        state.degradedClassification = true;
         telemetry.event('classification_skipped', { code: 'HYBRID_USAGE_UNRESOLVED' });
         await checkpoint(); return null;
       }
@@ -96,7 +96,7 @@ export function createHybridModelRouter({ session, profile, telemetry, checkpoin
         await checkpoint(); check(); return response.answers;
       } catch (error) {
         if (signal?.aborted) throw signal.reason;
-        session.hybrid.degradedClassification = true;
+        state.degradedClassification = true;
         telemetry.event('classification_failed', { code: error.code || 'JEV_UNAVAILABLE', stage: error.stage || (dispatched ? 'transport' : 'pre_dispatch'),
           ...(Number.isInteger(error.httpStatus) ? { httpStatus: error.httpStatus } : {}), usageVerified: reservation?.status === 'settled' });
         await checkpoint();

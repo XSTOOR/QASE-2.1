@@ -150,3 +150,15 @@ test('production Redis transport requires TLS unless explicitly controlled', () 
 		environment: { NODE_ENV: 'production', QASE_REDIS_URL: 'redis://cache.internal' }
 	}), /requires a TLS rediss/);
 });
+
+test('transport shutdown bounds a client drain that stalls during disconnection', { timeout: 4000 }, async () => {
+	let destroyed = 0;
+	const client = () => ({ isReady: true, async close() { await new Promise(() => {}); }, destroy() { destroyed++; } });
+	const value = createRedisEventTransport({tenantContext:TENANT,url:'redis://test',publisher:client(),subscriber:client()});
+	let timer;
+	try {
+		const stopped = await Promise.race([value.close().then(() => true),new Promise(resolve => {timer=setTimeout(() => resolve(false),2000);})]);
+		assert.equal(stopped,true,'A disconnected Redis drain must not hang application shutdown.');
+		assert.equal(destroyed,2);
+	} finally { clearTimeout(timer); }
+});

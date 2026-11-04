@@ -9,9 +9,9 @@ import { prepareHybridInference } from './hybridContext.js';
 import { createQaTools } from './qaTools.js';
 import { digestEvidence } from './qaScenarioLedger.js';
 
-function fixture(selectedTests = ['navigation', 'broken_links', 'responsive'], version = 2, paths = ['/docs', '/contact']) {
+function fixture(selectedTests = ['navigation', 'broken_links', 'responsive'], version = 2, paths = ['/docs', '/contact'], automatic = false) {
   const session = { id: randomUUID(), mode: 'qa', qaExecutionMode: 'hybrid', targetUrl: 'https://fixture.test/', selectedTests, messages: [], findings: [], activities: [], todos: [], secretNames: [] };
-  const record = { bridge: { authorizeHybridAction: async () => {} } }, profile = hybridProfile({ apiKey: 'fixture' }, { QASE_HYBRID_AUTONOMOUS_COMPLETION: 'false' });
+  const record = { bridge: { authorizeHybridAction: async () => {} } }, profile = hybridProfile({ apiKey: 'fixture' }, { QASE_HYBRID_AUTONOMOUS_COMPLETION: String(automatic) });
   let runtime = createHybridRuntime({ session, runStore: { async commit() {} }, profile, record });
   session.hybrid.partialReportApproved = { by: 'fixture-owner', at: Date.now() };
   if (version === 1) {
@@ -20,7 +20,7 @@ function fixture(selectedTests = ['navigation', 'broken_links', 'responsive'], v
   }
   runtime.router.classifier = async (_state, questions) => Object.fromEntries(Object.entries(questions).map(([id, question]) => [id, { choice: Object.keys(question.criteria)[0] }]));
   let url = session.targetUrl, calls = 0;
-  const inventory = () => ({ url, title: 'Fixture', forms: [], search: [], images: 0, players: 0, disclosures: [], tabs: [], links: [...paths, '/delete-account', '/?secret=not-allowed', 'https://outside.test/'].map((href, i) => ({ href: new URL(href, session.targetUrl).href, selector: `#link-${i}`, label: href })) });
+  const inventory = () => ({ url, title: 'Fixture', forms: [], fieldCount: 0, search: [], images: 0, players: 0, disclosures: [], tabs: [], links: [...paths, '/delete-account', '/?secret=not-allowed', 'https://outside.test/'].map((href, i) => ({ href: new URL(href, session.targetUrl).href, selector: `#link-${i}`, label: href })) });
   const base = { name: 'browser_qa_check', parametersSchema: { properties: {} }, description: 'Fixture check', async run(input) {
     calls++;
     if (['inspect', 'scroll'].includes(input.action)) return { success: true, url, inventory: inventory(), assertions: [] };
@@ -34,6 +34,48 @@ function fixture(selectedTests = ['navigation', 'broken_links', 'responsive'], v
   record.invokeHybridTool = async (name, input, signal) => tools.get(name).run(input, { signal });
   return { session, runtime, record, tools, base, calls: () => calls };
 }
+
+for (const ambiguous of [false, true]) test(`stale navigation recovery requires a unique fresh control (ambiguous=${ambiguous})`, async () => {
+  const f = fixture(['navigation'], 2, [], true), original = f.base.run;
+  const selectors = [];
+  f.base.run = async input => {
+    const result = await original(input);
+    if (result.inventory) result.inventory.navigationControls = [{ selector: '#old', label: 'Projects' }];
+    if (input.action === 'navigation_control') {
+      selectors.push(input.selector);
+      if (input.selector === '#old') return { success: false, dispatched: false, code: 'QA_CONTROL_STALE', assertions: [], inventory: { url: f.session.targetUrl, navigationControls: [{ selector: '#fresh', label: 'Projects' }, ...(ambiguous ? [{ selector: '#other', label: 'Projects' }] : [])] } };
+      return { success: true, assertions: [{ check: 'navigation', name: 'Projects opened', outcome: 'pass', expected: 'Panel opens', actual: 'Panel opened' }] };
+    }
+    return result;
+  };
+  f.record.invokeHybridTool = async (name, input, signal) => name === 'browser_qa_check' ? f.runtime.wrapTool(f.base).run(input, { signal }) : f.tools.get(name).run(input, { signal });
+  await f.runtime.wrapTool(f.base).run({ action: 'inspect' });
+  await f.runtime.tools.find(tool => tool.name === 'qa_test_routes').run({ route_ids: [f.session.hybrid.exploration.routes[0].id] });
+  assert.deepEqual(selectors, ambiguous ? ['#old'] : ['#old', '#fresh']);
+});
+
+for (const reveal of ['responsive', 'forms']) test(`search revealed by ${reveal} is executed once before closing the route`, async () => {
+  const f = fixture(['search', reveal], 2, [], true), original = f.base.run;
+  let visible = false, searches = 0;
+  f.base.run = async input => {
+    const result = await original(input);
+    if (input.action === reveal) visible = true;
+    if (input.action === 'search') { searches++; assert.equal(visible, true); }
+    if (result.inventory) { result.inventory.fieldCount = 1; result.inventory.search = visible ? [{ selector: '#query', label: 'Search projects' }] : []; }
+    return result;
+  };
+  f.record.invokeHybridTool = async (name, input, signal) => {
+    const tool = name === 'browser_qa_check' ? f.base : name === 'browser_qa_scenario' ? createHybridScenarioTool(f.base) : undefined;
+    return tool ? f.runtime.wrapTool(tool).run(input, { signal }) : f.tools.get(name).run(input, { signal });
+  };
+  await f.runtime.wrapTool(f.base).run({ action: 'inspect' });
+  const route = f.session.hybrid.exploration.routes[0];
+  await f.runtime.tools.find(tool => tool.name === 'qa_test_routes').run({ route_ids: [route.id] });
+  assert.equal(searches, 1);
+  assert.equal(route.absentChecks?.some(item => item.category === 'search') || false, false);
+  const search = f.session.hybrid.scenarios.find(item => item.category === 'search');
+  assert.equal(search.status, 'passed'); assert.ok(search.assertions.length);
+});
 
 test('multi-route batches validate observed candidates, retain cross-category failures and persist each browser receipt', async () => {
   const f = fixture(); await f.tools.get('browser_qa_check').run({ action: 'inspect' });
@@ -65,6 +107,44 @@ test('JEV route ranking is bounded, cached and advisory; it does not dispatch a 
   const frontier = f.runtime.tools.find(tool => tool.name === 'qa_route_frontier'), before = f.calls();
   assert.equal((await frontier.run({})).recommendation.authority, 'advisory'); await frontier.run({});
   assert.equal(ranks, 1); assert.equal(f.calls(), before);
+});
+
+test('autonomous batches cannot consume a route while omitting selected navigation and feature discovery', async () => {
+  const f = fixture(['navigation', 'responsive'], 2, [], true), state = f.session.hybrid;
+  const original = f.base.run;
+  f.base.run = async input => {
+    const result = await original(input);
+    if (result.inventory) result.inventory.navigationControls = [{ selector: '#projects', label: 'Projects' }];
+    if (input.action === 'navigation_control') result.assertions = [{ check: 'navigation', name: 'Fixture control exercised', outcome: 'pass', expected: 'Projects opens', actual: 'Projects opened' }];
+    return result;
+  };
+  // wrapTool copies the tool, so install this fixture implementation explicitly.
+  f.record.invokeHybridTool = async (name, input, signal) => name === 'browser_qa_check' ? f.runtime.wrapTool(f.base).run(input, { signal }) : f.tools.get(name).run(input, { signal });
+  await f.runtime.wrapTool(f.base).run({ action: 'inspect' });
+  const route = state.exploration.routes[0];
+  const result = await f.runtime.tools.find(tool => tool.name === 'qa_test_routes').run({ route_ids: [route.id], checks: ['responsive'] });
+  assert.deepEqual(result.checks, ['navigation', 'responsive']);
+  assert.ok(state.actions.some(action => action.input.action === 'navigation_control'));
+  assert.equal(state.exploration.interactions.filter(item => item.action === 'navigation_control').length, 1);
+  assert.equal(route.status, 'tested');
+});
+
+test('loading inventory cannot consume a route; a later rendered observation permits a bounded pre-execution retry', async () => {
+  const f = fixture(['forms'], 2, []), state = f.session.hybrid;
+  let ready = false;
+  const original = f.base.run;
+  f.base.run = async input => { const result = await original(input); if (result.inventory) result.inventory.readiness = { ready, reason: ready ? 'rendered' : 'loading_shell' }; return result; };
+  f.record.invokeHybridTool = async (name, input, signal) => name === 'browser_qa_check' ? f.runtime.wrapTool(f.base).run(input, { signal }) : f.tools.get(name).run(input, { signal });
+  await f.runtime.wrapTool(f.base).run({ action: 'inspect' });
+  const route = state.exploration.routes[0], batch = f.runtime.tools.find(tool => tool.name === 'qa_test_routes');
+  const first = await batch.run({ route_ids: [route.id] });
+  assert.equal(route.status, 'failed'); assert.deepEqual(first.executedRouteIds, []);
+  assert.equal(route.absentChecks, undefined); assert.equal(state.scenarios[0].executedActionIds.length, 0);
+  assert.equal((await f.runtime.tools.find(tool => tool.name === 'qa_route_frontier').run({ rank: false })).candidates.length, 0);
+  ready = true; await f.runtime.wrapTool(f.base).run({ action: 'inspect' });
+  assert.equal(route.status, 'pending'); assert.equal(route.renderRetries, 1);
+  await batch.run({ route_ids: [route.id] });
+  assert.equal(route.status, 'tested'); assert.equal(route.absentChecks[0].category, 'forms');
 });
 
 test('route suites execute selected-device checks before temporary responsive samples', async () => {
@@ -223,9 +303,10 @@ test('hundreds of passing assertions remain durable but do not inflate model-fac
 
 test('single-page dispositions cannot masquerade as adequate observed-route depth or a full pass', async () => {
   const f = fixture(); await f.tools.get('browser_qa_check').run({ action: 'inspect' });
-  for (const scenario of f.session.hybrid.scenarios) await f.runtime.ledger.close(scenario.id, 'not_executed', 'Fixture has not executed this scope.');
-  assert.throws(() => validateHybridReport(f.session, { verdict: 'partial' }), /observed-route depth/);
+  for (const scenario of f.session.hybrid.scenarios) await assert.rejects(f.runtime.ledger.close(scenario.id, 'not_executed', 'Fixture has not executed this scope.'), /actual attempt/);
+  assert.throws(() => validateHybridReport(f.session, { verdict: 'partial' }), /Required scenarios/);
   f.session.hybrid.budgetFinalizing = true;
+  for (const scenario of f.session.hybrid.scenarios) await f.runtime.ledger.close(scenario.id, 'not_executed', 'Host budget closeout.');
   assert.equal(validateHybridReport(f.session, { verdict: 'partial' }).verdict, 'blocked');
   assert.ok(hybridCompletion(f.session).gaps.some(item => /Observed-route coverage/.test(item)));
 });
@@ -288,4 +369,11 @@ test('unsupported-only scope can publish an honest blocker instead of being forc
   const prepared = prepareHybridInference([], { tools: [finish, ...f.runtime.tools] }, f.session);
   assert.ok(prepared.options.tools.some(tool => tool.name === 'finish_qa_report'));
   assert.equal(prepared.options.tools.some(tool => tool.name === 'qa_test_routes'), false);
+});
+
+test('route tool schema advertises only operator-selected supported checks', () => {
+  const f=fixture(['responsive','search','content']);
+  const tool=f.runtime.tools.find(tool=>tool.name==='qa_test_routes');
+  assert.deepEqual(tool.parametersSchema.properties.checks.items.enum,['responsive','search']);
+  assert.deepEqual(tool.parametersSchema.required,['route_ids']);
 });

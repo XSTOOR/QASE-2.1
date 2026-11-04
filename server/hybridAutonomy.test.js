@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createHybridRuntime } from './hybridQaRuntime.js';
 import { hybridProfile } from './hybridConfig.js';
-import { prepareHostDecision, hostCloseoutCalls, pauseForBudgetApproval } from './hybridContinuation.js';
+import { prepareHostDecision, hostCloseoutCalls, pauseForBudgetApproval,continuationOffer } from './hybridContinuation.js';
 import { ensureAutonomousCapacity, requestAutomaticCloseout, synchronizeAccessPhase } from './hybridAutonomy.js';
 import { compactCompletedRounds, hybridHostContext } from './hybridContext.js';
 import { validateHybridReport } from './qaCompletionGate.js';
@@ -15,16 +15,17 @@ function fixture(env = {}) {
   return { session, profile, record, runtime, state: session.hybrid };
 }
 
-test('new autonomous runs allocate inside fixed ceilings without token or coverage questions and retain counters', async () => {
+test('new runs allocate inside fixed ceilings without routine questions, then require a hard-limit decision', async () => {
   const { session, state } = fixture();
   assert.equal(state.continuationPolicyVersion, 2); assert.equal(state.executionPolicy.limits.reasonerTokens, 2000000);
   state.telemetry.reasoner.inputTokens = 295000;
   assert.equal(ensureAutonomousCapacity(state, { reasonerTokens: 350000 }), true);
   assert.equal(state.budgets.reasonerTokens, 600000); assert.equal(state.telemetry.reasoner.inputTokens, 295000);
-  assert.equal(prepareHostDecision(session, { closing: true }), null);
+  assert.equal(prepareHostDecision(session), null);
   assert.equal(ensureAutonomousCapacity(state, { reasonerTokens: 9000000 }), true);
   assert.equal(state.budgets.reasonerTokens, 2000000); assert.equal(ensureAutonomousCapacity(state, { reasonerTokens: 9000000 }), false);
   assert.equal(state.budgetApprovals, undefined, 'Allocation is pinned host policy, never a fabricated user answer.');
+  assert.equal(prepareHostDecision(session,{closing:true}).kind,'budget');
 });
 
 test('explicit operator limits override autonomous defaults and remain pinned on resume', () => {
@@ -33,6 +34,8 @@ test('explicit operator limits override autonomous defaults and remain pinned on
   assert.equal(ensureAutonomousCapacity(state, { reasonerTokens: 600000 }), false);
   createHybridRuntime({ session, record: {}, profile: hybridProfile({ apiKey: 'fixture-key' }, {}), runStore: { async commit() {} } });
   assert.equal(state.executionPolicy.limits.reasonerTokens, 400000); assert.ok(runtime);
+  assert.equal(continuationOffer(session).changes.reasonerTokens,0,'A user offer cannot bypass the pinned operator ceiling.');
+  assert.equal(continuationOffer(session).changes.durationMs,0);
 });
 
 test('missing secure access still asks once; generic workflow questions cannot block an autonomous run', async () => {
@@ -44,20 +47,24 @@ test('missing secure access still asks once; generic workflow questions cannot b
   assert.equal(prepareHostDecision(session).id, question.id);
 });
 
-test('coverage limitations can publish honestly without another question; unsupported pass still fails', async () => {
+test('recoverable execution failures cannot publish merely because a check was attempted', async () => {
   const { session, state, runtime } = fixture();
-  await runtime.ledger.close(state.scenarios[0].id, 'inconclusive', 'No suitable assertion was executed.');
+  await runtime.ledger.start(state.scenarios[0].id);
+  const action = await runtime.ledger.beginAction('browser_qa_check', { action: 'responsive' });
+  await runtime.ledger.record(action, { success: false, dispatched:true, error: 'Fixture viewport unavailable.' });
+  await runtime.ledger.close(state.scenarios[0].id, 'inconclusive', 'The attempted viewport check could not produce assertions.');
   assert.equal(prepareHostDecision(session), null);
-  assert.equal(validateHybridReport(session, { verdict: 'blocked' }).verdict, 'blocked');
+  assert.throws(()=>validateHybridReport(session, { verdict: 'blocked' }),{code:'HYBRID_EXECUTION_PENDING'});
   assert.throws(() => validateHybridReport(session, { verdict: 'pass' }), /Unsupported pass/);
 });
 
-test('known hard limit closeout requires no model tokens, and missing usage cannot be forgiven by automatic policy', async () => {
+test('known hard limits checkpoint a native SDK budget question without automatic closeout', async () => {
   const { session, state } = fixture();
   state.telemetry.reasoner.inputTokens = 2000000;
-  const decision = await pauseForBudgetApproval(session, {}, { code: 'HYBRID_MODEL_BUDGET' });
-  assert.equal(decision.automatic, true); assert.equal(state.pendingDecision, undefined);
-  assert.equal(hostCloseoutCalls(session)[0].toolName, 'qa_close_scenario');
+  let paused;
+  const decision = await pauseForBudgetApproval(session, {agentSession:{pauseForQuestion(...args){paused=args;}}}, { code: 'HYBRID_MODEL_BUDGET' });
+  assert.equal(decision.kind,'budget');assert.equal(paused[0].id,decision.id);
+  assert.equal(hostCloseoutCalls(session), null);
   assert.equal(state.partialReportApproved, undefined);
   const other = fixture(); other.state.modelBudget.roles.classifier.reservations.push({ status: 'uncertain' });
   assert.equal(requestAutomaticCloseout(other.session, 'limit'), false);
@@ -85,6 +92,16 @@ test('rolling context removes complete old call/result pairs while retaining eve
   assert.equal(compact.at(-1).toolCalls[0].id, 'unfinished');
   for (const tool of compact.filter(item => item.role === 'tool')) assert.ok(compact.some(item => item.toolCalls?.some(call => call.id === tool.toolCallId)));
   assert.ok(JSON.stringify(compact).length < JSON.stringify(messages).length / 2);
+});
+
+test('host-observed authorized access uses the same access phase as the evidence ledger', () => {
+  const { state } = fixture(); const scenario = state.scenarios[0];
+  scenario.status = 'inconclusive'; scenario.uncertainty = ['Anonymous page has no application controls.'];
+  state.authentication = { status: 'access_observed', grantId: 'approved-sign-in' };
+  assert.equal(synchronizeAccessPhase(state), true);
+  assert.equal(state.accessContext, 'approved-sign-in'); assert.equal(scenario.status, 'planned');
+  assert.deepEqual(scenario.uncertainty, []); assert.equal(scenario.priorDispositions[0].accessContext, 'public');
+  assert.equal(synchronizeAccessPhase(state), false);
 });
 
 test('shared source-page navigation belongs to distinct host route executions; repeated mutations within one route still stop', async () => {

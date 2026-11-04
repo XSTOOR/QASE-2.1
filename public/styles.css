@@ -8525,7 +8525,7 @@ background:var(--panel-chat);  font-family: var(--font-mono);
   font-size: 11px;
 }
 
-.cli-theme .sqa-modal .field textarea:focus {  border-color: rgba(47, 91, 234, 0.5);
+.cli-theme .sqa-modal .field textarea:focus {  border-color: rgba(47, 91, 234, 0.5); }
 .sqa-modal .field textarea:focus {
   border-color: rgba(47, 91, 234, 0.5);
   box-shadow: 0 0 0 2px rgba(47, 91, 234, 0.08);

@@ -27,6 +27,7 @@ export function liveInputCases(field) {
 export async function runLiveFormChecks(page, { protectInputs, signal, onAction } = {}) {
   if (typeof protectInputs !== 'function' || await page.evaluate(() => Boolean(navigator.serviceWorker?.controller))) return { assertions: [], gaps: ['Live input isolation is unavailable for this document; no field was modified.'] };
   const inventory = await page.evaluate(() => {
+    const modal=document.querySelector('dialog:modal');
     const selector = element => {
       if (element.id && document.querySelectorAll(`#${CSS.escape(element.id)}`).length === 1) return `#${CSS.escape(element.id)}`;
       const parts = [];
@@ -37,6 +38,7 @@ export async function runLiveFormChecks(page, { protectInputs, signal, onAction 
       return parts.join(' > ');
     };
     const nodes = [...document.querySelectorAll('input,textarea,select')].filter(node => {
+      if(modal&&!modal.contains(node))return false;
       if (!node.getClientRects().length || node.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
       for (let parent = node; parent; parent = parent.parentElement) { const style = getComputedStyle(parent); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; }
       return true;
@@ -44,7 +46,7 @@ export async function runLiveFormChecks(page, { protectInputs, signal, onAction 
     return nodes.map(node => ({ selector: selector(node), field: (node.name || node.id || node.type).slice(0, 100), type: node.tagName === 'TEXTAREA' ? 'textarea' : node.type,
       required: node.required, min: node.min ?? '', max: node.max ?? '', step: node.step ?? '', minLength: node.minLength ?? -1, maxLength: node.maxLength ?? -1,
       ...(node.tagName === 'SELECT' ? { options: [...node.options].filter(option => !option.disabled && !option.hidden && option.value).slice(0, 2).map(option => option.value) } : {}),
-      safe: ['text', 'email', 'url', 'number', 'textarea', 'tel', 'select-one'].includes(node.tagName === 'TEXTAREA' ? 'textarea' : node.type) && !node.disabled && !node.readOnly && !node.value &&
+      safe: ['text', 'search', 'email', 'url', 'number', 'textarea', 'tel', 'select-one'].includes(node.tagName === 'TEXTAREA' ? 'textarea' : node.type) && !node.disabled && !node.readOnly && !node.value &&
         (node.tagName !== 'SELECT' || [...node.options].some(option => option.value === '')) &&
         !/password|token|secret|credit|card|cvc|cvv|ssn|otp|one-time|username|login|auth|permission|session|role/i.test(`${node.name} ${node.id} ${node.autocomplete}`) }));
   });
@@ -115,8 +117,13 @@ export async function runLiveFormChecks(page, { protectInputs, signal, onAction 
   }
   const blockedNetworkAttempts = (blocked.total ?? blocked.length) - blockCount;
   if (blockedNetworkAttempts) gaps.push('Input events attempted blocked network dependencies. Native/local input evidence is recorded, but autosave, remote validation and submission outcomes are not established.');
-  if (inventory.length > eligible.length) gaps.push('Prefilled, sensitive, unsupported or excess controls were not modified; remaining inputs are outside this bounded sample.');
+  const coverageLimitations=[];
+  if (inventory.length > eligible.length) {
+    const message='Prefilled, sensitive, unsupported or excess controls were not modified; remaining inputs are outside this bounded sample.';
+    gaps.push(message);
+    coverageLimitations.push({code:'QA_INPUT_SAMPLE_LIMIT',message,excludedControls:inventory.length-eligible.length});
+  }
   return { fields, assertions: restorationFailed ? [] : assertions, gaps: [...new Set(gaps)], ...(restorationFailed ? { success: false, code: 'QA_INPUT_RESTORE_FAILED' } : {}),
-    blockedRequests: blocked.slice(blockOffset), formTesting: { mode: 'live_non_submitting', fieldsFilled: fields.filter(field => field.trials.length).length, casesExecuted, negativeCases, blockedNetworkAttempts, restored: !restorationFailed, submissionExecuted: false, networkIsolation: 'per_document_egress_quarantine' },
+    coverageLimitations, blockedRequests: blocked.slice(blockOffset), formTesting: { mode: 'live_non_submitting', fieldsFilled: fields.filter(field => field.trials.length).length, casesExecuted, negativeCases, blockedNetworkAttempts, restored: !restorationFailed, submissionExecuted: false, networkIsolation: 'per_document_egress_quarantine' },
     limitations: 'Real fill/input/blur/native invalid events with bounded synthetic empty, malformed, whitespace, Unicode and declared boundary cases. No Enter, submit, credentials or successful remote workflow was tested. Egress quarantine remains active against delayed autosaves until a fresh approved document load.' };
 }

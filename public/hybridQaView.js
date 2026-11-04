@@ -53,8 +53,10 @@ export function renderHybridQa(session, document) {
     `Reasoner: ${model.reasoner?.model || 'Opus 4.7'} · Classifier: ${model.classifier?.model || 'JEV 1.13'}`,
     `Status: ${model.status === 'finalizing_budget' ? 'Finishing within the approved budget' : model.status || 'pending qualification'}${model.current ? ` · Current scenario: ${model.current}` : ''}`,
     `${model.counts.passed || 0} passed · ${model.counts.failed || 0} failed · ${model.counts.blocked || 0} blocked · ${model.counts.inconclusive || 0} inconclusive · ${(model.counts.planned || 0) + (model.counts.not_executed || 0)} unexecuted`,
-    `Recorded scenario coverage: ${Math.round(Math.max(0, Math.min(1, model.coverage)) * 100)}% · ${model.confirmedDefects} confirmed defects · ${model.unresolved} unresolved observations`
+    `Conclusive scenario coverage: ${Math.round(Math.max(0, Math.min(1, model.coverage)) * 100)}% · ${model.confirmedDefects} confirmed defects · ${model.unresolved} unresolved observations`
   ];
+  if (model.accountability) rows.push(`Execution: ${model.accountability.attempted}/${model.accountability.total} scenarios attempted · ${model.accountability.accounted}/${model.accountability.total} accounted for · ${model.accountability.pending} unresolved obligations. Accounted blockers and inconclusive outcomes do not imply a pass.`);
+  if (model.discovery) rows.push(`Application discovery: ${model.discovery.status} · ${model.discovery.features} observed features · ${model.discovery.observations} evidence-backed observations. Discovery is separate from executed test coverage.`);
   if (model.writeTesting?.enabled) {
     const trials = model.writeTesting.trials || [];
     rows.push(`Test data writes: authorized at setup · ${trials.filter(item => item.status === 'responded').length} submissions acknowledged · ${trials.filter(item => ['dispatched', 'uncertain'].includes(item.status)).length} uncertain. Acknowledgment is not a verified business outcome.`);

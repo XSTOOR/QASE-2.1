@@ -1,3 +1,6 @@
+import { guardFinalization } from './finalizationGuard.js';
+import { modeExplorationReadiness } from './modeReasoningRuntime.js';
+import {createFounderDraftTool,resolveFounderDraft} from './founderReportDraft.js';
 import {
 	FOUNDER_CATEGORY_IDS,
 	FOUNDER_LEVELS,
@@ -164,7 +167,7 @@ export function founderFinishReadiness(session, now = Date.now()) {
 	};
 }
 
-export function createFounderTools(session, runStore) {
+export function createFounderTools(session, runStore, options = {}) {
 	const record = {
 		name: 'record_founder_observation',
 		description: 'Records one or a bounded batch of evidence-backed Founder Mode product observations. Prefer observations:[...] to capture every lens supported by the same browser evidence in one call. The host validates and binds evidence per item atomically; do not use it for analytics, revenue, customer, or market claims that were not observed.',
@@ -206,12 +209,14 @@ export function createFounderTools(session, runStore) {
 		name: 'finish_founder_review',
 		description: 'Validates and publishes the complete evidence-informed Founder review. Call only after the route inventory, representative workflow, diagnostics, every category, and every plan item are complete. Recommendations must be ranked in implementation order, deduplicated, non-contradictory, each with opportunity, proposed feature/integration, why it matters, intended outcome (no numerical promises), priority reason, implementation scope, at least two acceptance criteria, and dependencies. Prefer an existing third-party integration over building an internal replacement when it fits; use an encouraging practical tone and make no promises of success.',
 		category: 'founder',
-		parametersSchema: reportSchema(),
+		parametersSchema: options.stagedReport?{type:'object',additionalProperties:false,properties:{draft_revision:{type:'string'}},required:['draft_revision']}:reportSchema(),
 		async run(input) {
 			try {
 				if (session.founder?.finalizedAt && session.founder?.report) {
 					return { success: true, published: true, already_finalized: true, report: session.founder.report };
 				}
+				const exploration = modeExplorationReadiness(session);
+				if (!exploration.ready) return { success: false, error: 'Qualified Founder review requires observed page exploration, an executed reversible interaction, and diagnostics before publication.', exploration };
 				const readiness = founderFinishReadiness(session);
 				if (readiness.activeActivities.length > 0) return { success: false, error: 'Browser work is still running.', active_activity_ids: readiness.activeActivities.map(item => item.id) };
 				if (readiness.incompleteTodos.length > 0) return { success: false, error: 'The Founder review plan has unfinished work.', unfinished_todos: readiness.incompleteTodos.map(item => item.text) };
@@ -225,7 +230,7 @@ export function createFounderTools(session, runStore) {
 				if (!readiness.contextDecisionRecorded) return { success: false, requires_user_input: true, error: 'Call ask_question for target customer, product stage/business model, and current goal. The user may explicitly authorize an assumption-led review.' };
 				if (readiness.authenticationDecisionRequired) return { success: false, requires_user_input: true, error: 'Authentication blocks material product surfaces. Call ask_question for vaulted credentials or an explicit public-only scope boundary.' };
 				if (readiness.missing.length > 0) return { success: false, error: 'Every Founder review area needs an evidence-backed observation.', missing_categories: readiness.missing };
-				const report = await finishFounderReview(session, input, runStore);
+				const report = await finishFounderReview(session, options.stagedReport?resolveFounderDraft(session,input):input, runStore);
 				return { success: true, published: true, coverage: report.coverage, recommendation_count: report.recommendations.length, caveat: report.caveat };
 			} catch (error) {
 				return { success: false, error: error instanceof Error ? error.message : String(error) };
@@ -233,7 +238,11 @@ export function createFounderTools(session, runStore) {
 		}
 	};
 
-	return [record, finish];
+	const draft=options.stagedReport?createFounderDraftTool(session,runStore,reportSchema(),{...options,canDraft:()=>{
+		const readiness=founderFinishReadiness(session);
+		return modeExplorationReadiness(session).ready&&!readiness.missing.length&&!readiness.incompleteTodos.length&&readiness.inventoryComplete&&readiness.representativeWorkflowComplete&&readiness.browserEvidenceComplete&&readiness.contextDecisionRecorded&&!readiness.authenticationDecisionRequired&&!readiness.activeActivities.some(a=>a.toolName!=='draft_founder_report_section');
+	}}):null;
+	return [record,...(draft?[draft]:[]), guardFinalization(finish, session, options)];
 }
 
 export { reportSchema as founderReportToolSchema };

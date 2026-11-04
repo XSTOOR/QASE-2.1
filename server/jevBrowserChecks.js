@@ -6,9 +6,9 @@ import { safeBrowserRoute } from './browserRouteSafety.js';
 import { runJevAccessibility } from './jevAccessibility.js';
 import { runJevAnchors, runJevTabs, runJevNavigationControl, isolated } from './jevInteractions.js';
 import { responsiveWidths } from './qaViewport.js';
-import { settleQaControl } from './qaRenderReadiness.js';
+import { settleQaControl, qaPageReadiness } from './qaRenderReadiness.js';
 import { runLiveFormChecks } from './qaLiveForms.js';
-import { featureStateKey } from './qaFeatureState.js';
+import { featureStateKey, legacyFeatureStateKey } from './qaFeatureState.js';
 
 export const JEV_BROWSER_CHECKS = ['inspect', 'navigation', 'responsive', 'forms', 'search', 'media', 'disclosure', 'accessibility', 'dismiss_overlay', 'anchors', 'tabs', 'scroll', 'navigation_control', 'open_test_form', 'submit_test_form'];
 const risky = /delete|remove|logout|log.?out|sign.?out|reset|cancel|purchase|checkout|payment|subscribe|send|invite|publish|deploy|save|create|destroy|revoke|confirm|unsubscribe/i;
@@ -23,10 +23,16 @@ export async function settleJevPage(page) {
   await page.evaluate(() => new Promise(resolve => {
     let timer;
     const finish = () => { observer.disconnect(); clearTimeout(timer); clearTimeout(deadline); resolve(); };
-    const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(finish, 180); });
+    const settled = () => {
+      // CSS transitions can reveal a sidebar without a child/text mutation.
+      // Ignore perpetual decorative animations; retain the existing deadline.
+      const moving = document.getAnimations().some(animation => animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime));
+      if (moving) timer = setTimeout(settled, 50); else finish();
+    };
+    const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(settled, 180); });
     const deadline = setTimeout(finish, 1200);
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-    timer = setTimeout(finish, 180);
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'open', 'aria-hidden', 'aria-expanded', 'aria-busy'] });
+    timer = setTimeout(settled, 180);
   }));
   // A quiet loading shell is not a rendered application. Wait for explicit
   // busy state to clear; callers still record the observation if it times out.
@@ -44,7 +50,9 @@ export async function inspectJevPage(page) {
   await settleJevPage(page);
   await page.waitForFunction(() => document.body?.innerText.trim().length > 0, undefined, { timeout: 5000 }).catch(() => {});
   const inventory = await page.evaluate(() => {
+    const modal = document.querySelector('dialog:modal');
     const visible = element => {
+      if(modal&&!modal.contains(element))return false;
       if (!element.getClientRects().length || element.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
       // Closed native details can expose descendant geometry while their
       // content is not interactable. Do not publish those links as visible.
@@ -69,7 +77,7 @@ export async function inspectJevPage(page) {
     };
     const label = element => (element.getAttribute('aria-label') || element.innerText || element.getAttribute('title') || '').replace(/\s+/g, ' ').trim().slice(0, 180);
     const links = [...document.querySelectorAll('a[href]')].filter(visible).map(element => ({ selector: selector(element), href: element.href, label: label(element), target: element.target, download: element.hasAttribute('download') }));
-    const forms = [...document.forms].map(form => ({ selector: selector(form), method: form.method, action: form.action, fields: form.querySelectorAll('input,select,textarea').length }));
+    const forms = [...document.forms].filter(visible).map(form => ({ selector: selector(form), method: form.method, action: form.action, fields: form.querySelectorAll('input,select,textarea').length }));
     const search = [...document.querySelectorAll('input[type="search"],input[name="q"],input[name="query"],input[placeholder*="search" i],input[aria-label*="search" i],[role="searchbox"]')].filter(visible).filter(element => element.tagName === 'INPUT' && ['text', 'search'].includes(element.type)).map(element => ({ selector: selector(element), name: element.name, formMethod: element.form?.method, formAction: element.form?.action }));
     const auth = [...document.querySelectorAll('input[type="password"]')].filter(visible).length > 0 || links.some(link => /\b(log ?in|sign ?in|sign ?up)\b/i.test(link.label));
     const disclosures = [...document.querySelectorAll('summary,button,[role="button"]')].filter(visible).filter(element => element.getAttribute('role') !== 'tab' && !element.disabled && !element.form && element.getAttribute('aria-disabled') !== 'true').filter(element => /^(open |close |toggle |show |hide )?(menu|navigation|details|more|faq|help|filters?|accordion)\b/i.test(label(element)) || element.tagName === 'SUMMARY' || (element.hasAttribute('aria-controls') && element.hasAttribute('aria-expanded')) || (element.closest('[class*="faq" i],[class*="accordion" i]') && /\?/.test(label(element)))).map(element => ({ selector: selector(element), label: label(element) }));
@@ -90,13 +98,17 @@ export async function inspectJevPage(page) {
     const overlays = dialogs.map(dialog => {
       const onboarding = /welcome|quick tour|getting started|onboarding/i.test(label(dialog));
       const close = [...dialog.querySelectorAll('button,[role="button"]')].find(element => visible(element) && !element.disabled && !element.form && (/^(close|dismiss)(?:\b|$)/i.test(label(element)) || onboarding && /^skip(?: (?:the )?tour)?$/i.test(label(element))));
-      return { containsForm: Boolean(dialog.querySelector('form,input:not([type="hidden"]),textarea')), selector: selector(dialog), title: label(dialog).slice(0, 120), close: close ? { selector: selector(close), label: label(close) } : null };
+      return { containsForm: Boolean(dialog.querySelector('form,input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),textarea')), selector: selector(dialog), title: label(dialog).slice(0, 120), close: close ? { selector: selector(close), label: label(close) } : null };
     });
     const formOpeners = [...document.querySelectorAll('button,[role="button"]')].filter(visible).filter(element => !element.form && !element.disabled && /^(new|add|create|edit)(?: (?:a|an|the))? (project|record|item|note|task|document|folder|entry|draft)$/i.test(label(element))).map(element => ({ selector: selector(element), label: label(element) }));
     const navigationControls = [...document.querySelectorAll('nav button,[role="navigation"] button,aside button,nav [role="button"],[role="navigation"] [role="button"],button[role="tab"],[role="tablist"] [role="tab"]')].filter(visible).filter(element => !element.form && !element.disabled && element.getAttribute('aria-disabled') !== 'true' && !element.getAttribute('aria-current') && element.getAttribute('aria-selected') !== 'true' && /^(?:home|dashboard|projects?|meetings?|chat|settings|search|documents?|docs|teams?|overview|activity|reports?|about|files?|members?|analytics|templates?|integrations?|profile|account|general|appearance|notifications|history|favorites?|all|mine|shared|details|permissions)$/i.test(label(element))).map(element => ({ selector: selector(element), label: label(element) }));
-    return { headings: [...document.querySelectorAll('h1,h2,[role="heading"]')].filter(visible).map(label).slice(0, 12), selectedNavigation: [...document.querySelectorAll('[aria-current],[role="tab"][aria-selected="true"]')].filter(visible).map(label).slice(0, 12), url: location.href, title: document.title, text: document.body.innerText.slice(0, 6000), viewport: { width: innerWidth, height: innerHeight }, links: links.slice(0, 100), totalLinks: links.length, forms, fieldCount: [...document.querySelectorAll('input:not([type="hidden"]),select,textarea')].filter(visible).length, search, auth, authForm: [...document.querySelectorAll('input[type="password"]')].some(visible), disclosures: disclosures.slice(0, 24), totalDisclosures: disclosures.length, tabs: tabs.slice(0, 24), overlays, formOpeners: formOpeners.slice(0, 12), navigationControls: navigationControls.slice(0, 24), totalNavigationControls: navigationControls.length, images: document.images.length, players: document.querySelectorAll('audio,video').length };
+    const controls = [...document.querySelectorAll('button,[role=button],[role=tab],select,input:not([type=hidden]),textarea')].filter(visible).map(element => ({ selector: selector(element), label: label(element), role: element.getAttribute('role') || element.tagName.toLowerCase(), expanded: element.getAttribute('aria-expanded'), selected: element.getAttribute('aria-selected') })).slice(0, 80);
+    const regions = [...document.querySelectorAll('[role=region],[role=dialog],main,aside')].filter(visible).map(element => ({ role: element.getAttribute('role') || element.tagName.toLowerCase(), label: element.getAttribute('aria-label') || '', controls: element.querySelectorAll('button,input,select,textarea,[role=button]').length })).slice(0, 16);
+    return { controls, regions, headings: [...document.querySelectorAll('h1,h2,[role="heading"]')].filter(visible).map(label).slice(0, 12), selectedNavigation: [...document.querySelectorAll('[aria-current],[role="tab"][aria-selected="true"]')].filter(visible).map(label).slice(0, 12), url: location.href, title: document.title, text: document.body.innerText.slice(0, 6000), viewport: { width: innerWidth, height: innerHeight }, links: links.slice(0, 100), totalLinks: links.length, forms, fieldCount: [...document.querySelectorAll('input:not([type="hidden"]),select,textarea')].filter(visible).length, search, auth, authForm: [...document.querySelectorAll('input[type="password"]')].some(visible), disclosures: disclosures.slice(0, 24), totalDisclosures: disclosures.length, tabs: tabs.slice(0, 24), overlays, formOpeners: formOpeners.slice(0, 12), navigationControls: navigationControls.slice(0, 24), totalNavigationControls: navigationControls.length, images: document.images.length, players: document.querySelectorAll('audio,video').length };
   });
+  inventory.readiness = await page.evaluate(qaPageReadiness);
   inventory.stateKey = featureStateKey(inventory);
+  inventory.legacyStateKey = legacyFeatureStateKey(inventory);
   return inventory;
 }
 
@@ -405,7 +417,7 @@ async function disclosureLocal(page, input, onAction) {
       const target = document.getElementById(id);
       return { id, exists: Boolean(target), visible: visible(target), text: target?.innerText?.slice(0, 2000) || '' };
     });
-    return { tag: element?.tagName, label: (element?.getAttribute('aria-label') || element?.innerText || '').slice(0, 180), expanded: element?.getAttribute('aria-expanded'), open: element?.closest('details')?.open, controlled, hasForm: Boolean(element?.form), faq: Boolean(element?.closest('[class*="faq" i],[class*="accordion" i]')), body: document.body.innerText.slice(0, 12000) };
+    return { tag: element?.tagName, label: (element?.getAttribute('aria-label') || element?.innerText || element?.getAttribute('title') || '').replace(/\s+/g, ' ').trim().slice(0, 180), expanded: element?.getAttribute('aria-expanded'), open: element?.closest('details')?.open, controlled, hasForm: Boolean(element?.form), faq: Boolean(element?.closest('[class*="faq" i],[class*="accordion" i]')), body: document.body.innerText.slice(0, 12000) };
   }, input.selector);
   const before = await describe();
   if (before.hasForm || risky.test(before.label) || !(before.tag === 'SUMMARY' || /^(open |close |toggle |show |hide )?(menu|navigation|details|more|faq|help|filters?|accordion)\b/i.test(before.label) || (before.controlled.length && before.expanded !== null) || (before.faq && /\?/.test(before.label)))) throw new Error('Only observed non-destructive disclosure controls are eligible.');
@@ -493,11 +505,28 @@ async function dismissOverlay(page, input) {
 
 export async function runJevBrowserCheck(page, input, { signal, authorizeControl, onAction, onViewport, responsiveBoundaries = false, liveForms = false, requireLiveForms = false, protectInputs, executeTestForm } = {}) {
   const startedAt = Date.now();
-  if (!page || page.isClosed()) return { success: false, action: input?.action, error: 'No live browser page.' };
-  if (!JEV_BROWSER_CHECKS.includes(input?.action)) return { success: false, error: 'Unknown QA scenario.' };
+  if (!page || page.isClosed()) return { success: false, dispatched: false, action: input?.action, error: 'No live browser page.' };
+  if (!JEV_BROWSER_CHECKS.includes(input?.action)) return { success: false, dispatched: false, error: 'Unknown QA scenario.' };
   signal?.throwIfAborted();
   const url = page.url();
   try {
+    if (!['inspect', 'scroll'].includes(input.action)) {
+      let readiness = await page.evaluate(qaPageReadiness);
+      if (readiness?.ready === false) {
+        await settleJevPage(page);
+        readiness = await page.evaluate(qaPageReadiness);
+        if (!readiness.ready) return { success: false, code: 'QA_PAGE_NOT_READY', dispatched: false, action: input.action, url, assertions: [], inventory: await inspectJevPage(page), gaps: ['The application is still loading. Inspect its rendered state before executing checks; no pass or feature absence was inferred.'] };
+      }
+    }
+    if (input.action === 'disclosure') {
+      const inventory = await inspectJevPage(page);
+      const control = input.selector && page.locator(input.selector);
+      const unique = control && await control.count() === 1;
+      // Preserve supported selector aliases (e.g. a unique summary selector).
+      // Compare resolved DOM identity with the observed eligible controls.
+      const observed = unique && await control.evaluate((element, selectors) => selectors.some(selector => document.querySelector(selector) === element), inventory.disclosures.map(c => c.selector));
+      if (!observed) return { success: false, code: 'QA_CONTROL_STALE', dispatched: false, action: input.action, url, inventory, assertions: [], error: 'The disclosure is not uniquely observed on this page. Restore the planned feature location and use its fresh observed selector; no click was dispatched.' };
+    }
     let result;
     switch (input.action) {
       case 'submit_test_form': result = executeTestForm ? await executeTestForm(input.selector, signal) : { success: false, assertions: [], gaps: ['No test-write authorization is available.'] }; break;

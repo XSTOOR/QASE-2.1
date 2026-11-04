@@ -13,11 +13,19 @@ const environments = launcherConfigurations.map(row => ({ ...row, active: true, 
 const configuration = { provider: 'custom', model: 'fixture-model', ready: true, hasApiKey: true, providers: ['custom'], headless: true,
   hybridQa: { enabled: true, qualified: true, available: true, reasoner: 'drytis/claude-opus-4.7', classifier: 'jev-1.13' } };
 const noop = () => {};
+let qualificationRequests = 0, qualificationPolls = 0, qualificationFailure = false;
+function readConfiguration() {
+  if (configuration.hybridQa.status === 'qualification_running' && qualificationPolls-- === 0) configuration.hybridQa = qualificationFailure
+    ? {enabled:true,qualified:false,available:false,status:'qualification_failed',reason:'Fixture streaming compatibility failed. Testing remains blocked.'}
+    : {enabled:true,qualified:true,available:true,status:'ready'};
+  return configuration;
+}
 const services = {
   tenantContext: { organizationId: randomUUID(), projectId: randomUUID(), actorUserId: randomUUID(), actorEmail: 'fixture@example.test', actorName: 'Launcher fixture' },
   runs: { load: noop, async list() { return []; }, async get() { return null; }, create() { throw new Error('No real fixture run may be created'); }, delete: noop, commit: noop, addMessage: noop, addActivity: noop, updateActivity: noop, setStatus: noop },
   feedback: { create: noop, get: noop, async list() { return []; }, update: noop, remove: noop, stats: () => ({}), forRun: noop },
-  events: { publish: noop, subscribe: () => noop }, configuration: { getPublic: () => configuration, save: noop, testConnection: noop },
+  events: { publish: noop, subscribe: () => noop }, configuration: { getPublic: readConfiguration, save: noop, testConnection: noop,
+    qualifyHybrid(){qualificationRequests++;qualificationPolls=1;configuration.hybridQa={enabled:true,qualified:false,available:false,status:'qualification_running',reason:'Checking fixture model compatibility. Your setup is saved.'};return configuration;} },
   secrets: { clear: noop, names: () => [], store: noop }, reports: { buildMarkdown: () => '' },
   agent: { ensureRuntime() { throw new Error('Model execution is forbidden in this fixture'); }, runTurn: noop, closeBrowser: noop, getLiveState: () => ({}), stop: noop, invalidateIdleRuntimes: noop },
   environments: { seed: noop, async list() { return environments; }, async get(id) { return environments.find(row => row.envId === id); },
@@ -27,7 +35,7 @@ const services = {
 const { app } = createApplication({ services, environment: { NODE_ENV: 'production' } });
 const server = await new Promise(resolve => { const listener = app.listen(0, '127.0.0.1', () => resolve(listener)); });
 const base = `http://127.0.0.1:${server.address().port}`;
-const output = path.resolve('test-results', 'hybrid-launcher-ux'); fs.mkdirSync(output, { recursive: true });
+const output = path.resolve(process.env.QASE_LAUNCHER_OUTPUT || 'test-results/hybrid-launcher-ux'); fs.mkdirSync(output, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 const checks = [], errors = [];
 let metadata = true, failCatalog = false, unavailable = false, attemptedLaunch;
@@ -54,11 +62,12 @@ try {
     return route.fulfill({ status: 400, json: { error: 'Fixture captured launch. No run was created.' } });
   });
   await page.goto(`${base}/#/runs/new`);
+  await page.locator('#auth-gate').waitFor({ state: 'hidden' });
+  await page.locator('#qa-start[open]').waitFor();
+  await page.locator('#qa-allow-test-writes').waitFor({state:'visible'});
   assert.equal(await page.locator('#qa-allow-test-writes').isChecked(), false);
   const writeControl = await page.locator('#qa-allow-test-writes').boundingBox();
   assert.ok(writeControl.width >= 16 && writeControl.width <= 24 && writeControl.height <= 24);
-  await page.locator('#auth-gate').waitFor({ state: 'hidden' });
-  await page.locator('#qa-start[open]').waitFor();
   await page.locator('#qa-target-url').fill('https://example.test/');
   await page.locator('#qa-goal').fill('Keep this focus while recovering browser details.');
   await page.locator('#journey-next').click();
@@ -167,11 +176,35 @@ try {
   checks.push('Review names the exact browser/models and dispatches explicit hybrid environment/engine through the session API');
   configuration.hybridQa.available = false; configuration.hybridQa.reason = 'Fixture qualification expired. Requalify the gateway.';
   await page.reload(); await page.locator('#qa-start[open]').waitFor();
-  await page.locator('#qa-target-url').fill('https://example.test/'); await page.locator('#journey-next').click();
+  await page.locator('#qa-target-url').fill('https://example.test/');
+  await page.locator('#qa-goal').fill('Preserve this setup during compatibility renewal.');
+  await page.locator('#journey-next').click();
   assert.equal(await page.locator('#journey-next').isDisabled(), true);
   assert.match(await page.locator('#journey-footer-hint').textContent(), /qualification expired/);
   assert.equal(await page.locator('select[name="qaExecutionMode"]').count(), 0);
   checks.push('Unavailable hybrid is explained and blocked; it never falls back to another agent');
+  const selectedChecks=await page.locator('input[name="qa-test"]:checked').evaluateAll(nodes=>nodes.map(n=>n.value));
+  await page.screenshot({path:path.join(output,'qualification-expired.png')});
+  await page.locator('#qa-browser-status-action').click();
+  await page.locator('#qa-browser-status[data-state="loading"]').waitFor();
+  assert.equal(await page.locator('#journey-next').isDisabled(),true);
+  assert.equal(await page.locator('#qa-browser-status-action').isDisabled(),true);
+  await page.screenshot({path:path.join(output,'qualification-checking.png')});
+  await page.locator('#qa-browser-status[data-state="ready"]').waitFor();
+  assert.equal(qualificationRequests,1);assert.equal(await page.locator('#journey-next').isEnabled(),true);
+  assert.equal(await page.locator('#qa-target-url').inputValue(),'https://example.test/');
+  assert.match(await page.locator('#qa-goal').inputValue(),/Preserve this setup/);
+  assert.deepEqual(await page.locator('input[name="qa-test"]:checked').evaluateAll(nodes=>nodes.map(n=>n.value)),selectedChecks);
+  await page.screenshot({path:path.join(output,'qualification-ready.png')});
+  checks.push('Expired qualification renews once through POST, polls host status, and unlocks Review without losing URL, goal or checks');
+  qualificationFailure=true;configuration.hybridQa.available=false;configuration.hybridQa.status='qualification_expired';
+  await page.reload();await page.locator('#qa-start[open]').waitFor();
+  await page.locator('#qa-target-url').fill('https://example.test/');await page.locator('#journey-next').click();
+  await page.locator('#qa-browser-status-action').click();
+  await page.locator('#qa-form-error').filter({hasText:'Fixture streaming compatibility failed'}).waitFor();
+  assert.equal(await page.locator('#journey-next').isDisabled(),true);assert.equal(qualificationRequests,2);
+  assert.equal(await page.locator('#qa-browser-status-action').isEnabled(),true);
+  checks.push('Failed qualification remains blocked with a visible error and a usable retry action');
   assert.deepEqual(errors, []);
   fs.writeFileSync(path.join(output, 'result.json'), JSON.stringify({ passed: true, fixtureOnly: true, modelCalls: 0, checks, pageErrors: errors }, null, 2));
   console.log(JSON.stringify({ passed: true, output, checks, modelCalls: 0 }, null, 2));

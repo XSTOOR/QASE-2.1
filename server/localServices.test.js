@@ -5,8 +5,21 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
 import { createRuntimeApplicationServices } from './localServices.js';
+import { hybridQualificationService } from './hybridQualificationService.js';
+import { runWithRequestActor } from './requestActor.js';
 
 const RUN_ID = '6bf078e0-20df-48c3-a6f8-eb74ca14b9e1';
+
+test('qualification renewal binds concurrent accounts to their own effective credentials',async()=>{
+ const start=hybridQualificationService.start,lock=process.env.QASE_LOCK_MODEL,seen=[];
+ hybridQualificationService.start=profile=>{seen.push(profile.reasoner.apiKey);};process.env.QASE_LOCK_MODEL='false';
+ try{
+  const services=createRuntimeApplicationServices({}, {auth:{async getSettings(id){await new Promise(resolve=>setImmediate(resolve));return{provider:'jev',model:'jev-1.13',baseUrl:'https://llm.drytis.ai/typesafe/api/alpha/decisions',apiKey:`fixture-key-${id}`};}}});
+  const configs=await Promise.all(['account-a','account-b'].map(actorUserId=>runWithRequestActor({actorUserId},()=>services.configuration.qualifyHybrid())));
+  assert.deepEqual(seen.sort(),['fixture-key-account-a','fixture-key-account-b']);
+  assert.ok(configs.every(config=>!Object.hasOwn(config,'apiKey')));
+ }finally{hybridQualificationService.start=start;if(lock===undefined)delete process.env.QASE_LOCK_MODEL;else process.env.QASE_LOCK_MODEL=lock;}
+});
 
 test('stop aborts a running turn but leaves the runtime for the loop to finalize', () => {
 	const calls = [];

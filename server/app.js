@@ -919,6 +919,26 @@ export function createApplication(options = {}) {
 		response.json(await services.configuration.testConnection(request.body ?? {}));
 	});
 
+	app.post('/api/config/hybrid/qualification', async (request, response) => {
+		if (!requireOperator(request, response)) return;
+		if (!['owner', 'admin', 'developer'].includes(request.auth?.role)) {
+			response.status(403).json({ error: 'This action is limited to instance operators.' });
+			return;
+		}
+		if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body) || Object.keys(request.body).length) {
+			response.status(400).json({ error: 'This check uses the saved account configuration. Send an empty object.' });
+			return;
+		}
+		if (typeof services.configuration.qualifyHybrid !== 'function') {
+			response.status(503).json({ error: 'Model qualification is unavailable on this server. Ask the operator to run npm run qualify:hybrid-gateway.' });
+			return;
+		}
+		try {
+			const config = await services.configuration.qualifyHybrid();
+			response.status(config.hybridQa?.status === 'qualification_running' ? 202 : 200).json(config);
+		} catch (error) { safeErrorResponse(request, response, error); }
+	});
+
 	app.get('/api/devices', (_request, response) => {
 		response.json({
 			default: DEFAULT_DEVICE_ID,

@@ -3,6 +3,7 @@ import { evaluateSqaAssessment } from './sqaAssessment.js';
 import { SQA_CATALOG, getSqaControl, resolveSqaScope } from './sqaCatalog.js';
 import { redact } from './secrets.js';
 import { PublicInputError, publicInput } from './publicErrors.js';
+import { publicationTodos } from './finalizationGuard.js';
 
 const AGENT_EVIDENCE_TYPES = new Set([
 	'assessment_record', 'configuration_record', 'security_report', 'test_result', 'wcag_report'
@@ -409,6 +410,7 @@ export async function finishSqaAssessment(session, runStore, now = () => Date.no
 		throw new TypeError('This SQA assessment is finalized and cannot be recalculated without an authorized reopen.');
 	}
 	const previous = session.sqa;
+	const previousTodos = session.todos;
 	const normalized = normalizePendingSqaState(previous);
 	const assessedAt = new Date(now()).toISOString();
 	session.sqa = {
@@ -417,10 +419,12 @@ export async function finishSqaAssessment(session, runStore, now = () => Date.no
 		finalizedAt: assessedAt,
 		assessment: evaluateSqaAssessment(assessmentInput(normalized, assessedAt))
 	};
+	session.todos = publicationTodos(previousTodos, 'sqa');
 	try {
-		await runStore.commit(session, 'sqa', { assessment: session.sqa.assessment, final: true });
+		await runStore.commit(session, 'sqa', { assessment: session.sqa.assessment, final: true, todos: session.todos });
 	} catch (error) {
 		session.sqa = previous;
+		session.todos = previousTodos;
 		throw error;
 	}
 	return session.sqa.assessment;

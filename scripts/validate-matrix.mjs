@@ -88,11 +88,11 @@ for (const browser of BROWSERS) {
 	for (const version of versions) {
 		const label = channelForVersion(browser.code, version);
 		const distance = versions.length - 1 - versions.indexOf(version);
-		const expected = distance < browser.channels.length - 1 ? browser.channels[distance] : 'stable';
+		const expected = versions.length === 1 ? 'stable' : distance < browser.channels.length - 1 ? browser.channels[distance] : 'stable';
 		if (label !== expected) channelIssues.push(`${browser.code} ${version}: ${label} != ${expected}`);
 	}
 }
-check('7b', 'Release channels declared per browser, labeled by list position (not hardcoded versions)', channelIssues.length === 0,
+check('7b', 'Release channels match shipping singleton or positional version ladders', channelIssues.length === 0,
 	channelIssues.slice(0, 5).join('; '));
 
 // 7b-client. (M6 #14425) The client channel mirror (public/browserChannels.js)
@@ -107,6 +107,9 @@ for (const browser of BROWSERS) {
 	const serverVersions = JSON.stringify(BROWSER_VERSIONS[browser.code] ?? null);
 	const clientVersions = JSON.stringify(clientMirror.BROWSER_VERSIONS[browser.code] ?? null);
 	if (serverVersions !== clientVersions) mirrorDrift.push(`${browser.code}: versions drift`);
+	for (const version of BROWSER_VERSIONS[browser.code] ?? []) {
+		if (clientMirror.channelFor(browser.code, version) !== channelForVersion(browser.code, version)) mirrorDrift.push(`${browser.code} ${version}: channel label drift`);
+	}
 }
 for (const code of Object.keys(clientMirror.BROWSER_CHANNELS)) {
 	if (!BROWSERS.some((b) => b.code === code)) mirrorDrift.push(`${code}: client-only ladder`);

@@ -50,7 +50,7 @@ test('installed SDK pauses for a host budget decision and resumes the same loop 
   assert.equal(session.hybrid.scenarios[0].status, 'planned', 'A model continuation is not evidence that testing passed.');
 });
 
-for (const automatic of [false, true]) test(`installed SDK ${automatic ? 'automatic' : 'owner-selected'} closeout publishes at an exhausted budget without another model request`, { timeout: 20000 }, async t => {
+for (const automatic of [false, true]) test(`installed SDK ${automatic ? 'autonomous' : 'legacy'} hard-limit closeout requires owner approval and no extra model request`, { timeout: 20000 }, async t => {
   const { pauseForBudgetApproval } = await import('./hybridContinuation.js');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-closeout-sdk-'));
   const sdk = new CleanSlateNodeAgentRuntime({ rootPath: root,
@@ -68,10 +68,11 @@ for (const automatic of [false, true]) test(`installed SDK ${automatic ? 'automa
   let requests = 0; sdk.cleanSlateService.chat = async () => { requests++; throw new Error('No additional paid call authorized'); };
   hybrid.wrapChat(sdk.cleanSlateService);
   const decision = await pauseForBudgetApproval(session, sdk, { code: 'HYBRID_MODEL_BUDGET' });
-  const answer = automatic ? null : decision.input.options.at(-1);
-  if (!automatic) { session.pendingQuestion = { toolCallId: decision.id }; applyHostDecision(session, answer); }
+  assert.equal(session.report,undefined);assert.equal(session.hybrid.finishRequested,undefined);
+  const answer = decision.input.options.at(-1);
+  session.pendingQuestion = { toolCallId: decision.id }; applyHostDecision(session, answer);
   await hybrid.beginTurn(t.signal);
-  for await (const _part of automatic ? sdk.run('Finish the executed scope.', t.signal) : sdk.resumePendingQuestion(answer, t.signal)) { /* actual SDK dispositions and report */ }
+  for await (const _part of sdk.resumePendingQuestion(answer, t.signal)) { /* actual SDK dispositions and report */ }
   assert.equal(requests, 0); assert.equal(metric.inputTokens, 310000);
   assert.equal(session.report.verdict, 'blocked'); assert.ok(session.report.notCovered.length);
   assert.equal(session.report.securityOutcomes[0].outcome, 'not_tested');

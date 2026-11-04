@@ -323,3 +323,8 @@ test('a failed recovery turn is never logged or counted as successfully resumed'
 	assert.ok(harness.log.some(([event]) => event === 'runresume.turn-failed'));
 	assert.equal(harness.log.some(([event]) => event === 'runresume.resumed'), false);
 });
+
+test('a durably published QA report using ts cannot be auto-resumed after a status-write crash', () => {
+  const f=makeHarness({sessions:[]});
+  assert.equal(f.resume.isResumable(interruptedSession({report:{ts:1793664000000,verdict:'partial'}})),false);
+});

@@ -2,6 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { BROWSER_VERSIONS, BROWSER_CHANNELS, channelFor } from './browserChannels.js';
+import { BROWSER_VERSIONS as SERVER_VERSIONS, BROWSERS, channelForVersion } from '../server/environmentCatalog.js';
+
+test('client versions and displayed channels match the authoritative shipping catalog', () => {
+	assert.deepEqual(BROWSER_VERSIONS, SERVER_VERSIONS);
+	for (const browser of BROWSERS) for (const version of SERVER_VERSIONS[browser.code] ?? []) {
+		assert.equal(channelFor(browser.code, version), channelForVersion(browser.code, version));
+	}
+});
 
 test('client channel ladders mirror the server declarations', () => {
 	assert.deepEqual(BROWSER_CHANNELS.chrome, ['canary', 'dev', 'beta', 'stable']);
@@ -19,10 +27,7 @@ test('client channel ladders mirror the server declarations', () => {
 
 test('channelFor labels by position and degrades unknowns to stable', () => {
 	const chrome = BROWSER_VERSIONS.chrome;
-	assert.equal(channelFor('chrome', chrome.at(-1)), 'canary');
-	assert.equal(channelFor('chrome', chrome.at(-2)), 'dev');
-	assert.equal(channelFor('chrome', chrome.at(-3)), 'beta');
-	assert.equal(channelFor('chrome', chrome.at(-4)), 'stable');
+	assert.equal(channelFor('chrome', chrome.at(-1)), 'stable');
 	assert.equal(channelFor('chrome', chrome[0]), 'stable');
 	assert.equal(channelFor('chrome', '999'), 'stable');
 	assert.equal(channelFor('netscape', '5'), 'stable');

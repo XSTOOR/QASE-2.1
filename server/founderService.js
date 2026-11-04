@@ -15,6 +15,7 @@ import {
 	upgradeLegacyReport
 } from './founderSchema.js';
 import { redact } from './secrets.js';
+import { publicationTodos } from './finalizationGuard.js';
 
 const observationTypes = new Set(FOUNDER_OBSERVATION_TYPES);
 export const MAX_FOUNDER_STATE_BYTES = 1_000_000;
@@ -404,11 +405,14 @@ export async function finishFounderReview(session, input, runStore, now = () => 
 	});
 	assertFounderStateSize({ ...session.founder, report, updatedAt: generatedAt, finalizedAt: generatedAt });
 	const previous = session.founder;
+	const previousTodos = session.todos;
 	session.founder = { ...previous, report, updatedAt: generatedAt, finalizedAt: generatedAt };
+	session.todos = publicationTodos(previousTodos, 'founder');
 	try {
-		await runStore.commit(session, 'founder.finalized', { report });
+		await runStore.commit(session, 'founder.finalized', { report, todos: session.todos });
 	} catch (error) {
 		session.founder = previous;
+		session.todos = previousTodos;
 		throw error;
 	}
 	return report;

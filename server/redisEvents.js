@@ -5,6 +5,26 @@ import { createClient } from 'redis';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_EVENT_BYTES = 2 * 1024 * 1024;
 
+async function closeClient(client) {
+	if (client.isReady === false && typeof client.destroy === 'function') {
+		client.destroy();
+		return;
+	}
+	// Readiness can change between this check and close(). The Redis client's
+	// graceful drain otherwise waits indefinitely on commands queued offline.
+	let timer;
+	try {
+		await Promise.race([
+			Promise.resolve().then(() => client.close()),
+			new Promise((resolve, reject) => {
+				timer = setTimeout(() => {
+					try { client.destroy?.(); resolve(); } catch (error) { reject(error); }
+				}, 1000);
+			})
+		]);
+	} finally { clearTimeout(timer); }
+}
+
 function redisUrl(environment, allowInsecure) {
 	const raw = String(environment.QASE_REDIS_URL ?? '').trim();
 	if (!raw) throw new Error('Distributed execution requires QASE_REDIS_URL.');
@@ -38,6 +58,7 @@ export function createRedisEventTransport(options = {}) {
 	let closed = false;
 	let lastError;
 	let closePromise;
+	let healthProbe;
 
 	function accept(event) {
 		if (!event || typeof event !== 'object' || typeof event.sessionId !== 'string') return;
@@ -181,17 +202,24 @@ export function createRedisEventTransport(options = {}) {
 			return { running: Boolean(live.get(sessionId)?.running), frame: live.get(sessionId)?.frame };
 		},
 		async check() {
-			if (!loaded || closed) return false;
+			if (!loaded || closed || publisher.isReady===false || subscriber.isReady===false) return false;
+			let timer;
+			let offline;
 			try {
-				const ready = await publisher.ping() === 'PONG';
+				// One outstanding probe at most. An unavailable server must not
+				// queue unlimited health checks or hang HTTP readiness requests.
+				healthProbe??=Promise.resolve().then(()=>publisher.ping()).then(value=>value==='PONG').catch(error=>{lastError=error;return false;}).finally(()=>{healthProbe=undefined;});
+				const disconnected=new Promise(resolve=>{offline=()=>resolve(false);for(const client of [publisher,subscriber]){client.on?.('reconnecting',offline);client.on?.('end',offline);}});
+				const ready = await Promise.race([healthProbe,disconnected,new Promise(resolve=>{timer=setTimeout(()=>resolve(false),1000);timer.unref?.();})]);
 				if (ready) lastError = undefined;
 				return ready;
 			} catch (error) { lastError = error; return false; }
+			finally{clearTimeout(timer);if(offline)for(const client of [publisher,subscriber]){client.off?.('reconnecting',offline);client.off?.('end',offline);}}
 		},
 		close() {
 			closePromise ??= (async () => {
 				closed = true;
-				await Promise.allSettled([subscriber.close(), publisher.close()]);
+				await Promise.allSettled([subscriber,publisher].map(closeClient));
 				bus.removeAllListeners();
 				live.clear();
 				frameSubscriptions.clear();

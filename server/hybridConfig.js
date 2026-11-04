@@ -64,7 +64,7 @@ export function hybridAvailability(profile, { enabled = hybridEnabled(), readQua
   } catch (error) {
     const expired = error.code === 'HYBRID_QUALIFICATION_EXPIRED';
     return { enabled: true, qualified: false, available: false, status: expired ? 'qualification_expired' : 'qualification_required',
-      reason: expired ? 'Hybrid QA is unavailable because its compatibility check expired. The server operator must rerun the gateway checks; refresh this page after they pass.' : 'Hybrid QA is unavailable until the server operator completes gateway qualification for the configured models and account.' };
+      reason: expired ? 'The model compatibility check expired. Select “Check model compatibility” to renew it; your test setup is kept.' : 'Model compatibility must be verified before testing. Select “Check model compatibility” to run the gateway and SDK checks.' };
   }
 }
 
@@ -74,14 +74,20 @@ export function loadQualification(profile) {
   catch {
     // Compatibility with the initial local qualification report. Its exact
     // credential/profile identity is still validated before it can be used.
-    if (!process.env.QASE_HYBRID_QUALIFICATION_FILE) try { report = JSON.parse(readFileSync('.qase/qualifications/hybrid.json', 'utf8')); } catch { /* fail closed */ }
+    if (!process.env.QASE_HYBRID_QUALIFICATION_FILE && !process.env.QASE_HYBRID_QUALIFICATION_DIR && process.env.QASE_EXECUTION_MODE !== 'distributed') try { report = JSON.parse(readFileSync('.qase/qualifications/hybrid.json', 'utf8')); } catch { /* fail closed */ }
   }
   validateQualification(profile, report);
   return report;
 }
 
 export function qualificationPath(profile) {
-  return path.resolve(process.env.QASE_HYBRID_QUALIFICATION_FILE || path.join('.qase', 'qualifications', 'hybrid', `${profileIdentity(profile)}.json`));
+  // Distributed API/worker pods use separate ephemeral .qase directories.
+  // Their existing shared evidence volume must also carry the certificates.
+  const directory = process.env.QASE_HYBRID_QUALIFICATION_DIR ||
+    (process.env.QASE_EXECUTION_MODE === 'distributed' && process.env.QASE_ARTIFACT_DIR
+      ? path.join(process.env.QASE_ARTIFACT_DIR, 'qualifications', 'hybrid')
+      : path.join('.qase', 'qualifications', 'hybrid'));
+  return path.resolve(process.env.QASE_HYBRID_QUALIFICATION_FILE || path.join(directory, `${profileIdentity(profile)}.json`));
 }
 
 export function selectQaExecutionMode(value, enabled = hybridEnabled()) {

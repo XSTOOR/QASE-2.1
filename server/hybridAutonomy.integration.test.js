@@ -63,7 +63,7 @@ for (const late of [false, true]) test(`autonomous SDK ${late ? 'late' : 'initia
     })();
     record.hybrid.wrapChat(record.runtime.cleanSlateService);
     await runTurn(session, { task: 'Explore the authorized workspace, including observed navigation buttons, inputs and negative paths. Finish with evidence and honest scope.' }, store);
-    assert.equal(session.status, 'done', session.statusDetail); assert.equal(events.length, 0);
+    assert.equal(session.status, 'done', JSON.stringify({detail:session.statusDetail,scenarios:session.hybrid.scenarios.map(s=>({category:s.category,status:s.status,gaps:s.executionGaps,routeRuns:s.routeRuns})),errors:session.activities.filter(a=>a.status==='failed').map(a=>({tool:a.toolName,error:a.error}))})); assert.equal(events.length, 0);
     assert.equal(session.pendingQuestion, undefined); assert.equal(writes, 0);
     assert.ok(session.hybrid.evidence.some(e => e.result.action === 'dismiss_overlay' && e.result.assertions?.length));
     assert.ok(session.hybrid.exploration.interactions.some(i => i.action === 'navigation_control' && i.status === 'executed'));

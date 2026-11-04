@@ -6,6 +6,40 @@ import { chromium } from 'playwright';
 import { runJevBrowserCheck } from './jevBrowserChecks.js';
 import { assessJevExecution, jevRouteCandidates } from './jevQaRunner.js';
 
+test('a disclosure on the wrong page is refused before dispatch, then a fresh actual control executes',async t=>{
+ const browser=await chromium.launch();t.after(()=>browser.close());const page=await browser.newPage();
+ await page.setContent('<h1>Another surface</h1>');let clicks=0;
+ const refused=await runJevBrowserCheck(page,{action:'disclosure',selector:'#faq'},{onAction:async()=>{clicks++;}});
+ assert.equal(refused.code,'QA_CONTROL_STALE');assert.equal(refused.dispatched,false);assert.equal(clicks,0);assert.deepEqual(refused.assertions,[]);
+ await page.setContent('<h1>Observed help</h1><details><summary id="faq">FAQ</summary><p>Declared answer</p></details>');
+ const executed=await runJevBrowserCheck(page,{action:'disclosure',selector:'#faq'});
+ assert.equal(executed.success,true);assert.ok(executed.assertions.some(a=>a.check==='navigation'&&a.outcome==='pass'));
+});
+
+test('title-only menu discovered by inventory executes and restores its viewport', { timeout: 30000 }, async t => {
+  const browser = await chromium.launch(); t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.setContent(`<h1>Workspace</h1><button id="menu" title="Menu" aria-expanded="false" onclick="this.setAttribute('aria-expanded',String(panel.hidden));panel.hidden=!panel.hidden">☰</button><section id="panel" hidden>Projects</section>`);
+  // An icon with no text is commonly labelled solely by title.
+  await page.locator('#menu').evaluate(button => { button.innerHTML = '<svg width="20" height="20" aria-hidden="true"></svg>'; });
+  const inventory = await runJevBrowserCheck(page, { action: 'inspect' });
+  assert.equal(inventory.inventory.disclosures[0].label, 'Menu');
+  const result = await runJevBrowserCheck(page, { action: 'responsive' });
+  assert.ok(result.assertions.some(item => /disclosure/i.test(item.name)), JSON.stringify(result));
+  assert.ok(!result.gaps?.some(gap => /eligible/.test(gap)));
+  assert.equal(await page.locator('#menu').getAttribute('aria-expanded'), 'false');
+  assert.deepEqual(page.viewportSize(), { width: 1440, height: 900 });
+});
+
+test('inventory waits for a finite CSS reveal but ignores perpetual decoration', { timeout: 15000 }, async t => {
+  const browser = await chromium.launch(); t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(`<style>@keyframes reveal{from{opacity:0}to{opacity:1}}@keyframes spin{to{transform:rotate(360deg)}}#panel{animation:reveal .6s forwards}#decoration{animation:spin 1s infinite}</style><h1>Workspace</h1><span id="decoration">*</span><section id="panel"><input type="search" placeholder="Search projects"></section>`);
+  const result = await runJevBrowserCheck(page, { action: 'inspect' });
+  assert.equal(result.inventory.search.length, 1);
+  assert.equal(await page.locator('#panel').evaluate(element => getComputedStyle(element).opacity), '1');
+});
+
 test('responsive cancellation restores the viewport without starting additional widths', async () => {
   const controller = new AbortController();
   const widths = [];
@@ -83,9 +117,10 @@ test('discovery excludes invisible/inert controls and reproduces a declared unre
   assert.equal(hover.success, true);
   assert.equal(hover.assertions[0].outcome, 'pass', 'Hover opening before the click is not a broken click response.');
   assert.ok(hover.inventory.links.some(link => link.label === 'Docs'), JSON.stringify({ assertion: hover.assertions, body: await page.locator('body').innerHTML() }));
-  await page.setContent('<title>Welcome dialog fixture</title><button id="under">Open menu</button><section id="tour" role="dialog" aria-modal="true" style="position:fixed;inset:0;background:white"><h2>Welcome guide</h2><button id="close-tour" type="button" aria-label="Close welcome guide" onclick="this.parentElement.remove()">Close</button></section>');
+  await page.setContent('<title>Welcome dialog fixture</title><button id="under">Open menu</button><section id="tour" role="dialog" aria-modal="true" style="position:fixed;inset:0;background:white"><h2>Welcome guide</h2><label><input type="checkbox">Do not show again</label><button id="close-tour" type="button" aria-label="Close welcome guide" onclick="this.parentElement.remove()">Close</button></section>');
   const overlay = await runJevBrowserCheck(page, { action: 'inspect' });
   assert.equal(overlay.inventory.overlays[0].close.label, 'Close welcome guide');
+  assert.equal(overlay.inventory.overlays[0].containsForm, false, 'An onboarding preference checkbox must not be mistaken for a data-entry form.');
   const dismissed = await runJevBrowserCheck(page, { action: 'dismiss_overlay', selector: '#close-tour' });
   assert.equal(dismissed.assertions[0].outcome, 'pass');
   assert.equal(dismissed.inventory.overlays.length, 0);
@@ -172,6 +207,8 @@ test('navigation button discovery excludes outside/form/destructive controls and
   assert.deepEqual(observed.inventory.navigationControls.map(item => item.selector), ['#projects']);
   const outside = await runJevBrowserCheck(page, { action: 'navigation_control', selector: '#outside' });
   assert.equal(outside.success, false);
+  assert.equal(outside.dispatched, false); assert.equal(outside.code, 'QA_CONTROL_STALE');
+  assert.deepEqual(outside.inventory.navigationControls.map(item => item.selector), ['#projects']);
   const blocked = await runJevBrowserCheck(page, { action: 'navigation_control', selector: '#projects' });
   assert.equal(writes, 0); assert.equal(blocked.assertions.length, 0); assert.ok(blocked.blockedRequests.length);
   assert.match(blocked.gaps.join(' '), /blocked write/); assert.equal(await page.locator('main').textContent(), 'Initial content');
@@ -200,4 +237,38 @@ test('a late modal is reported before navigation dispatch, then a safe dismissal
   const progressed = await runJevBrowserCheck(page, { action: 'navigation_control', selector: '#projects' });
   assert.equal(progressed.success, true); assert.equal(new URL(progressed.inventory.url).pathname, '/destination');
   assert.equal(new URL(page.url()).pathname, '/', 'Source restoration remains intact.');
+});
+
+test('navigation restoration releases its temporary guard while retaining the host policy and observed feature evidence', { timeout: 30000 }, async t => {
+  let bootstraps = 0, unsafeWrites = 0;
+  const server = http.createServer((req, res) => {
+    if (req.url === '/approved-bootstrap' && req.method === 'POST') { bootstraps++; res.end('ok'); return; }
+    if (req.method !== 'GET') { unsafeWrites++; res.writeHead(403).end(); return; }
+    res.setHeader('Content-Type', 'text/html');
+    res.end(`<body>Loading...<script>fetch('/approved-bootstrap',{method:'POST'}).then(()=>{document.body.innerHTML='<nav><button id="projects">Projects</button></nav><main><h1>Workspace</h1></main>';document.querySelector('#projects').onclick=()=>{fetch('/telemetry',{method:'POST'}).catch(()=>{});document.querySelector('main').innerHTML='<h1>Projects</h1><input type="search" placeholder="Search projects">';};});</script>`);
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => { server.closeAllConnections(); server.close(); });
+  const browser = await chromium.launch(); t.after(() => browser.close()); const context = await browser.newContext();
+  // Explicit fixture host policy: only its provisioned read bootstrap may POST.
+  await context.route('**/*', route => route.request().method() === 'GET' || new URL(route.request().url()).pathname === '/approved-bootstrap' ? route.continue() : route.abort());
+  const page = await context.newPage(); await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  const result = await runJevBrowserCheck(page, { action: 'navigation_control', selector: '#projects' });
+  assert.equal(result.success, true); assert.equal(result.inventory.readiness.ready, true);
+  assert.ok(result.transition); assert.equal(result.inventory.search.length, 1);
+  assert.equal(result.assertions.length, 0, 'Blocked dependencies retain uncertainty; observed state is not a correctness pass.');
+  assert.equal(result.restoredInventory.readiness.ready, true); assert.deepEqual(result.restoredInventory.headings, ['Workspace']);
+  assert.equal(bootstraps, 2); assert.equal(unsafeWrites, 0);
+});
+
+test('a loading shell is neither an executed media check nor a discovered destination feature', { timeout: 30000 }, async t => {
+  const server = http.createServer((_req, res) => { res.setHeader('Content-Type', 'text/html'); res.end('<nav><button id="projects" onclick="document.body.textContent=\'Loading...\'">Projects</button></nav><h1>Workspace</h1>'); });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => { server.closeAllConnections(); server.close(); });
+  const browser = await chromium.launch(); t.after(() => browser.close()); const page = await browser.newPage();
+  await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  const navigation = await runJevBrowserCheck(page, { action: 'navigation_control', selector: '#projects' });
+  assert.equal(navigation.inventory.readiness.ready, false); assert.equal(navigation.transition, undefined);
+  assert.equal(navigation.assertions.length, 0); assert.match(navigation.gaps.join(' '), /loading/);
+  await page.setContent('Loading...');
+  const media = await runJevBrowserCheck(page, { action: 'media' });
+  assert.equal(media.code, 'QA_PAGE_NOT_READY'); assert.equal(media.dispatched, false); assert.deepEqual(media.assertions, []);
 });
