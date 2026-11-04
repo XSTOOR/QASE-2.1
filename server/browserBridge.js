@@ -29,6 +29,7 @@ import {
 } from './securityChecks.js';
 import { browserstackCredentials, connectBrowserstack, environmentEmulationOptions, resolveExecution } from './browserstackProvider.js';
 import { createInteractionApi } from './interactionApi.js';
+import { createSqaBrowserSmoke } from './sqaBrowserSmoke.js';
 import {
 	userAgentFor,
 	resolveExecutionLevel,
@@ -1178,6 +1179,33 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 			}).catch(() => {});
 		}
 		return result;
+	};
+
+	/*
+	 * SQA-only bounded smoke checks. These deliberately group repetitive real
+	 * keyboard and viewport operations into one model tool call, reducing cost
+	 * without weakening the evidence boundary or claiming full conformance.
+	 */
+	bridge.sqaSmoke = async (input = {}) => {
+		await service.ensurePage();
+		const page = currentPage();
+		if (!page) {
+			return { success: false, code: 'SQA_SMOKE_UNAVAILABLE', error: 'No live browser page yet — open the authorized target first.' };
+		}
+		const smoke = createSqaBrowserSmoke(page);
+		if (input.action === 'accessibility') {
+			return smoke.accessibility({ steps: input.steps, reverseSteps: input.reverse_steps });
+		}
+		if (input.action === 'responsive') {
+			return smoke.responsive({ viewports: input.viewports });
+		}
+		if (input.action === 'navigation') {
+			return smoke.navigation({ links: input.links });
+		}
+		if (input.action === 'form_validation') {
+			return smoke.formValidation({ fieldLabel: input.field_label, submitName: input.submit_name });
+		}
+		return { success: false, code: 'SQA_SMOKE_UNKNOWN_ACTION', error: 'action must be accessibility, responsive, navigation, or form_validation.' };
 	};
 
 	bridge.media = async (input = {}) => {

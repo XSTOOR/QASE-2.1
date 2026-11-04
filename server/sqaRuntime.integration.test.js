@@ -4,17 +4,19 @@ import { attachBrowserBridge } from './browserBridge.js';
 import { preflightSqaRuntime } from './sqaRuntime.js';
 import { createSqaState } from './sqaService.js';
 import { createSqaTools } from './sqaTools.js';
+import { inspectSqaEvidence } from './sqaEvidence.js';
 
-test('SQA iPad/WebKit can launch, exercise a workflow, and record real browser evidence', { timeout: 45_000 }, async () => {
-  const environment = {
+for (const [browserCode, expectedEngine] of [['chrome', 'chromium'], ['firefox', 'firefox'], ['safari', 'webkit']]) {
+test(`SQA ${expectedEngine} can launch, exercise a workflow, and record verifiable browser evidence`, { timeout: 45_000 }, async () => {
+  const environment = browserCode === 'safari' ? {
     envId: 'sqa-webkit-integration', platform: 'ipados', device: 'iPad Pro 12.9 (5th Gen)',
     browserCode: 'safari', browser: 'Safari', os: 'iPadOS', osVersion: '18.3',
     deviceType: 'tablet', executionProvider: 'local'
-  };
+  } : { envId: `sqa-${expectedEngine}-integration`, platform: 'desktop', browserCode, browser: browserCode === 'chrome' ? 'Chrome' : 'Firefox', os: 'Windows', deviceType: 'desktop', executionProvider: 'local' };
   const engine = await preflightSqaRuntime({ environment });
-  assert.equal(engine, 'webkit');
+  assert.equal(engine, expectedEngine);
   const session = {
-    id: 'sqa-webkit-regression', mode: 'sqa', engine, activities: [],
+    id: `sqa-${expectedEngine}-regression`, mode: 'sqa', engine, activities: [],
     sqa: createSqaState({ authorizationConfirmed: true, profiles: ['core'], attributes: ['web_application', 'user_interface'],
       target: { name: 'Local workflow fixture', release: 'test', environment: 'integration' } })
   };
@@ -40,17 +42,19 @@ test('SQA iPad/WebKit can launch, exercise a workflow, and record real browser e
     await page.getByRole('button', { name: 'Save' }).click();
     assert.equal(await page.locator('output').textContent(), 'Saved: SQA fixture');
     const facts = await bridge.readRuntimeFacts();
-    assert.match(facts.userAgent, /AppleWebKit/);
+    assert.match(facts.userAgent, expectedEngine === 'firefox' ? /Firefox\// : expectedEngine === 'chromium' ? /Chrome\// : /AppleWebKit/);
     assert.equal(bridge.execution.level, 'SIMULATED', 'never claim this is physical Safari/iPad');
     session.activities.push({ id: 'verified-form', toolName: 'browser_snapshot', status: 'done', ts: Date.now(),
-      summary: 'Verified required-field rejection and successful form submission in the local WebKit fixture.' });
+      summary: `Verified required-field rejection and successful form submission in the local ${expectedEngine} fixture.` });
     const record = createSqaTools(session, store).find(tool => tool.name === 'record_sqa_control');
     await record.run({ control_id: 'SQA-QUA-001', status: 'pass', evidence: [{ type: 'test_result',
       summary: 'Required name rejected when empty; submitting SQA fixture produced Saved: SQA fixture.' }] });
     assert.equal(session.sqa.observations[0].status, 'pass');
     assert.match(session.sqa.observations[0].evidence[0].reference, /activities\/verified-form\/evidence\//);
+    assert.equal(inspectSqaEvidence(session, 'SQA-QUA-001', 1).integrity, 'verified');
   } finally {
     bridge?.dispose?.();
     await service.browser?.close();
   }
 });
+}

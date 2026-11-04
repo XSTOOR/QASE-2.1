@@ -139,6 +139,10 @@ into the page under test, so watching a run never changes what is being tested.
 
 ## SQA assessments
 
+Run `npm run test:sqa-release` for isolated SQA contracts and Chromium/Firefox/
+WebKit browser acceptance without model calls. Setup, CI and deployment checks
+are documented in [SQA release readiness](docs/sqa-release-readiness.md).
+
 Choose **SQA assessment** to create a separately scoped software-quality run.
 Qase resolves a versioned, standards-informed control set, drives the existing
 browser automation runtime through non-destructive checks, binds observations to
@@ -317,6 +321,8 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 | `QASE_FRAME_INTERVAL_MS` | `320` | Live view frame interval |
 | `QASE_FRAME_QUALITY` | `55` | Live view JPEG quality |
 | `QASE_BROWSER_IDLE_MS` | `0` | Close a session's browser after this long idle. `0` keeps it open for the whole session. Cookies and the current page are restored either way. |
+| `QASE_MODEL_ACTIVITY_TIMEOUT_MS` | `180000` | Abort and retry a model stream that produces no text, reasoning, usage, or tool activity within this bounded interval. |
+| `QASE_MODEL_TIMEOUT_RETRIES` | `2` | Automatic retries after a model inactivity timeout or eligible SQA/Founder transport interruption. |
 | `QASE_BROWSER_ALLOWED_ORIGINS` | unset | Comma-separated trusted HTTP(S) origins (or `https://*.example.com`) that may receive top-level navigation outside the declared target origin |
 | `QASE_BROWSER_ALLOWED_PRIVATE_HOSTS` | unset | Explicit private-network host exceptions for reviewed internal production targets; exact hosts or `*.example.com` only |
 | `QASE_ALLOW_PRIVATE_NETWORK` | unset | Development-only explicit opt-out from private-network guards for local browser targets and model probes; ignored outside `NODE_ENV=development` |

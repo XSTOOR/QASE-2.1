@@ -3,6 +3,8 @@ import { evaluateSqaAssessment } from './sqaAssessment.js';
 import { SQA_CATALOG, getSqaControl, resolveSqaScope } from './sqaCatalog.js';
 import { redact } from './secrets.js';
 import { PublicInputError, publicInput } from './publicErrors.js';
+import { assertSqaSize, preserveSqaPublication } from './sqaHistory.js';
+import { evidenceDigest } from './sqaEvidence.js';
 
 const AGENT_EVIDENCE_TYPES = new Set([
 	'assessment_record', 'configuration_record', 'security_report', 'test_result', 'wcag_report'
@@ -13,6 +15,12 @@ const MAX_EVIDENCE_SUMMARY = 1_000;
 const MAX_AGENT_EVIDENCE_ITEMS = 10;
 const MAX_AGENT_OBSERVATION_BATCH = 12;
 const MAX_BLOCKER_BATCH = 50;
+
+/** Every SQA run created by this service is a browser assessment of a URL. */
+export const SQA_BROWSER_REVIEW_ATTRIBUTES = Object.freeze([
+	'web_application',
+	'user_interface'
+]);
 
 function text(value, label, maximum, required = false) {
 	if (value === undefined || value === null) {
@@ -73,7 +81,10 @@ export function createSqaState(input = {}, now = () => Date.now()) {
 	if (input.authorizationConfirmed !== true) {
 		throw new TypeError('You must confirm that you are authorized to test this target.');
 	}
-	const resolved = resolveSqaScope({ profiles: input.profiles, attributes: input.attributes });
+	const attributes = Array.isArray(input.attributes)
+		? [...new Set([...SQA_BROWSER_REVIEW_ATTRIBUTES, ...input.attributes])]
+		: input.attributes === undefined ? [...SQA_BROWSER_REVIEW_ATTRIBUTES] : input.attributes;
+	const resolved = resolveSqaScope({ profiles: input.profiles, attributes });
 	const authorizedAt = new Date(now()).toISOString();
 	const scope = {
 		catalogVersion: resolved.catalogVersion,
@@ -111,8 +122,10 @@ export function createSqaTodoPlan(sqa) {
 	const reviewerOnly = controls.length - browserEligible.length;
 	return [
 		{ text: 'Confirm the authorized target, assessment boundary, and representative workflows', status: 'pending' },
+		{ text: 'Run bounded keyboard/semantic accessibility and responsive-layout smoke checks', status: 'pending' },
+		{ text: 'Run bounded same-origin navigation and safe form-validation/recovery smoke checks', status: 'pending' },
 		{ text: `Collect browser evidence for ${browserEligible.length} technically observable control${browserEligible.length === 1 ? '' : 's'}`, status: 'pending' },
-		{ text: 'Verify positive, negative, boundary, accessibility, responsive, diagnostics, security, privacy, and localization behavior where applicable', status: 'pending' },
+		{ text: 'Verify positive, negative, boundary, diagnostics, security, privacy, and localization behavior where applicable', status: 'pending' },
 		{ text: 'Record evidence-backed control decisions and file confirmed product findings', status: 'pending' },
 		{ text: `Resolve or document reviewer-only evidence prerequisites for ${reviewerOnly} control${reviewerOnly === 1 ? '' : 's'}`, status: 'pending' },
 		{ text: 'Validate control and evidence completeness, then publish the professional SQA report', status: 'pending' }
@@ -129,10 +142,12 @@ export function normalizePendingSqaState(input) {
 	if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
 	if (input.finalizedAt) return input;
 	let normalized = input;
-	if (input.scope?.catalogVersion !== SQA_CATALOG.catalogVersion) {
+	const existingAttributes = Array.isArray(input.scope?.attributes) ? input.scope.attributes : [];
+	const missingBrowserReviewScope = SQA_BROWSER_REVIEW_ATTRIBUTES.some(attribute => !existingAttributes.includes(attribute));
+	if (input.scope?.catalogVersion !== SQA_CATALOG.catalogVersion || missingBrowserReviewScope) {
 		const resolved = resolveSqaScope({
 			profiles: input.scope?.profiles,
-			attributes: input.scope?.attributes
+			attributes: [...new Set([...SQA_BROWSER_REVIEW_ATTRIBUTES, ...existingAttributes])]
 		});
 		const applicableIds = new Set(resolved.applicableControls.map(control => control.id));
 		normalized = {
@@ -146,9 +161,9 @@ export function normalizePendingSqaState(input) {
 			},
 			observations: (input.observations ?? []).filter(item => applicableIds.has(item?.controlId))
 		};
-		// An assessment calculated under an older catalog is no longer a valid
-		// progress snapshot. The retained observations are re-evaluated on the
-		// next record operation; newly introduced controls remain pending.
+		// An assessment calculated under an older or incomplete browser scope is
+		// no longer a valid progress snapshot. Retained in-scope observations are
+		// re-evaluated on the next record operation; new controls remain pending.
 		delete normalized.assessment;
 	}
 	if (Array.isArray(normalized.observations) && normalized.observations.length > 0) return normalized;
@@ -178,7 +193,7 @@ function relevantBrowserActivities(session) {
 		}));
 }
 
-function evidenceFromBrowser(session, type, summary, now) {
+function evidenceFromBrowser(session, type, summary, now, records) {
 	if (!AGENT_EVIDENCE_TYPES.has(type)) {
 		throw new TypeError('The SQA agent cannot attest documentary, regulatory, approval, or independent-review evidence.');
 	}
@@ -187,15 +202,17 @@ function evidenceFromBrowser(session, type, summary, now) {
 		throw new TypeError('A pass or fail requires a completed browser observation in this run.');
 	}
 	const collectedAt = new Date(now()).toISOString();
-	const payload = redact(session.id, {
+	// Normalize to the exact JSON representation retained by both run stores.
+	const payload = JSON.parse(JSON.stringify(redact(session.id, {
 		runId: session.id,
 		evidenceType: type,
 		activityIds: activities.map(activity => activity.id),
 		activities,
 		collectedAt,
 		summary
-	});
-	const digest = createHash('sha256').update(canonical(payload)).digest('hex');
+	})));
+	const digest = evidenceDigest(payload).slice(7);
+	records?.set(`sha256:${digest}`, payload);
 	const primaryActivityId = encodeURIComponent(String(activities.at(-1).id).slice(0, 128));
 	return {
 		type,
@@ -248,7 +265,7 @@ function normalizeAgentEvidenceInputs(input, status) {
 	return items;
 }
 
-function normalizeAgentObservation(session, input, now) {
+function normalizeAgentObservation(session, input, now, records) {
 	const controlId = text(input?.control_id, 'SQA control ID', 32, true);
 	const control = getSqaControl(controlId);
 	if (!session.sqa.scope.applicableControlIds.includes(control.id)) {
@@ -280,7 +297,8 @@ function normalizeAgentObservation(session, input, now) {
 		session,
 		item.type,
 		item.summary ?? `Browser evidence for ${control.id}.`,
-		now
+		now,
+		records
 	));
 	return {
 		controlId: control.id,
@@ -297,6 +315,7 @@ function assertAgentRunMutable(session) {
 	if (session.sqa.finalizedAt) {
 		throw new TypeError('This SQA assessment is finalized. Reopen it through an authorized reviewer workflow before changing observations.');
 	}
+	if (session.sqa.review?.status === 'in_review') throw new TypeError('Human review is in progress. Only an authorized reviewer can change this draft.');
 	const normalized = normalizePendingSqaState(session.sqa);
 	if (normalized !== session.sqa) session.sqa = normalized;
 }
@@ -308,18 +327,26 @@ function assertAgentRunMutable(session) {
  */
 export async function recordAgentSqaObservation(session, input, runStore, now = () => Date.now()) {
 	assertAgentRunMutable(session);
-	const observation = normalizeAgentObservation(session, input, now);
-	const index = session.sqa.observations.findIndex(item => item.controlId === observation.controlId);
-	if (index >= 0) session.sqa.observations[index] = observation;
-	else session.sqa.observations.push(observation);
+	const previous = session.sqa;
+	const records = new Map();
+	const observation = normalizeAgentObservation(session, input, now, records);
+	const next = structuredClone(previous);
+	next.evidenceRecords = { ...previous.evidenceRecords, ...Object.fromEntries(records) };
+	const index = next.observations.findIndex(item => item.controlId === observation.controlId);
+	if (index >= 0) next.observations[index] = observation;
+	else next.observations.push(observation);
 	const assessedAt = new Date(now()).toISOString();
-	session.sqa.updatedAt = assessedAt;
-	session.sqa.assessment = evaluateSqaAssessment(assessmentInput(session.sqa, assessedAt));
-	await runStore.commit(session, 'sqa', {
-		assessment: session.sqa.assessment,
-		controlId: observation.controlId,
-		status: session.sqa.assessment.results.find(result => result.controlId === observation.controlId)?.status
-	});
+	next.updatedAt = assessedAt;
+	next.assessment = evaluateSqaAssessment(assessmentInput(next, assessedAt));
+	try {
+		assertSqaSize(next);
+		session.sqa = next;
+		await runStore.commit(session, 'sqa', {
+			assessment: next.assessment,
+			controlId: observation.controlId,
+			status: next.assessment.results.find(result => result.controlId === observation.controlId)?.status
+		});
+	} catch (error) { session.sqa = previous; throw error; }
 	return session.sqa.assessment.results.find(result => result.controlId === observation.controlId);
 }
 
@@ -334,29 +361,37 @@ export async function recordAgentSqaObservations(session, inputs, runStore, now 
 	if (!Array.isArray(inputs) || inputs.length === 0 || inputs.length > MAX_AGENT_OBSERVATION_BATCH) {
 		throw new TypeError(`SQA observation batch must contain 1-${MAX_AGENT_OBSERVATION_BATCH} controls.`);
 	}
-	const observations = inputs.map(input => normalizeAgentObservation(session, input, now));
+	const previous = session.sqa;
+	const records = new Map();
+	const observations = inputs.map(input => normalizeAgentObservation(session, input, now, records));
 	const ids = observations.map(item => item.controlId);
 	if (new Set(ids).size !== ids.length) {
 		throw new TypeError('SQA observation batch contains duplicate control IDs.');
 	}
+	const next = structuredClone(previous);
+	next.evidenceRecords = { ...previous.evidenceRecords, ...Object.fromEntries(records) };
 	for (const observation of observations) {
-		const index = session.sqa.observations.findIndex(item => item.controlId === observation.controlId);
-		if (index >= 0) session.sqa.observations[index] = observation;
-		else session.sqa.observations.push(observation);
+		const index = next.observations.findIndex(item => item.controlId === observation.controlId);
+		if (index >= 0) next.observations[index] = observation;
+		else next.observations.push(observation);
 	}
 	const assessedAt = new Date(now()).toISOString();
-	session.sqa.updatedAt = assessedAt;
-	session.sqa.assessment = evaluateSqaAssessment(assessmentInput(session.sqa, assessedAt));
+	next.updatedAt = assessedAt;
+	next.assessment = evaluateSqaAssessment(assessmentInput(next, assessedAt));
 	const statuses = Object.fromEntries(ids.map(controlId => [
 		controlId,
-		session.sqa.assessment.results.find(result => result.controlId === controlId)?.status
+		next.assessment.results.find(result => result.controlId === controlId)?.status
 	]));
-	await runStore.commit(session, 'sqa', {
-		assessment: session.sqa.assessment,
-		controlIds: ids,
-		statuses,
-		batch: true
-	});
+	try {
+		assertSqaSize(next);
+		session.sqa = next;
+		await runStore.commit(session, 'sqa', {
+			assessment: next.assessment,
+			controlIds: ids,
+			statuses,
+			batch: true
+		});
+	} catch (error) { session.sqa = previous; throw error; }
 	return session.sqa.assessment.results.filter(result => ids.includes(result.controlId));
 }
 
@@ -399,6 +434,49 @@ export async function recordAgentSqaBlockers(session, inputs, runStore, now = ()
 	return session.sqa.assessment.results.filter(result => ids.includes(result.controlId));
 }
 
+/**
+ * Host-owned safety closeout for an exhausted SQA run. Every still-pending
+ * control becomes blocked in one durable transaction with the exact host
+ * limit as its reason. Existing pass/fail/blocked evidence is preserved.
+ */
+export async function closePendingSqaControlsAsBlocked(session, reason, runStore, now = () => Date.now()) {
+	assertAgentRunMutable(session);
+	const safeReason = redact(session.id, text(reason, 'SQA safety closeout reason', MAX_RATIONALE, true));
+	const previous = session.sqa;
+	const normalized = normalizePendingSqaState(previous);
+	const observations = [...normalized.observations];
+	const closedControlIds = [];
+	for (const controlId of normalized.scope.applicableControlIds) {
+		const index = observations.findIndex(item => item.controlId === controlId);
+		if (index >= 0 && observations[index].status !== 'not_assessed') continue;
+		const blocked = { controlId, status: 'blocked', rationale: safeReason, evidence: [] };
+		if (index >= 0) observations[index] = blocked;
+		else observations.push(blocked);
+		closedControlIds.push(controlId);
+	}
+	if (closedControlIds.length === 0) return [];
+	const assessedAt = new Date(now()).toISOString();
+	session.sqa = {
+		...normalized,
+		observations,
+		updatedAt: assessedAt,
+		assessment: evaluateSqaAssessment(assessmentInput({ ...normalized, observations }, assessedAt))
+	};
+	try {
+		await runStore.commit(session, 'sqa', {
+			assessment: session.sqa.assessment,
+			controlIds: closedControlIds,
+			status: 'blocked',
+			safetyCloseout: true,
+			batch: true
+		});
+	} catch (error) {
+		session.sqa = previous;
+		throw error;
+	}
+	return session.sqa.assessment.results.filter(result => closedControlIds.includes(result.controlId));
+}
+
 /** Recompute and persist the final deterministic assessment. */
 export async function finishSqaAssessment(session, runStore, now = () => Date.now()) {
 	if (session?.mode !== 'sqa' || !session.sqa) {
@@ -418,6 +496,8 @@ export async function finishSqaAssessment(session, runStore, now = () => Date.no
 		assessment: evaluateSqaAssessment(assessmentInput(normalized, assessedAt))
 	};
 	try {
+		session.sqa.publishedVersions = preserveSqaPublication(session.sqa, undefined, true);
+		assertSqaSize(session.sqa);
 		await runStore.commit(session, 'sqa', { assessment: session.sqa.assessment, final: true });
 	} catch (error) {
 		session.sqa = previous;
@@ -436,9 +516,11 @@ export async function recordReviewerSqaObservation(session, observation, reviewe
 	if (session?.mode !== 'sqa' || !session.sqa) {
 		throw new PublicInputError('This run is not an SQA assessment.');
 	}
-	if (!reviewer || typeof reviewer !== 'object') throw new PublicInputError('A trusted reviewer is required.');
+	if (!reviewer || !['owner', 'admin'].includes(reviewer.role)) throw new PublicInputError('An owner or administrator reviewer is required.', 403);
 	const reviewedAt = new Date(now()).toISOString();
-	let workingSqa = session.sqa;
+	const previous = session.sqa;
+	let workingSqa = structuredClone(previous);
+	workingSqa.publishedVersions = preserveSqaPublication(previous);
 	if (workingSqa.scope?.catalogVersion !== SQA_CATALOG.catalogVersion) {
 		// A trusted review is an explicit reopen boundary. Prepare the catalog
 		// migration off-object so an invalid reviewer payload cannot accidentally
@@ -475,7 +557,7 @@ export async function recordReviewerSqaObservation(session, observation, reviewe
 	const attestation = {
 		controlId,
 		reviewedAt,
-		role: ['owner', 'admin'].includes(reviewer.role) ? reviewer.role : 'owner',
+		role: reviewer.role,
 		...(reviewer.actorUserId ? { actorUserId: reviewer.actorUserId } : {}),
 		observationSha256: createHash('sha256').update(canonical(accepted)).digest('hex')
 	};
@@ -487,7 +569,15 @@ export async function recordReviewerSqaObservation(session, observation, reviewe
 	session.sqa.updatedAt = reviewedAt;
 	session.sqa.finalizedAt = undefined;
 	session.sqa.assessment = assessment;
-	await runStore.commit(session, 'sqa', { assessment, controlId, reviewerAttestation: attestation });
+	session.sqa.reviewRevision = (previous.reviewRevision ?? 0) + 1;
+	session.sqa.review = { ...workingSqa.review, status: 'in_review', updatedAt: reviewedAt };
+	try {
+		assertSqaSize(session.sqa);
+		await runStore.commit(session, 'sqa', { assessment, controlId, reviewerAttestation: attestation, review: session.sqa.review, reviewRevision: session.sqa.reviewRevision });
+	} catch (error) {
+		session.sqa = previous;
+		throw error;
+	}
 	return normalized;
 }
 

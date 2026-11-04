@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createSqaState } from './sqaService.js';
 import { createSqaTools, finishReadiness } from './sqaTools.js';
+import { SQA_INPUT_TOKEN_BUDGET } from './sqaBrowserBudget.js';
 
 const fixedNow = () => Date.parse('2026-08-17T00:00:00.000Z');
 
@@ -80,6 +81,31 @@ test('finish tool refuses to publish a partial assessment', async () => {
 	assert.equal(candidate.sqa.finalizedAt, undefined);
 });
 
+test('safety closeout is rejected early and finishes exhausted runs in one call', async () => {
+	const early = session();
+	early.todos = [{ text: 'Run technical checks', status: 'pending' }];
+	let finish = createSqaTools(early, store()).find(tool => tool.name === 'finish_sqa_assessment');
+	const rejected = await finish.run({ close_after_safety_limit: true });
+	assert.equal(rejected.success, false);
+	assert.match(rejected.error, /only after.*limit is exhausted/i);
+	assert.equal(early.sqa.observations.length, 0);
+
+	const exhausted = session();
+	exhausted.todos = [{ text: 'Run technical checks', status: 'pending' }];
+	exhausted.tokenUsage = { inputTokens: SQA_INPUT_TOKEN_BUDGET };
+	finish = createSqaTools(exhausted, store()).find(tool => tool.name === 'finish_sqa_assessment');
+	const result = await finish.run({ close_after_safety_limit: true });
+	assert.equal(result.success, true);
+	assert.equal(result.published, true);
+	assert.equal(result.safety_closeout, true);
+	assert.equal(result.safety_closed_control_ids.length, exhausted.sqa.scope.applicableControlIds.length);
+	assert.ok(exhausted.sqa.finalizedAt);
+	assert.equal(exhausted.todos.every(todo => todo.status === 'completed'), true);
+	assert.deepEqual(finishReadiness(exhausted, fixedNow()).pendingControlIds, []);
+	assert.equal(exhausted.sqa.observations.every(item => item.status === 'blocked'), true);
+	assert.ok(exhausted.sqa.observations[0].rationale.includes(`${SQA_INPUT_TOKEN_BUDGET}/${SQA_INPUT_TOKEN_BUDGET}`));
+});
+
 test('authentication-blocked representative scope requires a user decision before finish', async () => {
 	const candidate = session();
 	candidate.sqa.scope.applicableControlIds = ['SQA-WEB-001', 'SQA-WEB-002'];
@@ -92,7 +118,39 @@ test('authentication-blocked representative scope requires a user decision befor
 	assert.equal(result.success, false);
 	assert.equal(result.requires_user_input, true);
 	assert.equal(candidate.sqa.finalizedAt, undefined);
+	candidate.tokenUsage = { inputTokens: SQA_INPUT_TOKEN_BUDGET };
+	const safetyResult = await finish.run({ close_after_safety_limit: true });
+	assert.equal(safetyResult.success, false);
+	assert.equal(safetyResult.requires_user_input, true, 'safety closeout cannot bypass authentication scope');
+	assert.equal(candidate.sqa.finalizedAt, undefined);
 
 	candidate.messages.push({ role: 'user', text: 'Continue with an anonymous-only assessment.' });
 	assert.deepEqual(finishReadiness(candidate, fixedNow()).authBlockedControlIds, []);
+});
+
+test('a confirmed finding prevents publication until every linked control is failed', async () => {
+	const candidate = session();
+	const tools = createSqaTools(candidate, store());
+	const record = tools.find(tool => tool.name === 'record_sqa_control');
+	const finish = tools.find(tool => tool.name === 'finish_sqa_assessment');
+	assert.equal((await record.run({
+		control_id: 'SQA-WEB-003',
+		status: 'pass',
+		evidence: [{ type: 'test_result', summary: 'The form validation workflow was sampled.' }]
+	})).success, true);
+	candidate.findings = [{ id: 'finding-1', title: 'Stale validation message', controlIds: ['SQA-WEB-003'] }];
+	const readiness = finishReadiness(candidate, fixedNow());
+	assert.deepEqual(readiness.findingControlConflicts.map(item => item.controlId), ['SQA-WEB-003']);
+	const rejected = await finish.run();
+	assert.equal(rejected.success, false);
+	assert.deepEqual(rejected.finding_control_conflicts.map(item => item.controlId), ['SQA-WEB-003']);
+	assert.equal(candidate.sqa.finalizedAt, undefined);
+
+	assert.equal((await record.run({
+		control_id: 'SQA-WEB-003',
+		status: 'fail',
+		rationale: 'A confirmed stale success state violates the form recovery objective.',
+		evidence: [{ type: 'test_result', summary: 'The stale success message remained after invalid submission.' }]
+	})).success, true);
+	assert.deepEqual(finishReadiness(candidate, fixedNow()).findingControlConflicts, []);
 });

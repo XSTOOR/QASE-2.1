@@ -132,7 +132,11 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 				steps: { type: 'array', items: { type: 'string' }, description: 'The exact steps to reproduce, in order.' },
 				expected: { type: 'string', description: 'What should have happened.' },
 				actual: { type: 'string', description: 'What actually happened.' },
-				evidence: { type: 'string', description: 'Supporting detail: a console error, a status code, the text of an error message.' }
+				evidence: { type: 'string', description: 'Supporting detail: a console error, a status code, the text of an error message.' },
+				control_ids: {
+					type: 'array', maxItems: 12, items: { type: 'string' },
+					description: 'SQA mode only: every scoped control whose objective this confirmed defect disproves. Required for SQA findings; each linked control must be recorded as fail.'
+				}
 			},
 			required: ['title', 'severity', 'expected', 'actual']
 		},
@@ -151,6 +155,18 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 			if (!SEVERITIES.includes(input.severity)) {
 				return { success: false, error: 'report_finding requires a valid severity: critical, high, medium, low, or info.' };
 			}
+			let controlIds;
+			if (session.mode === 'sqa') {
+				if (!Array.isArray(input.control_ids) || input.control_ids.length === 0 || input.control_ids.length > 12) {
+					return { success: false, error: 'SQA report_finding requires 1-12 scoped control_ids whose objective the defect disproves.' };
+				}
+				controlIds = [...new Set(input.control_ids)];
+				if (controlIds.length !== input.control_ids.length || controlIds.some(controlId => (
+					typeof controlId !== 'string' || !session.sqa?.scope?.applicableControlIds?.includes(controlId)
+				))) {
+					return { success: false, error: 'SQA finding control_ids must be unique control IDs in this assessment scope.' };
+				}
+			}
 			const severity = input.severity;
 			const findingTs = Date.now();
 			const finding = redact(session.id, {
@@ -164,6 +180,7 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 				expected: boundedText(input.expected, 20_000),
 				actual: boundedText(input.actual, 20_000),
 				evidence: input.evidence ? boundedText(input.evidence, 20_000) : undefined,
+				...(controlIds ? { controlIds } : {}),
 				engine: isEngineId(input.engine) ? input.engine : (isEngineId(session.engine) ? session.engine : undefined),
 				// Every tracked bug starts open; the user moves it through the
 				// lifecycle from the Bugs view.
@@ -196,6 +213,7 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 				success: true,
 				finding_id: finding.id,
 				recorded: `${severity.toUpperCase()}: ${finding.title}`,
+				...(controlIds ? { control_ids: controlIds } : {}),
 				total_findings: session.findings.length
 			};
 		}

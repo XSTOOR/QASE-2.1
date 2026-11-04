@@ -1,11 +1,13 @@
 import {
 	AGENT_EVIDENCE_TYPES,
+	closePendingSqaControlsAsBlocked,
 	finishSqaAssessment,
 	recordAgentSqaBlockers,
 	recordAgentSqaObservation,
 	recordAgentSqaObservations
 } from './sqaService.js';
 import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
+import { countSqaBrowserActivities, SQA_BROWSER_TOOL_BUDGET, SQA_INPUT_TOKEN_BUDGET } from './sqaBrowserBudget.js';
 
 const AGENT_EVIDENCE_TYPE_VALUES = [...AGENT_EVIDENCE_TYPES];
 const PUBLIC_ONLY_SCOPE = /\b(public[- ]only|anonymous[- ]only|unauthenticated[- ]only|login[- ]only|auth(?:entication)? surface only|continue without (?:credentials|sign[- ]?in))\b/i;
@@ -49,7 +51,20 @@ function finishReadiness(session, now = Date.now()) {
 			&& item.status === 'blocked'
 			&& AUTH_BLOCKED.test(item.rationale ?? ''))
 		.map(item => item.controlId);
-	return { pendingControlIds, incompletePassIds, activeActivities, incompleteTodos, authBlockedControlIds };
+	const findingControlConflicts = (session.findings ?? []).flatMap(finding => (
+		(finding.controlIds ?? [])
+			.filter(controlId => observations.get(controlId)?.status !== 'fail')
+			.map(controlId => ({ findingId: finding.id, title: finding.title, controlId,
+				observedStatus: observations.get(controlId)?.status ?? 'pending' }))
+	));
+	return {
+		pendingControlIds,
+		incompletePassIds,
+		activeActivities,
+		incompleteTodos,
+		authBlockedControlIds,
+		findingControlConflicts
+	};
 }
 
 export function createSqaTools(session, runStore) {
@@ -177,11 +192,17 @@ export function createSqaTools(session, runStore) {
 
 	const finish = {
 		name: 'finish_sqa_assessment',
-		description: 'Ends the SQA run by invoking the deterministic verdict engine. Call once after every applicable control has a result. The result is a scoped technical assessment, never a certification or regulatory approval.',
+		description: 'Ends the SQA run by invoking the deterministic verdict engine. Call once after every applicable control has a result. If a hard browser or input-token safety limit was reached, set close_after_safety_limit=true once; the host durably blocks all pending controls with the exact limit reason, completes the plan, and publishes without inventing evidence. The result is a scoped technical assessment, never a certification or regulatory approval.',
 		category: 'sqa',
-		parametersSchema: { type: 'object', properties: {} },
-		async run() {
+		parametersSchema: {
+			type: 'object', additionalProperties: false,
+			properties: {
+				close_after_safety_limit: { type: 'boolean', description: 'Use only after the host reports the SQA browser-tool or input-token safety limit is exhausted.' }
+			}
+		},
+		async run(input = {}) {
 			try {
+				if (session.sqa?.review?.status === 'in_review') return { success: false, error: 'An authorized reviewer must publish this review draft.' };
 				if (session.sqa?.finalizedAt && session.sqa?.assessment) {
 					return {
 						success: true,
@@ -194,13 +215,55 @@ export function createSqaTools(session, runStore) {
 						disclaimer: session.sqa.assessment.disclaimer
 					};
 				}
-				const readiness = finishReadiness(session);
+				let readiness = finishReadiness(session);
 				if (readiness.activeActivities.length > 0) {
 					return {
 						success: false,
 						error: 'Browser checks are still running. Wait for their tool results before publishing.',
 						active_activity_ids: readiness.activeActivities.map(item => item.id)
 					};
+				}
+				if (readiness.findingControlConflicts.length > 0) {
+					return {
+						success: false,
+						error: 'A confirmed SQA finding contradicts a linked control result. Every control linked by report_finding must be recorded as fail before publication.',
+						finding_control_conflicts: readiness.findingControlConflicts
+					};
+				}
+				let safetyClosedControlIds = [];
+				if (input?.close_after_safety_limit === true) {
+					const inputTokens = Math.max(0, Number(session.tokenUsage?.inputTokens) || 0);
+					const browserTools = countSqaBrowserActivities(session);
+					const tokenLimitReached = inputTokens >= SQA_INPUT_TOKEN_BUDGET;
+					const browserLimitReached = browserTools >= SQA_BROWSER_TOOL_BUDGET;
+					if (!tokenLimitReached && !browserLimitReached) {
+						return {
+							success: false,
+							error: 'Safety closeout is available only after the host SQA input-token or browser-tool limit is exhausted.',
+							input_tokens: inputTokens,
+							input_token_limit: SQA_INPUT_TOKEN_BUDGET,
+							browser_tools: browserTools,
+							browser_tool_limit: SQA_BROWSER_TOOL_BUDGET
+						};
+					}
+					if (readiness.authBlockedControlIds.length >= 2) {
+						return {
+							success: false,
+							requires_user_input: true,
+							error: 'Authentication prevented representative scoped workflows. Call ask_question for vaulted credentials, or ask the user to explicitly confirm an anonymous/public-surface-only assessment before publishing.',
+							auth_blocked_control_ids: readiness.authBlockedControlIds
+						};
+					}
+					const reason = tokenLimitReached
+						? `The host SQA input-token safety limit was exhausted (${inputTokens}/${SQA_INPUT_TOKEN_BUDGET}) before control-specific evidence was collected. Conservatively blocked; no pass or fail is claimed.`
+						: `The host SQA browser-tool safety limit was exhausted (${browserTools}/${SQA_BROWSER_TOOL_BUDGET}) before control-specific evidence was collected. Conservatively blocked; no pass or fail is claimed.`;
+					const closed = await closePendingSqaControlsAsBlocked(session, reason, runStore);
+					safetyClosedControlIds = closed.map(result => result.controlId);
+					if ((session.todos ?? []).some(todo => todo.status !== 'completed')) {
+						session.todos = session.todos.map(todo => ({ ...todo, status: 'completed' }));
+						await runStore.commit(session, 'todos', { todos: session.todos, safetyCloseout: true });
+					}
+					readiness = finishReadiness(session);
 				}
 				if (readiness.incompleteTodos.length > 0) {
 					return {
@@ -229,6 +292,8 @@ export function createSqaTools(session, runStore) {
 				return {
 					success: true,
 					published: true,
+					safety_closeout: safetyClosedControlIds.length > 0,
+					safety_closed_control_ids: safetyClosedControlIds,
 					assessment_id: assessment.assessmentId,
 					verdict: assessment.verdict,
 					coverage: assessment.coverage,

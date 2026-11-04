@@ -1,0 +1,39 @@
+name: SQA release acceptance
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  sqa:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Check runtime dependency security
+        run: npm run audit:dependencies
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - name: Verify SQA contracts and three-engine desktop/mobile workflows
+        run: npm run test:sqa-release
+      - name: Retain SQA results without private runtime state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqa-acceptance-${{ matrix.os }}
+          path: |
+            test-results/sqa-release/*/result.json
+            test-results/sqa-release/*/*.log
+            test-results/sqa-release/*/*-startup/result.json
+            test-results/sqa-release/*/*-startup/*.png
+            test-results/sqa-release/*/*-evidence/result.json
+            test-results/sqa-release/*/*-evidence/*.png
+            test-results/sqa-release/*/*-evidence/assessment.pdf
+          if-no-files-found: warn
+          retention-days: 14

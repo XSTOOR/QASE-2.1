@@ -1,5 +1,27 @@
 /* Qase — Drytis Studio design language (light-first) */
 
+.modal.sqa-evidence-dialog, .cli-theme .modal.sqa-evidence-dialog { width: min(760px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; padding: 20px; box-sizing: border-box; color: var(--text); background: var(--panel-chat); }
+.sqa-evidence-inspector { display: grid; gap: 12px; padding-top: 12px; overflow-wrap: anywhere; }
+.sqa-evidence-inspector h2, .sqa-evidence-inspector h3, .sqa-evidence-inspector h4, .sqa-evidence-inspector p { margin: 0; }
+.sqa-evidence-inspector dd { margin: 0 0 12px; white-space: pre-wrap; }
+.sqa-evidence-inspector dt { font-weight: 600; }
+.sqa-evidence-inspector pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sqa-evidence-inspector article, .sqa-traceability article { border-top: 1px solid var(--border); padding: 12px 0; }
+.sqa-traceability article { overflow-wrap: anywhere; }
+.sqa-traceability summary { cursor: pointer; }
+
+.sqa-review-panel { display: grid; gap: 12px; }
+.sqa-review-panel h3, .sqa-review-panel h4, .sqa-review-panel p { margin: 0; }
+.sqa-review-form, .sqa-review-evidence { display: grid; gap: 12px; }
+.sqa-review-form { border-top: 1px solid var(--border); padding-top: 16px; }
+.sqa-review-field { display: grid; gap: 6px; min-width: 0; font-size: 12px; }
+.sqa-review-field input, .sqa-review-field select, .sqa-review-field textarea { width: 100%; min-width: 0; box-sizing: border-box; padding: 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel-chat); font: inherit; }
+.sqa-review-field textarea { min-height: 76px; resize: vertical; }
+.sqa-review-evidence fieldset { min-width: 0; display: grid; gap: 10px; border: 1px solid var(--border); padding: 12px; }
+.sqa-review-panel details > div { display: grid; gap: 10px; padding-top: 10px; }
+.sqa-review-version { display: flex; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--border); padding: 10px 0; overflow-wrap: anywhere; }
+.sqa-review-version p { flex-basis: 100%; }
+
 :root {
   color-scheme: light dark;
   --bg: #07090d;
@@ -8134,13 +8156,45 @@ background: rgba(47, 91, 234, 0.075);  box-shadow: none;
   font-size: 8.5px;
 }
 
+.sqa-selection-summary {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 680;
+}
+
+.sqa-selection-reasons {
+  display: grid;
+  gap: 3px;
+  margin: 7px 0 0;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1.45;
+  list-style: none;
+}
+
+.sqa-selection-reasons li::before {
+  margin-right: 6px;
+  color: var(--info);
+  content: "✓";
+}
+
 .sqa-catalog-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 11px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface-1);
   color: var(--text-muted);
   font-size: 10px;
+}
+
+.sqa-build-fields {
+  margin-top: 10px;
 }
 
 .sqa-fieldset {
@@ -8525,12 +8579,7 @@ background:var(--panel-chat);  font-family: var(--font-mono);
   font-size: 11px;
 }
 
-.cli-theme .sqa-modal .field textarea:focus {  border-color: rgba(47, 91, 234, 0.5);
-.sqa-modal .field textarea:focus {
-  border-color: rgba(47, 91, 234, 0.5);
-  box-shadow: 0 0 0 2px rgba(47, 91, 234, 0.08);
-}
-
+.sqa-modal .field textarea:focus,
 .cli-theme .sqa-modal .field textarea:focus {
   border-color: rgba(47, 91, 234, 0.5);
   box-shadow: 0 0 0 2px rgba(47, 91, 234, 0.08);

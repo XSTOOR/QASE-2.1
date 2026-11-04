@@ -67,6 +67,9 @@ export function groupSqaUnresolvedResults(results = []) {
  * "blocked" verdict; only `finalizedAt` makes the result final.
  */
 export function describeSqaLifecycle(sqa = {}, runStatus = 'idle', activityCount = 0) {
+	if (sqa?.review?.status === 'in_review' && !sqa.finalizedAt) {
+		return { phase: 'review', finalized: false, status: 'review', badge: 'review draft', label: 'Human evidence review', mark: '…', eyebrow: 'Assessment lifecycle', detail: 'Reviewer decisions are in a draft. Earlier published versions remain available in Published versions.' };
+	}
 	const assessment = sqa?.assessment;
 	if (sqa?.finalizedAt) {
 		const status = assessment?.verdict ?? 'not_assessed';

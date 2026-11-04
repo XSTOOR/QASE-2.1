@@ -1,4 +1,7 @@
 import { describeSqaLifecycle, groupSqaUnresolvedResults } from './sqaPresentation.js';
+import { renderSqaReviewPanel } from './sqaReviewView.js';
+import { sqaReportModel } from './sqaReportModel.js';
+import { evidenceInspectButton, renderSqaTraceability } from './sqaEvidenceView.js';
 import { previewCollapsed } from './previewLayout.js';
 import { renderProbeIds, hasInteractiveSurface } from './renderHealth.js';
 import { renderMatrixPicker } from './matrixPicker.js';
@@ -43,6 +46,7 @@ import { channelFor as channelForClient } from './browserChannels.js';
 import { fallbackOptionsFor, availabilityMeta, describeQueue } from './deviceRuntimeUi.js';
 import { resolveActiveRuntimeEnvironment, viewForSelection } from './activeRuntimeEnvironment.js';
 import { chromeViewModel } from './browserChrome.js';
+import { SQA_REQUIRED_BROWSER_ATTRIBUTES, describeSqaScopeSelection } from './sqaScopeSelection.js';
 import {
 	lastRunByCase, caseStatus, platformsOf, caseEnvLines,
 	filterCasesForWizard, resolveRunPairs
@@ -4033,14 +4037,16 @@ function renderSqaReportTab() {
 		?? 'This scoped engineering assessment is not legal advice, regulatory approval, accreditation, an audit opinion, or certification.';
 	notice.append(noticeTitle, noticeText);
 
-	el.reportView.append(notice, renderSqaVerdict(assessment, lifecycle), renderSqaReportActions());
+	el.reportView.append(notice);
+	if (assessment.technicalSummary) el.reportView.append(renderSqaTechnicalSummary(assessment.technicalSummary));
+	el.reportView.append(renderSqaFailures(assessment), renderSqaVerdict(assessment, lifecycle), renderSqaReportActions());
 	el.reportView.append(
 		renderSqaUnresolved(assessment),
 		renderSqaCoverage(assessment)
 	);
-	if (assessment.technicalSummary) el.reportView.append(renderSqaTechnicalSummary(assessment.technicalSummary));
 	el.reportView.append(
 		renderSqaControls(assessment.results ?? []),
+		renderSqaTraceability(sqaReportModel(assessment), { runId: state.session.id, api }),
 		renderSqaSources(assessment.frameworkCoverage ?? []),
 		renderSqaScope(sqa.scope ?? {}, assessment)
 	);
@@ -4121,6 +4127,7 @@ function renderSqa() {
 	}
 
 	const sqa = state.session.sqa ?? {};
+	const sqaReviewRunId = state.session.id;
 	const scope = sqa.scope ?? {};
 	const assessment = sqa.assessment;
 	const lifecycle = describeSqaLifecycle(sqa, state.session.status, state.session.activities?.length ?? 0);
@@ -4136,7 +4143,29 @@ function renderSqa() {
 	notice.append(noticeTitle, noticeText);
 	el.sqaView.append(notice);
 
+	if (assessment?.technicalSummary) el.sqaView.append(renderSqaTechnicalSummary(assessment.technicalSummary));
+	if (assessment) el.sqaView.append(renderSqaFailures(assessment));
 	el.sqaView.append(renderSqaVerdict(assessment, lifecycle));
+	el.sqaView.append(renderSqaReviewPanel({
+		session: state.session,
+		role: state.user?.role,
+		api,
+		selectRun: id => selectSession(id),
+		refresh: async sqa => {
+			if (state.session?.id !== sqaReviewRunId) return;
+			if (sqa.reviewRevision !== undefined && sqa.reviewRevision <= (state.session.sqa?.reviewRevision ?? 0)) return;
+			state.session.sqa = sqa;
+			renderSqa(); renderReport(); renderHeader();
+			void refreshRuns();
+		},
+		downloadMarkdown: async (url, filename) => {
+			const text = await apiText(url);
+			const blobUrl = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+			const link = document.createElement('a'); link.href = blobUrl; link.download = filename;
+			document.body.append(link); link.click(); link.remove();
+			setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
+		}
+	}));
 
 	if (!lifecycle.finalized && lifecycle.phase === 'ready') {
 		const pending = document.createElement('div');
@@ -4154,8 +4183,8 @@ function renderSqa() {
 	if (lifecycle.finalized) el.sqaView.append(renderSqaReportActions());
 	el.sqaView.append(renderSqaUnresolved(assessment));
 	el.sqaView.append(renderSqaCoverage(assessment));
-	if (assessment.technicalSummary) el.sqaView.append(renderSqaTechnicalSummary(assessment.technicalSummary));
 	el.sqaView.append(renderSqaControls(assessment.results ?? []));
+	el.sqaView.append(renderSqaTraceability(sqaReportModel(assessment), { runId: state.session.id, api }));
 	el.sqaView.append(renderSqaSources(assessment.frameworkCoverage ?? []));
 	el.sqaView.append(renderSqaScope(scope, assessment));
 }
@@ -4267,6 +4296,14 @@ function renderSqaReportActions() {
 	actionGroup.className = 'report-action-group';
 	actionGroup.append(actions, developerActions);
 	return actionGroup;
+}
+
+function renderSqaFailures(assessment) {
+	const failures = sqaReportModel(assessment).failures;
+	const section = sqaSection('Evidence-backed control failures', 'Recorded failures are separate from missing reviewer evidence.');
+	if (!failures.length) section.append(sqaLabeledText('Result', 'No evidence-backed control failures were recorded.'));
+	for (const failure of failures) section.append(sqaLabeledText(`${failure.controlId} — ${failure.title}`, failure.rationale ?? 'Remediate and retest this control.'));
+	return section;
 }
 
 function renderSqaVerdict(assessment, lifecycle) {
@@ -4552,12 +4589,15 @@ function renderSqaControl(result) {
 	} else {
 		const evidenceList = document.createElement('ul');
 		evidenceList.className = 'sqa-evidence-list';
-		for (const artifact of evidence) {
+		for (const [index, artifact] of evidence.entries()) {
 			const entry = document.createElement('li');
 			const type = document.createElement('strong');
 			type.textContent = humanizeSqaId(artifact.type);
 			const reference = safeSqaLink(artifact.reference, artifact.reference);
-			entry.append(type, reference);
+			entry.append(type, reference, evidenceInspectButton({ runId: state.session.id, controlId: result.controlId, index: index + 1, api }));
+			const provenance = document.createElement('span');
+			provenance.textContent = `Collected at: ${artifact.collectedAt ?? 'not recorded'} · Digest: ${artifact.digest ?? 'not supplied'}`;
+			entry.append(provenance);
 			if (artifact.summary) {
 				const description = document.createElement('span');
 				description.textContent = artifact.summary;
@@ -4827,6 +4867,16 @@ function handleEvent(event) {
 			break;
 
 		case 'sqa':
+			if (event.reviewRevision !== undefined) {
+				if (event.reviewRevision <= (session.sqa?.reviewRevision ?? 0)) break;
+				const runId = session.id;
+				void api(`/sessions/${runId}`).then(latest => {
+					if (state.session?.id !== runId || latest.sqa?.reviewRevision <= (state.session.sqa?.reviewRevision ?? 0)) return;
+					state.session.sqa = latest.sqa;
+					renderSqa(); renderReport(); renderHeader(); void refreshRuns();
+				}).catch(() => undefined);
+				break;
+			}
 			session.mode = 'sqa';
 			session.sqa ??= { scope: {} };
 			session.sqa.assessment = event.assessment;
@@ -4837,7 +4887,15 @@ function handleEvent(event) {
 			renderSqa();
 			renderReport();
 			void refreshRuns();
-			if (event.final) toast('Quality review published.', 'good');
+			if (event.final && (!event.review || event.review.status === 'published')) toast('Quality review published.', 'good');
+			if (event.final || event.reviewRevision !== undefined) {
+				const runId = session.id;
+				void api(`/sessions/${runId}`).then(latest => {
+					if (state.session?.id !== runId) return;
+					state.session.sqa = latest.sqa;
+					renderSqa(); renderReport();
+				}).catch(() => undefined);
+			}
 			break;
 
 		case 'founder.created':
@@ -5971,8 +6029,11 @@ const sqaUi = {
 	cancel: $('sqa-cancel'),
 	submit: $('sqa-submit'),
 	catalogState: $('sqa-catalog-state'),
+	catalogMessage: $('sqa-catalog-message'),
+	catalogRetry: $('sqa-catalog-retry'),
 	catalogVersion: $('sqa-catalog-version'),
 	selectionSummary: $('sqa-selection-summary'),
+	selectionReasons: $('sqa-selection-reasons'),
 	customize: $('sqa-customize'),
 	disclaimer: $('sqa-catalog-disclaimer'),
 	deviceSelect: null, // legacy select removed (DX Phase 3)
@@ -6039,11 +6100,18 @@ function paintSqaCatalog(catalog) {
 	sqaUi.attributeOptions.replaceChildren(...attributes.map(attribute => {
 		const id = typeof attribute === 'string' ? attribute : attribute.id;
 		const title = typeof attribute === 'string' ? humanizeSqaId(attribute) : (attribute.title ?? humanizeSqaId(id));
-		return sqaCatalogOption({ name: 'sqa-attribute', value: id, title });
+		const requiredForBrowserReview = SQA_REQUIRED_BROWSER_ATTRIBUTES.includes(id);
+		return sqaCatalogOption({
+			name: 'sqa-attribute', value: id, title,
+			checked: requiredForBrowserReview,
+			disabled: requiredForBrowserReview,
+			meta: requiredForBrowserReview ? 'Required for URL-based browser review' : ''
+		});
 	}));
 	sqaUi.profilesFieldset.disabled = false;
 	sqaUi.attributesFieldset.disabled = false;
 	sqaUi.catalogState.hidden = true;
+	sqaUi.catalogRetry.hidden = true;
 	syncSqaSelectionSummary();
 	syncSqaSubmitState();
 }
@@ -6052,17 +6120,18 @@ function syncSqaSelectionSummary() {
 	if (!sqaUi.selectionSummary) return;
 	if (!state.sqaCatalog) {
 		sqaUi.selectionSummary.textContent = 'Loading the recommended scope…';
+		sqaUi.selectionReasons?.replaceChildren();
 		return;
 	}
-	const profiles = [...sqaUi.profileOptions.querySelectorAll('input:checked')]
-		.filter(input => input.value !== 'core').length;
-	const attributes = [...sqaUi.attributeOptions.querySelectorAll('input:checked')].length;
-	const additions = [];
-	if (profiles) additions.push(`${profiles} additional profile${profiles === 1 ? '' : 's'}`);
-	if (attributes) additions.push(`${attributes} product characteristic${attributes === 1 ? '' : 's'}`);
-	sqaUi.selectionSummary.textContent = additions.length
-		? `Universal quality baseline · ${additions.join(' · ')}`
-		: 'Universal quality baseline · Recommended browser evidence';
+	const profiles = [...sqaUi.profileOptions.querySelectorAll('input:checked')].map(input => input.value);
+	const attributes = [...sqaUi.attributeOptions.querySelectorAll('input:checked')].map(input => input.value);
+	const preview = describeSqaScopeSelection(state.sqaCatalog, { profiles, attributes });
+	sqaUi.selectionSummary.textContent = preview.text;
+	sqaUi.selectionReasons?.replaceChildren(...preview.reasons.map(reason => {
+		const item = document.createElement('li');
+		item.textContent = reason;
+		return item;
+	}));
 }
 
 function sqaCatalogOption({ name, value, title, description = '', meta = '', checked = false, disabled = false }) {
@@ -6095,10 +6164,52 @@ function sqaCatalogOption({ name, value, title, description = '', meta = '', che
 }
 
 function syncSqaSubmitState() {
-	sqaUi.submit.disabled = !state.sqaCatalog || !sqaUi.authorization.checked || sqaUi.submit.dataset.busy === 'true';
+	const requiredDetailsPresent = Boolean(
+		sqaUi.targetUrl.value.trim()
+		&& sqaUi.targetRelease.value.trim()
+		&& sqaUi.targetEnvironment.value.trim()
+	);
+	sqaUi.submit.disabled = !state.sqaCatalog
+		|| !sqaUi.authorization.checked
+		|| !requiredDetailsPresent
+		|| !selectedEnvironmentForRun()
+		|| sqaUi.submit.dataset.busy === 'true';
 }
 
+function showSqaCatalogState(message, { retry = false } = {}) {
+	sqaUi.catalogState.hidden = false;
+	sqaUi.catalogMessage.textContent = message;
+	sqaUi.catalogRetry.hidden = !retry;
+}
+
+async function refreshSqaCatalog({ force = false } = {}) {
+	if (force) {
+		state.sqaCatalog = undefined;
+		state.sqaCatalogPromise = undefined;
+	}
+	showSqaCatalogState('Loading assessment catalog…');
+	sqaUi.catalogRetry.disabled = true;
+	setSqaFormError();
+	try {
+		paintSqaCatalog(await loadSqaCatalog());
+	} catch (error) {
+		showSqaCatalogState('The assessment catalog could not be loaded.', { retry: true });
+		setSqaFormError(error instanceof Error ? error.message : String(error));
+	} finally {
+		sqaUi.catalogRetry.disabled = false;
+		syncSqaSubmitState();
+	}
+}
+
+let sqaStartupRequested = false;
+
 async function openSqaStart() {
+	// Authentication can expose the workspace before its initial route is ready.
+	// An explicit SQA launch must take precedence over the automatic QA setup.
+	if (!pageRouter.started) sqaStartupRequested = true;
+	if (!pageRouter.started || pageRouter.current().name === 'new-run') {
+		await pageRouter.navigate({ name: 'runs' }, { replace: true, applyRoute: pageRouter.started });
+	}
 	setSqaFormError();
 	sqaUi.form.reset();
 	applyStudioTarget(sqaUi.targetUrl);
@@ -6110,21 +6221,14 @@ async function openSqaStart() {
 	if (sqaUi.deviceLandscape) sqaUi.deviceLandscape.checked = pendingLandscape();
 	sqaUi.profilesFieldset.disabled = true;
 	sqaUi.attributesFieldset.disabled = true;
-	sqaUi.catalogState.hidden = false;
-	sqaUi.catalogState.textContent = 'Loading assessment catalog…';
+	showSqaCatalogState('Loading assessment catalog…');
 	syncSqaSelectionSummary();
 	sqaUi.submit.dataset.busy = 'false';
 	syncSqaSubmitState();
 	if (!sqaUi.dialog.open) sqaUi.dialog.showModal();
 	if (matchMedia('(pointer: fine)').matches) setTimeout(() => sqaUi.targetUrl?.focus(), 0);
 
-	try {
-		paintSqaCatalog(await loadSqaCatalog());
-	} catch (error) {
-		sqaUi.catalogState.hidden = false;
-		sqaUi.catalogState.textContent = 'The assessment catalog could not be loaded.';
-		setSqaFormError(error instanceof Error ? error.message : String(error));
-	}
+	await refreshSqaCatalog();
 }
 
 function closeSqaStart() {
@@ -6134,8 +6238,12 @@ function closeSqaStart() {
 sqaUi.close.onclick = closeSqaStart;
 sqaUi.cancel.onclick = closeSqaStart;
 sqaUi.authorization.onchange = syncSqaSubmitState;
+sqaUi.catalogRetry.onclick = () => void refreshSqaCatalog({ force: true });
 sqaUi.profileOptions.onchange = syncSqaSelectionSummary;
 sqaUi.attributeOptions.onchange = syncSqaSelectionSummary;
+for (const input of [sqaUi.targetUrl, sqaUi.targetRelease, sqaUi.targetEnvironment]) {
+	input.addEventListener('input', syncSqaSubmitState);
+}
 
 sqaUi.form.onsubmit = async event => {
 	event.preventDefault();
@@ -6155,8 +6263,8 @@ sqaUi.form.onsubmit = async event => {
 	}
 	const target = {
 		name: sqaUi.targetName.value.trim() || parsedTargetUrl.hostname,
-		release: sqaUi.targetRelease.value.trim() || 'Current',
-		environment: sqaUi.targetEnvironment.value.trim() || 'Preview'
+		release: sqaUi.targetRelease.value.trim(),
+		environment: sqaUi.targetEnvironment.value.trim()
 	};
 	if (!sqaUi.authorization.checked) {
 		setSqaFormError('Confirm testing authorization and the non-destructive boundary first.');
@@ -6167,6 +6275,12 @@ sqaUi.form.onsubmit = async event => {
 	const profiles = [...sqaUi.profileOptions.querySelectorAll('input:checked')].map(input => input.value);
 	if (!profiles.includes('core')) profiles.unshift('core');
 	const attributes = [...sqaUi.attributeOptions.querySelectorAll('input:checked')].map(input => input.value);
+	const environmentId = selectedEnvironmentForRun();
+	if (!environmentId) {
+		setSqaFormError('Choose an available device and browser before starting the quality review.');
+		sqaUi.testOnChange?.focus();
+		return;
+	}
 	sqaUi.submit.dataset.busy = 'true';
 	sqaUi.submit.textContent = 'Starting review…';
 	syncSqaSubmitState();
@@ -6179,9 +6293,8 @@ sqaUi.form.onsubmit = async event => {
 				target,
 				scopeNotes: sqaUi.scopeNotes.value.trim(),
 				authorizationConfirmed: true,
-				device: activeTestEnvStore?.get?.()?.device || pendingDeviceId(),
 				deviceLandscape: (sqaUi.deviceLandscape?.checked) === true,
-				environmentId: selectedEnvironmentForRun() || undefined
+				environmentId
 			})
 		});
 		const session = result?.session ?? result;
@@ -7789,6 +7902,7 @@ const devicePicker = $('device-picker') ? createDevicePicker({
 		// + device frame reflect the new selection at once, not on next render.
 		renderLiveDeviceViewHeader(state.session ?? null, state.activeRuntimeEnvironment);
 		renderAllTestOnBlocks(); // start dialogs read the same selection (DX Phase 3)
+		syncSqaSubmitState();
 		// M3 (#14422): keep the sidebar highlight in sync with card selections.
 		matrixSidebar?.setSelection?.(selection?.device ?? null, selection?.osVersion ?? null);
 	},
@@ -8325,7 +8439,7 @@ async function bootWorkspace() {
 					await pageRouter.navigate(initialRoute, { replace: true, applyRoute: false });
 				}
 			}
-			if (initialRoute.name === 'runs' && state.sessionId === target.id) {
+			if (initialRoute.name === 'runs' && state.sessionId === target.id && !sqaStartupRequested) {
 				// Restoring a completed run is not a request to open Results.
 				// Keep result navigation behind an explicit user action or URL.
 				initialRoute = { name: 'run', runId: target.id };
@@ -8337,7 +8451,7 @@ async function bootWorkspace() {
 			el.transcript.append(el.chatEmpty);
 			el.chatEmpty.hidden = false;
 			renderRunsEmptyState();
-			if (initialRoute.name === 'runs') {
+			if (initialRoute.name === 'runs' && !sqaStartupRequested) {
 				initialRoute = { name: 'new-run' };
 				await pageRouter.navigate(initialRoute, { replace: true, applyRoute: false });
 			}

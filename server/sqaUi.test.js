@@ -14,9 +14,13 @@ test('Quality launcher exposes an accessible recommended review with optional ad
 	assert.match(html, /id="sqa-target-url"[^>]+type="url"[^>]+required/);
 	assert.match(html, /id="sqa-customize"/);
 	assert.match(html, /id="sqa-selection-summary"[^>]+aria-live="polite"/);
-	for (const id of ['sqa-target-name', 'sqa-target-release', 'sqa-target-environment']) {
-		assert.doesNotMatch(html, new RegExp(`id="${id}"[^>]+required`));
+	assert.match(html, /id="sqa-selection-reasons"[^>]+aria-label="Why these controls are selected"/);
+	assert.doesNotMatch(html, /id="sqa-target-name"[^>]+required/);
+	for (const id of ['sqa-target-release', 'sqa-target-environment']) {
+		assert.match(html, new RegExp(`id="${id}"[^>]+required`));
 	}
+	assert.match(html, /id="sqa-target-release"[^>]+placeholder="2026\.11\.2\+abc123"/);
+	assert.match(html, /id="sqa-catalog-retry"[^>]+hidden>Retry catalog/);
 	assert.match(html, /id="tab-sqa"[^>]+role="tab"[^>]+aria-controls="pane-sqa"/);
 	assert.match(html, /id="pane-sqa"[^>]+role="tabpanel"[^>]+aria-labelledby="tab-sqa"/);
 	assert.match(html, /id="sqa-scope-guidance"[^>]+role="note"/);
@@ -27,12 +31,19 @@ test('SQA frontend uses the authenticated API contract and safe DOM construction
 	assert.match(app, /api\('\/sqa\/catalog'\)/);
 	assert.match(app, /api\('\/sqa\/sessions',\s*\{\s*method:\s*'POST'/);
 	assert.match(app, /authorizationConfirmed:\s*true/);
+	assert.match(app, /SQA_REQUIRED_BROWSER_ATTRIBUTES\.includes\(id\)/);
+	assert.match(app, /Required for URL-based browser review/);
+	assert.match(app, /describeSqaScopeSelection\(state\.sqaCatalog/);
+	assert.match(app, /catalogRetry\.onclick = \(\) => void refreshSqaCatalog\(\{ force: true \}\)/);
+	assert.match(app, /Choose an available device and browser before starting the quality review/);
+	assert.doesNotMatch(app, /sqaUi\.targetRelease\.value\.trim\(\) \|\| 'Current'/);
+	assert.doesNotMatch(app, /sqaUi\.targetEnvironment\.value\.trim\(\) \|\| 'Preview'/);
 	assert.match(app, /api\(`\/sessions\/\$\{session\.id\}\/message`,\s*\{/);
 	assert.match(app, /JSON\.stringify\(\{\s*text:\s*targetUrl\s*\}\)/);
 	assert.match(app, /case 'sqa':/);
 	assert.match(app, /if \(event\.final\) session\.sqa\.finalizedAt/);
 	assert.match(app, /else delete session\.sqa\.finalizedAt/);
-	assert.match(app, /if \(event\.final\) toast\('Quality review published\.'/);
+	assert.match(app, /if \(event\.final && \(!event\.review \|\| event\.review\.status === 'published'\)\) toast\('Quality review published\.'/);
 	const renderer = app.slice(app.indexOf('function renderSqa()'), app.indexOf('function connect(id)'));
 	assert.ok(renderer.length > 1_000, 'SQA renderer block should be discoverable');
 	assert.doesNotMatch(renderer, /\b(?:innerHTML|outerHTML|insertAdjacentHTML)\b/);
@@ -50,6 +61,7 @@ test('SQA frontend uses the authenticated API contract and safe DOM construction
 	assert.doesNotMatch(app, /Held in this server's memory only/);
 	assert.match(styles, /\.sqa-technical-summary/);
 	assert.match(styles, /\.sqa-unresolved-group/);
+	assert.match(styles, /\.sqa-selection-reasons/);
 });
 
 test('finalized SQA assessments expose professional report export actions', () => {

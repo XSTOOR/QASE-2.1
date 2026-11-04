@@ -6,7 +6,7 @@ import { prepareHostDecision } from './hybridContinuation.js';
 import { hybridProfile } from './hybridConfig.js';
 import { PublicInputError } from './publicErrors.js';
 import { createInstanceAccess } from './instanceAccess.js';
-import { finishSqaAssessment } from './sqaService.js';
+import { createSqaState, finishSqaAssessment } from './sqaService.js';
 import { aggregateSessionFindings, setFindingStatus } from './store.js';
 import { createCoverageService } from './coverageService.js';
 
@@ -369,6 +369,49 @@ async function startFixture(options = {}) {
 async function body(response) {
 	return response.json();
 }
+
+test('SQA human review API preserves versions, rejects stale writes and enforces reviewer permissions without a model turn', async t => {
+	let role = 'developer';
+	const access = { mount(app) { createTestAccess().mount(app); app.use('/api', (request, _response, next) => { request.auth = { ...request.auth, role }; next(); }); } };
+	const fixture = await startFixture({ access }); t.after(() => fixture.close());
+	const session = fixture.services.runs.create('Review API');
+	session.mode = 'sqa'; session.status = 'done';
+	session.sqa = createSqaState({ authorizationConfirmed: true, target: { name: 'Review API', release: 'v1', environment: 'local' } });
+	session.sqa.observations = session.sqa.scope.applicableControlIds.map(controlId => ({ controlId, status: 'blocked', rationale: 'Evidence missing.', evidence: [] }));
+	await finishSqaAssessment(session, fixture.services.runs);
+	const base = `/api/sessions/${session.id}/sqa`;
+	assert.equal((await fixture.request(`${base}/review/request`, { method: 'POST', json: { expectedRevision: 0, reason: 'Please review risk evidence.' } })).status, 200);
+	assert.equal((await fixture.request('/api/sqa/reviews')).status, 403);
+	assert.equal((await fixture.request(`${base}/review/reopen`, { method: 'POST', json: { expectedRevision: 1, reason: 'Review evidence.' } })).status, 403);
+	assert.equal((await fixture.request(`${base}/observations`, { method: 'POST', json: {} })).status, 403);
+	role = 'owner';
+	assert.equal((await body(await fixture.request('/api/sqa/reviews'))).reviews.length, 1);
+	const original = await body(await fixture.request(`${base}/versions/1`));
+	assert.equal((await fixture.request(`${base}/review/reopen`, { method: 'POST', json: { expectedRevision: 0, reason: 'Stale.' } })).status, 409);
+	assert.equal((await fixture.request(`${base}/review/reopen`, { method: 'POST', json: { expectedRevision: 1, reason: 'Review current risk evidence.' } })).status, 200);
+	assert.equal((await fixture.request(`/api/sessions/${session.id}/report.md`)).status, 409);
+	assert.equal((await fixture.request(`/api/sessions/${session.id}/report.md?version=1`)).status, 200);
+	assert.equal((await fixture.request(`/api/sessions/${session.id}/message`, { method: 'POST', json: { text: 'Restart' } })).status, 409);
+	const decision = { controlId: 'SQA-GOV-001', status: 'pass', rationale: 'Current risk register reviewed.', evidence: [{ type: 'risk_register', reference: 'artifact://release/v1/risk' }] };
+	assert.equal((await fixture.request(`${base}/observations`, { method: 'POST', json: { expectedRevision: 2, observation: decision } })).status, 200);
+	const inspected = await body(await fixture.request(`${base}/evidence/SQA-GOV-001/1`));
+	assert.equal(inspected.integrity, 'external_unverified');
+	assert.equal(inspected.evidence.reference, 'artifact://release/v1/risk');
+	assert.equal((await fixture.request(`${base}/evidence/SQA-GOV-001/1?version=1`)).status, 404);
+	assert.equal((await fixture.request(`${base}/evidence/SQA-GOV-001/0`)).status, 400);
+	assert.equal((await fixture.request(`${base}/observations`, { method: 'POST', json: { expectedRevision: 2, observation: decision } })).status, 409);
+	assert.equal((await fixture.request(`${base}/review/publish`, { method: 'POST', json: { expectedRevision: 3, reason: 'Reviewed risk evidence; other gaps remain.' } })).status, 200);
+	assert.equal((await body(await fixture.request(`${base}/versions`))).versions.length, 2);
+	assert.deepEqual(await body(await fixture.request(`${base}/versions/1`)), original);
+	assert.equal((await fixture.request(`${base}/versions/999`)).status, 404);
+	assert.equal((await body(await fixture.request('/api/sqa/reviews'))).reviews.length, 0);
+	assert.equal(fixture.state.runCalls.length, 0);
+	const get = fixture.services.runs.get;
+	fixture.services.runs.get = id => id === session.id ? undefined : get(id);
+	assert.equal((await fixture.request(`${base}/versions/1`)).status, 404);
+	assert.equal((await fixture.request(`${base}/evidence/SQA-GOV-001/1`)).status, 404);
+	assert.equal((await fixture.request(`${base}/review/reopen`, { method: 'POST', json: { expectedRevision: 4, reason: 'Unavailable run.' } })).status, 404);
+});
 
 test('application construction has no startup side effects and validates its service contract', () => {
 	const memory = createMemoryServices();
@@ -741,7 +784,7 @@ test('SQA catalog and authorized scope creation stay pending until evidence is e
         assert.equal(created.mode, 'sqa');
         assert.equal(created.sqa.scope.authorization.confirmed, true);
         assert.equal(created.sqa.assessment, undefined);
-		assert.equal(created.todos.length, 6);
+		assert.equal(created.todos.length, 8);
 		assert.ok(created.todos.every(item => item.status === 'pending'));
 		assert.match(created.todos[0].text, /authorized target.*assessment boundary/i);
 		assert.match(created.todos.at(-1).text, /publish the professional SQA report/i);
@@ -754,7 +797,7 @@ test('SQA catalog and authorized scope creation stay pending until evidence is e
 		const initialPlan = fixture.state.events.find(event => (
 			event.type === 'todos' && event.sessionId === created.id
 		));
-		assert.equal(initialPlan.todos.length, 6);
+		assert.equal(initialPlan.todos.length, 8);
 
         const report = await fixture.request(`/api/sessions/${created.id}/report.md`);
 	assert.equal(report.status, 409);
@@ -789,6 +832,31 @@ test('SQA refuses an unsupported runtime before creating an assessment or starti
 	});
 	assert.equal(response.status, 422);
 	assert.match((await body(response)).error, /SQA cannot start.*NOT SUPPORTED/);
+	assert.equal(fixture.state.events.filter(event => event.type === 'sqa.created').length, 0);
+	assert.equal(fixture.state.ensureCalls.length, 0);
+	assert.equal(fixture.state.runCalls.length, 0);
+});
+
+test('SQA rejects invalid explicit device and engine identifiers instead of silently falling back', async t => {
+	const fixture = await startFixture();
+	t.after(() => fixture.close());
+	const request = extra => fixture.request('/api/sqa/sessions', {
+		method: 'POST',
+		json: {
+			authorizationConfirmed: true,
+			target: { name: 'Runtime validation', release: 'build-123', environment: 'staging' },
+			...extra
+		}
+	});
+
+	const invalidDevice = await request({ device: 'mystery-phone' });
+	assert.equal(invalidDevice.status, 422);
+	assert.match((await body(invalidDevice)).error, /Unsupported SQA device.*available catalog/);
+
+	const invalidEngine = await request({ engine: 'safari' });
+	assert.equal(invalidEngine.status, 422);
+	assert.match((await body(invalidEngine)).error, /Unsupported SQA browser engine.*chromium, firefox, or webkit/);
+
 	assert.equal(fixture.state.events.filter(event => event.type === 'sqa.created').length, 0);
 	assert.equal(fixture.state.ensureCalls.length, 0);
 	assert.equal(fixture.state.runCalls.length, 0);

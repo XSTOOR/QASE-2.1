@@ -9,7 +9,7 @@
 <title>QASE — Autonomous quality assurance</title>
 <script src="theme.js?v=20261015-11"></script>
 <script src="studioMode.js?v=20261014-6"></script>
-<link rel="stylesheet" href="styles.css?v=20261015-15">
+<link rel="stylesheet" href="styles.css?v=20261104-3">
 <link rel="stylesheet" href="bugsView.css?v=20261014-6">
 <link rel="stylesheet" href="studio-workspace.css?v=20261015-6">
 <link rel="stylesheet" href="studio-embed.css?v=20261015-7">
@@ -1172,6 +1172,7 @@
         <h3>Recommended quality review</h3>
         <p>Qase includes the universal product-quality baseline and uses evidence it can observe directly.</p>
         <p class="sqa-selection-summary" id="sqa-selection-summary" role="status" aria-live="polite">Loading the recommended scope…</p>
+        <ul class="sqa-selection-reasons" id="sqa-selection-reasons" aria-label="Why these controls are selected"></ul>
         <details class="sqa-boundary">
           <summary>About this review</summary>
           <p id="sqa-catalog-disclaimer">This is readiness guidance, not certification or regulatory approval.</p>
@@ -1179,7 +1180,10 @@
         <span class="sqa-catalog-meta" id="sqa-catalog-version" aria-live="polite"></span>
       </div>
 
-      <div class="sqa-catalog-state" id="sqa-catalog-state" role="status" aria-live="polite">Loading assessment catalog…</div>
+      <div class="sqa-catalog-state" id="sqa-catalog-state" role="status" aria-live="polite">
+        <span id="sqa-catalog-message">Loading assessment catalog…</span>
+        <button class="btn btn-ghost btn-sm" type="button" id="sqa-catalog-retry" hidden>Retry catalog</button>
+      </div>
 
       <fieldset class="sqa-fieldset sqa-target-primary">
         <legend>Product to review</legend>
@@ -1188,6 +1192,22 @@
           <input id="sqa-target-url" name="targetUrl" type="url" required maxlength="2048" inputmode="url" autocomplete="url" placeholder="https://staging.example.com…">
           <small>Qase opens this URL and starts the recommended review.</small>
         </label>
+        <div class="field-row sqa-field-row sqa-build-fields">
+          <label class="field">
+            <span>Product name <small>(optional)</small></span>
+            <input id="sqa-target-name" name="targetName" maxlength="200" autocomplete="off" placeholder="Customer portal…">
+          </label>
+          <label class="field">
+            <span>Release or build identifier</span>
+            <input id="sqa-target-release" name="targetRelease" required maxlength="200" autocomplete="off" placeholder="2026.11.2+abc123">
+            <small>Use the deployed version, commit, or immutable build ID.</small>
+          </label>
+          <label class="field">
+            <span>Environment</span>
+            <input id="sqa-target-environment" name="targetEnvironment" required maxlength="100" autocomplete="off" placeholder="Local, staging, or production">
+            <small>Name the environment represented by the target URL.</small>
+          </label>
+        </div>
       </fieldset>
 
       <label class="check sqa-authorization">
@@ -1211,21 +1231,7 @@
           </fieldset>
 
           <fieldset class="sqa-fieldset sqa-target-fields">
-            <legend>Review details</legend>
-            <div class="field-row sqa-field-row">
-              <label class="field">
-                <span>Product name <small>(optional)</small></span>
-                <input id="sqa-target-name" name="targetName" maxlength="200" autocomplete="off" placeholder="Customer portal…">
-              </label>
-              <label class="field">
-                <span>Release <small>(optional)</small></span>
-                <input id="sqa-target-release" name="targetRelease" maxlength="200" autocomplete="off" placeholder="Current…">
-              </label>
-              <label class="field">
-                <span>Environment <small>(optional)</small></span>
-                <input id="sqa-target-environment" name="targetEnvironment" maxlength="100" autocomplete="off" placeholder="Preview…">
-              </label>
-            </div>
+            <legend>Review notes</legend>
             <label class="field">
               <span>Scope notes <small>(optional)</small></span>
               <textarea id="sqa-scope-notes" name="scopeNotes" rows="3" maxlength="4000" placeholder="In-scope workflows, exclusions, assumptions, and evidence locations…"></textarea>
@@ -1702,6 +1708,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261027-6" type="module"></script>
+<script src="app.js?v=20261104-3" type="module"></script>
 </body>
 </html>

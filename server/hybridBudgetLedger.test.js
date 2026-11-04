@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import net from 'node:net';
 import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
 import { hybridProfile } from './hybridConfig.js';
 import { createHybridTelemetry } from './hybridTelemetry.js';
 import { createHybridModelRouter } from './hybridModelRouter.js';
@@ -125,8 +126,9 @@ test('legacy reconciliation requires every exact receipt; aggregate totals alone
   assert.equal(f.telemetry.metrics.reasoner.calls, 3); assert.equal(f.telemetry.metrics.reasoner.inputTokens, 76666);
 });
 
-test('offline repair dry-run preserves history; explicit apply backs up history and changes no limits or evidence', async () => {
+test('offline repair dry-run preserves history; explicit apply backs up history and changes no limits or evidence', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-budget-repair-test-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const f = fixture(); delete f.session.hybrid.modelBudget;
   Object.assign(f.telemetry.metrics.reasoner, { calls: 3, inputTokens: 76666, outputTokens: 551, reservedTokens: 234321, usageReported: true });
   Object.assign(f.session, { mode: 'qa', qaExecutionMode: 'hybrid', status: 'interrupted', findings: [{ id: 'preserved' }] });
@@ -136,10 +138,12 @@ test('offline repair dry-run preserves history; explicit apply backs up history 
   const log = path.join(root, 'host.log'), history = path.join(root, '.qase', 'sessions.json');
   fs.mkdirSync(path.dirname(history)); fs.writeFileSync(history, JSON.stringify([f.session]));
   fs.writeFileSync(log, receipts.map(item => JSON.stringify(item)).join('\n'));
-  const before = fs.readFileSync(history, 'utf8'), script = new URL('../scripts/reconcile-hybrid-budget.mjs', import.meta.url);
-  const server = net.createServer(socket => socket.end()); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const before = fs.readFileSync(history, 'utf8'), script = fileURLToPath(new URL('../scripts/reconcile-hybrid-budget.mjs', import.meta.url));
+  const server = net.createServer(socket => socket.end());
+  t.after(() => new Promise(resolve => { server.closeAllConnections?.(); server.close(resolve); }));
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const port = String(server.address().port);
-  const run = args => spawnSync(process.execPath, [script.pathname, f.session.id, log, ...args], { cwd: root, encoding: 'utf8', env: { ...process.env, NODE_ENV: 'development', QASE_RUN_STORE: 'local', PORT: port } });
+  const run = args => spawnSync(process.execPath, [script, f.session.id, log, ...args], { cwd: root, encoding: 'utf8', timeout: 15000, env: { ...process.env, NODE_ENV: 'development', QASE_RUN_STORE: 'local', PORT: port } });
   const dry = run([]); assert.equal(dry.status, 0, dry.stderr); assert.equal(fs.readFileSync(history, 'utf8'), before);
   assert.equal(JSON.parse(dry.stdout).applied, false);
   const online = run(['--apply']); assert.notEqual(online.status, 0); assert.match(online.stderr, /Stop the local server/);

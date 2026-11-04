@@ -20,7 +20,11 @@ import { createSqaTools } from './sqaTools.js';
 import { isCredentialQuestion } from '../public/questionPresentation.js';
 import { clearSecrets, redact, secretNames } from './secrets.js';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
-import { guardSqaBrowserTool } from './sqaBrowserBudget.js';
+import {
+	countSqaBrowserActivities,
+	guardSqaBrowserTool,
+	sqaContextCompactionDue
+} from './sqaBrowserBudget.js';
 import { guardSecurityPayloadTool } from './securityPayloadBudget.js';
 import { applyUsage, attachUsageCapture, createEmptyOutputGuard, createUsageLedger, createUsageLogger, subtractUsage } from './usageCapture.js';
 import { installJevRuntime } from './jevRuntime.js';
@@ -49,6 +53,7 @@ export { guardSqaBrowserTool } from './sqaBrowserBudget.js';
  */
 const BROWSER_IDLE_MS = Number(process.env.QASE_BROWSER_IDLE_MS ?? 0);
 const MODEL_TIMEOUT_RETRIES = Math.max(0, Number(process.env.QASE_MODEL_TIMEOUT_RETRIES ?? 2));
+const DEFAULT_MODEL_ACTIVITY_TIMEOUT_MS = 180_000;
 // #16225 follow-up: consecutive REAL empty completions (billed input, zero
 // output) tolerated before the run is aborted as a model-gateway loop.
 const EMPTY_COMPLETION_LIMIT = Math.min(50, Math.max(1, Math.floor(Number(process.env.QASE_EMPTY_COMPLETION_LIMIT ?? 5)) || 5));
@@ -58,6 +63,58 @@ const EMPTY_COMPLETION_LIMIT = Math.min(50, Math.max(1, Math.floor(Number(proces
 const EMPTY_ESTIMATE_LIMIT = Math.min(200, Math.max(1, Math.floor(Number(process.env.QASE_EMPTY_ESTIMATE_LIMIT ?? 30)) || 30));
 const MODEL_TIMEOUT_RETRY_DELAY_MS = Math.max(0, Number(process.env.QASE_MODEL_TIMEOUT_RETRY_DELAY_MS ?? 1200));
 const INCOMPLETE_RUN_CONTINUATIONS = Math.max(0, Number(process.env.QASE_INCOMPLETE_RUN_CONTINUATIONS ?? 2));
+
+export function modelActivityTimeoutMs(environment = process.env) {
+	const configured = Number(environment.QASE_MODEL_ACTIVITY_TIMEOUT_MS ?? DEFAULT_MODEL_ACTIVITY_TIMEOUT_MS);
+	if (!Number.isFinite(configured)) return DEFAULT_MODEL_ACTIVITY_TIMEOUT_MS;
+	return Math.min(900_000, Math.max(100, Math.floor(configured)));
+}
+
+export async function* withModelActivityDeadline(stream, { timeoutMs, onTimeout, registerTouch } = {}) {
+	if (!stream?.[Symbol.asyncIterator]) throw new TypeError('Model response stream must be async iterable.');
+	const deadlineMs = Math.min(900_000, Math.max(100, Math.floor(Number(timeoutMs) || DEFAULT_MODEL_ACTIVITY_TIMEOUT_MS)));
+	const iterator = stream[Symbol.asyncIterator]();
+	let timedOut = false;
+	let awaitingModel = false;
+	let timer;
+	let rejectDeadline;
+	const deadline = new Promise((_, reject) => { rejectDeadline = reject; });
+	const touch = () => {
+		if (!awaitingModel || timedOut) return;
+		clearTimeout(timer);
+		timer = setTimeout(() => {
+			timedOut = true;
+			const error = new Error(`The model produced no response activity for ${deadlineMs} ms.`);
+			error.name = 'ModelActivityTimeoutError';
+			error.code = 'MODEL_ACTIVITY_TIMEOUT';
+			try { onTimeout?.(error); } catch { /* timeout enforcement must still reject */ }
+			rejectDeadline(error);
+		}, deadlineMs);
+	};
+	const releaseTouch = registerTouch?.(touch);
+	try {
+		while (true) {
+			awaitingModel = true;
+			touch();
+			let step;
+			try {
+				step = await Promise.race([iterator.next(), deadline]);
+			} finally {
+				awaitingModel = false;
+				clearTimeout(timer);
+			}
+			if (step.done) return;
+			yield step.value;
+		}
+	} finally {
+		awaitingModel = false;
+		clearTimeout(timer);
+		releaseTouch?.();
+		const closing = iterator.return?.();
+		if (timedOut) Promise.resolve(closing).catch(() => undefined);
+		else await closing;
+	}
+}
 
 function appendUserMemory(context, session) {
 	if (session.mode === 'qa' || !Array.isArray(session.userMemory) || session.userMemory.length === 0) return context;
@@ -69,7 +126,8 @@ function appendUserMemory(context, session) {
 
 function isRetryableModelTimeout(error) {
 	const message = sanitizeErrorDetail(error);
-	return /request timed out|provider activity for \d+ seconds/i.test(message);
+	return error?.code === 'MODEL_ACTIVITY_TIMEOUT'
+		|| /request timed out|provider activity for \d+ seconds|no response activity for \d+ ms/i.test(message);
 }
 
 /**
@@ -85,7 +143,8 @@ function isRetryableModeInterruption(error, mode) {
 	if (/\b(?:400|401|402|403|404|409|422|429)\b|unauthori[sz]ed|forbidden|api key|authentication|quota|rate limit|policy|invalid request/i.test(message)) {
 		return false;
 	}
-	return /connection (?:error|closed|reset|terminated)|socket hang up|econnreset|etimedout|fetch failed|network error|premature close/i.test(message);
+	return /^(?:terminated|connection closed|premature close)$/i.test(message.trim())
+		|| /connection (?:error|closed|reset|terminated)|socket hang up|econnreset|etimedout|fetch failed|network error|premature close/i.test(message);
 }
 
 /**
@@ -128,7 +187,7 @@ export function allowedToolNames(mode = 'qa') {
 		...(mode === 'founder'
 			? ['record_founder_observation', 'finish_founder_review']
 			: mode === 'sqa'
-				? ['report_finding', 'record_sqa_control', 'record_sqa_blockers', 'finish_sqa_assessment']
+				? ['browser_sqa_smoke', 'report_finding', 'record_sqa_control', 'record_sqa_blockers', 'finish_sqa_assessment']
 				: ['report_finding', 'finish_qa_report'])]);
 }
 
@@ -282,6 +341,31 @@ export function prepareFounderSynthesis(session, record) {
 	return true;
 }
 
+/**
+ * Start the next SQA workflow from durable host state instead of resending the
+ * complete browser/tool transcript. The browser and registered tools remain
+ * live; only redundant provider conversation history is cleared.
+ */
+export function prepareSqaContextContinuation(session, record) {
+	if (!sqaContextCompactionDue(session, record?.sqaBrowserActivitiesAtCompaction, undefined,
+		record?.sqaInputTokensAtCompaction)) return false;
+	const runtime = record?.runtime;
+	if (typeof runtime?.agentSession?.clear !== 'function') return false;
+	runtime.agentSession.clear();
+	record.sqaBrowserActivitiesAtCompaction = countSqaBrowserActivities(session);
+	record.sqaInputTokensAtCompaction = Math.max(0, Number(session.tokenUsage?.inputTokens) || 0);
+	record.sqaContextCompactions = (record.sqaContextCompactions ?? 0) + 1;
+	console.info(JSON.stringify({
+		event: 'sqa_context_compaction',
+		runId: session.id,
+		compaction: record.sqaContextCompactions,
+		browserActivities: record.sqaBrowserActivitiesAtCompaction,
+		inputTokens: record.sqaInputTokensAtCompaction,
+		ts: new Date().toISOString()
+	}));
+	return true;
+}
+
 /** Tool name -> how the activity feed should announce it. */
 const ACTIVITY_LABELS = {
 	browser_open: 'Opened page',
@@ -311,6 +395,7 @@ const ACTIVITY_LABELS = {
 	browser_close_tab: 'Closed tab',
 	browser_media: 'Tested synthetic microphone',
 	browser_test_meeting_link: 'Checked meeting link',
+	browser_sqa_smoke: 'Ran bounded SQA browser smoke check',
 	update_todo: 'Updated the test plan',
 	ask_question: 'Asked the user',
 	report_finding: 'Filed a finding',
@@ -617,7 +702,8 @@ export async function ensureRuntime(session, runStore) {
 		const registeredTools = [...ALL_TOOLS, ...sessionTools].filter(tool => allowedTools.has(tool.name) && (!record.hybrid || record.hybrid.allows(tool.name))).map(tool => {
 			const legacyGuarded = guardSecurityPayloadTool(guardSqaBrowserTool(tool, session), session, settings.securityPayloadLimit);
 			const guardedTool = record.hybrid ? record.hybrid.wrapTool(legacyGuarded) : legacyGuarded;
-			if (session.mode !== 'founder' || guardedTool.name !== 'update_todo') return guardedTool;
+			if (guardedTool.name !== 'update_todo') return guardedTool;
+			if (session.mode === 'founder') {
 			const canonicalPlan = createFounderReviewTodos();
 			return {
 				...guardedTool,
@@ -632,6 +718,23 @@ export async function ensureRuntime(session, runStore) {
 					return result;
 				}
 			};
+			}
+			if (session.mode === 'sqa') {
+				return {
+					...guardedTool,
+					description: `${guardedTool.description} SQA plans must stay bounded to at most 10 workflow-oriented items.`,
+					async run(input, context) {
+						const result = await guardedTool.run(input, context);
+						if (result.success === false) return result;
+						const proposed = normaliseTodos(result, []);
+						if (proposed.length > 10) {
+							return { success: false, code: 'SQA_PLAN_TOO_LARGE', error: 'Keep the SQA plan to at most 10 workflow-oriented items and group related controls together.' };
+						}
+						return result;
+					}
+				};
+			}
+			return guardedTool;
 		});
 		headless.options.tools = registeredTools;
 		headless.toolsByName.clear();
@@ -803,7 +906,10 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	let retryAfterTimeout = false;
 	let continueIncompleteRun = false;
 	let handoffToFounderSynthesis = false;
+	let handoffToSqaContinuation = false;
 	let successfulFinalizer = false;
+	let modelResponseTimedOut = false;
+	let touchModelActivity = () => {};
 
 	const appendText = async (content, kind) => {
 		if (!content) {
@@ -974,6 +1080,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	record.usageLedger ??= createUsageLedger();
 	const turnUsageLedger = record.usageLedger;
 	record.onUsageHarvested = usage => {
+		touchModelActivity();
 		const tracked = turnUsageLedger.track(usage);
 		if (!tracked) return;
 		// #16225 follow-up: observe every REAL report through the shared
@@ -1032,6 +1139,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	const openActivities = new Map();
 
 	const beginActivity = async (toolName, input, toolCallId) => {
+		touchModelActivity();
 		await finalizeAssistant();
 		closeThinking();
 		// Test Execution Timer: the finalizer tool opening is the start of
@@ -1070,6 +1178,10 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 	// Crash recovery: mirror the model conversation to disk while the run is in
 	// flight so an interrupted run can be auto-resumed after a restart.
 	const snapshots = snapshotWriter(session.id, runtime, session.ownerUserId);
+	const modelController = new AbortController();
+	const abortModel = () => modelController.abort(controller.signal.reason);
+	controller.signal.addEventListener('abort', abortModel, { once: true });
+	if (controller.signal.aborted) abortModel();
 
 	try {
 		if (record.hybrid) await record.hybrid.beginTurn(controller.signal);
@@ -1081,9 +1193,26 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 				`The user answered: ${resumeAnswer}`,
 				'Continue from the recorded transcript and current browser state. Honor the answer, avoid repeating completed or irreversible actions, and finish the run.'
 			].join('\n');
-		const stream = canResumePendingQuestion
-			? runtime.resumePendingQuestion(resumeAnswer, controller.signal)
-			: runtime.run(recoveryTask, controller.signal);
+		const rawStream = canResumePendingQuestion
+			? runtime.resumePendingQuestion(resumeAnswer, modelController.signal)
+			: runtime.run(recoveryTask, modelController.signal);
+		const activityTimeoutMs = modelActivityTimeoutMs();
+		const stream = withModelActivityDeadline(rawStream, {
+			timeoutMs: activityTimeoutMs,
+			registerTouch(touch) {
+				touchModelActivity = touch;
+				return () => { touchModelActivity = () => {}; };
+			},
+			onTimeout(error) {
+				modelResponseTimedOut = true;
+				modelController.abort(error);
+				console.error(JSON.stringify({
+					event: 'model_activity_timeout', runId: session.id,
+					timeoutMs: activityTimeoutMs, retryAttempt,
+					ts: new Date().toISOString()
+				}));
+			}
+		});
 
 		streamLoop: for await (const part of stream) {
 			switch (part.type) {
@@ -1157,6 +1286,13 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 							break streamLoop;
 						}
 					}
+					if (ok && ['record_sqa_control', 'record_sqa_blockers'].includes(part.toolName)
+						&& sqaContextCompactionDue(session, record.sqaBrowserActivitiesAtCompaction, undefined,
+							record.sqaInputTokensAtCompaction)
+						&& typeof runtime.agentSession?.clear === 'function') {
+						handoffToSqaContinuation = true;
+						break streamLoop;
+					}
 					if (part.toolName === 'browser_open' && ok && result?.url) {
 						bridge.startFrames();
 					}
@@ -1217,6 +1353,8 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		} else if (handoffToFounderSynthesis) {
 			continueIncompleteRun=true;
 			await runStore.setStatus(session,'running','Evidence collection complete. Preparing the Founder report.');
+		} else if (handoffToSqaContinuation) {
+			await runStore.setStatus(session, 'running', 'SQA evidence checkpoint saved. Continuing with a compact context…');
 		} else if (pending) {
 			const hostDecision = session.hybrid?.pendingDecision?.id === pending.toolCallId ? session.hybrid.pendingDecision : null;
 			session.pendingQuestion = {
@@ -1304,6 +1442,7 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 			deleteRunSnapshot(session.id);
 		}
 	} finally {
+		controller.signal.removeEventListener('abort', abortModel);
 		closeThinking();
 		if (record.hybrid) {
 			const status = successfulFinalizer ? 'done' : session.status === 'awaiting_input' && session.hybrid.pendingDecision ? 'awaiting_input' : controller.signal.aborted ? (record.hybridPause ? 'paused' : 'cancelled') : session.status === 'awaiting_input' ? 'awaiting_input' : continueIncompleteRun ? 'running' : 'paused';
@@ -1315,14 +1454,17 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		// continuation will inspect current browser state before retrying.
 		await Promise.allSettled([...openActivities.values()].map(id => runStore.updateActivity(session, id, {
 			status: 'failed',
-			error: controller.signal.aborted
+			error: modelResponseTimedOut
+				? 'Tool stopped because the model response timed out.'
+				: controller.signal.aborted
 				? 'Tool stopped with the agent run.'
 				: 'The model turn ended before this tool returned.'
 		})));
 		openActivities.clear();
 		// Retain cancellation and the running lock through an automatic retry or
 		// phase handoff. Stop must remain effective while the model is backing off.
-		const continuing = !controller.signal.aborted && (continueIncompleteRun || retryAfterTimeout);
+		const continuing = !controller.signal.aborted
+			&& (continueIncompleteRun || retryAfterTimeout || handoffToSqaContinuation);
 		// Capture while the device session/attestation still belongs to this turn.
 		await captureRuntimeFacts(session, bridge, record);
 		if (!continuing) {
@@ -1398,6 +1540,21 @@ export async function runTurn(session, { task, resumeAnswer, retryAttempt = 0, i
 		return;
 	}
 
+	if (handoffToSqaContinuation) {
+		if (!prepareSqaContextContinuation(session, record)) {
+			await runStore.setStatus(session, 'error', 'The SQA context checkpoint could not be prepared safely. Send "continue" to resume from durable progress.');
+			record.running = false;
+			record.controller = undefined;
+			return;
+		}
+		record.running = false;
+		record.controller = undefined;
+		return runTurn(session, {
+			task: 'Continue the unfinished SQA assessment from the durable Progress section and current browser state. Do not repeat recorded controls or completed workflows. Complete the next bounded workflow, record its control decisions immediately, update the plan, and finish with reviewer-only blockers plus finish_sqa_assessment.',
+			incompleteAttempt
+		}, runStore, deviceRuntime);
+	}
+
 	if (continueIncompleteRun) {
 		const completionInstruction = session.mode === 'founder'
 			? 'Continue the unfinished Founder review now. Read the current Progress section, immediately complete the remaining route/surface inventory, representative workflow, diagnostics, and evidence-backed category observations without repeating finished work. Ask for critical founder context or an authenticated/public-only scope decision only when genuinely required. Then call finish_founder_review with the complete evidence-linked strategy; never invent customer, analytics, market, or revenue facts.'
@@ -1469,6 +1626,12 @@ export function summariseResult(toolName, result) {
 	}
 	if (toolName === 'browser_test_meeting_link') {
 		return `Meeting prejoin check: ${JSON.stringify({ url: result.url, title: result.title, joined: result.joined, code: result.code }).slice(0, 950)}`;
+	}
+	if (toolName === 'browser_sqa_smoke') {
+		if (result.action === 'accessibility') return `Accessibility smoke: ${result.uniqueForwardTargets ?? 0} unique focus target(s), ${result.noFocusSteps ?? 0} no-focus step(s), wrapped=${Boolean(result.wrappedDuringSample)}`;
+		if (result.action === 'responsive') return `Responsive smoke: ${(result.samples ?? []).length} viewport(s), max overflow ${Math.max(0, ...(result.samples ?? []).map(sample => Number(sample.horizontalOverflowPx) || 0))}px`;
+		if (result.action === 'navigation') return `Navigation smoke: ${(result.samples ?? []).filter(sample => sample.ok).length}/${(result.samples ?? []).length} same-origin link destination(s) loaded`;
+		if (result.action === 'form_validation') return `Form smoke: ${(result.cases ?? []).length} generated case(s), stale success after invalid=${Boolean(result.staleSuccessSignalAfterInvalid)}`;
 	}
 	if (result.recorded) {
 		return result.recorded;

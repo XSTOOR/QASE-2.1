@@ -13,6 +13,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Check runtime dependency security
+        run: npm run audit:dependencies
       - run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run verify
       - name: Verify dashboard navigation and secure credential handoff

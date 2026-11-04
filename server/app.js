@@ -51,6 +51,9 @@ import { createConfiguredTelegramNotifier } from './telegramNotifier.js';
 import { resolveDisplayTimeZone, formatFeedbackTimestamp } from './displayTime.js';
 import { createSqaState, createSqaTodoPlan, publicSqaCatalog, recordReviewerSqaObservation } from './sqaService.js';
 import { preflightSqaRuntime } from './sqaRuntime.js';
+import { changeSqaReview, assertSqaReviewIdle, assertSqaReviewRevision } from './sqaReview.js';
+import { sqaPublishedVersions, sqaVersion } from './sqaHistory.js';
+import { inspectSqaEvidence } from './sqaEvidence.js';
 import { publicQaTestCatalog } from './qaTestCatalog.js';
 import { validateQaSelectedTests, validateSecurityAuthorization } from './appQaSelection.js';
 import { selectQaExecutionMode, hybridProfile, loadQualification } from './hybridConfig.js';
@@ -2038,9 +2041,15 @@ export function createApplication(options = {}) {
 		let session;
 		try {
 			const sqa = publicInput(() => createSqaState(request.body ?? {}));
-			const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
+			if (request.body?.device !== undefined && !isDeviceId(request.body.device)) {
+				throw new PublicInputError(`Unsupported SQA device "${String(request.body.device)}". Choose a device from the available catalog.`, 422);
+			}
+			if (request.body?.engine !== undefined && !isEngineId(request.body.engine)) {
+				throw new PublicInputError(`Unsupported SQA browser engine "${String(request.body.engine)}". Choose chromium, firefox, or webkit.`, 422);
+			}
+			const device = request.body?.device ?? DEFAULT_DEVICE_ID;
 			const deviceLandscape = request.body?.deviceLandscape === true;
-			const engine = isEngineId(request.body?.engine) ? request.body.engine : 'chromium';
+			const engine = request.body?.engine ?? 'chromium';
 			const environment = await resolveEnvironmentForRun(services, request.body?.environmentId);
 			const executionEngine = await preflightSqaRuntime({ environment, engine });
 			session = await services.runs.create(`SQA — ${sqa.scope.target.name}`, {
@@ -2142,28 +2151,84 @@ export function createApplication(options = {}) {
 		});
 	});
 
-	app.post('/api/sessions/:id/sqa/observations', async (request, response) => {
+	const activeSqaReviews = new Set();
+	async function withSqaReview(request, response, work, reviewerOnly = true) {
 		const session = await requireSession(request, response);
 		if (!session) return;
-		if (session.mode !== 'sqa') {
-			response.status(409).json({ error: 'This run is not an SQA assessment.' });
-			return;
-		}
-		if (request.auth?.role && !['owner', 'admin'].includes(request.auth.role)) {
+		if (reviewerOnly && !['owner', 'admin'].includes(request.auth?.role)) {
 			response.status(403).json({ error: 'SQA evidence review requires an owner or administrator.' });
 			return;
 		}
+		if (activeSqaReviews.has(session.id)) return response.status(409).json({ error: 'Another review update is being saved. Reload and retry.' });
+		activeSqaReviews.add(session.id);
 		try {
+			assertSqaReviewIdle(session);
+			if (services.agent.getLiveState(session.id).running) throw new PublicInputError('Stop the active assessment before human review.', 409);
+			await work(session);
+		} catch (error) {
+			safeErrorResponse(request, response, error);
+		} finally {
+			activeSqaReviews.delete(session.id);
+		}
+	}
+
+	app.post('/api/sessions/:id/sqa/observations', (request, response) => withSqaReview(request, response, async session => {
+			if (request.body?.observation || session.sqa.reviewRevision) assertSqaReviewRevision(session.sqa, request.body?.expectedRevision);
 			const result = await recordReviewerSqaObservation(
 				session,
-				request.body ?? {},
+				request.body?.observation ?? request.body ?? {},
 				request.auth ?? {},
 				services.runs
 			);
-			response.json({ result, assessment: session.sqa.assessment });
-		} catch (error) {
-			safeErrorResponse(request, response, error);
-		}
+			response.json({ result, assessment: session.sqa.assessment, sqa: session.sqa });
+	}));
+
+	for (const action of ['request', 'reopen', 'publish']) {
+		app.post(`/api/sessions/:id/sqa/review/${action}`, (request, response) => withSqaReview(request, response, async session => {
+			const sqa = await changeSqaReview(session, action, request.body, request.auth, services.runs);
+			response.json({ sqa });
+		}, action !== 'request'));
+	}
+
+	app.get('/api/sqa/reviews', async (request, response) => {
+		if (!['owner', 'admin'].includes(request.auth?.role)) return response.status(403).json({ error: 'The review inbox requires an owner or administrator.' });
+		try {
+			// Use the existing account-scoped list/get contract; never read unscoped runs.
+			const recent = await services.runs.list({ limit: 100 });
+			const reviews = [];
+			for (const summary of recent) {
+				if (summary.mode !== 'sqa') continue;
+				const run = await services.runs.get(summary.id);
+				if (run?.mode === 'sqa' && ['requested', 'in_review'].includes(run.sqa?.review?.status)) {
+					reviews.push({ id: run.id, title: run.title, target: run.sqa.scope.target, review: run.sqa.review, reviewRevision: run.sqa.reviewRevision });
+				}
+			}
+			response.json({ reviews, recentRunLimit: 100 });
+		} catch (error) { safeErrorResponse(request, response, error); }
+	});
+
+	app.get('/api/sessions/:id/sqa/versions', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		if (session.mode !== 'sqa') return response.status(409).json({ error: 'This run is not an SQA assessment.' });
+		response.json({ versions: sqaPublishedVersions(session.sqa).map(({ assessment, observations, scope, ...meta }) => ({ ...meta, assessmentId: assessment.assessmentId, verdict: assessment.verdict })) });
+	});
+
+	app.get('/api/sessions/:id/sqa/evidence/:controlId/:index', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		try {
+			response.json(inspectSqaEvidence(session, request.params.controlId, request.params.index, request.query.version));
+		} catch (error) { safeErrorResponse(request, response, error); }
+	});
+
+	app.get('/api/sessions/:id/sqa/versions/:version', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		try {
+			if (session.mode !== 'sqa') throw new PublicInputError('This run is not an SQA assessment.', 409);
+			response.json(sqaVersion(session.sqa, request.params.version));
+		} catch (error) { safeErrorResponse(request, response, error); }
 	});
 
 	app.get('/api/findings', async (request, response) => {
@@ -2253,6 +2318,7 @@ export function createApplication(options = {}) {
 	app.post('/api/sessions/:id/message', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
+		if (session.sqa?.review?.status === 'in_review' || activeSqaReviews.has(session.id)) return response.status(409).json({ error: 'Human review is in progress. Publish the reviewed version before starting another model turn.' });
 		const text = String(request.body?.text ?? '').trim();
 		if (!text) {
 			response.status(400).json({ error: 'Message is empty.' });
@@ -2457,9 +2523,18 @@ export function createApplication(options = {}) {
 		response.send(found.bytes);
 	});
 
+	function reportVersion(request, session) {
+		if (request.query.version === undefined) return session;
+		if (session.mode !== 'sqa') throw new PublicInputError('Versions are available only for SQA reports.');
+		const version = sqaVersion(session.sqa, request.query.version);
+		return { ...session, sqa: { scope: version.scope, observations: version.observations, assessment: version.assessment, finalizedAt: version.publishedAt } };
+	}
+
 	app.get('/api/sessions/:id/report.md', async (request, response) => {
-		const session = await requireSession(request, response);
+		let session = await requireSession(request, response);
 		if (!session) return;
+		try { session = reportVersion(request, session); }
+		catch (error) { safeErrorResponse(request, response, error); return; }
 		if (session.mode === 'sqa' && (!session.sqa?.assessment || !session.sqa?.finalizedAt)) {
 			response.status(409).json({ error: 'The SQA assessment is pending and has not been finalized yet.' });
 			return;
@@ -2496,8 +2571,10 @@ export function createApplication(options = {}) {
 	});
 
 	app.get('/api/sessions/:id/report.pdf', async (request, response) => {
-		const session = await requireSession(request, response);
+		let session = await requireSession(request, response);
 		if (!session) return;
+		try { session = reportVersion(request, session); }
+		catch (error) { safeErrorResponse(request, response, error); return; }
 		if (session.mode === 'sqa' && (!session.sqa?.assessment || !session.sqa?.finalizedAt)) {
 			response.status(409).json({ error: 'The SQA assessment is pending and has not been finalized yet.' });
 			return;

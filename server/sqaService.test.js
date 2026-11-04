@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+	closePendingSqaControlsAsBlocked,
 	createSqaState,
 	createSqaTodoPlan,
 	finishSqaAssessment,
@@ -8,9 +9,10 @@ import {
 	recordAgentSqaBlockers,
 	recordAgentSqaObservation,
 	recordAgentSqaObservations,
-	recordReviewerSqaObservation
+	recordReviewerSqaObservation,
+	SQA_BROWSER_REVIEW_ATTRIBUTES
 } from './sqaService.js';
-import { SQA_CATALOG_VERSION } from './sqaCatalog.js';
+import { SQA_CATALOG_VERSION, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { clearSecrets, storeSecrets } from './secrets.js';
 
 const fixedNow = () => Date.parse('2026-08-15T00:00:00.000Z');
@@ -54,6 +56,29 @@ test('SQA state requires explicit authorization and resolves the universal core'
 	assert.equal(state.assessment, undefined);
 });
 
+test('URL-based SQA state always includes browser review attributes and all six web controls', () => {
+	const state = createSqaState({
+		authorizationConfirmed: true,
+		profiles: ['core'],
+		attributes: [],
+		target: { name: 'Example', release: 'build-123', environment: 'staging' }
+	}, fixedNow);
+	assert.deepEqual(state.scope.attributes, SQA_BROWSER_REVIEW_ATTRIBUTES);
+	assert.deepEqual(
+		state.scope.applicableControlIds.filter(controlId => SQA_TECHNICAL_CONTROL_IDS.includes(controlId)),
+		SQA_TECHNICAL_CONTROL_IDS
+	);
+});
+
+test('URL-based SQA state preserves additional attributes without duplicating browser defaults', () => {
+	const state = createSqaState({
+		authorizationConfirmed: true,
+		attributes: ['handles_personal_data', 'web_application'],
+		target: { name: 'Example', release: 'build-123', environment: 'staging' }
+	}, fixedNow);
+	assert.deepEqual(state.scope.attributes, ['web_application', 'user_interface', 'handles_personal_data']);
+});
+
 test('SQA finalization storage failure preserves the pending assessment and permits a durable retry', async () => {
 	const candidate = session();
 	const previous = structuredClone(candidate.sqa);
@@ -69,11 +94,33 @@ test('SQA finalization storage failure preserves the pending assessment and perm
 
 test('SQA sessions receive a canonical non-empty host plan before the model starts', () => {
 	const plan = createSqaTodoPlan(session().sqa);
-	assert.equal(plan.length, 6);
+	assert.equal(plan.length, 8);
 	assert.ok(plan.every(item => item.status === 'pending'));
-	assert.match(plan[1].text, /browser evidence for \d+ technically observable controls/);
-	assert.match(plan[4].text, /reviewer-only evidence prerequisites for \d+ controls/);
+	assert.match(plan[1].text, /accessibility and responsive-layout smoke checks/);
+	assert.match(plan[2].text, /navigation and safe form-validation/);
+	assert.match(plan[3].text, /browser evidence for \d+ technically observable controls/);
+	assert.match(plan[6].text, /reviewer-only evidence prerequisites for \d+ controls/);
 	assert.match(plan.at(-1).text, /publish the professional SQA report/);
+});
+
+test('host safety closeout blocks only pending controls in one durable batch', async () => {
+	const candidate = session();
+	candidate.sqa.observations = [{
+		controlId: 'SQA-WEB-001', status: 'blocked', rationale: 'Existing truthful result.', evidence: []
+	}];
+	const runStore = store();
+	const results = await closePendingSqaControlsAsBlocked(
+		candidate,
+		'The host input-token safety limit was exhausted before control-specific evidence was collected.',
+		runStore,
+		fixedNow
+	);
+	assert.equal(results.length, candidate.sqa.scope.applicableControlIds.length - 1);
+	assert.equal(candidate.sqa.observations.find(item => item.controlId === 'SQA-WEB-001').rationale, 'Existing truthful result.');
+	assert.equal(candidate.sqa.observations.every(item => item.status === 'blocked'), true);
+	assert.match(candidate.sqa.observations.find(item => item.controlId !== 'SQA-WEB-001').rationale, /safety limit was exhausted/);
+	assert.equal(runStore.commits.length, 1);
+	assert.equal(runStore.commits[0].payload.safetyCloseout, true);
 });
 
 test('legacy evidence-empty provisional assessments migrate back to pending without changing real results', async () => {
@@ -203,6 +250,18 @@ test('unfinished sessions migrate to the current catalog while finalized session
 	await assert.rejects(recordAgentSqaObservation(candidate, {
 		control_id: 'SQA-WEB-001', status: 'blocked', rationale: 'Must not mutate.'
 	}, runStore, fixedNow), /finalized/);
+});
+
+test('unfinished legacy sessions on the current catalog gain the required browser scope', () => {
+	const candidate = session().sqa;
+	candidate.scope.attributes = [];
+	candidate.scope.applicableControlIds = candidate.scope.applicableControlIds.filter(controlId => !controlId.startsWith('SQA-WEB-'));
+	const migrated = normalizePendingSqaState(candidate);
+	assert.deepEqual(migrated.scope.attributes, SQA_BROWSER_REVIEW_ATTRIBUTES);
+	assert.deepEqual(
+		migrated.scope.applicableControlIds.filter(controlId => SQA_TECHNICAL_CONTROL_IDS.includes(controlId)),
+		SQA_TECHNICAL_CONTROL_IDS
+	);
 });
 
 test('agent cannot manufacture documentary evidence and finalization remains conservative', async () => {

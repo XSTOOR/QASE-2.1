@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildSqaContext } from './sqaPrompt.js';
 import { createSqaState } from './sqaService.js';
+import { SQA_BROWSER_WORKFLOW_CHECKPOINT, SQA_INPUT_TOKEN_BUDGET } from './sqaBrowserBudget.js';
 
 test('SQA context makes progress explicit and orders technical smoke checks before documentary assurance', () => {
 	const session = {
@@ -34,6 +35,12 @@ test('SQA context makes progress explicit and orders technical smoke checks befo
 	assert.ok(context.indexOf('- SQA-QUA-001 [') < context.indexOf('# Reviewer-only assurance controls'));
 	assert.match(context, /controls batch of up to 12/);
 	assert.match(context, /Browser tool budget: 2\/120 used; 118 remaining/);
-	assert.match(context, /at most 12 observed Tab\/Shift\+Tab steps per workflow/i);
+	assert.match(context, /browser_sqa_smoke once with action=accessibility/i);
+	assert.match(context, /browser_sqa_smoke once with action=responsive/i);
+	assert.match(context, /browser_sqa_smoke action=navigation/i);
+	assert.match(context, /action=form_validation/i);
+	assert.match(context, /close_after_safety_limit=true/i);
+	assert.ok(context.includes(`Input-token safety budget: 0/${SQA_INPUT_TOKEN_BUDGET} used`));
+	assert.ok(context.includes(`Workflow checkpoint: 2/${SQA_BROWSER_WORKFLOW_CHECKPOINT} browser actions`));
 	assert.match(context, /two verified locator strategies/);
 });
