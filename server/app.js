@@ -56,7 +56,7 @@ import { preflightSqaRuntime } from './sqaRuntime.js';
 import { publicQaTestCatalog } from './qaTestCatalog.js';
 import { validateQaSelectedTests, validateSecurityAuthorization } from './appQaSelection.js';
 import { selectQaExecutionMode, hybridProfile, loadQualification } from './hybridConfig.js';
-import { hybridRecoveryProblem } from './hybridRecoveryGate.js';
+import { hybridRecoveryProblem, reconcileHybridUsageBeforeResume } from './hybridRecoveryGate.js';
 import { getConfig } from './config.js';
 import { renderReportPdf } from './reportPdf.js';
 import { buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
@@ -2253,6 +2253,11 @@ export function createApplication(options = {}) {
 			response.status(409).json({ error: 'The agent is still working. Stop it before sending another instruction.' });
 			return;
 		}
+		// #18637: the stop path could persist a reservation as uncertain/pending
+		// even though its VERIFIED receipt was durably logged. Reconcile from the
+		// durable receipt log before gating; only genuinely unaccounted usage
+		// (no receipt, no log entry) stays blocked.
+		await reconcileHybridUsageBeforeResume(session);
 		const recoveryProblem = hybridRecoveryProblem(session);
 		if (recoveryProblem) {
 			response.status(409).json({ error: recoveryProblem.message, code: recoveryProblem.code });

@@ -51,10 +51,34 @@ export function createHybridModelRouter({ session, profile, telemetry, checkpoin
     if (metric.calls >= maxCalls || used + metric.reservedTokens + reserve > maxTokens) throw new HybridPause('HYBRID_MODEL_BUDGET', `${role} model budget exhausted (${used} provider-reported tokens, ${metric.reservedTokens} pending reservation tokens, ${metric.calls}/${maxCalls} calls). Progress is saved; a new run needs an explicitly approved budget.`);
     return accounting.begin(role, reserve);
   }
+  // #18637: a user stop used to persist 'uncertain' (or a stale 'pending')
+  // while the transport's release()→publish() was still unwinding a VERIFIED
+  // receipt — permanently 409-blocking Resume with "A model usage receipt is
+  // missing". Give the unwind a bounded drain first; only genuinely
+  // unaccounted exposure stays uncertain (fail-closed preserved). A receipt
+  // landing even later still heals via reasonerUsage() + re-checkpoint.
+  const settleReservation = async (role, reservation, unwind) => {
+    try {
+      await Promise.race([
+        Promise.resolve(unwind()).then(() => undefined, () => undefined),
+        new Promise(resolve => { const timer = setTimeout(resolve, 250); timer.unref?.(); })
+      ]);
+    } catch { /* unwind never blocks exposure accounting */ }
+    accounting.uncertain(role, reservation);
+  };
   return {
     check,
     reasonerUsage(usage) {
-      try { accounting.settle('reasoner', usage.reservationId, usage); deadlines.get(usage.reservationId)?.(); }
+      try {
+        // #18637: a receipt can land after the turn's final checkpoint already
+        // persisted the reservation as uncertain/pending (the stop path races
+        // the transport's release→publish). Settling here is authoritative —
+        // re-checkpoint so the durable ledger records the verified receipt and
+        // Resume is not permanently blocked by a stale snapshot.
+        const settled = accounting.settle('reasoner', usage.reservationId, usage);
+        deadlines.get(usage.reservationId)?.();
+        if (settled) void checkpoint().catch(() => {});
+      }
       catch (error) { throw modelFailure(error); }
     },
     async classifier(observations, questions, signal) {
@@ -138,12 +162,12 @@ export function createHybridModelRouter({ session, profile, telemetry, checkpoin
               if (part.value?.type !== 'reasoning' && part.value?.type !== 'reasoning_reset') yield part.value;
             }
           } catch (error) { throw modelFailure(error); }
-          finally { clearTimeout(timeout); deadlines.delete(reservation.id); subscription.dispose(); cts.dispose(true); accounting.uncertain('reasoner', reservation); telemetry.metrics.reasoner.latencyMs += Math.max(0, (reservation.completedAt || Date.now()) - began); void iterator.return?.().catch?.(() => {}); await checkpoint(); }
+          finally { clearTimeout(timeout); deadlines.delete(reservation.id); subscription.dispose(); cts.dispose(true); await settleReservation('reasoner', reservation, () => iterator.return?.().catch?.(() => {})); telemetry.metrics.reasoner.latencyMs += Math.max(0, (reservation.completedAt || Date.now()) - began); await checkpoint(); }
         })();
       } catch (error) {
         clearTimeout(timeout); deadlines.delete(reservation.id); subscription.dispose(); cts.dispose(true);
-        telemetry.metrics.reasoner.latencyMs += Date.now() - began;
-        accounting.uncertain('reasoner', reservation); await checkpoint();
+        telemetry.metrics.reasoner.latencyMs += Math.max(0, (reservation.completedAt || Date.now()) - began);
+        await settleReservation('reasoner', reservation, () => {}); await checkpoint();
         throw modelFailure(error);
       }
     }

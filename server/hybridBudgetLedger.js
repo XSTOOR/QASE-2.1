@@ -36,6 +36,15 @@ export function createHybridBudgetLedger(state, telemetry) {
         return false;
       }
       item.status = 'settled'; item.receipt = receipt; item.completedAt = Date.now();
+      // #18637: durable evidence a verified receipt settled this reservation.
+      // The log entry is written in the SAME in-memory mutation (and therefore
+      // the same checkpoint) as the settle + telemetry bump, so its durable
+      // presence proves both. If a later checkpoint races (stop path) and the
+      // reservation is persisted as uncertain/pending, resume-time
+      // reconciliation can heal it from this log — never from guesses.
+      ledger.receiptLog ??= [];
+      ledger.receiptLog.push({ role, reservationId: id, callId: usage.callId ?? null, inputTokens, outputTokens, settledAt: item.completedAt });
+      if (ledger.receiptLog.length > 200) ledger.receiptLog = ledger.receiptLog.slice(-200);
       telemetry.usage(role, usage); sync(role); return true;
     },
     notDispatched(role, item) {
@@ -44,6 +53,9 @@ export function createHybridBudgetLedger(state, telemetry) {
       telemetry.metrics[role].calls--; sync(role);
     },
     uncertain(role, item) { if (!['settled', 'not_dispatched'].includes(item.status)) { item.status = 'uncertain'; sync(role); } }
+    // #18637: the resume-time heal from receiptLog lives in
+    // hybridRecoveryGate.js (healFromReceiptLog) because the preflight has no
+    // live ledger/telemetry instance. Keep the logic single-sourced there.
   };
 }
 
