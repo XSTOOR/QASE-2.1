@@ -37,9 +37,10 @@ test('lifecycle: error state is actionable and preserves evidence', () => {
 	assert.equal(lifecycle.phase, 'error');
 	assert.match(lifecycle.message, /Resolve the reported error/);
 	assert.match(lifecycle.message, /continue from the saved evidence/);
-	// Model/provider failure lands in this state: inputs and observations are
-	// preserved by the session store; only the turn failed.
-	assert.match(lifecycle.detail, /no Founder brief was published/);
+	// #17935: execution errors are recoverable — the evidence is preserved and
+	// the state says so; it must NOT claim the review itself failed.
+	assert.match(lifecycle.detail, /3 observations remain saved/);
+	assert.doesNotMatch(lifecycle.label, /Review failed/);
 });
 
 test('lifecycle: interrupted state keeps observations and offers resume', () => {

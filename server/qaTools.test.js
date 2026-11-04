@@ -27,6 +27,21 @@ const finding = {
 	evidence: 'The microphone track state is ended.'
 };
 
+test('partial results require gaps, keep runtime integrity and never hide high severity', async () => {
+	const partial = { ...report, verdict: 'partial', not_covered: ['Authentication not executed.'] };
+	const valid = fixture();
+	assert.equal((await valid.finish.run(partial)).success, true);
+	assert.equal(valid.session.report.verdict, 'partial');
+	assert.match(buildReportMarkdown(valid.session), /Completed with gaps/);
+	assert.equal((await fixture().finish.run({ ...partial, not_covered: [] })).success, false);
+	const missingIdentity = fixture({ runtimeFacts: {} });
+	await missingIdentity.finish.run(partial);
+	assert.equal(missingIdentity.session.report.verdict, 'blocked');
+	const high = fixture({ findings: [{ ...finding }] });
+	await high.finish.run(partial);
+	assert.equal(high.session.report.verdict, 'fail');
+});
+
 test('QA finding to Markdown workflow preserves evidence, redacts vaulted data, and fails high-impact defects', async t => {
 	const target = fixture();
 	storeSecrets(target.session.id, { password: 'qa-test-private-password' });
@@ -115,6 +130,24 @@ test('QA finish requires completed work and model force cannot bypass it', async
 	assert.equal(result.remaining_count, 1);
 	assert.equal(target.session.report, undefined);
 	assert.equal(target.commits.length, 0);
+});
+
+// #17997: validation failures must name the actual cause. E2E hybrid run
+// a3418492 showed the generic message sending the agent into a 6-call retry
+// loop during budget closeout.
+test('QA finish rejects bad verdicts and empty summaries with actionable errors', async () => {
+	const target = fixture();
+	const badVerdict = await target.finish.run({ ...report, verdict: 'passed' });
+	assert.equal(badVerdict.success, false);
+	assert.match(badVerdict.error, /verdict "passed"/);
+	assert.match(badVerdict.error, /pass_with_issues/);
+	const missingSummary = await target.finish.run({ verdict: 'pass' });
+	assert.equal(missingSummary.success, false);
+	assert.match(missingSummary.error, /nonempty summary/);
+	const nonObject = await target.finish.run('finish');
+	assert.equal(nonObject.success, false);
+	assert.match(nonObject.error, /object with a verdict/);
+	assert.equal(target.session.report, undefined);
 });
 
 test('QA cannot publish success without a plan, successful browser evidence, or declared coverage', async () => {

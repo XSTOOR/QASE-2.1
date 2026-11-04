@@ -5,6 +5,7 @@ import {
 	groupFounderObservations,
 	resolveFounderQuickWins
 } from './founderPresentation.js';
+import { tokenSummaryText } from './uiPrimitives.js';
 
 /**
  * Create the Founder Mode presentation surface.
@@ -151,13 +152,14 @@ export function createFounderView({
 
 	function renderFounderHero(scope, lifecycle) {
 		const target = scope.target ?? {};
+		const session = getSession();
 		const node = doc.createElement('section');
 		node.className = 'founder-hero';
 		const eyebrow = doc.createElement('span');
 		eyebrow.className = 'founder-eyebrow';
 		eyebrow.textContent = 'Founder Mode // evidence-led product review';
 		const title = doc.createElement('h2');
-		title.textContent = target.name ?? getSession()?.title ?? 'Founder review';
+		title.textContent = target.name ?? session?.title ?? 'Founder review';
 		const detail = doc.createElement('p');
 		detail.textContent = lifecycle.detail;
 		const status = doc.createElement('span');
@@ -165,6 +167,33 @@ export function createFounderView({
 		status.dataset.status = lifecycle.status;
 		status.textContent = lifecycle.label;
 		node.append(eyebrow, title, detail, status);
+		// #17934: live token usage row. Values come from the server's usage
+		// events only — no report yet shows an explicit pending/unavailable
+		// state, never a fabricated zero.
+		const usage = session?.tokenUsage;
+		const tokens = doc.createElement('span');
+		tokens.className = 'founder-tokens';
+		if (tokenSummaryText(usage)) {
+			tokens.textContent = tokenSummaryText(usage);
+			tokens.title = usage.estimated === true
+				? 'Estimated from the model gateway (authoritative usage not yet reported).'
+				: 'Token usage reported by the model gateway.';
+			const perModel = usage.byModel;
+			if (perModel && Object.keys(perModel).length > 0) {
+				const modelLines = Object.entries(perModel)
+					.sort((a, b) => (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens))
+					.map(([model, u]) => `${model}: ${u.inputTokens ?? 0} in · ${u.outputTokens ?? 0} out`)
+					.join('\n');
+				tokens.title = `${tokens.title}\n${modelLines}`;
+			}
+		} else if (session?.status === 'running') {
+			tokens.textContent = 'Tokens: awaiting usage report…';
+			tokens.title = 'The model gateway has not reported usage for this run yet.';
+		} else {
+			tokens.textContent = 'Token usage unavailable';
+			tokens.title = 'No token usage was reported for this run.';
+		}
+		node.append(tokens);
 		return node;
 	}
 
@@ -730,7 +759,7 @@ export function createFounderView({
 		const founder = session.founder ?? {};
 		const scope = founder.scope ?? {};
 		const report = founder.report;
-		const lifecycle = describeFounderLifecycle(founder, session.status, session.activities?.length ?? 0);
+		const lifecycle = describeFounderLifecycle(founder, session.status, session.activities?.length ?? 0, session);
 		elements.countFounder.textContent = lifecycle.badge;
 		elements.founderView.append(renderFounderHero(scope, lifecycle), renderFounderScope(scope));
 
@@ -767,7 +796,7 @@ export function createFounderView({
 		const session = getSession();
 		const founder = session?.founder ?? {};
 		const report = founder.report;
-		const lifecycle = describeFounderLifecycle(founder, session?.status, session?.activities?.length ?? 0);
+		const lifecycle = describeFounderLifecycle(founder, session?.status, session?.activities?.length ?? 0, session);
 		if (!founder.finalizedAt || !report) {
 			const pending = doc.createElement('div');
 			pending.className = 'feed-empty';

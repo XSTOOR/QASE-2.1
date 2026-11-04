@@ -1,48 +1,93 @@
-# QASE deployment handoff
+# QASE hybrid production candidate
 
-Release `qase-2026-10-16-single-browser-r4` retains the compact recent-run cards and updates the UI asset version to `20261016-3`.
+Release: `qase-2026-10-27-hybrid-production-r1`. UI: `20261027-6`.
+Target: `https://qase.drytis.com`. This is a source/image handoff, not a record
+of deployment or production activation.
 
-## Single-run workflow
+## Preserved history and compatibility
 
-- “Let QASE choose” uses one Chrome desktop configuration. No alternative-engine fallback, tablet default, version selector, parent run or batch fan-out. The generic Windows Desktop is preferred on Windows/Linux hosts; macOS hosts use one compatible desktop from the catalog. Versions remain internal runtime metadata, not separate jobs.
-- Custom selection chooses one browser and one compatible device. Search, device type, operating system and manufacturer filters compose. Filtering never clears the chosen pair, which stays in the summary. Old multi-version preferences migrate to one exact environment.
-- Environment selection is separate from optional advanced checks. The review page names the chosen browser/device and one run. Unavailable browser choices explain their disabled state; emulation and engine-equivalence notes remain honest.
-- The QA launch endpoint rejects multi-configuration and batch requests, including old clients. An owner's repeated request returns their existing active run. Concurrent submissions are guarded across HTTP awaits; a busy local execution service rejects before creating more waiting work and preserves the draft.
-- Existing historical runs, legacy advanced matrix APIs, data and queued production work are preserved, not cancelled or deleted. The local admission guard is process-scoped: use the existing single-process local-store topology. Multi-API/distributed rollouts require explicit shared-capacity and duplicate-start canaries before promotion, not a concurrency increase to hide a backlog.
-- Browser selection, HTTP admission, device filters, focus, stale preferences, feedback and existing runtime behavior have regression coverage. Production rollout and real-model canaries remain required.
+Based on GitHub main `82911f8db54f7eb3efeb9b45e96d12c21805756f`, preserving its
+authentication, tenant isolation, local/PostgreSQL stores, distributed workers,
+SQA/Founder, integration, evidence and deployment-resilience foundations.
+The public site currently reports the October 16 single-browser release;
+compare its actual checkout/infrastructure before promotion because that release
+is newer than the GitHub baseline. No production files, secrets or data were
+changed during preparation.
 
-## Automatic startup and feedback UX
+## Application changes since the previous GitHub release
 
-- The default launcher is “Let QASE choose”. Browser/device selection is no longer required. Custom configurations remain an explicit option.
-- The server plans one Chrome desktop configuration from the current catalog. After admission it checks that default profile. A failed Chrome launch is reported honestly without trying other engines or generating additional jobs. Browser processes are not probed outside the shared capacity budget.
-- Startup uses a dedicated full-page status view, not the technical QA-run popup. It explains capacity waiting, reports queue position when available, transitions to the real session, and makes diagnostics optional. Leaving the page stops its polling/navigation. Interrupted queued work can reconnect once without creating another run.
-- Feedback loads and submissions are bound to their run. Late responses cannot overwrite another run; a duplicate save acknowledgement recovers the existing record for editing while preserving the draft. Background synchronization never opens a feedback modal automatically.
-- Local UI verification uses an explicitly labelled simulated agent with notifications disabled. It is not evidence of a successful production model run. Live authenticated canaries remain a rollout gate.
+- Opus 4.7 reasoning and JEV 1.13 typed classification through one CleanSlate
+  loop, with host permission, usage, budget and completion authority.
+- Durable scenarios, evidence, conservative usage recovery and explicit gaps;
+  no unexecuted scenario or model agreement can become a passing test.
+- Scoped route exploration uses remaining page slots correctly; report
+  publication and closeout share one depth policy. Completed closeout runs do
+  not spend additional model calls republishing their existing report.
+- Guarded live input/negative-path checks restore fields without submission,
+  and responsive samples restore the selected device preview.
+- Hybrid-only QA launcher, clearer recovery/buttons, explicit Results/Back,
+  and startup/refresh restoring the run workspace rather than auto-opening Results.
+- Existing run execution modes remain pinned. Legacy/JEV-only rollback APIs,
+  SQA and Founder paths remain available.
+- Hybrid exposes native blocking questions and requires an access decision at
+  observed login walls. Secure explicit consent grants one guarded test-account
+  sign-in; successful access enables fresh signed-in route observations without
+  treating access as a passed authentication suite. Scope decisions and bounded
+  goal memory survive restart. Failed credential validation retains the form.
+- Sign-in waits for client rendering instead of inspecting immediately after
+  DOMContentLoaded. Explicit exact authentication-API consent supports a separate
+  backend without granting arbitrary cross-origin writes. Blocked access requires
+  a recovery decision; private route depth and session-expiry detection are scoped
+  to the current access state. Compact ledger-based closeout preserves more of the
+  existing budget for exploration. Plan resolution is shown separately from coverage.
 
-## Production startup hotfix
+- New runs enforce host-authored access and continuation questions through the
+  native SDK pause/resume lifecycle. Budget limits no longer silently publish
+  unfinished work: the owner can approve a displayed bounded extension or
+  explicitly request a gap report. Exact usage and prior evidence are retained.
+- Premature prose-only stops get bounded automatic continuation. Budget abort
+  cleanup preserves the pending decision and vault; duplicate approvals are
+  rejected. Explicit closeout uses the same native ledger/report tools without
+  another paid model request, including at an exhausted budget.
+- Sign-in can recognize a bounded successful session receipt plus a rendered
+  changed route, with an explicit owner confirmation fallback. HTTP 200 alone
+  cannot prove access. Anonymous and signed-in executions of the same URL are
+  tracked separately. These controls apply to new continuation-policy runs;
+  existing closed reports are preserved.
 
-- Accepted test runs open a durable queue route immediately, not a previous paused session. Pending work remains discoverable in Recent tests, survives reload, and transitions to its real session only while the user is viewing that queue.
-- Runtime initialization now has the existing configurable prelaunch deadline (120 seconds by default). Timeout aborts late turn startup, records an error, and lets the queue proceed. Browser cleanup is bounded to five seconds so a cleanup hang cannot indefinitely retain an execution slot.
-- Stopping the queue view invalidates in-flight updates; transient status-read failures continue polling rather than silently dropping live updates.
-- Matrix status, event and control endpoints enforce run ownership while the internal scheduler retains its system-level view.
-- The login document is served relative to the public root, including installations beneath hidden release directories, without permitting access outside that root.
-- New regression coverage exercises queued routes, stale responses, runtime timeout/slot release and account isolation. Production rollout and authenticated canaries remain required; see `docs/production-run-startup.md`.
+## Deployment changes
 
-## Included deployment changes
+- Shared source inventory and `npm run release:manifest` regenerate the checked-in
+  SHA-256 manifest. Docker verifies it in a source stage before runtime layers.
+- Source-only Docker context excludes developer state and dependencies. The
+  runtime retains the locked Node 22/Playwright installation, non-root user,
+  health check and persistent state/evidence paths, with release/revision labels.
+- CI verifies source/tests, builds the image, boots an isolated hardened
+  container, checks protected APIs/closed registration/demo exclusion and launches
+  Chromium, Firefox and WebKit. It also uploads the source ZIP and checksum.
+  CI does not publish images, deploy, migrate data or activate models.
+- Production environment examples and runbook document target-host gateway
+  qualification, receipt persistence/renewal, optional PostgreSQL migrations
+  041/042, draining and rollback. No dependency versions were upgraded.
 
-- Docker browser dependencies follow the locked Playwright installer; the image uses a non-root account, a health check, container binding, and writable state/evidence directories.
-- A single-host Compose baseline includes a TLS reverse proxy, persistent volumes, closed registration, private application port, and streaming configuration.
-- The source ZIP has a generated per-file SHA-256 manifest, a ZIP checksum sidecar, source verification, and a live release/asset verification command.
-- Packaged UTF-8 text uses canonical LF line endings so the same source hashes survive Linux Git checkout; application behavior and binary assets are unchanged.
-- CI checks the source and builds the image. A one-time offline operator bootstrap refuses populated local account stores.
-- Existing application features and data-store implementations remain intact. Developer state, secrets, uploads, browser bundles, dependencies, and previous archives are excluded.
-- Browser capability detection confirms touch injection on an isolated blank page, avoiding false hardware-touch reports for non-touch contexts. Browser fixture tests use their own local servers; verification no longer assumes Linux-only files or preinstalled branded browsers.
-- Client and server compare revision numbers numerically, so revision 17 correctly supersedes revision 9 during stale-tab detection.
+## Required operator gates
 
-## Required production gates
+Docker is not installed on the preparation machine; Linux image checks must
+pass in CI or on the approved build host. Test/CI outcomes belong to the review
+commit and must not be inferred from this document. Opt-in database/integration
+skips require isolated staging verification where those services are used.
 
-Local r4 verification completed 1,886 tests: 1,859 passed, zero failed and 27 skipped. Syntax checks passed for 486 source files; private-path checks and the credential scan passed. Skips include opt-in integration checks and the POSIX file-mode assertion that is not applicable on Windows. UI verification covered combined device filters, single-pair review, popup-free startup and the narrow mobile layout. Its isolated runtime harness made no model calls; it is not a production agent canary. Linux image validation and authenticated production canaries remain mandatory.
+Keep authentication required and registration closed. Preserve production
+identity, database, Redis, volumes and account settings. Apply migrations through
+the reviewed process before hybrid/partial-report writes on PostgreSQL. Never
+replace an existing distributed deployment with the single-host Compose example.
 
-The receiving deployment agent must build and scan the Linux image, configure secrets/DNS/TLS/persistence/SMTP, run the full verification suite, and pass authenticated QA/SQA/Founder canaries before switching traffic. Docker and the target production environment are not available in this handoff workspace, so this archive is not evidence of an already completed production deployment.
+Hybrid remains disabled by default. Before activation, qualify all 13 gateway/
+SDK capabilities inside the target image using the provisioned account key;
+receipts expire after 24 hours and must be renewed through approved operations.
+Do not copy developer keys or `.qase` state, weaken receipt checks, reset budgets,
+or silently substitute models. Then run authorized staging QA/SQA/Founder,
+SMTP recovery, isolation, evidence-persistence and ingress/SSE canaries.
 
-Read `DEPLOYMENT_PROMPT.md` for exact-version deployment, branch synchronization, migration precautions, and rollback requirements. Do not treat the local-store Compose baseline as a multi-replica design or replace an existing PostgreSQL production store with it.
+Read `DEPLOYMENT_PROMPT.md` for exact steps and rollback. Publishing this branch
+does not authorize merging, switching traffic, or changing other branches.

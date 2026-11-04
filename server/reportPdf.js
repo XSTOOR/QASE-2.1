@@ -15,6 +15,7 @@ const SEVERITY_COLOR = {
 const VERDICT_LABEL = {
 	pass: 'Pass',
 	pass_with_issues: 'Pass with issues',
+	partial: 'Completed with gaps',
 	fail: 'Fail',
 	blocked: 'Blocked'
 };

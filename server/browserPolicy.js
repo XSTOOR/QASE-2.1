@@ -30,8 +30,36 @@ const DESTRUCTIVE_PATTERNS = [
 	{ category: 'settings', pattern: /\b(save|apply|update|change)\s+(?:account |billing |security )?(?:settings|permissions|password)\b/i }
 ];
 
-const AFFIRMATIVE = /^\s*(?:yes|y|confirm(?:ed)?|proceed|continue|allow|approve(?:d)?|do it|go ahead)(?:\s|[.,;:!]|$)/i;
-const NEGATIVE = /^\s*(?:no|n|deny|decline|cancel|do not|don't|stop)(?:\s|[.,;:!]|$)/i;
+const AFFIRMATIVE = /^\s*(?:yes|y|yep|yeah|ok|okay|sure|fine|affirmative|agreed|confirm(?:ed)?|proceed|continue|allow|approve(?:d)?|do it|go ahead|go on|go for it|sounds good|please do)(?:\s|[.,;:!]|$)/i;
+const NEGATIVE = /^\s*(?:no|n|nope|deny|decline|cancel|do not|don't|stop)(?:\s|[.,;:!]|$)/i;
+
+/**
+ * #17989: an affirmative answer that explicitly scopes the approval to the
+ * rest of the run ("without asking again", "for this run", …) converts the
+ * single-use confirmation grant into a RUN-SCOPED grant: same risk category,
+ * same origin, unlimited uses, no TTL. It still never covers a different
+ * category, a different origin, or anything the destructive classifier did
+ * not already classify — the security boundary is unchanged, only the
+ * re-prompting for the SAME explicitly approved action class ends.
+ */
+const RUN_SCOPED_APPROVAL = /without asking again|don'?t ask again|no more (?:prompts|confirmations|questions)|for the (?:rest of the |remainder of the |whole |entire )?(?:run|session|test)/i;
+
+/** Normalize a persisted grant (session.browserActionGrant) after a rebuild. */
+function normalizeGrant(grant) {
+	if (!grant || typeof grant !== 'object') return undefined;
+	const normalized = {
+		category: String(grant.category ?? ''),
+		location: String(grant.location ?? ''),
+		runScoped: Boolean(grant.runScoped),
+		approvedAt: Number(grant.approvedAt ?? 0)
+	};
+	// Run-scoped grants carry no TTL/use cap; bounded grants keep theirs.
+	normalized.expiresAt = normalized.runScoped || !Number.isFinite(Number(grant.expiresAt)) ? null : Number(grant.expiresAt);
+	normalized.remainingUses = normalized.runScoped || !Number.isFinite(Number(grant.remainingUses)) ? null : Math.max(0, Number(grant.remainingUses));
+	// An expired bounded grant hydrates as nothing.
+	if (!normalized.runScoped && normalized.expiresAt !== null && normalized.remainingUses === 0) return undefined;
+	return normalized;
+}
 
 function cleanHost(hostname) {
 	return String(hostname ?? '').trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
@@ -261,7 +289,13 @@ export function createBrowserPolicy({
 	environment = process.env,
 	resolveHost = defaultResolveHost,
 	now = () => Date.now(),
-	confirmationTtlMs = DEFAULT_CONFIRMATION_TTL_MS
+	confirmationTtlMs = DEFAULT_CONFIRMATION_TTL_MS,
+	// #17989: persist + hydrate run-scoped authorization so an approved action
+	// class survives bridge rebuilds and process restarts. The store contract
+	// is intentionally tiny: getBrowserActionGrant() → {category, location,
+	// runScoped, …}|null, setBrowserActionGrant(grant|null).
+	getBrowserActionGrant,
+	setBrowserActionGrant
 } = {}) {
 	const nodeEnvironment = String(environment.NODE_ENV ?? '').toLowerCase();
 	const production = nodeEnvironment === 'production';
@@ -284,7 +318,10 @@ export function createBrowserPolicy({
 		}
 	})();
 	let pendingConfirmation;
-	let grant;
+	// #17989: hydrate a persisted run-scoped grant on construction so a
+	// rebuilt bridge (browser closed and reopened, process restart) keeps the
+	// user's "don't ask again" authorization instead of re-prompting.
+	let grant = normalizeGrant(getBrowserActionGrant?.());
 	const observedMeetingLinks = new Set();
 
 	const privateHostAllowed = hostname =>
@@ -404,12 +441,15 @@ export function createBrowserPolicy({
 		const timestamp = now();
 		// Bind approval to one origin and one risk category. A confirmation flow
 		// may move from a list page to a modal/confirmation route, so the path is
-		// deliberately not part of the grant; the strict two-use cap limits scope.
+		// deliberately not part of the grant; the strict two-use cap limits scope
+		// unless the user explicitly scoped the approval to the whole run
+		// (#17989 — run-scoped grants still cannot cross categories or origins).
 		const location = safeOriginLabel(descriptor.url ?? getTargetUrl() ?? '');
 
-		if (grant && grant.expiresAt >= timestamp && grant.category === risk.category && grant.location === location && grant.remainingUses > 0) {
-			grant.remainingUses -= 1;
-			return { allowed: true, confirmationUsed: true, category: risk.category };
+		if (grant && grant.category === risk.category && grant.location === location &&
+			(grant.runScoped || (grant.expiresAt >= timestamp && grant.remainingUses > 0))) {
+			if (!grant.runScoped) grant.remainingUses -= 1;
+			return { allowed: true, confirmationUsed: true, category: risk.category, runScoped: grant.runScoped };
 		}
 		grant = undefined;
 
@@ -417,14 +457,24 @@ export function createBrowserPolicy({
 			pendingConfirmation.category === risk.category && pendingConfirmation.location === location) {
 			const answer = latestAnswer(messages, pendingConfirmation.createdAt);
 			if (answer && AFFIRMATIVE.test(String(answer.text ?? ''))) {
-				grant = {
+				const runScoped = RUN_SCOPED_APPROVAL.test(String(answer.text ?? ''));
+				grant = runScoped ? {
 					category: risk.category,
 					location,
+					runScoped: true,
+					approvedAt: timestamp,
+					approvedWith: String(answer.text ?? '').slice(0, 200)
+				} : {
+					category: risk.category,
+					location,
+					runScoped: false,
 					expiresAt: timestamp + confirmationTtlMs,
 					remainingUses: DEFAULT_CONFIRMATION_USES - 1
 				};
+				// #17989: persist so a rebuilt bridge hydrates the grant.
+				try { setBrowserActionGrant?.(grant.runScoped ? { ...grant } : null); } catch { /* persistence is best-effort; the in-memory grant still holds */ }
 				pendingConfirmation = undefined;
-				return { allowed: true, confirmationUsed: true, category: risk.category };
+				return { allowed: true, confirmationUsed: true, category: risk.category, runScoped };
 			}
 			if (answer && NEGATIVE.test(String(answer.text ?? ''))) {
 				pendingConfirmation = undefined;
@@ -475,7 +525,11 @@ export function createBrowserPolicy({
 		},
 		authorizeAction,
 		asBlockedResult,
-		getPendingConfirmation: () => pendingConfirmation && { ...pendingConfirmation }
+		getPendingConfirmation: () => pendingConfirmation && { ...pendingConfirmation },
+		// #17989: inspection/testing seam — the active authorization grant
+		// (run-scoped or bounded) without exposing its internal state mutation.
+		getActiveGrant: () => grant ? { ...grant } : null,
+		clearGrant: () => { grant = undefined; try { setBrowserActionGrant?.(null); } catch { /* best-effort */ } }
 	};
 }
 

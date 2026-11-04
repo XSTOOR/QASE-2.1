@@ -51,8 +51,8 @@ test('empty Qase view keeps one primary launcher and routes composer URLs into s
 	assert.match(app, /qaUi\.targetUrl\.value = target\.href/);
 });
 
-test('tablet and mobile move directly to the primary execution surface', () => {
+test('tablet and mobile show the execution surface without switching to results on completion', () => {
 	assert.match(workspaceStyles, /min-width: 721px[\s\S]*data-run-status="running"[\s\S]*\.viewer \{ grid-row: 1; \}/);
 	assert.match(app, /justStarted[\s\S]*setWorkspaceView\('browser'\)/);
-	assert.match(app, /justCompleted[\s\S]*setWorkspaceView\('results'\)/);
+	assert.doesNotMatch(app, /justCompleted[\s\S]*setWorkspaceView\('results'\)/);
 });

@@ -58,6 +58,40 @@ test('SQA record tool accepts an atomic controls batch without a new runtime per
 	assert.deepEqual(result.results.map(item => item.control_id).sort(), ['SQA-QUA-001', 'SQA-TRC-002']);
 });
 
+// #17997 regression: batched pass decisions must go through the bounded JEV
+// verifier too (E2E run e4a0fe68 bypassed it entirely via the batch path).
+test('SQA batch record verifies every pass decision through the JEV verifier', async () => {
+	const verified = [];
+	const jevVerifier = { verify: async input => { verified.push(input); return { challenge: null }; } };
+	const candidate = session();
+	const record = createSqaTools(candidate, store(), { jevVerifier }).find(tool => tool.name === 'record_sqa_control');
+	const result = await record.run({ controls: [{
+		control_id: 'SQA-QUA-001',
+		status: 'pass',
+		rationale: 'Verified representative workflow.',
+		evidence: [{ type: 'test_result', summary: 'Positive and negative browser workflow matched its oracle.' }]
+	}, {
+		control_id: 'SQA-TRC-001',
+		status: 'blocked',
+		rationale: 'Missing prerequisite.',
+		evidence: [{ type: 'test_result', summary: 'Browser check could not establish the prerequisite.' }]
+	}] });
+	assert.equal(result.success, true);
+	assert.equal(verified.length, 1, 'only the pass decision is verified');
+	assert.equal(verified[0].controlId, 'SQA-QUA-001');
+	assert.equal(verified[0].status, 'pass');
+	assert.ok(verified[0].rationale.length > 0, 'rationale is forwarded to JEV');
+	assert.ok(Array.isArray(verified[0].evidence), 'evidence is forwarded to JEV');
+	assert.equal(result.jev_verifications, undefined, 'no challenge entries when JEV is satisfied');
+	// A challenge must surface per-control, never flip the result.
+	const challenging = { verify: async input => ({ challenge: input.controlId === 'SQA-QUA-001' ? 'Evidence too thin.' : null }) };
+	const record2 = createSqaTools(session(), store(), { jevVerifier: challenging }).find(tool => tool.name === 'record_sqa_control');
+	const result2 = await record2.run({ controls: [{ control_id: 'SQA-QUA-001', status: 'pass', rationale: 'r', evidence: [{ type: 'test_result', summary: 's' }] }] });
+	assert.equal(result2.results[0].status, 'pass', 'JEV challenge never flips the decision');
+	assert.equal(result2.jev_verifications?.[0]?.control_id, 'SQA-QUA-001');
+	assert.match(result2.jev_verifications?.[0]?.jev_verification ?? '', /too thin/);
+});
+
 test('finish readiness reports missing controls, incomplete work, and recent in-flight browser tools', () => {
 	const candidate = session();
 	candidate.todos = [

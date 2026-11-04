@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
 	assembleQaConfigurations,
+	buildQaConfigurations,
 	browserFamilies,
 	executionTypeFor,
 	availabilityFor,
@@ -11,6 +12,8 @@ import {
 	EXECUTION_TYPES
 } from './qaConfigurations.js';
 import { generateEnvironments, BROWSERS, BROWSER_VERSIONS } from './environmentCatalog.js';
+import { fetchConfigurationIndex } from '../public/qaConfigMatrix.js';
+import { hybridLaunchOptions } from '../public/hybridQaView.js';
 
 /** Build a synthetic enriched environment row the way environmentService does. */
 function enrichedEnv(overrides = {}) {
@@ -37,6 +40,15 @@ function enrichedEnv(overrides = {}) {
 		...overrides
 	};
 }
+
+test('actual compact index survives the client fetch and validates hybrid launch without heavy-row metadata', async () => {
+  const payload = await buildQaConfigurations({ environmentsService: { async list() { return [enrichedEnv()]; } }, index: true, limit: 1 });
+  const index = await fetchConfigurationIndex({ fetcher: async () => Response.json(payload) });
+  assert.equal(index.length, 1); assert.equal(index[0].browserSupport, undefined);
+  assert.equal(index[0].executionEngine, 'chromium'); assert.equal(index[0].availability, 'AVAILABLE');
+  assert.deepEqual(hybridLaunchOptions({ config: { hybridQa: { available: true } }, mode: 'hybrid', envIds: [index[0].envId], configurations: index }),
+    { qaExecutionMode: 'hybrid', environmentId: index[0].envId, engine: 'chromium' });
+});
 
 test('FAMILY_ORDER lists all seven families in launcher order', () => {
 	assert.deepEqual(FAMILY_ORDER, ['edge', 'chrome', 'brave', 'firefox', 'safari', 'opera', 'duckduckgo']);

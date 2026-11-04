@@ -55,6 +55,11 @@ import { createPageRouter, routeHash } from './pageRouter.js';
 import { blockedRunReason, runPresentationLabel, runPresentationStatus } from './runPresentation.js';
 import { createQaJourney, normalizeWebsite } from './qaJourney.js';
 import { workflowStatus } from './workflowStatus.js';
+import { renderJevExecution } from './jevExecutionView.js';
+import { planPresentation } from './planPresentation.js';
+import { qaPlanProgress, qaExecutionModeLabel, qaLauncherModeLabel, qaLauncherSelectionProblem } from './qaExecutionView.js';
+import { renderHybridQa, hybridLaunchOptions, hybridScenarioProgress, hybridScenarioPlan, hybridAvailabilityMessage, holdPrimaryPreview, viewportStatusText } from './hybridQaView.js';
+import { focusedBrowserConfiguration, qaBrowserStatus, renderQaBrowserStatus } from './qaBrowserStatus.js';
 
 /**
  * Qase dashboard.
@@ -234,13 +239,12 @@ const state = {
 	founderCatalogPromise: undefined,
 	qaTestCatalog: undefined,
 	qaTestCatalogPromise: undefined,
+	qaTestCatalogFailed: false,
 	/** Live reasoning for the current turn. Never kept once the agent replies. */
 	thinking: { text: '', action: '' },
 	runTimer: { interval: undefined, startedAt: undefined, endedAt: undefined },
 	/** Per-session expand preference after the post-run auto-collapse. */
 	stageCollapsePreferences: new Map(),
-	/** Run whose completed QA results were automatically revealed. */
-	shownQaResults: undefined,
 	/** Run whose live Plan was revealed once without overriding later tab choices. */
 	shownRunningPlan: undefined,
 	/** Instance is in pilot mode (invite-only registration, beta notice). */
@@ -1084,7 +1088,6 @@ function selectSessionWithTimeout(id, options, timeoutMs) {
 async function selectSession(id, { updateRoute = true } = {}) {
 	if (document.body.dataset.workspaceView === 'runs') setWorkspaceView('agent');
 	state.shownFounderReport = undefined;
-	state.shownQaResults = undefined;
 	state.shownRunningPlan = undefined;
 	state.sessionId = id;
 	state.bubbles.clear();
@@ -1099,7 +1102,6 @@ async function selectSession(id, { updateRoute = true } = {}) {
 	const session = await api(`/sessions/${id}`);
 	if (state.sessionId !== id) return;
 	applySessionSnapshot(session);
-	if (session.status === 'done' && matchMedia('(max-width: 720px)').matches) setWorkspaceView('results');
 	if (session.mode === 'founder') {
 		void founderLoadProjectState().then(() => renderFounder());
 	} else {
@@ -1107,7 +1109,7 @@ async function selectSession(id, { updateRoute = true } = {}) {
 	}	await connect(id);
 	await refreshRuns();
 	if (updateRoute && pageRouter.started) {
-		await pageRouter.navigate({ name: session.status === 'done' ? 'results' : 'run', runId: id });
+		await pageRouter.navigate({ name: 'run', runId: id });
 	}
 }
 
@@ -1340,7 +1342,6 @@ function applySessionSnapshot(session) {
 	renderFounder();
 	showCompletedFounderReport();
 	showRunningQaPlan();
-	showCompletedQaResults();
 	renderStageCollapse();
 	updateRunTimer();
 	if (_runEnvHook) _runEnvHook(session);
@@ -1378,7 +1379,7 @@ async function startRun() { openQaStart(); }
 
 async function createQaRun({
 	targetUrl, device, deviceLandscape, selectedTests, securityAuthorization,
-	kickoffText, engine = 'chromium', coreFlowsOnly = false, environmentId, scopeSelection
+	kickoffText, engine = 'chromium', coreFlowsOnly = false, environmentId, scopeSelection, qaExecutionMode, testCaseId
 }) {
 	void markOnboarded();
 	const session = await api('/sessions', {
@@ -1388,6 +1389,8 @@ async function createQaRun({
 			deviceLandscape,
 			engine,
 			selectedTests,
+			...(qaExecutionMode ? { qaExecutionMode } : {}),
+			...(testCaseId ? { testCaseId } : {}),
 			...(securityAuthorization ? { securityAuthorization } : {}),
 			...(environmentId ? { environmentId } : {}),
 			...(scopeSelection ? { scopeSelection } : {})
@@ -1674,6 +1677,12 @@ function renderMiniSummary() {
 
 function renderHeader() {
 	const session = state.session;
+	const resumeBlock = workflowStatus(session).resumeBlocked;
+	el.resumeRun.disabled = Boolean(resumeBlock);
+	el.resumeRun.title = resumeBlock || '';
+	el.resumeRun.textContent = resumeBlock ? 'Review required' : 'Resume';
+	const executionLabel = $('qa-agent-mode');
+	if (executionLabel) { executionLabel.textContent = qaExecutionModeLabel(session); executionLabel.hidden = !executionLabel.textContent; }
 	const guide = $('journey-run-guide');
 	guide.hidden = !state.sessionId || Boolean(workflowStatus(session).hidden);
 	if (state.sessionId) {
@@ -1685,19 +1694,50 @@ function renderHeader() {
 		action.textContent = guidance.action;
 		action.onclick = () => {
 			if (guidance.destination === 'results') void pageRouter.navigate({ name: 'results', runId: state.sessionId });
+			else if (guidance.destination === 'progress') { activateDetailTab($('tab-plan')); setWorkspaceView('results'); }
 			else if (guidance.destination === 'question') { setWorkspaceView('agent'); el.questionSlot.scrollIntoView({ block: 'nearest' }); el.questionSlot.querySelector('input, textarea, button')?.focus(); }
 			else if (guidance.destination === 'conversation') { setWorkspaceView('agent'); el.transcript.scrollTop = el.transcript.scrollHeight; el.composerInput.focus(); }
 			else el.composerInput.focus();
 		};
 	}
-	// Customer-facing progress stays simple. Model usage remains in Run details.
+	// #17934: the header chip carries the LIVE token usage for every mode
+	// (Founder, QA, QA Run, SQA) — restored after the UI rebuild dropped it.
+	// session.tokenUsage is server-authoritative (SSE 'usage' events, fed by
+	// the gateway's own usage reports); nothing here fabricates values: no
+	// usage events yet → explicit pending/absent state, never a fake 0.
 	const hasRun = Boolean(state.sessionId && (session.targetUrl || session.title));
 	document.body.dataset.hasRun = String(hasRun);
 	el.statusChip.hidden = !hasRun;
 	el.runSummary.hidden = !hasRun;
-	el.tokenText.classList.remove('is-pending');
-	el.tokenText.textContent = 'Run progress';
-	el.tokenText.title = '';
+	const usageSummary = tokenSummaryText(session?.tokenUsage);
+	if (usageSummary) {
+		// Authoritative counts exist — show them.
+		el.tokenText.classList.remove('is-pending');
+		el.tokenText.textContent = usageSummary;
+		el.tokenText.title = session?.tokenUsage?.estimated === true
+			? 'Estimated from the model gateway (authoritative billing usage not yet reported).'
+			: 'Token usage reported by the model gateway.';
+	} else if (session?.status === 'running') {
+		// Run in flight, no usage event yet — pending, not zero.
+		el.tokenText.classList.add('is-pending');
+		el.tokenText.textContent = 'Tokens: awaiting usage report…';
+		el.tokenText.title = 'The model gateway has not reported usage for this run yet.';
+	} else {
+		el.tokenText.classList.remove('is-pending');
+		el.tokenText.textContent = 'Token usage unavailable';
+		el.tokenText.title = 'No token usage was reported for this run.';
+	}
+	// #17934: per-model attribution in the tooltip (e.g. primary agent vs
+	// JEV classification) — the breakdown comes from authoritative usage
+	// events carrying the model that spent them.
+	const perModel = session?.tokenUsage?.byModel;
+	if (usageSummary && perModel && Object.keys(perModel).length > 0) {
+		const modelLines = Object.entries(perModel)
+			.sort((a, b) => (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens))
+			.map(([model, u]) => `${model}: ${formatTokens(u.inputTokens ?? 0)} in · ${formatTokens(u.outputTokens ?? 0)} out`)
+			.join('\n');
+		el.tokenText.title = `${el.tokenText.title}\n${modelLines}`;
+	}
 	// LIVE pill: only while the run is actively working.
 	el.livePill.hidden = session.status !== 'running';
 	renderMiniSummary();
@@ -1724,6 +1764,7 @@ function renderHeader() {
 	el.chatTitle.textContent = session.status === 'running'
 		? `Testing ${targetName}`
 		: displayStatus === 'blocked' ? 'Testing blocked'
+			: displayStatus === 'partial' ? 'Testing completed with gaps'
 			: session.status === 'done' ? 'Testing complete' : targetName;
 	// Keep the engine visible in the header for non-chromium runs (the run
 	// list already carries an engine pill in its meta row).
@@ -1743,6 +1784,8 @@ function renderHeader() {
  * right-hand Plan tab, kept here once so the two can never disagree.
  */
 function runProgress() {
+	const hybrid = hybridScenarioProgress(state.session); if (hybrid) return hybrid;
+	const qa = qaPlanProgress(state.session); if (qa) return qa;
 	const todos = state.session?.todos ?? [];
 	const total = todos.length;
 	const done = todos.filter(todo => todo.status === 'completed').length;
@@ -1785,15 +1828,15 @@ function renderCurrentActivity() {
 			.find(activity => activity.status === 'running');
 		const activePlanItem = (session.todos ?? [])
 			.find(todo => todo.status === 'in_progress');
-		const savedAction = runningActivity?.label || runningActivity?.title
+		const savedAction = [runningActivity?.label || runningActivity?.title, runningActivity?.detail].filter(Boolean).join(' — ')
 			|| activePlanItem?.text || activePlanItem?.title || '';
-		const label = action || (text ? tailOf(text) : '') || savedAction;
+		const label = savedAction || action || (text ? tailOf(text) : '');
 		el.currentActivityState.textContent = label || 'Working…';
 		el.currentActivity.hidden = false;
 	} else if (session?.status === 'done') {
 		el.currentActivityState.textContent = runPresentationStatus(session) === 'blocked'
 			? `Testing could not proceed — ${truncate(blockedRunReason(session), 160)}`
-			: 'Testing complete';
+			: runPresentationStatus(session) === 'partial' ? 'QA scenarios completed — review executed evidence and remaining workflows.' : 'Testing complete';
 		el.currentActivity.hidden = false;
 	} else {
 		el.currentActivityState.textContent = '';
@@ -1803,11 +1846,9 @@ function renderCurrentActivity() {
 
 function setStatus(status) {
 	const previousStatus = document.body.dataset.runStatus;
-	const justCompleted = status === 'done' && document.body.dataset.runStatus !== 'done';
 	const justStarted = status === 'running' && previousStatus !== 'running';
 	if (state.session) state.session.status = status;
 	document.body.dataset.runStatus = status;
-	if (justCompleted && matchMedia('(max-width: 720px)').matches) setWorkspaceView('results');
 	if (justStarted && matchMedia('(max-width: 720px)').matches) setWorkspaceView('browser');
 	const stopping = status === 'running' && state.stopRequests.has(state.sessionId);
 	const stoppedByUser = status === 'interrupted' && state.session?.statusDetail === 'Stopped by user.';
@@ -1821,6 +1862,7 @@ function setStatus(status) {
 		? 'waiting for you'
 		: status === 'running' ? 'Running'
 			: displayStatus === 'blocked' ? 'Blocked'
+				: displayStatus === 'partial' ? 'Completed with gaps'
 				: status === 'done' ? 'Complete'
 				: stoppedByUser ? 'Stopped'
 					: status === 'interrupted' ? 'Paused'
@@ -1832,6 +1874,10 @@ function setStatus(status) {
 	el.stopRun.disabled = stopping;
 	el.stopRun.textContent = stopping ? 'Stopping…' : 'Stop';
 	el.resumeRun.hidden = !((status === 'interrupted' || status === 'error') && state.sessionId);
+	const resumeBlock = workflowStatus(state.session).resumeBlocked;
+	el.resumeRun.disabled = Boolean(resumeBlock);
+	el.resumeRun.title = resumeBlock || '';
+	el.resumeRun.textContent = resumeBlock ? 'Review required' : 'Resume';
 	el.sendBtn.disabled = running;
 	el.composerInput.disabled = running;
 	el.composerHint.hidden = !running;
@@ -1863,6 +1909,13 @@ function formatElapsed(ms) {
 
 function runElapsedMs() {
 	const timer = state.runTimer;
+	const measured = state.session?.qaExecutionMode === 'hybrid' ? state.session.hybrid?.telemetry?.elapsedMs : undefined;
+	if (Number.isFinite(measured) && measured >= 0) {
+		if (timer.measuredMs !== measured || timer.measuredStatus !== state.session.status) {
+			timer.measuredMs = measured; timer.measuredStatus = state.session.status; timer.measuredAt = Date.now();
+		}
+		return measured + (state.session.status === 'running' ? Math.max(0, Date.now() - timer.measuredAt) : 0);
+	}
 	if (typeof timer.startedAt !== 'number') return undefined;
 	return (typeof timer.endedAt === 'number' ? timer.endedAt : Date.now()) - timer.startedAt;
 }
@@ -1916,6 +1969,7 @@ function syncRunTimer(status) {
 
 function resetRunMeta(session) {
 	const timer = state.runTimer;
+	delete timer.measuredMs; delete timer.measuredStatus; delete timer.measuredAt;
 	if (timer.interval) {
 		clearInterval(timer.interval);
 		timer.interval = undefined;
@@ -2096,6 +2150,9 @@ function updateRunTimer() {
 		el.runTimer.dataset.state = 'blocked';
 		el.runTimerLabel.dataset.state = 'blocked';
 		el.runTimerLabel.textContent = '⚠ Testing Blocked';
+	} else if (runPresentationStatus(session) === 'partial') {
+		el.runTimer.dataset.state = 'completed';
+		el.runTimerLabel.textContent = 'Completed with gaps';
 	} else if (session.status === 'done') {
 		el.runTimer.dataset.state = 'completed';
 		el.runTimerLabel.textContent = '✓ Test Completed';
@@ -2771,6 +2828,7 @@ function optionForm(question) {
 function credentialForm() {
 	const form = document.createElement('form');
 	form.className = 'cred-form';
+	const hybrid = state.session?.qaExecutionMode === 'hybrid';
 
 	const row = document.createElement('div');
 	row.className = 'cred-row';
@@ -2794,6 +2852,22 @@ function credentialForm() {
 	note.className = 'cred-note';
 	note.innerHTML = 'Encrypted locally for this run and deleted when the run ends — never sent to the model. ' +
 		'The agent fills the form with <code>{{QA_USERNAME}}</code> and <code>{{QA_PASSWORD}}</code>; the real values are swapped in at the keyboard.';
+	const consent = document.createElement('label');
+	consent.className = 'cred-note';
+	const authorize = document.createElement('input');
+	authorize.type = 'checkbox';
+	authorize.required = hybrid;
+	consent.append(authorize, ' I am authorized to use this test account and approve one sign-in attempt on this website. Continue with read-only testing afterward.');
+	const expectedUrl = document.createElement('input');
+	expectedUrl.type = 'url';
+	expectedUrl.placeholder = 'Expected signed-in page URL (optional)';
+	expectedUrl.setAttribute('aria-label', 'Expected signed-in page URL');
+	const loginEndpoint = document.createElement('input');
+	loginEndpoint.type = 'url';
+	loginEndpoint.placeholder = 'Sign-in API URL (optional; approve only a service you trust)';
+	loginEndpoint.setAttribute('aria-label', 'Approved sign-in API URL');
+	if (hybrid) consent.append(' If a sign-in API URL is supplied below, I also approve sending this test account to that exact endpoint once.');
+	if (hybrid) note.textContent = 'Use a test account. Credentials are encrypted in this run’s vault; the model receives placeholders only. One sign-in is allowed on this website or the exact API URL you approve. Account creation and SSO/MFA are not automated. You can skip login and continue public-only.';
 
 	const actions = document.createElement('div');
 	actions.className = 'cred-actions';
@@ -2808,37 +2882,44 @@ function credentialForm() {
 	submit.textContent = 'Store and continue';
 	actions.append(skip, submit);
 
-	form.append(row, extra, note, actions);
+	form.append(row, ...(hybrid ? [expectedUrl, loginEndpoint, consent] : [extra]), note, actions);
 	form.onsubmit = async event => {
 		event.preventDefault();
 		const fields = {};
 		if (username.value) fields.QA_USERNAME = username.value;
 		if (password.value) fields.QA_PASSWORD = password.value;
-		if (extra.value) fields.QA_OTP = extra.value;
+		if (!hybrid && extra.value) fields.QA_OTP = extra.value;
+		if (hybrid && (!username.value || !password.value || !authorize.checked)) {
+			toast('Enter both test-account fields and approve one sign-in, or choose Skip login.', 'bad');
+			return;
+		}
 		if (Object.keys(fields).length === 0) {
 			toast('Enter a username or password first.', 'bad');
 			return;
 		}
-		el.questionSlot.replaceChildren();
-		state.session.pendingQuestion = undefined;
+		submit.disabled = true;
 		try {
-			await api(`/sessions/${state.sessionId}/credentials`, { method: 'POST', body: JSON.stringify({ fields }) });
+			await api(`/sessions/${state.sessionId}/credentials`, { method: 'POST', body: JSON.stringify({ fields, ...(hybrid ? { authorizeLogin: authorize.checked, expectedUrl: expectedUrl.value.trim(), loginEndpoint: loginEndpoint.value.trim() } : {}) }) });
+			el.questionSlot.replaceChildren();
+			state.session.pendingQuestion = undefined;
+			password.value = ''; username.value = ''; extra.value = '';
 			toast('Credentials stored locally. The model only sees placeholders.', 'good');
 		} catch (error) {
 			fail(error);
-		}
+		} finally { submit.disabled = false; }
 	};
 
 	return form;
 }
 
 async function sendAnswer(answer) {
-	el.questionSlot.replaceChildren();
-	state.session.pendingQuestion = undefined;
-	await api(`/sessions/${state.sessionId}/answer`, {
+	try { await api(`/sessions/${state.sessionId}/answer`, {
 		method: 'POST',
 		body: JSON.stringify({ answer })
-	}).catch(fail);
+	});
+	el.questionSlot.replaceChildren();
+	state.session.pendingQuestion = undefined;
+	} catch (error) { fail(error); }
 }
 
 /* ── Live browser view ───────────────────────────────────────────── */
@@ -2865,7 +2946,17 @@ function fitStageFrame() {
 	el.stageInner.style.height = `${Math.max(1, frameHeight)}px`;
 }
 
+function renderViewportStatus() {
+	const node = $('viewport-test-status');
+	if (!node) return;
+	node.textContent = viewportStatusText(state.session?.hybrid?.viewport);
+	node.hidden = !node.textContent;
+}
+
 function applyFrame(frame) {
+	if (frame.viewportTesting && state.session?.hybrid) state.session.hybrid.viewport = frame.viewportTesting;
+	renderViewportStatus();
+	if (holdPrimaryPreview(frame, state.session)) return;
 	el.frame.src = `data:${frame.mimeType};base64,${frame.base64}`;
 	el.stageEmpty.hidden = true;
 	el.stageInner.hidden = false;
@@ -2877,6 +2968,7 @@ function applyFrame(frame) {
 		el.browserUrl.textContent = frame.url;
 	}
 	el.browserTitle.textContent = truncate(frame.title ?? '', 40);
+	if (state.activeRuntimeEnvironment) renderBrowserChrome(state.activeRuntimeEnvironment);
 	requestAnimationFrame(fitStageFrame);
 }
 
@@ -2885,6 +2977,7 @@ function applyFrame(frame) {
  * space, so they are scaled to however large the image is actually drawn.
  */
 function applyCursor(cursor) {
+	if (state.session?.hybrid?.viewport?.phase === 'responsive_sample') return;
 	if (cursor.viewport) {
 		state.viewport = cursor.viewport;
 	}
@@ -2996,26 +3089,30 @@ function upsertActivity(activity) {
 }
 
 function renderTodos() {
-	const todos = state.session.todos ?? [];
-	const done = todos.filter(todo => todo.status === 'completed').length;
+	const hybridPlan = hybridScenarioPlan(state.session);
+	const todos = hybridPlan || state.session.todos || [];
+	const done = hybridPlan ? hybridScenarioProgress(state.session).done : (qaPlanProgress(state.session)?.done ?? todos.filter(todo => todo.status === 'completed').length);
 	el.countPlan.textContent = todos.length > 0 ? `${done}/${todos.length}` : '';
 	el.planList.replaceChildren();
 	if (todos.length === 0) {
 		el.planList.innerHTML = '<div class="feed-empty">No test plan generated yet — the agent writes one at the start of each run.</div>';
+		const hybrid = renderHybridQa(state.session, document); if (hybrid) el.planList.prepend(hybrid);
 		return;
 	}
+	const hybrid = renderHybridQa(state.session, document); if (hybrid) el.planList.append(hybrid);
 	for (const todo of todos) {
+		const presentation = planPresentation(todo);
 		const node = document.createElement('div');
-		node.className = `todo ${todo.status}`;
+		node.className = `todo ${presentation.key}`;
 		node.setAttribute('role', 'listitem');
 		const mark = document.createElement('span');
 		mark.className = 'todo-mark';
-		mark.textContent = todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '◉' : '○';
+		mark.textContent = presentation.mark;
 		/* Status chip (UI Fix Phase 1): text label, not color-only — maps the
 		 * raw todo status onto the run vocabulary. */
 		const chip = document.createElement('span');
-		chip.className = `todo-chip todo-chip-${todo.status ?? 'pending'}`;
-		chip.textContent = { completed: 'Passed', in_progress: 'Running', failed: 'Failed', blocked: 'Blocked' }[todo.status ?? 'pending'] ?? 'Queued';
+		chip.className = `todo-chip todo-chip-${presentation.key}`;
+		chip.textContent = presentation.label;
 		const text = document.createElement('span');
 		text.className = 'todo-text';
 		text.textContent = todo.text;
@@ -3307,6 +3404,7 @@ function findingAsTicket(finding) {
 const VERDICTS = {
 	pass: { mark: '✓', label: 'Pass', tone: 'ok' },
 	pass_with_issues: { mark: '!', label: 'Pass with issues', tone: 'warn' },
+	partial: { mark: '…', label: 'Completed with gaps', tone: 'warn' },
 	fail: { mark: '✕', label: 'Fail', tone: 'bad' },
 	blocked: { mark: '—', label: 'Blocked', tone: 'dim' }
 };
@@ -3628,13 +3726,33 @@ function renderReport() {
 	const report = state.session.report;
 	if (!report) {
 		el.reportView.innerHTML = '<div class="feed-empty">No report available — it is published when a run finishes.</div>';
+		const hybrid = renderHybridQa(state.session, document); if (hybrid) el.reportView.prepend(hybrid);
 		return;
 	}
-	el.reportView.append(renderResultsOverview(state.session, {
+	const hybrid = renderHybridQa(state.session, document); if (hybrid) el.reportView.append(hybrid);	el.reportView.append(renderResultsOverview(state.session, {
 		document,
 		onFindings: () => activateDetailTab($('tab-findings'), true),
 		onWorkspace: () => { void pageRouter.navigate({ name: 'run', runId: state.sessionId }); }
 	}));
+	// #17934: final token consumption on the completed report — the run's
+	// authoritative accumulated usage, per model where reported.
+	const finalUsage = tokenSummaryText(state.session.tokenUsage);
+	if (finalUsage) {
+		const usageRow = document.createElement('div');
+		usageRow.className = 'sqa-tokens';
+		usageRow.textContent = `Total model usage for this run: ${finalUsage}`;
+		usageRow.title = state.session.tokenUsage.estimated === true
+			? 'Estimated from the model gateway (authoritative usage not reported).'
+			: 'Token usage reported by the model gateway.';
+		const perModel = state.session.tokenUsage.byModel;
+		if (perModel && Object.keys(perModel).length > 0) {
+			usageRow.title += '\n' + Object.entries(perModel)
+				.sort((a, b) => (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens))
+				.map(([model, u]) => `${model}: ${formatTokens(u.inputTokens ?? 0)} in · ${formatTokens(u.outputTokens ?? 0)} out`)
+				.join('\n');
+		}
+		el.reportView.append(usageRow);
+	}
 
 	/* Export report (UI Fix Phase 1): JSON download of the finished report —
 	 * presented once, inside the Report tab workspace. */
@@ -3691,6 +3809,8 @@ function renderReport() {
 	const summarySection = section('Summary', paragraph(report.summary));
 	summarySection.classList.add('report-summary-detail');
 	el.reportView.append(summarySection);
+	const executionView = renderJevExecution(report.executionEvidence, document);
+	if (executionView) el.reportView.append(executionView);
 	if (report.recommendations?.length) {
 		const nextSection = section('Recommended next action', list(report.recommendations));
 		nextSection.classList.add('report-next-detail');
@@ -4178,6 +4298,34 @@ function renderSqa() {
 	const assessment = sqa.assessment;
 	const lifecycle = describeSqaLifecycle(sqa, state.session.status, state.session.activities?.length ?? 0);
 	el.countSqa.textContent = lifecycle.badge;
+
+	// #17934: live token usage row for SQA Mode — same authoritative source
+	// (SSE 'usage' → session.tokenUsage) as the header chip. Includes the
+	// per-model breakdown so JEV vs primary-model spend is visible (#17936).
+	const sqaTokens = document.createElement('div');
+	sqaTokens.className = 'sqa-tokens';
+	const usageSummary = tokenSummaryText(state.session.tokenUsage);
+	if (usageSummary) {
+		sqaTokens.textContent = `Model usage: ${usageSummary}`;
+		sqaTokens.title = state.session.tokenUsage.estimated === true
+			? 'Estimated from the model gateway (authoritative usage not yet reported).'
+			: 'Token usage reported by the model gateway.';
+		const perModel = state.session.tokenUsage.byModel;
+		if (perModel && Object.keys(perModel).length > 0) {
+			const modelLines = Object.entries(perModel)
+				.sort((a, b) => (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens))
+				.map(([model, u]) => `${model}: ${formatTokens(u.inputTokens ?? 0)} in · ${formatTokens(u.outputTokens ?? 0)} out`)
+				.join('\n');
+			sqaTokens.title = `${sqaTokens.title}\n${modelLines}`;
+		}
+	} else if (state.session.status === 'running') {
+		sqaTokens.textContent = 'Tokens: awaiting usage report…';
+		sqaTokens.title = 'The model gateway has not reported usage for this run yet.';
+	} else {
+		sqaTokens.textContent = 'Token usage unavailable';
+		sqaTokens.title = 'No token usage was reported for this run.';
+	}
+	el.sqaView.append(sqaTokens);
 
 	const notice = document.createElement('aside');
 	notice.className = 'sqa-notice';
@@ -4814,8 +4962,9 @@ function handleEvent(event) {
 			}
 			upsertActivity(event.activity);
 			// The action doubles as the strip's caption when no reasoning streams.
-			if (event.activity.status === 'running') {
-				state.thinking.action = [event.activity.label, event.activity.detail]
+			{
+				const current = [...session.activities].reverse().find(item => item.status === 'running');
+				state.thinking.action = [current?.label, current?.detail]
 					.filter(Boolean).join(' — ');
 				updateThinkingStrip();
 				renderCurrentActivity();
@@ -4828,6 +4977,21 @@ function handleEvent(event) {
 			session.todos = event.todos;
 			renderTodos();
 			renderProgressCard();
+			break;
+
+		case 'hybrid.state':
+			session.hybrid = event.hybrid;
+			renderHeader();
+			renderTimerChip();
+			renderViewportStatus();
+			renderTodos();
+			renderProgressCard();
+			renderReport();
+			break;
+
+		case 'qa.viewport':
+			if (session.hybrid) session.hybrid.viewport = event.viewport;
+			renderViewportStatus();
 			break;
 
 		case 'context':
@@ -5003,6 +5167,7 @@ function handleEvent(event) {
 			if (event.browser?.url) {
 				el.browserUrl.textContent = event.browser.url;
 			}
+			if (state.activeRuntimeEnvironment) renderBrowserChrome(state.activeRuntimeEnvironment);
 			break;
 
 		case 'session':
@@ -5032,6 +5197,7 @@ const qaUi = {
 	cancel: $('qa-cancel'),
 	submit: $('qa-submit'),
 	targetUrl: $('qa-target-url'),
+	executionMode: $('qa-execution-mode'),
 	testOn: $('qa-test-on'),
 	testOnChange: document.querySelector('#qa-start [data-test-on-change]'),
 	deviceLandscape: $('qa-device-landscape'),
@@ -5084,6 +5250,13 @@ let qaJourneySelectionMode = (() => {
 let qaJourneyCustomSelection;
 
 function qaFocusedSelection() {
+	const hybrid = qaUi.executionMode?.value === 'hybrid';
+	if (hybrid) {
+		const available = qaMatrixState.index.filter(isSelectable);
+		const row = focusedBrowserConfiguration(available, true);
+		if (!row) return createSelectionState();
+		return singleSelection(qaMatrixState.index, row);
+	}
 	return singleSelection(qaMatrixState.index, preferredConfiguration(qaMatrixState.index.filter(item =>
 		isSelectable(item) && item.browserCode === 'chrome' && item.deviceType === 'desktop')));
 }
@@ -5211,6 +5384,7 @@ function qaMatrixEffectiveSelection() {
 
 /** Apply a selection-state change, re-derive, persist, re-render. */
 function qaMatrixApplySelection(nextState, fromPreset = false) {
+	setQaFormError();
 	nextState = normalizeSingleSelection(qaMatrixState.index, nextState);
 	if (!fromPreset) { qaJourneySelectionMode = 'custom'; qaJourneyCustomSelection = nextState; }
 	syncJourneyPreset();
@@ -5310,6 +5484,7 @@ function syncQaSubmitState() {
 	const authorizationReady = !qaUi.dialog?.open || !qaSecuritySelected() || Boolean(qaUi.securityAuthorized?.checked);
 	qaUi.submit.disabled = selected === 0 || !urlValid || !authorizationReady || !matrixReady || qaUi.submit.dataset.busy === 'true';
 	const blockedReason = qaLaunchBlockedReason();
+	qaUi.submit.disabled ||= Boolean(blockedReason);
 	qaUi.submit.title = blockedReason ?? '';
 	if (qaUi.testsCount) {
 		qaUi.testsCount.textContent = `${selected} of ${qaUi.selectedTests.catalogSize ?? selected} selected`;
@@ -5329,22 +5504,39 @@ function qaLaunchBlockedReason() {
 	const target = qaUi.targetUrl?.value?.trim() ?? '';
 	if (!target) return 'Enter a website URL to start.';
 	if (!isValidTargetUrl(target)) return 'Enter a valid http(s) website URL.';
+	const agentChoice = qaLauncherSelectionProblem(qaUi.executionMode?.value, state.config); if (agentChoice) return agentChoice;
 	if (!state.qaTestCatalog) return 'Loading recommended checks…';
 	if (qaUi.selectedTests.size === 0) return 'Select at least one check.';
 	if (qaSecuritySelected() && !qaUi.securityAuthorized?.checked) {
 		return 'Confirm that you are authorized to test this site.';
 	}
-	if (qaJourneySelectionMode === 'quick') return null;
+	if (qaJourneySelectionMode === 'quick') {
+		// Quick mode hides the matrix, so its derived focused selection must
+		// still satisfy the hybrid one-browser contract before the review step
+		// claims readiness. Legacy quick mode always runs on the platform's
+		// automatic browser and needs no catalog check here.
+		if (qaUi.executionMode?.value !== 'hybrid') return null;
+		if (qaMatrixState.fetchState === 'loading') return 'Loading browsers and devices…';
+		if (qaMatrixState.fetchState === 'error') return 'Browsers and devices could not be loaded. Retry the browser list.';
+		try { hybridLaunchOptions({ config: state.config, mode: 'hybrid', envIds: sanitizeSelection(qaMatrixState.index, qaMatrixEffectiveSelection()), configurations: qaMatrixState.index }); }
+		catch (error) { return error.message; }
+		return null;
+	}
 	if (qaMatrixState.fetchState === 'loading') return 'Loading browsers and devices…';
 	if (qaMatrixState.fetchState === 'error') return 'Browsers and devices could not be loaded. Open Customize and retry.';
 	const configurations = qaMatrixState.selectedEnvIds.length;
 	if (configurations !== 1) return 'Choose one browser and one device.';
 	// One exact environment; versions never expand into additional runs.
+	// Hybrid still runs exactly one browser; validate its specific needs too.
+	try { hybridLaunchOptions({ config: state.config, mode: qaUi.executionMode?.value, envIds: qaMatrixState.selectedEnvIds, configurations: qaMatrixState.index }); }
+	catch (error) { return error.message; }
 	return null;
 }
 
 /** Keep the compact launcher honest when availability or selection changes. */
 function syncQaSelectionSummary() {
+	renderQaBrowserStatus(qaBrowserStatus({ fetchState: qaMatrixState.fetchState, configurations: qaMatrixState.index,
+		envIds: qaMatrixState.selectedEnvIds, mode: qaUi.executionMode?.value, config: state.config }), document);
 	const summary = $('qa-selection-summary');
 	if (!summary) return;
 	const blockedReason = qaLaunchBlockedReason();
@@ -5529,13 +5721,38 @@ async function loadQaTestCatalog() {
 					throw new Error('The standard test catalog response is invalid.');
 				}
 				state.qaTestCatalog = catalog;
+				state.qaTestCatalogFailed = false;
 				return catalog;
+			})
+			.catch(error => {
+				// #17933: record the failure so the Coverage step explains a
+				// dead catalog HONESTLY ("could not be loaded") instead of a
+				// misleading permanent "Loading available checks…" that keeps
+				// the Review Test Run button disabled with no way forward.
+				state.qaTestCatalogFailed = true;
+				throw error;
 			})
 			.finally(() => {
 				state.qaTestCatalogPromise = undefined;
 			});
 	}
 	return state.qaTestCatalogPromise;
+}
+
+/** #17933: explicit retry for a failed catalog load — re-runs the fetch,
+ *  repaints the catalog, and re-syncs the journey gates. */
+function retryQaTestCatalog() {
+	state.qaTestCatalogFailed = false;
+	return loadQaTestCatalog()
+		.then(catalog => {
+			paintQaTestCatalog(catalog);
+			setQaFormError();
+			syncQaSubmitState();
+		})
+		.catch(error => {
+			setQaFormError(error instanceof Error ? error.message : String(error));
+			syncQaSubmitState();
+		});
 }
 
 /** The built-in deliberately-broken demo site, when this instance serves one. */
@@ -5593,27 +5810,46 @@ function showQaStartPage() {
 	if (!qaUi.dialog) return;
 	qaJourneySelectionMode = 'quick';
 	syncJourneyPreset();
-	qaJourney ??= createQaJourney({ document, changed: syncQaSubmitState, getState: () => ({
-		config: state.config,
+	qaJourney ??= createQaJourney({ document, changed: syncQaSubmitState, onBlocked: reason => {
+		// #17933: a blocked advance must never be silent. The journey writes
+		// the footer hint; we ALSO surface it on the form error element with
+		// a retry action when the catalog fetch failed.
+		if (state.qaTestCatalogFailed) {
+			setQaFormError('The standard checks could not be loaded. Close this window and try again, or reload the page.');
+			return;
+		}
+		setQaFormError(reason);
+	}, getState: () => ({
+		config: { ...state.config, model: qaLauncherModeLabel(qaUi.executionMode?.value, state.config) },
 		checks: qaUi.selectedTests.size,
 		automatic: qaJourneySelectionMode === 'quick',
 		configurations: qaJourneySelectionMode === 'quick' ? 1 : qaMatrixState.selectedEnvIds.length,
 		environmentLabel: (() => { const row = qaMatrixState.index.find(r => qaMatrixState.selectedEnvIds.includes(r.envId)); return row ? `${row.browser || row.browserCode} · ${row.device} · 1 run` : null; })(),
+		browserLabel: qaMatrixState.selectedEnvIds.length === 1 ? qaBrowserStatus({ fetchState: qaMatrixState.fetchState, configurations: qaMatrixState.index,
+			envIds: qaMatrixState.selectedEnvIds, mode: qaUi.executionMode?.value, config: state.config }).title : null,
 		busy: qaUi.submit.dataset.busy === 'true',
 		blocked: qaLaunchBlockedReason(),
-		coverageBlocked: !state.qaTestCatalog ? 'Loading available checks…'
+		coverageBlocked: !state.qaTestCatalog ? (state.qaTestCatalogFailed ? 'The standard checks could not be loaded. Retry, then continue.' : 'Loading available checks…')
 			: !qaUi.selectedTests.size ? 'Choose at least one check to continue.'
 			: qaSecuritySelected() && !qaUi.securityAuthorized?.checked ? 'Confirm security testing authorization below.'
-			: qaJourneySelectionMode === 'quick' ? null
+			: qaJourneySelectionMode !== 'quick' ? null
+			: qaUi.executionMode?.value !== 'hybrid' ? null
 			: qaMatrixState.fetchState === 'loading' ? 'Loading browsers and devices…'
-			: qaMatrixState.fetchState === 'error' ? 'The device catalog could not load. Open customization and retry.'
-			: !qaMatrixState.selectedEnvIds.length ? 'Choose at least one available browser and device.' : null
+			: qaMatrixState.fetchState === 'error' ? 'The device catalog could not load. Retry the browser list.'
+			: qaLaunchBlockedReason() ?? null
 	}) });
 	setQaFormError();
 	const draft = { url: qaUi.targetUrl.value, goal: $('qa-goal').value };
+	// #17933: form.reset() would silently wipe the user's check selection
+	// (the checkboxes live inside this form) — snapshot and restore them so
+	// coverage configuration persists across dialog re-opens and steps.
+	const draftChecks = [...qaUi.selectedTests];
 	qaUi.form.reset();
+	const selectedMode = $('qa-selected-agent'); if (selectedMode) selectedMode.textContent = qaLauncherModeLabel(qaUi.executionMode?.value, state.config);
 	if (draft.url) qaUi.targetUrl.value = draft.url;
 	if (draft.goal) $('qa-goal').value = draft.goal;
+	for (const input of qaSelectableInputs()) input.checked = draftChecks.includes(input.value);
+	refreshQaSelection();
 	// Studio context prefill first, then the matrix top bar's target URL wins
 	// if set (M4 #14423): applied AFTER reset() so it survives it.
 	applyStudioTarget(qaUi.targetUrl);
@@ -5671,10 +5907,24 @@ function showQaStartPage() {
 		.then(paintQaTestCatalog)
 		.catch(error => {
 			qaUi.testsState.hidden = false;
-			qaUi.testsState.textContent = 'The standard test catalog could not be loaded.';
+			// #17933: actionable recovery — a Retry button replaces the dead
+			// "close this window" advice, and re-syncs the journey gates.
+			qaUi.testsState.replaceChildren();
+			const message = document.createElement('span');
+			message.textContent = 'The standard test catalog could not be loaded. ';
+			const retry = document.createElement('button');
+			retry.type = 'button';
+			retry.className = 'link-btn';
+			retry.textContent = 'Retry loading checks';
+			retry.addEventListener('click', () => {
+				qaUi.testsState.textContent = 'Retrying…';
+				qaUi.testsState.hidden = false;
+				void retryQaTestCatalog();
+			});
+			qaUi.testsState.append(message, retry);
 			setQaFormError(error instanceof Error ? error.message : String(error));
 			$('qa-customize').open = true;
-			$('qa-selection-summary').textContent = 'Checks could not be loaded. Close this window and try again.';
+			$('qa-selection-summary').textContent = 'Checks could not be loaded. Retry above.';
 			syncQaSubmitState();
 		});
 }
@@ -5690,6 +5940,19 @@ function closeQaStart({ updateRoute = true } = {}) {
 
 
 if (qaUi.dialog) {
+	$('qa-browser-status-action')?.addEventListener('click', async event => {
+		setQaFormError();
+		const action = event.currentTarget.dataset.action;
+		if (action === 'recommended') {
+			$('journey-focused').click();
+			$('qa-browser-status-title').focus({ preventScroll: true });
+		} else if (action === 'change') {
+			$('journey-custom').click();
+			qaUi.matrix.fieldset?.scrollIntoView({ block: 'start' });
+			qaUi.matrix.search?.focus({ preventScroll: true });
+		} else if (action === 'reload') await loadQaMatrixCatalog();
+		else if (action === 'config') { try { paintConfig(await api('/config')); syncQaSubmitState(); } catch (error) { setQaFormError(error.message); } }
+	});
 	$('journey-focused')?.addEventListener('click', () => {
 		if (qaJourneySelectionMode !== 'quick') qaJourneyCustomSelection = qaMatrixState.selection;
 		qaJourneySelectionMode = 'quick';
@@ -5782,6 +6045,8 @@ if (qaUi.dialog) {
 		if (qaUi.submit.dataset.busy === 'true') return;
 		setQaFormError();
 		if (!qaUi.form.reportValidity()) return;
+		const agentChoice = qaLauncherSelectionProblem(qaUi.executionMode?.value, state.config);
+		if (agentChoice) { setQaFormError(agentChoice); qaJourney?.showCoverage(); return; }
 		if (!ensureModelConfigured('QA launcher')) return;
 		let targetUrl;
 		try {
@@ -5812,17 +6077,31 @@ if (qaUi.dialog) {
 			$('qa-customize').open = true;
 			return;
 		}
+		const device = activeTestEnvStore?.get?.()?.device || pendingDeviceId();
+		const deviceLandscape = (qaUi.deviceLandscape?.checked) === true;
 		const goal = $('qa-goal')?.value.trim();
 		const kickoffText = [targetUrl, scopeMessage, goal ? `User focus for this run: ${goal}` : ''].filter(Boolean).join('\n');
 		// QA matrix (#15013): the run set is the selected device–OS–browser–version
 		// configurations. At least one configuration must be selected and validated.
 		const automatic = qaJourneySelectionMode === 'quick';
+		const hybridRequested = qaUi.executionMode?.value === 'hybrid';
 		if (!automatic && qaMatrixState.selectedEnvIds.length === 0) {
 			setQaFormError('Select at least one browser configuration.');
 			$('qa-customize').open = true;
 			return;
 		}
-		const selectedEnvIds = automatic ? [] : sanitizeSelection(qaMatrixState.index, qaMatrixState.selectedEnvIds);
+		// Quick mode carries a DERIVED focused selection (qaFocusedSelection ran
+		// when the catalog loaded); hybrid needs that one exact environment to
+		// attach qaExecutionMode + environmentId. Legacy quick mode still submits
+		// browserMode automatic with no env list.
+		const selectedEnvIds = automatic
+			? (hybridRequested ? sanitizeSelection(qaMatrixState.index, qaMatrixEffectiveSelection()) : [])
+			: sanitizeSelection(qaMatrixState.index, qaMatrixState.selectedEnvIds);
+		if (hybridRequested && selectedEnvIds.length !== 1) {
+			setQaFormError('For hybrid testing, choose Focused check with one browser configuration. Multi-browser hybrid dispatch is not enabled.');
+			$('qa-customize').open = true;
+			return;
+		}
 		if (!automatic && selectedEnvIds.length !== 1) {
 			setQaFormError('The selected configurations are no longer available. Reload the catalog and pick again.');
 			return;
@@ -5832,6 +6111,21 @@ if (qaUi.dialog) {
 		qaUi.submit.disabled = true;
 		qaUi.submit.textContent = 'Starting…';
 		try {
+			// Hybrid QA: when hybrid mode is selected and qualified, the run goes
+			// through /api/sessions with qaExecutionMode hybrid (one browser).
+			const hybridOptions = hybridLaunchOptions({ config: state.config, mode: qaUi.executionMode?.value, envIds: selectedEnvIds, configurations: qaMatrixState.index });
+			if (hybridOptions) {
+				await createQaRun({ targetUrl, device, deviceLandscape, selectedTests, securityAuthorization, kickoffText,
+					scopeSelection: scopeValues, testCaseId: qaUi._testCaseId, ...hybridOptions });
+				qaUi.targetUrl.value = ''; $('qa-goal').value = '';
+				closeQaStart({ updateRoute: false });
+				toast('Hybrid QA started — Opus 4.7 reasoning + JEV 1.13 classification.');
+				if (qaUi.founderMode?.checked) { await openFounderStart(); founderUi.targetUrl.value = targetUrl; }
+				else if (qaUi.compliance?.checked) { await openSqaStart(); sqaUi.targetUrl.value = targetUrl; }
+				return;
+			}
+			// Legacy/single-browser path: exactly one request and one item.
+			// No parent runs, batches or version fan-out.
 			const matrixRun = await apiWithTimeout('/qa-matrix-runs', 20000, {
 				method: 'POST',
 				body: JSON.stringify({
@@ -6332,7 +6626,7 @@ const cfg = {
 };
 
 /** Providers whose endpoint the user supplies themselves. */
-const BASE_URL_REQUIRED = new Set(['custom', 'azureOpenAI']);
+const BASE_URL_REQUIRED = new Set(['custom', 'azureOpenAI', 'jev']);
 const BASE_URL_OPTIONAL = new Set(['openai', 'openrouter', 'nvidia', 'grok']);
 const CUSTOM_MODEL_VALUE = '__qase_custom_model__';
 const DEFAULT_CUSTOM_MODEL = 'z-ai/glm-5.2';
@@ -6378,6 +6672,23 @@ function fillModelOptions(models = [], selected = '') {
 
 function paintConfig(config) {
 	state.config = config;
+	const modeField = $('qa-execution-mode-field');
+	if (modeField) modeField.dataset.state = config.hybridQa?.available ? 'ready' : 'attention';
+	// The launcher's execution mode ships as "hybrid" in the markup. When the
+	// server reports hybrid QA unavailable (feature flag off / qualification
+	// missing), keeping mode=hybrid wedges the launcher gate permanently —
+	// "Review test run" never enables because hybridLaunchOptions() rejects the
+	// mode on every gate check, with no way for the user to proceed. Fall back
+	// to legacy single-model QA, matching the server's own
+	// selectQaExecutionMode(undefined) default when hybrid is disabled. The
+	// run then takes the /api/qa-matrix-runs path. A user who explicitly chose
+	// a mode is never overridden — this only corrects the uncorrected default.
+	if (qaUi.executionMode && qaUi.executionMode.value === 'hybrid' && !config.hybridQa?.enabled) {
+		qaUi.executionMode.value = 'legacy';
+	}
+	const hybridStatus = $('qa-hybrid-availability');
+	if (hybridStatus) hybridStatus.textContent = hybridAvailabilityMessage(config);
+	const selectedAgent = $('qa-selected-agent'); if (selectedAgent) selectedAgent.textContent = qaLauncherModeLabel(qaUi.executionMode?.value, config);
 	qaJourney?.sync();
 	if (qaJourney) syncQaSubmitState();
 	// #15643: the sidebar model badge was removed with the Advanced section;
@@ -6457,7 +6768,7 @@ function fillSettings(config) {
 	cfg.provider.replaceChildren(...config.providers.map(name => {
 		const option = document.createElement('option');
 		option.value = name;
-		option.textContent = name === 'custom' ? 'custom (OpenAI-compatible endpoint)' : name;
+		option.textContent = name === 'custom' ? 'custom (OpenAI-compatible endpoint)' : name === 'jev' ? 'JEV Decisions' : name;
 		return option;
 	}));
 	cfg.provider.value = config.provider;
@@ -6466,6 +6777,12 @@ function fillSettings(config) {
 	cfg.reasoning.value = config.reasoning ?? 'medium';
 	cfg.maxTurns.value = config.maxTurns ?? 120;
 	cfg.headless.checked = config.headless !== false;
+	cfg.provider.disabled = config.modelLocked === true;
+	cfg.model.disabled = config.modelLocked === true;
+	cfg.modelCustom.disabled = config.modelLocked === true;
+	cfg.baseUrl.disabled = config.modelLocked === true;
+	cfg.key.disabled = config.modelLocked === true;
+	cfg.reasoning.disabled = config.provider === 'jev';
 
 	// The stored key is never sent to the browser; leaving the box empty keeps it.
 	cfg.key.value = '';
@@ -6481,6 +6798,11 @@ function fillSettings(config) {
 
 function syncProviderFields() {
 	const provider = cfg.provider.value;
+	if (provider === 'jev') {
+		cfg.baseUrlField.hidden = false;
+		cfg.providerNote.textContent = 'JEV selects from observed browser actions and judges captured evidence. Reports use bounded host-authored templates; unsampled checks are identified as not tested.';
+		return;
+	}
 	const required = BASE_URL_REQUIRED.has(provider);
 	cfg.baseUrlField.hidden = !required && !BASE_URL_OPTIONAL.has(provider);
 	// The custom gateway is provisioned by the server (key comes from env) —
@@ -6576,7 +6898,7 @@ function renderResultsPageHeader() {
 	const displayStatus = runPresentationStatus(session);
 	$('results-page-status').textContent = displayStatus === 'blocked'
 		? 'Blocked'
-		: session.status === 'done' ? 'Complete' : 'Results available';
+		: displayStatus === 'partial' ? 'Completed with gaps' : session.status === 'done' ? 'Complete' : 'Results available';
 	$('results-page-status').dataset.status = displayStatus;
 	$('results-page-findings').textContent = `${findings} finding${findings === 1 ? '' : 's'}`;
 	let target = '';
@@ -6665,9 +6987,7 @@ async function applyPageRoute(route) {
 		}
 
 		const narrow = matchMedia('(max-width: 720px)').matches;
-		setWorkspaceView(narrow && state.session?.status === 'done'
-			? 'results'
-			: narrow && state.session?.status === 'running'
+		setWorkspaceView(narrow && state.session?.status === 'running'
 				? 'browser'
 				: 'agent');
 		document.title = 'Qase — autonomous QA agent';
@@ -7623,6 +7943,7 @@ function renderRunEnvBlock(session) {
 			?? (snap?.executionProvider === 'local' ? 'SIMULATED' : hasEnv ? 'VIRTUAL_DEVICE' : 'Not recorded');
 		const level = String(rawLevel).toLowerCase().replaceAll('_', ' ').replace(/^./, value => value.toUpperCase());
 		const runState = runPresentationStatus(session) === 'blocked' ? 'Blocked'
+			: runPresentationStatus(session) === 'partial' ? 'Completed with gaps'
 			: session?.status === 'done' ? 'Complete'
 			: session?.status === 'running' ? 'Running'
 				: session?.status === 'interrupted' ? 'Paused' : String(session?.status ?? 'Unknown');
@@ -8084,6 +8405,7 @@ el.stopRun.onclick = async () => {
 	}
 };
 el.resumeRun.onclick = async () => {
+	if (workflowStatus(state.session).resumeBlocked) { toast(workflowStatus(state.session).resumeBlocked, 'bad'); return; }
 	el.resumeRun.disabled = true;
 	try {
 		await api(`/sessions/${state.sessionId}/message`, {
@@ -8145,7 +8467,10 @@ function setWorkspaceView(view) {
 
 setWorkspaceView('agent');
 for (const button of document.querySelectorAll('.workspace-mobile-nav button')) {
-	button.addEventListener('click', () => setWorkspaceView(button.dataset.workspaceView));
+	button.addEventListener('click', () => {
+		if (button.dataset.workspaceView === 'results' && state.session?.status === 'done' && state.sessionId) void pageRouter.navigate({ name: 'results', runId: state.sessionId });
+		else setWorkspaceView(button.dataset.workspaceView);
+	});
 }
 
 function activateDetailTab(tab, moveFocus = false) {
@@ -8244,8 +8569,10 @@ async function bootWorkspace() {
 					await pageRouter.navigate(initialRoute, { replace: true, applyRoute: false });
 				}
 			}
-			if (initialRoute.name === 'runs') {
-				initialRoute = { name: state.session?.status === 'done' ? 'results' : 'run', runId: target.id };
+			if (initialRoute.name === 'runs' && state.sessionId === target.id) {
+				// Restoring a completed run is not a request to open Results.
+				// Keep result navigation behind an explicit user action or URL.
+				initialRoute = { name: 'run', runId: target.id };
 				await pageRouter.navigate(initialRoute, { replace: true, applyRoute: false });
 			}
 		} else {

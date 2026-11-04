@@ -314,7 +314,7 @@ export function createLocalApplicationServices(options = {}) {
 			return deleteSession(id, ownerUserId());
 		},
 		async commit(session, type, payload = {}) {
-			emit(session, type, payload);
+			emit(session, type, payload, { durable: session.qaExecutionMode === 'hybrid' });
 			return session;
 		},
 		async setFindingStatus(session, findingId, patch) {

@@ -8,9 +8,9 @@ const dockerfileUrl = new URL('../Dockerfile', import.meta.url);
 const packageScriptUrl = new URL('../scripts/package.mjs', import.meta.url);
 
 test('deployment baseline keeps secrets external and applies container hardening', async () => {
-	const [manifest, migrations, dockerfile, packageScript] = await Promise.all([
+	const [manifest, migrations, dockerfile, packageScript, releaseSource] = await Promise.all([
 		readFile(manifestUrl, 'utf8'), readFile(migrationsUrl, 'utf8'), readFile(dockerfileUrl, 'utf8'),
-		readFile(packageScriptUrl, 'utf8')
+		readFile(packageScriptUrl, 'utf8'), readFile(new URL('../scripts/release-source.mjs', import.meta.url), 'utf8')
 	]);
 	assert.doesNotMatch(`${manifest}\n${migrations}`, /kind:\s+Secret\b/);
 	assert.doesNotMatch(manifest, /image:\s+\S+:latest\b/);
@@ -29,6 +29,6 @@ test('deployment baseline keeps secrets external and applies container hardening
 	assert.match(migrations, /qase-control-migrator/);
 	assert.match(dockerfile, /USER node/);
 	assert.match(dockerfile, /npm ci --omit=dev/);
-	assert.match(packageScript, /'deploy'/);
+	assert.match(releaseSource, /'deploy'/);
 	assert.match(packageScript, /'Dockerfile'/);
 });

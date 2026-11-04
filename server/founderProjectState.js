@@ -69,7 +69,7 @@ export function projectStateFromSession(session) {
 		updatedAt: founder.finalizedAt,
 		ownerUserId: session.ownerUserId,
 		targetUrl: founder.scope?.target?.url ?? session.targetUrl,
-		context: founder.scope?.projectContext,
+		context: founder.scope?.projectContext ?? undefined,
 		goals: founder.scope?.productContext,
 		recommendationSet: report.recommendationSet
 			? {

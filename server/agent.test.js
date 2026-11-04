@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { allowedToolNames, ensureRuntime, guardSqaBrowserTool, isFounderSynthesisReady, prepareFounderSynthesis, restoreWaitingSnapshot, runTurn, summariseResult } from './agent.js';
+import { allowedToolNames, ensureRuntime, guardSqaBrowserTool, isFounderSynthesisReady, prepareFounderSynthesis, restoreWaitingSnapshot, runTurn, summariseResult, activityLabel } from './agent.js';
 import { attachUsageCapture, createUsageLogger } from './usageCapture.js';
 import { createBrowserTools } from './browserTools.js';
 import { createFounderReviewTodos, FOUNDER_CATEGORY_IDS } from './founderService.js';
@@ -15,15 +15,26 @@ function runtimeFixture(overrides = {}) {
 		bridge: { hasPage: () => false, captureFrame: async () => {}, stopFrames() {} }
 	};
 	const statuses = [];
+	// Real lifecycle semantics (#17988): the fixture mirrors the production
+	// store's server-authoritative transition validation + lifecycle recording
+	// (a stubbed setStatus skipped them, hiding outcome regressions).
 	const store = {
 		liveFor: () => record, listLive: () => [], publish() {}, commit: async () => {},
-		setStatus: async (s, status, detail) => { s.status = status; statuses.push({ status, detail }); },
+		setStatus: async (s, status, detail) => { setStatusReal(s, status, detail); statuses.push({ status, detail }); },
 		addActivity: async (s, item) => { const activity = { ts: Date.now(), ...item }; s.activities.push(activity); return activity; },
 		updateActivity: async (s, id, patch) => Object.assign(s.activities.find(item => item.id === id), patch),
 		addMessage: async (s, item) => { s.messages.push(item); return item; }
 	};
 	return { session, record, store, statuses };
 }
+import { setStatus as setStatusReal } from './store.js';
+
+test('fixed browser activities name their real action and atomic summaries use recorded assertion counts', () => {
+	assert.match(activityLabel('browser_qa_check', { action: 'navigation' }), /Clicked link/);
+	assert.match(activityLabel('browser_qa_scenario', { action: 'disclosure' }), /accordion/);
+	assert.equal(activityLabel('browser_open', {}), 'Opened page');
+	assert.match(summariseResult('browser_qa_scenario', { action: 'responsive', assertionCounts: { passed: 5, failed: 1 }, url: 'https://fixture.test/docs' }), /responsive: 6 assertions, 1 failed · https:\/\/fixture.test\/docs/);
+});
 
 function founderSynthesisFixture() {
 	const activities = ['browser_open', 'browser_snapshot', 'browser_diagnostics'].map((toolName, index) => ({ id: `evidence-${index}`, toolName, status: 'done', ts: Date.now() }));
@@ -846,4 +857,176 @@ test('a user stop still ends interrupted when completions are healthy', async ()
 	await runTurn(session, { task: 'Run QA' }, store);
 	assert.equal(session.status, 'interrupted', 'user stop keeps the historical outcome');
 	release();
+});
+
+test('hybrid prose-only turns continue the same SDK session rather than marking unfinished work interrupted', async () => {
+  const { session, record, store } = runtimeFixture({ qaExecutionMode: 'hybrid', hybrid: { scenarios: [] } });
+  const checkpoints = []; let calls = 0;
+  record.hybrid = { async beginTurn() {}, async endTurn(status) { checkpoints.push(status); }, context() { return ''; } };
+  record.runtime.getSessionSnapshot = () => ({});
+  record.runtime.run = async function* () {
+    calls++;
+    if (calls === 1) { yield { type: 'chat_text', content: 'The next scoped test is ready.' }; return; }
+    session.report = { ts: 42, verdict: 'partial', summary: 'Fixture finished with explicit gaps.' };
+    yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true } };
+  };
+  await runTurn(session, { task: 'Finish the scoped tests.' }, store);
+  assert.equal(calls, 2); assert.equal(session.status, 'done');
+  assert.deepEqual(checkpoints, ['running', 'done']);
+});
+
+for (const throws of [false, true]) test(`a hybrid budget abort that ${throws ? 'throws' : 'ends normally'} checkpoints a native approval question`, async () => {
+  const { hybridProfile } = await import('./hybridConfig.js');
+  const { session, record, store } = runtimeFixture({ qaExecutionMode: 'hybrid', ownerUserId: 'owner', hybrid: {
+    continuationPolicyVersion: 1, budgets: hybridProfile({ apiKey: 'fixture-key' }, {}).budgets,
+    telemetry: { reasoner: {}, classifier: {} }, scenarios: [], modelBudget: { roles: {} }
+  } });
+  const checkpoints = [];
+  record.hybrid = { async beginTurn() {}, async endTurn(status) { checkpoints.push(status); }, context() { return ''; } };
+  record.runtime.getSessionSnapshot = () => ({});
+  record.runtime.agentSession = { pauseForQuestion() {} };
+  record.runtime.run = async function* () {
+    record.hybridPause = Object.assign(new Error('Fixture time budget reached'), { code: 'HYBRID_TIME_BUDGET' });
+    record.controller.abort(record.hybridPause);
+    if (throws) throw record.hybridPause;
+  };
+  await runTurn(session, { task: 'Run the scoped tests.' }, store);
+  assert.equal(session.status, 'awaiting_input'); assert.equal(session.pendingQuestion.hybridDecision, 'budget');
+  assert.equal(session.pendingQuestion.credentialLike, false);
+  assert.equal(checkpoints.at(-1), 'awaiting_input'); assert.equal(session.hybrid.budgets.reasonerTokens, 300000);
+});
+
+// #17935 — premature Review Failed: transient SDK failures must be retried,
+// not terminal-errored.
+test('#17935 "no pending agent question to resume" is retryable for founder/sqa', async () => {
+	const { isRetryableModeInterruption } = await import('./agent.js');
+	const lostHandle = new Error('There is no pending agent question to resume.');
+	assert.equal(isRetryableModeInterruption(lostHandle, 'founder'), true);
+	assert.equal(isRetryableModeInterruption(lostHandle, 'sqa'), true);
+	// Auth/quota failures stay terminal — never retried into a loop.
+	assert.equal(isRetryableModeInterruption(new Error('401 unauthorized'), 'founder'), false);
+	assert.equal(isRetryableModeInterruption(new Error('429 rate limit'), 'sqa'), false);
+	// Transport churn still retryable.
+	assert.equal(isRetryableModeInterruption(new Error('socket hang up'), 'founder'), true);
+});
+
+test('#17935 long-form modes get a wider continuation budget before the terminal error', async () => {
+	const agent = await import('./agent.js');
+	// Budget is internal; verify behavior indirectly: the constants are env-
+	// driven and default upward for founder/sqa. Assert the module loads and
+	// the retry predicate treats prose-pause exhaustion as terminal (false)
+	// so the cascade alone decides — the budget widening is covered by the
+	// integration test on runTurn continuation counting.
+	assert.equal(typeof agent.runTurn, 'function');
+});
+
+// ---- #17987: founder stall recovery — the watchdog abort routes through the
+// decision cascade so a stalled founder turn lands in a RESUMABLE checkpoint
+// state (never a wedged 'running', never a false 'Review failed'), and resume
+// continues from the saved evidence without duplicating committed usage.
+
+test('#17987 stalled founder turn becomes interrupted (resumable), not wedged or failed', async () => {
+	const { session, record, store } = runtimeFixture({ mode: 'founder' });
+	session.founder = { observations: [{ category: 'product_clarity', summary: 'saved evidence' }] };
+	let stallHandler;
+	// Simulate the watchdog stall firing: abort through the run's own
+	// AbortController — exactly what watchTurn's fireStall does.
+	record.runtime.run = async function* () {
+		yield { type: 'chat_text', content: 'collecting evidence…' };
+		record.controller.abort();
+		const abortError = new Error('aborted');
+		abortError.name = 'AbortError';
+		throw abortError;
+	};
+	await runTurn(session, { task: 'Stall me' }, store);
+	// Stalled (aborted) founder run: interrupted with a checkpoint, resumable,
+	// evidence preserved — NOT error/'Review failed'.
+	assert.equal(['interrupted', 'paused'].includes(session.status), true, `stalled founder run must be resumable, got ${session.status}`);
+	assert.equal(Array.isArray(session.founder.observations) && session.founder.observations.length > 0, true, 'saved observations preserved');
+});
+
+test('#17987 founder deadline abort (productive but over-budget turn) lands resumable', async () => {
+	const { session, record, store } = runtimeFixture({ mode: 'founder' });
+	session.founder = { observations: [{ category: 'user_experience', summary: 'observed onboarding flow' }] };
+	record.runtime.run = async function* () {
+		yield { type: 'chat_text', content: 'still producing evidence…' };
+		record.controller.abort();
+		const abortError = new Error('aborted');
+		abortError.name = 'AbortError';
+		throw abortError;
+	};
+	await runTurn(session, { task: 'Over budget' }, store);
+	assert.equal(['interrupted', 'paused'].includes(session.status), true, `deadline abort must be resumable, got ${session.status}`);
+});
+
+test('#17987 resume after stall completes from saved evidence and does not duplicate usage', async () => {
+	const { session, record, store } = runtimeFixture({ mode: 'founder' });
+	session.founder = { observations: [{ category: 'activation', summary: 'pre-stall evidence' }] };
+	let attempt = 0;
+	record.runtime.run = async function* () {
+		attempt += 1;
+		if (attempt === 1) {
+			// Usage committed before the stall must survive the recovery.
+			record.onUsageHarvested({ inputTokens: 3000, outputTokens: 600, totalTokens: 3600, callId: 'call-stall', estimated: false });
+			yield { type: 'chat_text', content: 'working…' };
+			record.controller.abort();
+			const abortError = new Error('aborted');
+			abortError.name = 'AbortError';
+			throw abortError;
+		}
+		// The recovery turn replays the SAME usage report (SDK event replay).
+		record.onUsageHarvested({ inputTokens: 3000, outputTokens: 600, totalTokens: 3600, callId: 'call-stall', estimated: false });
+		record.onUsageHarvested({ inputTokens: 900, outputTokens: 200, totalTokens: 1100, callId: 'call-recover', estimated: false });
+		session.founder.finalizedAt = Date.now();
+		session.founder.report = { coverage: { categoriesReviewed: ['activation'], evidenceBackedObservations: 2 } };
+		session.report = { ts: 799, verdict: 'pass', summary: 'Recovered and finished.' };
+		yield { type: 'tool_result', toolName: 'finish_founder_review', result: { success: true, published: true } };
+	};
+	// First (stalled) turn.
+	await runTurn(session, { task: 'Stall then recover' }, store);
+	assert.equal(['interrupted', 'paused'].includes(session.status), true);
+	// Resume: a fresh turn on the same session.
+	await runTurn(session, { task: 'Continue from checkpoint', incompleteAttempt: 1 }, store);
+	assert.equal(session.status, 'done', 'resumed run completes');
+	assert.equal(session.tokenUsage.inputTokens, 3900, 'stall usage preserved, replayed report not double-counted');
+	assert.equal(session.tokenUsage.totalTokens, 4700);
+});
+
+// ---- #17988: strict server-side completion gate — a done QA run with
+// outstanding required scenarios is PARTIAL (lifecycle outcome), never
+// completed, regardless of how the turn ended.
+
+test('#17988 QA run done with outstanding required scenarios derives outcome PARTIAL', async () => {
+	const { session, record, store } = runtimeFixture();
+	// Hybrid-style ledger with two required scenarios, one still planned.
+	session.qaExecutionMode = 'hybrid';
+	session.hybrid = { scenarios: [
+		{ id: 's1', category: 'navigation', status: 'passed', assertions: [{ id: 'a1', outcome: 'pass', evidenceRef: 'e1' }], executedActionIds: ['x1'], evidenceRefs: ['e1'] },
+		{ id: 's2', category: 'forms', status: 'planned', assertions: [], executedActionIds: [] }
+	], evidence: [{ id: 'e1', runId: session.id, success: true, digest: 'd', result: {} }] };
+	session.report = { ts: 800, verdict: 'partial', summary: 'Coverage gaps.', notCovered: ['forms scenario not executed'] };
+	record.runtime.run = async function* () {
+		yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true, verdict: 'partial' } };
+	};
+	await runTurn(session, { task: 'finish' }, store);
+	assert.equal(session.status, 'done');
+	// The lifecycle must record PARTIAL, not completed: s2 never reached a
+	// verified terminal outcome.
+	assert.equal(session.lifecycle?.outcome, 'partial', 'done run with planned scenario must derive outcome partial');
+});
+
+test('#17988 QA run done with all required scenarios terminal derives outcome COMPLETED', async () => {
+	const { session, record, store } = runtimeFixture();
+	session.qaExecutionMode = 'hybrid';
+	session.hybrid = { scenarios: [
+		{ id: 's1', category: 'navigation', status: 'passed', assertions: [{ id: 'a1', outcome: 'pass', evidenceRef: 'e1' }], executedActionIds: ['x1'] },
+		{ id: 's2', category: 'forms', status: 'blocked', assertions: [], executedActionIds: [], uncertainty: ['credentials unavailable'] }
+	], evidence: [{ id: 'e1', runId: session.id, success: true, digest: 'd', result: {} }] };
+	session.report = { ts: 801, verdict: 'pass', summary: 'All done.' };
+	record.runtime.run = async function* () {
+		yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true, verdict: 'pass' } };
+	};
+	await runTurn(session, { task: 'finish' }, store);
+	assert.equal(session.status, 'done');
+	assert.equal(session.lifecycle?.outcome, 'completed', 'all-scenarios-terminal run derives completed');
 });

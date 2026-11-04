@@ -15,7 +15,22 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run verify
+      - name: Verify dashboard navigation and secure credential handoff
+        run: node scripts/qualify-live-preview.mjs
       - name: Verify release content when using the delivered snapshot
         run: node scripts/verify-release.mjs
       - name: Validate production image
-        run: docker build --tag qase:verification .
+        run: |
+          RELEASE_ID=$(node -p "JSON.parse(require('fs').readFileSync('public/release.json')).releaseId")
+          docker build --build-arg QASE_RELEASE_ID="$RELEASE_ID" --build-arg QASE_SOURCE_REVISION="$GITHUB_SHA" --tag qase:verification .
+      - name: Smoke test hardened production image without live model calls
+        run: npm run test:production-image -- qase:verification
+      - name: Package reviewed source
+        run: npm run package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qase-reviewed-source
+          path: |
+            qase-share.zip
+            qase-share.zip.sha256
+          if-no-files-found: error

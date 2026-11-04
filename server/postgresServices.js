@@ -5,6 +5,7 @@ import { currentRequestActor } from './requestActor.js';
 import { DEFAULT_DEVICE_ID, isDeviceId } from './deviceProfiles.js';
 import { isEngineId } from './browserEngines.js';
 import { aggregateSessionFindings, applyStatusTiming, setFindingStatus, timingForEvent, markReportPhase, markExecutionStarted } from './store.js';
+import { invalidTransition, recordLifecyclePhase } from './runLifecycle.js';
 import { createPostgresFeedbackRepository } from './postgres/feedbackRepository.js';
 import { normalizeQaScopeSelection } from '../public/qaScopeCatalog.js';
 
@@ -18,6 +19,7 @@ function restore(target, snapshot) {
 }
 
 function createSession(title, now, options = {}) {
+	if (options.qaExecutionMode !== undefined && !['legacy', 'hybrid'].includes(options.qaExecutionMode)) throw new TypeError('Unknown QA execution mode.');
 	const timestamp = now();
 	const session = {
 		id: options.id ?? randomUUID(),
@@ -42,6 +44,7 @@ function createSession(title, now, options = {}) {
 		secretNames: [],
 		/** Selected standard QA test ids; undefined = full coverage. */
 		selectedTests: options.selectedTests ? [...options.selectedTests] : undefined,
+		qaExecutionMode: options.qaExecutionMode === 'hybrid' ? 'hybrid' : undefined,
 		/** Security testing authorization for runs with security checks. */
 		securityAuthorization: options.securityAuthorization
 			? structuredClone(options.securityAuthorization)
@@ -440,9 +443,22 @@ export function createPostgresApplicationServices({
 			return entry;
 		},
 	async setStatus(session, status, detail) {
-		const before = { pausedAt: session.pausedAt, pausedSeconds: session.pausedSeconds ?? 0 };
-		applyStatusTiming(session, status);
-		session.status = status;
+	// #17932: mirror the local store's server-authoritative transition
+	// validation — the persistence adapter must never accept a transition
+	// the lifecycle rejected (notably terminal → another terminal).
+	const invalid = invalidTransition(session.status, status);
+	if (invalid) {
+		console.warn(JSON.stringify({
+			event: 'run_status_transition_rejected', runId: session.id,
+			from: session.status, to: status,
+			reason: invalid, ts: new Date().toISOString()
+		}));
+		return;
+	}
+	const before = { pausedAt: session.pausedAt, pausedSeconds: session.pausedSeconds ?? 0 };
+	applyStatusTiming(session, status);
+	session.status = status;
+	recordLifecyclePhase(session, status, detail);
 		// On resume (pausedAt cleared), tell the repository how much pause time
 		// to accumulate into the persisted paused_seconds column.
 		if (before.pausedAt !== undefined && session.pausedAt === undefined) {

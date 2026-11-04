@@ -52,7 +52,7 @@ function finishReadiness(session, now = Date.now()) {
 	return { pendingControlIds, incompletePassIds, activeActivities, incompleteTodos, authBlockedControlIds };
 }
 
-export function createSqaTools(session, runStore) {
+export function createSqaTools(session, runStore, { jevVerifier } = {}) {
 	const recordControl = {
 		name: 'record_sqa_control',
 		description: 'Records one scoped SQA control observation, or an atomic controls batch of up to 12 closely related observations. Capture a control-specific browser check immediately before pass/fail. Provide every required browser-eligible evidence type in evidence; manual and reviewer-only prerequisites remain blocked.',
@@ -112,7 +112,28 @@ export function createSqaTools(session, runStore) {
 					if (hasSingleFields) {
 						throw new TypeError('Use either controls or the single-control fields, not both.');
 					}
+					const batchInput = Array.isArray(input.controls) ? input.controls : [];
 					const results = await recordAgentSqaObservations(session, input.controls, runStore);
+					// #17936/#17997: batch pass decisions must receive the same
+					// bounded, advisory JEV verification as single-control ones —
+					// otherwise agents that batch observations (the common case)
+					// silently bypass the verifier. The verifier's own call budget
+					// keeps this bounded.
+					const jev = [];
+					if (jevVerifier) {
+						for (let i = 0; i < results.length; i++) {
+							const result = results[i];
+							const source = batchInput[i];
+							if (result?.status !== 'pass' || !result?.controlId) continue;
+							const verification = await jevVerifier.verify({
+								controlId: result.controlId,
+								status: 'pass',
+								rationale: source?.rationale ?? '',
+								evidence: source?.evidence ?? []
+							}).catch(() => null);
+							if (verification?.challenge) jev.push({ control_id: result.controlId, jev_verification: verification.challenge });
+						}
+					}
 					return {
 						success: true,
 						recorded: results.map(result => `${result.controlId}: ${result.status}`),
@@ -122,17 +143,33 @@ export function createSqaTools(session, runStore) {
 							status: result.status,
 							decision_notes: result.decisionNotes,
 							evidence_coverage: result.evidenceCoverage
-						}))
+						})),
+						...(jev.length ? { jev_verifications: jev } : {})
 					};
 				}
 				const result = await recordAgentSqaObservation(session, input, runStore);
+				// #17936: bounded, advisory JEV verification of pass decisions.
+				// A challenge is SURFACED to the agent (never auto-flips the
+				// result); the primary agent and deterministic evaluator keep
+				// full control of the assessment.
+				let jev = undefined;
+				if (jevVerifier && result?.status === 'pass' && result?.controlId) {
+					const verification = await jevVerifier.verify({
+						controlId: result.controlId,
+						status: 'pass',
+						rationale: input?.rationale ?? '',
+						evidence: input?.evidence ?? []
+					}).catch(() => null);
+					if (verification?.challenge) jev = verification.challenge;
+				}
 				return {
 					success: true,
 					recorded: `${result.controlId}: ${result.status}`,
 					control_id: result.controlId,
 					status: result.status,
 					decision_notes: result.decisionNotes,
-					evidence_coverage: result.evidenceCoverage
+					evidence_coverage: result.evidenceCoverage,
+					...(jev ? { jev_verification: jev } : {})
 				};
 			} catch (error) {
 				return { success: false, error: error instanceof Error ? error.message : String(error) };

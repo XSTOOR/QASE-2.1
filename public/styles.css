@@ -2723,6 +2723,7 @@ a {
 .todo-chip-in_progress { border-color: rgba(104, 119, 255, 0.32); background: var(--accent-soft); color: #aeb7ff; }
 .todo-chip-failed { border-color: rgba(239, 121, 127, 0.32); background: var(--danger-soft); color: #ff9da1; }
 .todo-chip-blocked { border-color: rgba(232, 181, 95, 0.32); background: var(--warning-soft); color: var(--warning); }
+.todo-chip-partial, .todo-chip-not_tested, .todo-chip-not_observed { border-color: rgba(232, 181, 95, 0.32); background: var(--warning-soft); color: var(--warning); }
 
 .todo + .todo {
   margin-top: 3px;
@@ -2768,8 +2769,7 @@ a {
 }
 
 .todo.completed .todo-text {
-  text-decoration: line-through;
-  text-decoration-color: rgba(137, 148, 165, 0.42);
+  text-decoration: none;
 }
 
 /* Findings */
@@ -13689,4 +13689,22 @@ dialog:not([open]) { display: none !important; }
   color: #ffffff;
   opacity: 0.45;                        /* clearly distinguishable from enabled */
   cursor: not-allowed;
+}
+
+
+/* #17934 — Founder & SQA live token rows (same data as the header chip). */
+.founder-tokens {
+	display: block;
+	margin-top: 0.5rem;
+	font-size: 0.85rem;
+	color: var(--ink-2, #5b6472);
+	white-space: pre-line;
+}
+.sqa-tokens {
+	margin: 0 0 0.75rem;
+	padding: 0.5rem 0.75rem;
+	font-size: 0.85rem;
+	color: var(--ink-2, #5b6472);
+	background: var(--surface-2, #f4f5f7);
+	border-radius: 8px;
 }

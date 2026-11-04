@@ -88,6 +88,20 @@ function grantedPolicy() {
 	});
 }
 
+test('QA scenario drains in-flight preview capture and prevents viewport-racing screenshots', async () => {
+	const { bridge } = await makeBridge(grantedPolicy());
+	let release;
+	bridge.frameCapture = new Promise(resolve => { release = resolve; });
+	const checking = bridge.runQaCheck({ action: 'inspect' });
+	assert.equal(bridge.qaOperationActive, true);
+	await bridge.captureFrame(); // Must return without entering screenshot work.
+	assert.equal(bridge.qaOperationActive, true);
+	release();
+	await checking;
+	assert.equal(bridge.qaOperationActive, false);
+	await bridge.dispose();
+});
+
 test('browser_wait clamps ms and timeoutMs to the documented 30000ms bound', async () => {
 	const { service, calls, bridge } = await makeBridge(grantedPolicy());
 

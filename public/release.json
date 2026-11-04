@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-10-16-single-browser-r4",
-  "uiVersion": "20261016-3",
+  "releaseId": "qase-2026-10-27-hybrid-production-r1",
+  "uiVersion": "20261027-7",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "One Chrome desktop by default, single browser/device custom picker, duplicate-safe launch admission without new capacity queues"
+  "source": "Hybrid QA execution release integrated with production DEV (single-browser launcher, public API, feedback/Telegram) on the existing handoff baseline; UI 20261027-7 fixes the hybrid quick-mode wizard start"
 }

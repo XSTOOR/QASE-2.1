@@ -439,3 +439,29 @@ html[data-theme="dark"] body.studio-workspace #qa-start .mp-browser:disabled .mx
 @media (prefers-reduced-motion: reduce) {
   body.studio-workspace *, body.studio-workspace *::before, body.studio-workspace *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+/* Focused QA polish: retain the workspace layout and both theme palettes. */
+body.studio-workspace #qa-start .qa-agent-status {
+  display: grid; gap: 8px; padding: 18px 20px; border: 1px solid var(--border);
+  border-left: 3px solid #6791d8; border-radius: 12px; background: var(--surface-1);
+}
+body.studio-workspace #qa-start .qa-agent-status[data-state="ready"] { border-left-color: #429879; }
+body.studio-workspace #qa-start .qa-agent-status[data-state="attention"] { border-left-color: #c58a2d; }
+body.studio-workspace #qa-start .qa-agent-status-label { font-size: 10px; letter-spacing: .08em; color: var(--text-muted); }
+body.studio-workspace #qa-start .qa-agent-status strong { font-size: 14px; line-height: 1.5; }
+body.studio-workspace #qa-start .qa-agent-status small { margin: 0; line-height: 1.6; }
+body.studio-workspace :is(#qa-submit, #journey-next, #journey-run-action, #resume-run):not(:disabled) {
+  background: #e4edff; border: 1px solid #b6caee; color: #203f73;
+  box-shadow: 0 1px 2px #182b5010; transition: background-color 150ms ease, border-color 150ms ease;
+}
+body.studio-workspace :is(#qa-submit, #journey-next, #journey-run-action, #resume-run):not(:disabled):hover {
+  background: #d3e2ff; border-color: #89a9dd; color: #18345f; transform: none;
+}
+body.studio-workspace :is(#qa-submit, #journey-next, #journey-run-action, #resume-run):focus-visible {
+  outline: 3px solid #6995e0; outline-offset: 3px;
+}
+body.studio-workspace .journey-run-guide[data-tone="attention"] #journey-run-action:not(:disabled) {
+  background: #fff0d6; border-color: #dfbf83; color: #694614;
+}
+body.studio-workspace .journey-run-guide[data-tone="complete"] #journey-run-action:not(:disabled) {
+  background: #dcf3e9; border-color: #a7d6c1; color: #205c46;
+}

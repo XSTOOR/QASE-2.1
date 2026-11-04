@@ -4,7 +4,7 @@ const PRODUCT_FINDING_CATEGORIES = new Set([
 ]);
 
 /** Convert durable Founder state into a truthful, non-final lifecycle label. */
-export function describeFounderLifecycle(founder = {}, runStatus = 'idle', activityCount = 0) {
+export function describeFounderLifecycle(founder = {}, runStatus = 'idle', activityCount = 0, session = null) {
 	const observationCount = Array.isArray(founder?.observations) ? founder.observations.length : 0;
 	const totalCategories = founder?.scope?.categories?.length ?? founder?.report?.coverage?.totalCategories ?? 0;
 	if (founder?.finalizedAt && founder?.report) {
@@ -29,9 +29,29 @@ export function describeFounderLifecycle(founder = {}, runStatus = 'idle', activ
 		};
 	}
 	if (runStatus === 'error') {
+		// #17935: separate REVIEW GENERATION failure from execution failure.
+		// "Review failed" is reserved for a genuine, unrecoverable failure of
+		// the review/publication step itself. An execution error with saved
+		// evidence is recoverable: the evidence is intact and a resume
+		// continues from it. Only classification-confirmed review failures
+		// (session.lifecycle.outcome === 'review_failed') or an error during
+		// the synthesis/report phase with no recoverable path keep the
+		// 'Review failed' label; everything else is 'Execution error' with a
+		// resume path that preserves the evidence.
+		const outcome = session?.lifecycle?.outcome;
+		const observationCountNow = Array.isArray(founder?.observations) ? founder.observations.length : 0;
+		if (outcome === 'review_failed') {
+			return {
+				phase: 'error', status: 'error', finalized: false, label: 'Review failed', badge: 'error',
+				detail: 'The Founder brief could not be generated. The evidence collected so far is preserved.',
+				message: 'Review generation failed and could not be recovered. The collected evidence remains saved below; resume the run to regenerate the brief.'
+			};
+		}
 		return {
-			phase: 'error', status: 'error', finalized: false, label: 'Review failed', badge: 'error',
-			detail: 'The last execution ended with an error; no Founder brief was published.',
+			phase: 'error', status: 'error', finalized: false, label: 'Execution error — evidence saved', badge: 'error',
+			detail: observationCountNow > 0
+				? `Execution stopped with an error. ${observationCountNow} observation${observationCountNow === 1 ? '' : 's'} remain saved for the review.`
+				: 'The last execution ended with an error before evidence was captured.',
 			message: 'Resolve the reported error, then send an instruction to continue from the saved evidence.'
 		};
 	}

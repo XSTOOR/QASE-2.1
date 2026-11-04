@@ -315,3 +315,141 @@ test('meeting participation and recording require explicit confirmation', () => 
 	assert.equal(classifyDestructiveAction('click', { text: 'Enable microphone' }), undefined);
 	assert.equal(classifyDestructiveAction('click', { text: 'Mute microphone' }), undefined);
 });
+
+// ---- #17989: run-scoped authorization policy for approved safe operations.
+
+test('#17989 common casual approvals are recognized affirmations', () => {
+	let clock = 100_000;
+	const descriptor = { text: 'Delete project', url: 'https://app.example.test/projects/1' };
+	for (const text of ['OK, go ahead.', 'Sure, proceed.', 'Yep, do it.', 'Sounds good — please do.']) {
+		// Fresh policy per phrase: each approval arms its own bounded grant.
+		const policy = createBrowserPolicy({
+			getTargetUrl: () => 'https://app.example.test/',
+			environment: { NODE_ENV: 'test' },
+			now: () => clock
+		});
+		assert.equal(policy.authorizeAction('click', descriptor, []).allowed, false);
+		const decision = policy.authorizeAction('click', descriptor, [
+			{ role: 'user', kind: 'answer', text, ts: clock + 1 }
+		]);
+		assert.equal(decision.allowed, true, text);
+		clock += 10_000;
+	}
+});
+
+test('#17989 explicit "without asking again" arms a run-scoped grant that never expires or re-prompts', () => {
+	let clock = 200_000;
+	const policy = createBrowserPolicy({
+		getTargetUrl: () => 'https://app.example.test/',
+		environment: { NODE_ENV: 'test' },
+		now: () => clock,
+		confirmationTtlMs: 1_000
+	});
+	const descriptor = { text: 'Remove item', url: 'https://app.example.test/items/4' };
+	assert.equal(policy.authorizeAction('click', descriptor, []).code, BROWSER_POLICY_CODES.CONFIRMATION_REQUIRED);
+	clock += 1;
+	const answer = [{ role: 'user', kind: 'answer', text: 'Yes — remove these for the rest of the run, without asking again.', ts: clock }];
+	const first = policy.authorizeAction('click', descriptor, answer);
+	assert.equal(first.allowed, true);
+	assert.equal(first.runScoped, true, 'run-scoped approval recorded');
+	// Far beyond the old 2-use/2-min cap: the SAME category+origin keeps
+	// executing without another confirmation.
+	clock += 60 * 60_000;
+	for (let attempt = 0; attempt < 5; attempt += 1) {
+		const again = policy.authorizeAction('click', descriptor, []);
+		assert.equal(again.allowed, true, `attempt ${attempt} stays authorized`);
+		assert.equal(again.runScoped, true);
+	}
+});
+
+test('#17989 a run-scoped grant never crosses risk category or origin', () => {
+	let clock = 300_000;
+	const policy = createBrowserPolicy({
+		getTargetUrl: () => 'https://app.example.test/',
+		environment: { NODE_ENV: 'test' },
+		now: () => clock
+	});
+	const remove = { text: 'Remove item', url: 'https://app.example.test/items/4' };
+	assert.equal(policy.authorizeAction('click', remove, []).allowed, false);
+	clock += 1;
+	const scoped = policy.authorizeAction('click', remove, [
+		{ role: 'user', kind: 'answer', text: 'Yes, without asking again for this run.', ts: clock }
+	]);
+	assert.equal(scoped.runScoped, true);
+	// Different category (purchase) still requires explicit confirmation.
+	const purchase = { text: 'Purchase', url: 'https://app.example.test/checkout' };
+	assert.equal(policy.authorizeAction('click', purchase, []).code, BROWSER_POLICY_CODES.CONFIRMATION_REQUIRED);
+	// Same category on a different origin still requires confirmation.
+	const elsewhere = { text: 'Remove item', url: 'https://other.example.test/items/9' };
+	assert.equal(policy.authorizeAction('click', elsewhere, []).code, BROWSER_POLICY_CODES.CONFIRMATION_REQUIRED);
+	// Declining the new category never inherits the run-scoped grant: the
+	// decline is recorded against the purchase confirmation specifically.
+	clock += 1;
+	const declined = policy.authorizeAction('click', purchase, [
+		{ role: 'user', kind: 'answer', text: 'No, cancel.', ts: clock }
+	]);
+	assert.equal([BROWSER_POLICY_CODES.CONFIRMATION_DECLINED, BROWSER_POLICY_CODES.CONFIRMATION_REQUIRED].includes(declined.code), true, `decline must not allow, got ${declined.code}`);
+	assert.equal(declined.allowed, false);
+});
+
+test('#17989 run-scoped grants persist across bridge rebuilds via the session record', () => {
+	let clock = 400_000;
+	const now = () => clock;
+	const store = { grant: null };
+	const getTargetUrl = () => 'https://app.example.test/';
+	const environment = { NODE_ENV: 'test' };
+	const descriptor = { text: 'Delete project', url: 'https://app.example.test/projects/1' };
+
+	const first = createBrowserPolicy({
+		getTargetUrl, environment, now,
+		getBrowserActionGrant: () => store.grant,
+		setBrowserActionGrant: grant => { store.grant = grant; }
+	});
+	assert.equal(first.authorizeAction('click', descriptor, []).allowed, false);
+	clock += 1;
+	const answer = [{ role: 'user', kind: 'answer', text: 'Confirmed — continue without asking again for this session.', ts: clock }];
+	assert.equal(first.authorizeAction('click', descriptor, answer).allowed, true);
+	assert.equal(store.grant?.runScoped, true, 'run-scoped grant persisted to the session record');
+
+	// Bridge rebuild (browser closed/reopened, process restart): a NEW policy
+	// hydrates the persisted grant and does not re-prompt for the same class.
+	clock += 90 * 60_000; // long after any TTL — persistence, not the timer, carries it
+	const rebuilt = createBrowserPolicy({
+		getTargetUrl, environment, now,
+		getBrowserActionGrant: () => store.grant,
+		setBrowserActionGrant: grant => { store.grant = grant; }
+	});
+	const afterRebuild = rebuilt.authorizeAction('click', descriptor, []);
+	assert.equal(afterRebuild.allowed, true, 'rebuilt bridge keeps the run-scoped authorization');
+	assert.equal(afterRebuild.runScoped, true);
+
+	// clearGrant drops the persisted authorization.
+	rebuilt.clearGrant();
+	assert.equal(store.grant, null);
+	const afterClear = rebuilt.authorizeAction('click', descriptor, []);
+	assert.equal(afterClear.code, BROWSER_POLICY_CODES.CONFIRMATION_REQUIRED);
+});
+
+test('#17989 bounded grants still expire and are NOT persisted', () => {
+	let clock = 500_000;
+	const store = { grant: null };
+	const policy = createBrowserPolicy({
+		getTargetUrl: () => 'https://app.example.test/',
+		environment: { NODE_ENV: 'test' },
+		now: () => clock,
+		confirmationTtlMs: 1_000,
+		getBrowserActionGrant: () => store.grant,
+		setBrowserActionGrant: grant => { store.grant = grant; }
+	});
+	const descriptor = { text: 'Delete project', url: 'https://app.example.test/projects/1' };
+	assert.equal(policy.authorizeAction('click', descriptor, []).allowed, false);
+	clock += 1;
+	const decision = policy.authorizeAction('click', descriptor, [
+		{ role: 'user', kind: 'answer', text: 'Yes, proceed.', ts: clock }
+	]);
+	assert.equal(decision.allowed, true);
+	assert.equal(decision.runScoped, false);
+	assert.equal(store.grant, null, 'plain approval persists nothing');
+	clock += 2_000;
+	assert.equal(policy.authorizeAction('click', descriptor, []).code, BROWSER_POLICY_CODES.CONFIRMATION_REQUIRED);
+});

@@ -1,8 +1,10 @@
 /* Guided product workflow. Uses the workspace's light/dark theme tokens. */
 #cfg-managed-connection[hidden] { display: none !important; }
-body.studio-workspace .journey-run-guide { display: flex; align-items: center; gap: 12px; padding: 14px 16px; margin: 0 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+body.studio-workspace .journey-run-guide { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 16px; margin: 0 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
 body.studio-workspace .journey-run-guide[hidden] { display: none; }
-body.studio-workspace .journey-run-guide > div { flex: 1; min-width: 0; }
+body.studio-workspace .journey-run-guide > div { flex: 1 1 240px; min-width: 0; }
+body.studio-workspace .jev-execution-evidence details { margin-block: 10px; overflow-wrap: anywhere; }
+body.studio-workspace .jev-execution-evidence summary { cursor: pointer; font-weight: 600; }
 body.studio-workspace .journey-run-guide strong { font-size: 12px; color: var(--text); }
 body.studio-workspace .journey-run-guide p { font-size: 11px; line-height: 1.6; margin: 4px 0 0; color: var(--text-muted); }
 body.studio-workspace .journey-run-guide[data-tone="attention"] { border-left: 3px solid #d99b36; }
@@ -61,6 +63,15 @@ body.studio-workspace #qa-start .journey-presets button[aria-pressed="true"] { b
 body.studio-workspace #qa-start .journey-presets strong { display: block; font-size: 12px; line-height: 1.8; }
 body.studio-workspace #qa-start .journey-presets strong span { display: inline-block; margin-left: 5px; color: var(--accent); font-size: 9px; font-weight: 500; }
 body.studio-workspace #qa-start .journey-presets small { display: block; font-size: 11px; line-height: 1.6; color: var(--text-muted); margin-top: 6px; }
+body.studio-workspace #qa-start .qa-browser-status { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 18px 20px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 12px; background: var(--surface-1); }
+body.studio-workspace #qa-start .qa-browser-status-copy { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+body.studio-workspace #qa-start .qa-browser-status .qa-browser-status-label { margin: 0 0 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--text-muted); font-size: 10px; letter-spacing: .06em; }
+body.studio-workspace #qa-start #qa-browser-status-badge { padding: 3px 8px; border-radius: 20px; background: var(--surface-2); color: var(--text); font-size: 10px; letter-spacing: normal; }
+body.studio-workspace #qa-start .qa-browser-status[data-state="ready"] { border-left-color: #29a376; }
+body.studio-workspace #qa-start .qa-browser-status[data-state="blocked"] { border-left-color: #d99b36; }
+body.studio-workspace #qa-start .qa-browser-status h3 { margin: 0 0 6px; color: var(--text); font-size: 15px; line-height: 1.5; }
+body.studio-workspace #qa-start .qa-browser-status #qa-browser-status-detail { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.7; }
+body.studio-workspace #qa-start #qa-browser-status-action { min-height: 40px; max-width: 100%; white-space: normal; }
 body.studio-workspace #qa-start .journey-benefits span { font-size: 11px; padding: 6px 9px; border-radius: 6px; background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border); }
 body.studio-workspace #qa-start .qa-customize { border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
 body.studio-workspace #qa-start .qa-customize > summary { font-size: 13px; color: var(--text); cursor: pointer; }
