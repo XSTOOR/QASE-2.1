@@ -100,6 +100,9 @@ const PROBE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const VERSION_TIMEOUT_MS = 8000;
 
 let cache = null; // { probedAt, brands: [...] }
+const pendingProbes = new Set();
+let cacheGeneration = 0;
+let latestProbe = 0;
 
 function parseVersion(output) {
 	const match = String(output ?? '').match(/([0-9]+(?:\.[0-9]+){1,3})/);
@@ -140,6 +143,29 @@ export async function probeLocalBrowsers(options = {}) {
 	if (!options.force && cache && Date.now() - cache.probedAtMs < PROBE_TTL_MS) {
 		return cache.result;
 	}
+	const finder = options.findBinary ?? findBinary;
+	const versionReader = options.versionFor ?? versionFor;
+	const launcher = options.launchProbe ?? null;
+	// The catalog resolves thousands of environments concurrently. Until the
+	// first installed binary responds, they must share its pending probe too.
+	const existing = !options.force && [...pendingProbes].find(probe =>
+		probe.generation === cacheGeneration && probe.finder === finder
+		&& probe.versionReader === versionReader && probe.launcher === launcher);
+	if (existing) return existing.promise;
+	const probe = { generation: cacheGeneration, sequence: ++latestProbe, finder, versionReader, launcher };
+	probe.promise = readLocalBrowserProbe(options).then(result => {
+		// An invalidated or superseded probe cannot republish stale availability.
+		if (probe.generation === cacheGeneration && probe.sequence === latestProbe) {
+			cache = { probedAtMs: Date.now(), result };
+		}
+		return result;
+	});
+	pendingProbes.add(probe);
+	try { return await probe.promise; }
+	finally { pendingProbes.delete(probe); }
+}
+
+async function readLocalBrowserProbe(options) {
 	const brands = [];
 	for (const brand of BRANDS) {
 		const executablePath = (options.findBinary ?? findBinary)(brand.candidatePaths);
@@ -182,9 +208,7 @@ export async function probeLocalBrowsers(options = {}) {
 			reason
 		});
 	}
-	const result = { probedAt: new Date().toISOString(), brands };
-	cache = { probedAtMs: Date.now(), result };
-	return result;
+	return { probedAt: new Date().toISOString(), brands };
 }
 
 /** Sync accessor for the last probe (may be stale or null). */
@@ -195,6 +219,7 @@ export function lastLocalBrowserProbe() {
 /** Drop the cache so the next probe re-reads the filesystem. */
 export function invalidateLocalBrowserCache() {
 	cache = null;
+	cacheGeneration++;
 }
 
 /** Registry entry for one brand code (null when never probed). */

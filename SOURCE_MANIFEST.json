@@ -244,7 +244,7 @@
     },
     {
       "path": "docs/sqa-release-candidate-2026-11-05.md",
-      "sha256": "16b3b06f405ebe110a679b5f6e6511251b504065ffc6a655dd9ff910a0e56f77"
+      "sha256": "13e41218456cb119a9612bc2dd18f215e8ac9917796ab303fb1c5d4aec151985"
     },
     {
       "path": "docs/sqa-release-readiness.md",
@@ -2088,11 +2088,11 @@
     },
     {
       "path": "server/localBrowserRegistry.js",
-      "sha256": "6cc74b6fa2c577dce0c4a855e071cf6948564b2be48dfc776978c7b68a9484e0"
+      "sha256": "3955e436e2801d70da8d84bb24c54897030a864cddec8109c4b2dac2d8013650"
     },
     {
       "path": "server/localBrowserRegistry.test.js",
-      "sha256": "7d0741427b9d5b84adcb22234934a0a3ad98b718d829b4de8f75a629ede21800"
+      "sha256": "f8aa3e73aa33cda269bfd170391ee7bd986297c89bfec724d5544fbd7f12e8e6"
     },
     {
       "path": "server/localDeviceCatalog.js",

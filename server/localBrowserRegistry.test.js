@@ -70,6 +70,78 @@ test('probe results are cached with a TTL and invalidated on demand', async () =
 	assert.equal(lastLocalBrowserProbe(), null);
 });
 
+test('concurrent cold registry probes share one version lookup per installed brand', async () => {
+	invalidateLocalBrowserCache();
+	let release;
+	const gate = new Promise(resolve => { release = resolve; });
+	let calls = 0;
+	const options = {
+		findBinary: paths => paths[0].includes('google-chrome') ? paths[0] : null,
+		versionFor: async () => { calls++; await gate; return '151.0.1'; }
+	};
+	const readers = Array.from({ length: 256 }, () => probeLocalBrowsers(options));
+	release();
+	const results = await Promise.all(readers);
+	assert.equal(calls, 1, 'Catalog fan-out must not start a subprocess per environment');
+	assert.ok(results.every(result => result === results[0]));
+	assert.equal(results[0].brands.find(brand => brand.code === 'chrome').version, '151.0.1');
+});
+
+for (const refresh of ['invalidate', 'force']) {
+	test(`${refresh} refresh cannot be overwritten by an older pending registry probe`, async () => {
+		invalidateLocalBrowserCache();
+		let release;
+		const gate = new Promise(resolve => { release = resolve; });
+		let calls = 0;
+		const options = {
+			findBinary: paths => paths[0].includes('google-chrome') ? paths[0] : null,
+			versionFor: async () => { if (++calls === 1) { await gate; return '150.0.1'; } return '151.0.1'; }
+		};
+		const stale = probeLocalBrowsers(options);
+		if (refresh === 'invalidate') invalidateLocalBrowserCache();
+		let fresh;
+		try { fresh = await probeLocalBrowsers({ ...options, force: refresh === 'force' }); }
+		finally { release(); }
+		await stale;
+		assert.equal(calls, 2);
+		assert.equal(lastLocalBrowserProbe(), fresh);
+		assert.equal(fresh.brands.find(brand => brand.code === 'chrome').version, '151.0.1');
+	});
+}
+
+test('a rejected registry probe releases concurrent readers and allows a fresh retry', async () => {
+	invalidateLocalBrowserCache();
+	let calls = 0;
+	const options = {
+		findBinary: paths => paths[0].includes('google-chrome') ? paths[0] : null,
+		versionFor: async () => { if (++calls === 1) throw new Error('fixture lookup failed'); return '151.0.1'; }
+	};
+	const readers = await Promise.allSettled([probeLocalBrowsers(options), probeLocalBrowsers(options)]);
+	assert.ok(readers.every(reader => reader.status === 'rejected' && /fixture lookup failed/.test(reader.reason.message)));
+	assert.equal(calls, 1);
+	const retried = await probeLocalBrowsers(options);
+	assert.equal(retried.brands.find(brand => brand.code === 'chrome').version, '151.0.1');
+	assert.equal(calls, 2);
+});
+
+test('pending version-only lookup cannot replace a requested launch verification', async () => {
+	invalidateLocalBrowserCache();
+	let release;
+	const gate = new Promise(resolve => { release = resolve; });
+	let launches = 0;
+	const options = {
+		findBinary: paths => paths[0].includes('google-chrome') ? paths[0] : null,
+		versionFor: async () => { await gate; return '151.0.1'; }
+	};
+	const versionOnly = probeLocalBrowsers(options);
+	const verified = probeLocalBrowsers({ ...options, launchProbe: async () => { launches++; return { ok: true }; } });
+	release();
+	const [first, second] = await Promise.all([versionOnly, verified]);
+	assert.equal(first.brands.find(brand => brand.code === 'chrome').launchVerified, false);
+	assert.equal(second.brands.find(brand => brand.code === 'chrome').launchVerified, true);
+	assert.equal(launches, 1);
+});
+
 test('localBrowserEntry returns one brand or null; unknown codes are null', async () => {
 	invalidateLocalBrowserCache();
 	const entry = await localBrowserEntry('opera', {});

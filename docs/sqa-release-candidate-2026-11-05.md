@@ -70,6 +70,21 @@ Five separate repeat runs passed with the same input, restoration, delayed
 autosave and no-submission assertions. The production readiness window and
 network quarantine were not relaxed; full-suite revalidation remains required.
 
+Commit `42ce007` passed local verification and both hosted SQA jobs, but the
+full Linux job still reproduced the matrix request timeout. Investigation found
+concurrent cold registry reads launching independent browser-version subprocesses
+before the cache was populated. A regression reproduced 256 lookups instead
+of one; the catalog can fan out across thousands of environment records. This
+was invisible on hosts without binaries at the registry's Linux paths.
+
+The follow-up registry change shares pending probes with identical lookup and
+launch requirements, retains explicit forced refreshes and prevents invalidated
+or superseded results from overwriting a newer cache. Failed lookups release
+their waiters and can be retried. Launch verification cannot be satisfied by
+a pending version-only lookup. Five regressions cover these cases; three fail
+against the previous implementation. Matrix route isolation alone did not fix
+the Linux timeout, and image validation remains pending until hosted CI passes.
+
 For the exact committed source, require `npm run audit:dependencies`,
 `npm run verify`, `npm run test:sqa-release`, `npm run release:verify`, the
 production-image build and `npm run test:production-image`. The GitHub checks on
