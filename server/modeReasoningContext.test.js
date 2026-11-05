@@ -26,6 +26,20 @@ test('recent screenshots survive and inference never mutates the durable transcr
  assert.equal(result[0].content[0].text,'Capture 0');
 });
 
+test('SQA inference keeps only the current workflow result and latest screenshot', () => {
+	const messages=[];
+	for(let n=0;n<6;n++) messages.push(
+		{role:'assistant',content:'',toolCalls:[{id:`sqa-${n}`,toolName:'browser_snapshot',input:{}}]},
+		{role:'tool',toolCallId:`sqa-${n}`,content:JSON.stringify({success:true,bodyText:'x'.repeat(5000)})},
+		{role:'user',content:[{type:'image_url',image_url:{url:`data:image/png;base64,sqa${n}`}}]}
+	);
+	const session={mode:'sqa',todos:[],sqa:{observations:[],execution:{}}};
+	const result=projectModeMessages(messages,session);
+	const calls=result.flatMap(message=>message.toolCalls||[]).map(call=>call.id);
+	assert.deepEqual(calls,['sqa-4','sqa-5']);
+	assert.equal(result.filter(message=>Array.isArray(message.content)&&message.content.some(part=>part.type==='image_url')).length,1);
+});
+
 test('duplicate SDK envelopes compact only against matching trusted workspace reminders and retain every human request',()=>{
  const session={id:'mode-fixture'},context=`Workspace root: ${path.join(process.cwd(),'.qase','workspaces',session.id)}\n\n`+'Trusted mode instructions. '.repeat(1000);
  const messages=[{role:'system',content:'SDK system policy'},{role:'user',content:`[CONTEXT]\n${context}\n\nUser Request: Inspect the authorized fixture.`},{role:'system',content:`[RUNTIME CONTEXT REMINDER]\n${context}\n\nCurrent objective: Inspect the authorized fixture.`}];

@@ -143,6 +143,13 @@ credential values. The default deadline is 12 minutes; use
 `--timeout-minutes 1..15` when needed. Results are stored in
 `test-results/sqa-live-release/<timestamp>/`.
 
+To qualify an explicitly authorized public target through the same disposable
+account and server, add `--target-url https://example.test/`. The external mode
+forbids sign-in, account creation, uploads, purchases, personal-data submission
+and cross-origin exploration. All six technical controls must receive a result.
+If the public target has no eligible safe form, the form control must be blocked
+with a precise rationale; the runner does not require or invent a form action.
+
 Prepare a review snapshot with:
 
 ```sh

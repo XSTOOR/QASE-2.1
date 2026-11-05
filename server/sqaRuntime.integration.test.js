@@ -47,11 +47,11 @@ test(`SQA ${expectedEngine} can launch, exercise a workflow, and record verifiab
     session.activities.push({ id: 'verified-form', toolName: 'browser_snapshot', status: 'done', ts: Date.now(),
       summary: `Verified required-field rejection and successful form submission in the local ${expectedEngine} fixture.` });
     const record = createSqaTools(session, store).find(tool => tool.name === 'record_sqa_control');
-    await record.run({ control_id: 'SQA-QUA-001', status: 'pass', evidence: [{ type: 'test_result',
+    await record.run({ control_id: 'SQA-WEB-003', status: 'pass', evidence: [{ type: 'test_result',
       summary: 'Required name rejected when empty; submitting SQA fixture produced Saved: SQA fixture.' }] });
     assert.equal(session.sqa.observations[0].status, 'pass');
     assert.match(session.sqa.observations[0].evidence[0].reference, /activities\/verified-form\/evidence\//);
-    assert.equal(inspectSqaEvidence(session, 'SQA-QUA-001', 1).integrity, 'verified');
+    assert.equal(inspectSqaEvidence(session, 'SQA-WEB-003', 1).integrity, 'verified');
   } finally {
     bridge?.dispose?.();
     await service.browser?.close();

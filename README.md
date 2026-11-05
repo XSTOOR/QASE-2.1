@@ -9,7 +9,9 @@ Production deployment targets `https://qase.drytis.com`. Never deploy the
 parent workspace or copy developer `.qase` state into production.
 
 This release adds hybrid QA (Opus reasoning, JEV classification, one CleanSlate
-loop), the reviewed SQA evidence workflow and UI `20261105-4`. Production activation requires gateway qualification
+loop), the reviewed SQA evidence workflow and UI `20261106-1`. SQA now completes
+and records each browser workflow before compacting its model context, reducing
+repeated input while preserving the fixed safety limit. Production activation requires gateway qualification
 on the execution host and an explicit opt-in; see [DEPLOYMENT_PROMPT.md](DEPLOYMENT_PROMPT.md).
 New hybrid runs test automatically using the supplied context. Budget and generic
 coverage questions do not interrupt new runs. Secure access may still need your

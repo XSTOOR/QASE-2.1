@@ -1,6 +1,9 @@
 const DEFAULT_SQA_BROWSER_TOOL_BUDGET = 120;
-const DEFAULT_SQA_CONTEXT_COMPACTION_ACTIVITY_INTERVAL = 16;
-const DEFAULT_SQA_CONTEXT_COMPACTION_INPUT_TOKEN_INTERVAL = 75_000;
+// A normal SQA browser workflow is deliberately capped at four actions. Start
+// the next workflow from durable host state as soon as that checkpoint is
+// recorded instead of carrying several large snapshots into later controls.
+const DEFAULT_SQA_CONTEXT_COMPACTION_ACTIVITY_INTERVAL = 1;
+const DEFAULT_SQA_CONTEXT_COMPACTION_INPUT_TOKEN_INTERVAL = 50_000;
 const DEFAULT_SQA_INPUT_TOKEN_BUDGET = 350_000;
 const DEFAULT_SQA_BROWSER_WORKFLOW_CHECKPOINT = 4;
 
@@ -14,7 +17,7 @@ export const SQA_BROWSER_TOOL_BUDGET = configuredBudget();
 function configuredCompactionInterval() {
 	const value = Number(process.env.QASE_SQA_CONTEXT_COMPACTION_ACTIVITY_INTERVAL
 		?? DEFAULT_SQA_CONTEXT_COMPACTION_ACTIVITY_INTERVAL);
-	return Number.isFinite(value) ? Math.max(10, Math.min(60, Math.floor(value)))
+	return Number.isFinite(value) ? Math.max(1, Math.min(60, Math.floor(value)))
 		: DEFAULT_SQA_CONTEXT_COMPACTION_ACTIVITY_INTERVAL;
 }
 

@@ -23,8 +23,13 @@ export function compactModeEnvelopes(messages,session){
  * intact. Detailed host receipts are retrievable through mode progress. */
 export function projectModeMessages(messages, session) {
   messages=compactModeEnvelopes(messages,session);
-  const tools = messages.map((m,i)=>m.role==='tool'?i:-1).filter(i=>i>=0), recent = new Set(tools.slice(-4));
-  const images = messages.map((m,i)=>Array.isArray(m.content)&&m.content.some(p=>p.type==='image_url')?i:-1).filter(i=>i>=0), keepImages = new Set(images.slice(-2));
+  // SQA records each bounded browser workflow immediately. Once recorded, the
+  // durable control result—not several old page dumps—is authoritative. Keep
+  // only the current browser result and its recording receipt in model context.
+  const recentToolCount = session?.mode === 'sqa' ? 2 : 4;
+  const recentImageCount = session?.mode === 'sqa' ? 1 : 2;
+  const tools = messages.map((m,i)=>m.role==='tool'?i:-1).filter(i=>i>=0), recent = new Set(tools.slice(-recentToolCount));
+  const images = messages.map((m,i)=>Array.isArray(m.content)&&m.content.some(p=>p.type==='image_url')?i:-1).filter(i=>i>=0), keepImages = new Set(images.slice(-recentImageCount));
   const projected = messages.map((message,index)=>{
     let content = message.content;
     if (message.role==='tool' && !recent.has(index) && typeof content==='string' && content.length>3500) {
@@ -35,7 +40,7 @@ export function projectModeMessages(messages, session) {
     if(Array.isArray(content)&&!keepImages.has(index))content=content.map(part=>part.type==='image_url'?{type:'text',text:'Earlier screenshot omitted from repeated model context; captured activity evidence is retained.'}:part);
     return content===message.content?message:{...message,content};
   });
-  const compacted = compactCompletedRounds(projected);
+  const compacted = compactCompletedRounds(projected, session?.mode === 'sqa' ? 2 : 4);
   if(session?.[session.mode]?.execution?.phase==='synthesis'){
    compacted.push({role:'system',content:`Authoritative ${session.mode} synthesis checkpoint. Browser investigation is complete. Use saved evidence and the existing finalizer; no browser replay or new permissions. ${JSON.stringify({reportDraft:session.founder?.reportDraft?{revision:session.founder.reportDraft.revision,completedSections:Object.keys(session.founder.reportDraft.input),recommendationIds:session.founder.reportDraft.input.recommendations?.map(r=>r.id)}:undefined,todos:session.todos,observations:session[session.mode].observations.map(o=>({id:o.id,category:o.category,controlId:o.controlId,status:o.status}))})}`});
    return compacted;

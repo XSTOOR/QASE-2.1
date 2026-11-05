@@ -56,6 +56,7 @@ test('SQA frontend uses the authenticated API contract and safe DOM construction
 	assert.match(app, /'Reviewer evidence required'/);
 	assert.match(app, /'Mixed evidence incomplete'/);
 	assert.match(app, /'Automated check blocked \/ not run'/);
+	assert.match(app, /'Stopped early: budget reached'/);
 	assert.match(app, /Deterministic verdict: Blocked\. No control failures were recorded/);
 	assert.match(app, /encrypted locally for this run and deleted when the run ends/i);
 	assert.doesNotMatch(app, /Held in this server's memory only/);

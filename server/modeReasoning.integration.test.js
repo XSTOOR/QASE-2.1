@@ -39,7 +39,7 @@ for(const mode of ['sqa','founder'])test(`${mode}: native SDK batches persist br
    }else if(calls===2){
     assert.equal(session.activities.filter(a=>a.toolName.startsWith('browser_')&&a.status==='done').length,3);
     const toolName=mode==='sqa'?'record_sqa_control':'record_founder_observation';
-    const input=mode==='sqa'?{control_id:'SQA-TRC-002',status:'blocked',rationale:'Fixture observation; broader evidence remains unavailable',evidence:[{type:'test_result',summary:'Rendered local workspace and collected diagnostics'}]}:{category:'product_clarity',type:'strength',title:'Clear workspace heading',summary:'Local workspace is visibly named on the fixture page',confidence:'high'};
+    const input=mode==='sqa'?{control_id:'SQA-WEB-001',status:'blocked',rationale:'Fixture observation; the complete rendering evidence contract remains unavailable',evidence:[{type:'test_result',summary:'Rendered local workspace and collected diagnostics'}]}:{category:'product_clarity',type:'strength',title:'Clear workspace heading',summary:'Local workspace is visibly named on the fixture page',confidence:'high'};
     yield{type:'tool_call',call:{id:randomUUID(),toolName,input}};
    }else yield{type:'text',content:'All work is done. The final report is complete.'};
   })();

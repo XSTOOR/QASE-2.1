@@ -24,7 +24,7 @@ function session(browserActivities, observations = 1) {
 }
 
 test('SQA context compaction becomes due only after durable evidence and a bounded activity interval', () => {
-	assert.equal(SQA_CONTEXT_COMPACTION_ACTIVITY_INTERVAL >= 10, true);
+	assert.equal(SQA_CONTEXT_COMPACTION_ACTIVITY_INTERVAL, 1, 'every recorded browser workflow starts a compact continuation');
 	assert.equal(countSqaBrowserActivities(session(24)), 24);
 	assert.equal(sqaContextCompactionDue(session(23), 0, 24), false);
 	assert.equal(sqaContextCompactionDue(session(24), 0, 24), true);

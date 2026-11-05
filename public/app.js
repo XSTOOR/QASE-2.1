@@ -4514,7 +4514,7 @@ function renderSqaUnresolved(assessment) {
 	const unresolved = (assessment.results ?? []).filter(result => result.status !== 'pass');
 	const groups = groupSqaUnresolvedResults(assessment.results);
 	const evidenceGaps = groups.reviewer.length + groups.mixed.length;
-	const node = sqaSection('Failures and evidence gaps', `${groups.failures.length} failed · ${evidenceGaps} reviewer/mixed evidence gaps · ${groups.automated.length} automated incomplete`);
+	const node = sqaSection('Failures and evidence gaps', `${groups.failures.length} failed · ${groups.budget.length} stopped by budget · ${evidenceGaps} reviewer/mixed evidence gaps · ${groups.automated.length} automated incomplete`);
 
 	if (unresolved.length === 0) {
 		const empty = document.createElement('p');
@@ -4528,6 +4528,7 @@ function renderSqaUnresolved(assessment) {
 	list.className = 'sqa-unresolved-groups';
 	for (const group of [
 		{ title: 'Confirmed failures', description: 'Evidence-backed control failures that affect the product verdict.', results: groups.failures, kind: 'failures' },
+		{ title: 'Stopped early: budget reached', description: 'The safety budget ended this run before these checks completed. Saved results remain valid; rerun after the execution-efficiency fix to complete this coverage.', results: groups.budget, kind: 'budget' },
 		{ title: 'Reviewer evidence required', description: 'Documents, approvals, records, or independent review must be supplied by an authorized reviewer.', results: groups.reviewer, kind: 'reviewer' },
 		{ title: 'Mixed evidence incomplete', description: 'This control combines browser-observable checks with external reviewer artifacts.', results: groups.mixed, kind: 'mixed' },
 		{ title: 'Automated check blocked / not run', description: 'The controlled browser check did not complete or lacks agent-capable technical evidence.', results: groups.automated, kind: 'automated' }

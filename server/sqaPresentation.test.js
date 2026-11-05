@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
 	describeSqaLifecycle,
 	groupSqaUnresolvedResults,
+	isSqaBudgetStopResult,
 	SQA_AGENT_CAPABLE_EVIDENCE_TYPES
 } from '../public/sqaPresentation.js';
 
@@ -56,11 +57,15 @@ test('unresolved SQA controls distinguish reviewer, mixed, automated, and failed
 	const mixed = unresolved({ id: 'mixed', automationLevel: 'hybrid', types: ['test_result', 'risk_register'] });
 	const automated = unresolved({ id: 'automated', automationLevel: 'automated', types: ['test_result'] });
 	const failure = unresolved({ id: 'failure', automationLevel: 'automated', types: ['test_result'], status: 'fail' });
-	const groups = groupSqaUnresolvedResults([reviewer, mixed, automated, failure, { status: 'pass' }]);
+	const budget = { ...unresolved({ id: 'budget', automationLevel: 'hybrid', types: ['test_result', 'risk_register'] }), rationale: 'Stopped early: budget reached. The host SQA input-token safety limit was exhausted.' };
+	const groups = groupSqaUnresolvedResults([reviewer, mixed, automated, failure, budget, { status: 'pass' }]);
 	assert.deepEqual(groups.reviewer, [reviewer]);
 	assert.deepEqual(groups.mixed, [mixed]);
 	assert.deepEqual(groups.automated, [automated]);
 	assert.deepEqual(groups.failures, [failure]);
+	assert.deepEqual(groups.budget, [budget]);
+	assert.equal(isSqaBudgetStopResult(budget), true);
+	assert.equal(isSqaBudgetStopResult({ rationale: 'The host SQA browser-tool safety limit was exhausted (120/120).' }), true, 'older published assessments remain classified');
 });
 
 test('a reviewer-only blocked verdict is presented as evidence incomplete without changing raw verdict', () => {

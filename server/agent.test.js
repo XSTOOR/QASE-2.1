@@ -7,7 +7,7 @@ import { createBrowserTools } from './browserTools.js';
 import { createFounderReviewTodos, FOUNDER_CATEGORY_IDS } from './founderService.js';
 import { clearSecrets, resolveSecrets, storeSecrets } from './secrets.js';
 import { withUserConfiguration } from './config.js';
-import { getSqaControl } from './sqaCatalog.js';
+import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { AGENT_EVIDENCE_TYPES, createSqaState, createSqaTodoPlan } from './sqaService.js';
 import { createSqaTools } from './sqaTools.js';
 
@@ -869,7 +869,7 @@ test('Founder synthesis readiness retains every prerequisite and clears only the
 test('SQA context continuation clears only redundant model history at bounded evidence checkpoints', () => {
 	const session = {
 		mode: 'sqa',
-		activities: Array.from({ length: 24 }, (_, index) => ({
+		activities: Array.from({ length: 1 }, (_, index) => ({
 			id: `browser-${index}`,
 			toolName: 'browser_snapshot',
 			status: 'done'
@@ -881,20 +881,20 @@ test('SQA context continuation clears only redundant model history at bounded ev
 	const before = structuredClone(session);
 	assert.equal(prepareSqaContextContinuation(session, record), true);
 	assert.equal(clearCount, 1);
-	assert.equal(record.sqaBrowserActivitiesAtCompaction, 24);
+	assert.equal(record.sqaBrowserActivitiesAtCompaction, 1);
 	assert.equal(record.sqaContextCompactions, 1);
 	assert.deepEqual(session, before);
 	assert.equal(prepareSqaContextContinuation(session, record), false);
 	assert.equal(clearCount, 1);
 
-	session.activities.push(...Array.from({ length: 24 }, (_, index) => ({
+	session.activities.push(...Array.from({ length: 1 }, (_, index) => ({
 		id: `browser-next-${index}`,
 		toolName: 'browser_click',
 		status: 'done'
 	})));
 	assert.equal(prepareSqaContextContinuation(session, record), true);
 	assert.equal(clearCount, 2);
-	assert.equal(record.sqaBrowserActivitiesAtCompaction, 48);
+	assert.equal(record.sqaBrowserActivitiesAtCompaction, 2);
 	assert.equal(record.sqaContextCompactions, 2);
 });
 
@@ -1015,7 +1015,11 @@ test('deterministic fake-model SQA agent completes the real closeout path withou
 		const finish = tools.find(tool => tool.name === 'finish_sqa_assessment');
 		const reviewerOnly = [];
 		let callIndex = 0;
-		for (const controlId of fixture.session.sqa.scope.applicableControlIds) {
+		const orderedControlIds = [
+			...SQA_TECHNICAL_CONTROL_IDS.filter(controlId => fixture.session.sqa.scope.applicableControlIds.includes(controlId)),
+			...fixture.session.sqa.scope.applicableControlIds.filter(controlId => !SQA_TECHNICAL_CONTROL_IDS.includes(controlId))
+		];
+		for (const controlId of orderedControlIds) {
 			const control = getSqaControl(controlId);
 			const hasAgentEvidence = control.evidenceRequirements.some(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type));
 			const allEvidenceIsAgentEvidence = control.evidenceRequirements.every(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type));

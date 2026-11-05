@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-sqa-2026-11-05-readiness-r1",
-  "uiVersion": "20261105-4",
+  "releaseId": "qase-sqa-2026-11-06-efficiency-r1",
+  "uiVersion": "20261106-1",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "SQA evidence review, immutable history, verified evidence inspection and security patches on codex/hybrid-production-readiness ad0afcd; reviewed candidate, not a deployment record"
+  "source": "SQA browser-first execution, per-workflow context compaction, explicit budget-stop reporting and the reviewed evidence workflow on codex/hybrid-production-readiness ad0afcd; reviewed candidate, not a deployment record"
 }

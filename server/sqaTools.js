@@ -15,6 +15,20 @@ const AGENT_EVIDENCE_TYPE_VALUES = [...AGENT_EVIDENCE_TYPES];
 const PUBLIC_ONLY_SCOPE = /\b(public[- ]only|anonymous[- ]only|unauthenticated[- ]only|login[- ]only|auth(?:entication)? surface only|continue without (?:credentials|sign[- ]?in))\b/i;
 const AUTH_BLOCKED = /\b(behind authentication|authentication (?:is )?required|requires? (?:authentication|credentials|sign[- ]?in)|unauthenticated|no (?:login )?credentials?|cannot sign in|login (?:is )?required)\b/i;
 
+function pendingTechnicalControlIds(session) {
+	const applicable = new Set(session.sqa?.scope?.applicableControlIds ?? []);
+	const recorded = new Map((session.sqa?.observations ?? []).map(item => [item.controlId, item.status]));
+	return SQA_TECHNICAL_CONTROL_IDS.filter(controlId => (
+		applicable.has(controlId) && (!recorded.has(controlId) || recorded.get(controlId) === 'not_assessed')
+	));
+}
+
+function requireTechnicalControlsFirst(session, proposedControlIds) {
+	const pending = pendingTechnicalControlIds(session);
+	if (pending.length === 0 || proposedControlIds.every(controlId => SQA_TECHNICAL_CONTROL_IDS.includes(controlId))) return;
+	throw new TypeError(`Finish the six technical web controls first. Pending: ${pending.join(', ')}. Record non-technical controls only after these have results.`);
+}
+
 function finishReadiness(session, now = Date.now()) {
 	const observations = new Map((session.sqa?.observations ?? []).map(item => [item.controlId, item]));
 	const pendingControlIds = [];
@@ -129,6 +143,9 @@ export function createSqaTools(session, runStore, options = {}) {
 					if (hasSingleFields) {
 						throw new TypeError('Use either controls or the single-control fields, not both.');
 					}
+					requireTechnicalControlsFirst(session, Array.isArray(input.controls)
+						? input.controls.map(item => item?.control_id)
+						: []);
 					const results = await recordAgentSqaObservations(session, input.controls, runStore);
 					return {
 						success: true,
@@ -142,6 +159,7 @@ export function createSqaTools(session, runStore, options = {}) {
 						}))
 					};
 				}
+				requireTechnicalControlsFirst(session, [input?.control_id]);
 				const result = await recordAgentSqaObservation(session, input, runStore);
 				return {
 					success: true,
@@ -180,6 +198,7 @@ export function createSqaTools(session, runStore, options = {}) {
 		},
 		async run(input) {
 			try {
+				requireTechnicalControlsFirst(session, (input?.controls ?? []).map(item => item?.control_id));
 				const results = await recordAgentSqaBlockers(session, input?.controls, runStore);
 				return {
 					success: true,
@@ -259,8 +278,8 @@ export function createSqaTools(session, runStore, options = {}) {
 						};
 					}
 					const reason = tokenLimitReached
-						? `The host SQA input-token safety limit was exhausted (${inputTokens}/${SQA_INPUT_TOKEN_BUDGET}) before control-specific evidence was collected. Conservatively blocked; no pass or fail is claimed.`
-						: `The host SQA browser-tool safety limit was exhausted (${browserTools}/${SQA_BROWSER_TOOL_BUDGET}) before control-specific evidence was collected. Conservatively blocked; no pass or fail is claimed.`;
+						? `Stopped early: budget reached. The host SQA input-token safety limit was exhausted (${inputTokens}/${SQA_INPUT_TOKEN_BUDGET}) before control-specific evidence was collected. Conservatively blocked; no pass or fail is claimed.`
+						: `Stopped early: budget reached. The host SQA browser-tool safety limit was exhausted (${browserTools}/${SQA_BROWSER_TOOL_BUDGET}) before control-specific evidence was collected. Conservatively blocked; no pass or fail is claimed.`;
 					const closed = await closePendingSqaControlsAsBlocked(session, reason, runStore);
 					safetyClosedControlIds = closed.map(result => result.controlId);
 					if ((session.todos ?? []).some(todo => todo.status !== 'completed')) {

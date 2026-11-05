@@ -29,10 +29,11 @@ test('SQA context makes progress explicit and orders technical smoke checks befo
 	assert.match(context, /record_sqa_blockers/);
 	assert.match(context, /authentication prevents representative workflows/);
 	assert.match(context, /SQA-WEB-001 \[PENDING/);
-	assert.match(context, /SQA-QUA-001 \[PENDING/);
-	assert.match(context, /SQA-GOV-001 \[recorded=blocked/);
-	assert.ok(context.indexOf('- SQA-WEB-001 [') < context.indexOf('- SQA-GOV-001 ['));
-	assert.ok(context.indexOf('- SQA-QUA-001 [') < context.indexOf('# Reviewer-only assurance controls'));
+	assert.doesNotMatch(context, /SQA-QUA-001 \[PENDING/);
+	assert.doesNotMatch(context, /SQA-GOV-001 \[recorded=blocked/);
+	assert.match(context, /Recorded result index: SQA-GOV-001=blocked/);
+	assert.ok(context.indexOf('- SQA-WEB-001 [') < context.indexOf('# Reviewer-only assurance controls'));
+	assert.match(context, /hidden until every browser-first control is recorded/);
 	assert.match(context, /controls batch of up to 12/);
 	assert.match(context, /Browser tool budget: 2\/120 used; 118 remaining/);
 	assert.match(context, /browser_sqa_smoke once with action=accessibility/i);
@@ -43,4 +44,6 @@ test('SQA context makes progress explicit and orders technical smoke checks befo
 	assert.ok(context.includes(`Input-token safety budget: 0/${SQA_INPUT_TOKEN_BUDGET} used`));
 	assert.ok(context.includes(`Workflow checkpoint: 2/${SQA_BROWSER_WORKFLOW_CHECKPOINT} browser actions`));
 	assert.match(context, /two verified locator strategies/);
+	assert.match(context, /controls batch for SQA-WEB-001, SQA-WEB-004,/);
+	assert.match(context, /controls batch for SQA-WEB-002 and SQA-WEB-003/);
 });

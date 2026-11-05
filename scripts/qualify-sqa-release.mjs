@@ -11,7 +11,8 @@ import { createSqaTestServer } from './sqa-test-runtime.mjs';
 
 // Explicit opt-in: uses a real model, but only against this controlled fixture.
 const { values } = parseArgs({ options: {
-	'env-file': { type: 'string' }, 'output-dir': { type: 'string' }, 'timeout-minutes': { type: 'string', default: '12' }
+	'env-file': { type: 'string' }, 'output-dir': { type: 'string' },
+	'target-url': { type: 'string' }, 'timeout-minutes': { type: 'string', default: '12' }
 } });
 assert.ok(values['env-file'], 'Pass --env-file with the existing gateway environment path.');
 const timeoutMs = Number(values['timeout-minutes']) * 60_000;
@@ -34,7 +35,11 @@ const fixture = createServer((req, res) => {
 	res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SQA release fixture</title><style>body{font:18px system-ui;line-height:1.5;max-width:760px;margin:24px auto;padding:0 16px}nav{display:flex;flex-wrap:wrap;gap:16px}input,button{font:inherit;max-width:100%;box-sizing:border-box;padding:8px;margin:8px 0}form{display:grid}a:focus-visible,input:focus-visible,button:focus-visible{outline:3px solid #1455cc}</style></head><body>${extra}</body></html>`);
 });
 await new Promise((resolve, reject) => { fixture.once('error', reject); fixture.listen(0, '127.0.0.1', resolve); });
-const target = `http://127.0.0.1:${fixture.address().port}/`;
+const fixtureTarget = `http://127.0.0.1:${fixture.address().port}/`;
+const externalTarget = Boolean(values['target-url']);
+const targetUrl = new URL(values['target-url'] || fixtureTarget);
+assert.ok(['http:', 'https:'].includes(targetUrl.protocol), 'The qualification target must use HTTP or HTTPS.');
+const target = targetUrl.href;
 const runtime = await createSqaTestServer(path.join(directory, 'runtime'), { authRequired: true, envFile });
 const password = `Controlled qualification ${randomUUID()}`;
 const account = { email: `sqa-release-${Date.now()}@local.example`, password, displayName: 'SQA live release qualification' };
@@ -42,7 +47,11 @@ let api;
 let csrf;
 let sessionId;
 let finalSession;
-const result = { status: 'running', startedAt: new Date().toISOString(), source: 'local controlled SQA release fixture', modelBacked: true };
+const result = {
+	status: 'running', startedAt: new Date().toISOString(),
+	source: externalTarget ? 'explicitly authorized external SQA target' : 'local controlled SQA release fixture',
+	target, modelBacked: true
+};
 async function json(method, route, data) {
 	const response = await api.fetch(`/api${route}`, { method, headers: { Origin: runtime.base, ...(!['GET', 'HEAD'].includes(method) && csrf ? { 'X-CSRF-Token': csrf } : {}) }, ...(data === undefined ? {} : { data }) });
 	assert.ok(response.ok(), `${method} ${route} returned HTTP ${response.status()}.`);
@@ -71,11 +80,16 @@ try {
 	result.provider = config.provider; result.model = config.model;
 	const created = await json('POST', '/sqa/sessions', {
 		authorizationConfirmed: true, engine: 'chromium', profiles: ['core'], attributes: ['web_application', 'user_interface'],
-		target: { name: 'SQA release fixture', release: 'sqa-release-candidate-2026-11-05', environment: 'isolated local qualification' },
-		scopeNotes: 'Public-only controlled loopback fixture, no credentials, accounts, payment, media, external services, documents or reviewer evidence. Test the six technical browser controls first. Use all four bounded browser_sqa_smoke actions (accessibility, responsive, navigation, form_validation) and diagnostics. Local form submission changes only the page output. Block missing documentary prerequisites honestly; do not infer them from this sample.'
+		target: { name: externalTarget ? targetUrl.hostname : 'SQA release fixture', release: 'sqa-release-candidate-2026-11-06', environment: externalTarget ? 'isolated external qualification' : 'isolated local qualification' },
+		scopeNotes: externalTarget
+			? 'Public-only authorized target. Do not sign in, submit personal data, create accounts, upload files, make purchases or leave the target origin. Test the six technical browser controls first. Use all four bounded browser_sqa_smoke actions (accessibility, responsive, navigation, form_validation) and diagnostics. Exercise only harmless public interactions. Block unavailable workflows and missing documentary prerequisites honestly.'
+			: 'Public-only controlled loopback fixture, no credentials, accounts, payment, media, external services, documents or reviewer evidence. Test the six technical browser controls first. Use all four bounded browser_sqa_smoke actions (accessibility, responsive, navigation, form_validation) and diagnostics. Local form submission changes only the page output. Block missing documentary prerequisites honestly; do not infer them from this sample.'
 	});
 	sessionId = created.id; assert.equal(created.mode, 'sqa'); assert.notEqual(created.qaExecutionMode, 'hybrid');
-	await json('POST', `/sessions/${sessionId}/message`, { text: `${target} Run this explicitly authorized public-only SQA release qualification. Verify initial rendering, navigation to Privacy and back, native invalid/valid email behavior, keyboard/semantics, narrow-screen layout and diagnostics. Use browser_sqa_smoke for all four actions. Finish all six SQA-WEB technical controls with observed evidence. Batch missing reviewer-only documents as blocked, complete the host plan and publish finish_sqa_assessment. There are no credentials or documents to request. Do not expand into media, checkout, outside origins or an account workflow.` });
+	const instruction = externalTarget
+		? `${target} Run this explicitly authorized public-only SQA release qualification. Verify initial rendering, safe public navigation and return, any harmless visible form validation without submitting data, keyboard/semantics, narrow-screen layout and diagnostics. Use browser_sqa_smoke for all four actions. Finish all six SQA-WEB technical controls with observed evidence or a precise target-specific blocker. Batch missing reviewer-only documents as blocked, complete the host plan and publish finish_sqa_assessment. There are no credentials or documents to request. Do not sign in, create an account, upload, purchase, leave the target origin or submit personal data.`
+		: `${target} Run this explicitly authorized public-only SQA release qualification. Verify initial rendering, navigation to Privacy and back, native invalid/valid email behavior, keyboard/semantics, narrow-screen layout and diagnostics. Use browser_sqa_smoke for all four actions. Finish all six SQA-WEB technical controls with observed evidence. Batch missing reviewer-only documents as blocked, complete the host plan and publish finish_sqa_assessment. There are no credentials or documents to request. Do not expand into media, checkout, outside origins or an account workflow.`;
+	await json('POST', `/sessions/${sessionId}/message`, { text: instruction });
 	const started = Date.now();
 	let progress;
 	while (Date.now() - started < timeoutMs) {
@@ -95,9 +109,21 @@ try {
 	assert.ok(assessment.results.every(item => item.status !== 'not_assessed'));
 	assert.equal(assessment.verdict, 'blocked', 'Missing reviewer documents must keep this browser-only assessment blocked.');
 	const technical = assessment.results.filter(item => /^SQA-WEB-00[1-6]$/.test(item.controlId));
-	assert.equal(technical.length, 6); assert.ok(technical.every(item => item.status === 'pass'), 'A healthy fixture technical control did not pass; inspect the retained session.');
+	assert.equal(technical.length, 6);
+	if (externalTarget) assert.ok(technical.every(item => item.status !== 'not_assessed'), 'An external-target technical control was not assessed.');
+	else assert.ok(technical.every(item => item.status === 'pass'), 'A healthy fixture technical control did not pass; inspect the retained session.');
 	const activities = finalSession.activities.filter(item => item.status === 'done' && item.toolName?.startsWith('browser_'));
-	for (const action of ['accessibility', 'responsive', 'navigation', 'form_validation']) assert.ok(activities.some(item => item.toolName === 'browser_sqa_smoke' && item.input?.action === action), `Missing ${action} smoke activity.`);
+	for (const action of ['accessibility', 'responsive', 'navigation', 'form_validation']) {
+		const completed = activities.some(item => item.toolName === 'browser_sqa_smoke' && item.input?.action === action);
+		if (externalTarget && action === 'form_validation' && !completed) {
+			const formControl = technical.find(item => item.controlId === 'SQA-WEB-003');
+			assert.equal(formControl?.status, 'blocked', 'A missing external form smoke must produce a precise blocked form control.');
+			assert.match(formControl?.rationale ?? '', /\b(?:no|none|absent|requires?|could not|unsupported)\b.*\b(?:form|field|validation)\b|\b(?:form|field|validation)\b.*\b(?:no|none|absent|requires?|could not|unsupported)\b/i,
+				'The external form blocker does not explain why the bounded smoke was unavailable.');
+			continue;
+		}
+		assert.ok(completed, `Missing ${action} smoke activity.`);
+	}
 	assert.ok(finalSession.tokenUsage?.totalTokens > 0, 'The live run must retain model usage.');
 	let evidenceCount = 0;
 	for (const control of assessment.results) {

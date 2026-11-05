@@ -44,6 +44,7 @@ test('SQA tool contract supports multi-evidence observations and bounded blocker
 
 test('SQA record tool accepts an atomic controls batch without a new runtime permission', async () => {
 	const candidate = session();
+	candidate.sqa.scope.applicableControlIds = ['SQA-QUA-001', 'SQA-TRC-002'];
 	const record = createSqaTools(candidate, store()).find(tool => tool.name === 'record_sqa_control');
 	const result = await record.run({ controls: [{
 		control_id: 'SQA-QUA-001',
@@ -57,6 +58,24 @@ test('SQA record tool accepts an atomic controls batch without a new runtime per
 	assert.equal(result.success, true);
 	assert.equal(result.count, 2);
 	assert.deepEqual(result.results.map(item => item.control_id).sort(), ['SQA-QUA-001', 'SQA-TRC-002']);
+});
+
+test('SQA record tools keep non-technical work behind the six web controls', async () => {
+	const candidate = session();
+	const tools = createSqaTools(candidate, store());
+	const record = tools.find(tool => tool.name === 'record_sqa_control');
+	const blockers = tools.find(tool => tool.name === 'record_sqa_blockers');
+	const premature = await record.run({
+		control_id: 'SQA-QUA-001', status: 'blocked', rationale: 'No reviewed quality plan.'
+	});
+	assert.equal(premature.success, false);
+	assert.match(premature.error, /Finish the six technical web controls first/);
+	assert.match(premature.error, /SQA-WEB-001/);
+	const prematureBatch = await blockers.run({ controls: [{
+		control_id: 'SQA-GOV-001', rationale: 'No reviewed risk register.'
+	}] });
+	assert.equal(prematureBatch.success, false);
+	assert.match(prematureBatch.error, /Finish the six technical web controls first/);
 });
 
 test('finish readiness reports missing controls, incomplete work, and recent in-flight browser tools', () => {
@@ -103,6 +122,7 @@ test('safety closeout is rejected early and finishes exhausted runs in one call'
 	assert.equal(exhausted.todos.every(todo => todo.status === 'completed'), true);
 	assert.deepEqual(finishReadiness(exhausted, fixedNow()).pendingControlIds, []);
 	assert.equal(exhausted.sqa.observations.every(item => item.status === 'blocked'), true);
+	assert.ok(exhausted.sqa.observations.every(item => item.rationale.startsWith('Stopped early: budget reached.')));
 	assert.ok(exhausted.sqa.observations[0].rationale.includes(`${SQA_INPUT_TOKEN_BUDGET}/${SQA_INPUT_TOKEN_BUDGET}`));
 });
 

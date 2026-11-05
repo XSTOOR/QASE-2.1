@@ -1,6 +1,24 @@
 # QASE SQA release candidate
 
-Release: `qase-sqa-2026-11-05-readiness-r1`. UI: `20261105-4`.
+Release: `qase-sqa-2026-11-06-efficiency-r1`. UI: `20261106-1`.
+
+SQA browser execution now checkpoints after every recorded browser workflow and
+starts the next workflow with a compact continuation. Pending controls remain in
+the prompt, while already recorded controls are represented by a concise result
+index. The six technical web controls are now a host-enforced first phase and
+related results are recorded in bounded batches; later control descriptions stay
+hidden until their phase begins. The safety budget is unchanged, but repeated
+provider input and premature assurance work are reduced so the six technical
+browser controls can finish before documentary review. If the
+limit is reached, unresolved controls are now grouped under **Stopped early:
+budget reached** instead of being mixed with missing documents or browser
+obstacles. See [SQA execution efficiency](docs/sqa-execution-efficiency-2026-11-06.md).
+The controlled live gateway qualification finalized all 30 applicable controls
+with all six technical browser controls passing.
+A fresh isolated Drytis qualification also finalized all 30 controls: five
+technical controls passed and form validation was precisely blocked because the
+public site exposes no supported email GET form; no technical control remained
+unassessed.
 
 SQA launch now updates when a saved device finishes restoring, and explains
 missing URL, build, environment, permission or device requirements beside Start.

@@ -4,8 +4,8 @@ This is the operator runbook for the reviewed release targeting **https://qase.d
 
 ## Required release
 
-- Release ID: `qase-sqa-2026-11-05-readiness-r1`.
-- UI version: `20261105-4`, including the SQA launch-readiness fix, evidence review/inspection workflow and the inherited hybrid discovery, cancellation and publication fixes. See [SQA candidate review](docs/sqa-release-candidate-2026-11-05.md) for source identity and validation scope.
+- Release ID: `qase-sqa-2026-11-06-efficiency-r1`.
+- UI version: `20261106-1`, including per-workflow SQA context compaction, explicit budget-stop reporting, the SQA launch-readiness fix, evidence review/inspection workflow and the inherited hybrid discovery, cancellation and publication fixes. See [SQA execution efficiency](docs/sqa-execution-efficiency-2026-11-06.md) and [SQA candidate review](docs/sqa-release-candidate-2026-11-05.md) for validation scope and source identity.
 - The application root is the extracted folder containing `package.json`, `public/`, and `server/`. It is a Node.js Express application serving static ES modules, NOT a Next.js or Vite build. Do not deploy the parent workspace, an old `apps/` project, or a generated `dist/` directory.
 - Run Node.js 22 or 24. Keep `package-lock.json` and Playwright `1.62.0` unchanged; use `npm ci`, not dependency upgrades.
 - Preserve all current QA, SQA, Founder, authentication, reports, browser/runtime, device matrix, and UI functionality. Do not redesign or replace the application during deployment.
