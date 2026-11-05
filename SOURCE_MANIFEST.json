@@ -16,7 +16,7 @@
     },
     {
       "path": ".github/workflows/verify.yml",
-      "sha256": "61a1f199c404a756dc3908dd063d8d00502ec18017283031a1132360858aed8e"
+      "sha256": "48cb13bed8d7a6a8684d8a83f5d7c9214734a497f36ead29ffaef48a51410284"
     },
     {
       "path": ".gitignore",
@@ -88,7 +88,7 @@
     },
     {
       "path": "DEPLOYMENT_PROMPT.md",
-      "sha256": "08a72faa61d03447979b9854b85131f9d91348d09dd9eef8be7798fc5dc88da7"
+      "sha256": "ab19a598fa0d39eead35d8e9c54e695874f1fcaed9da66f8c78653302266989d"
     },
     {
       "path": "Dockerfile",
@@ -105,6 +105,10 @@
     {
       "path": "docs/brand-system.md",
       "sha256": "75c3b2835cd14d82854383e33df377097c8dc9ca2406a77908d77da3293ebb1d"
+    },
+    {
+      "path": "docs/deployment-handoff-2026-11-05.md",
+      "sha256": "3b9b373404c8ab083f23bccad864848f4059c742cf8bb370ef58110da738c57d"
     },
     {
       "path": "docs/discovery-first-qa-repair-2026-11-05.md",
@@ -907,6 +911,10 @@
       "sha256": "14452d8be06e18476137897be0cc83077c354df3909c6e6b6d18e1236f05d74a"
     },
     {
+      "path": "scripts/production-image-identity.mjs",
+      "sha256": "a113e19071736ffea79b1bcf843a0b75c27040024d1f634224a7400bd28558a6"
+    },
+    {
       "path": "scripts/prune-local.mjs",
       "sha256": "b77d62d4465426b8abbb7d23f224a1c9d1f3769206eb8e1c14b336cee4ce953d"
     },
@@ -992,7 +1000,7 @@
     },
     {
       "path": "scripts/smoke-production-image.mjs",
-      "sha256": "7cc091a27cab35a328c4254bc589ee5df396b6705712a0a83daaac270a94dcf0"
+      "sha256": "867d8c7bf700850c63c063f113676c9506ae6f391f3907e0c16dfd2f76cd163d"
     },
     {
       "path": "scripts/start-jev-local.mjs",
@@ -1836,7 +1844,7 @@
     },
     {
       "path": "server/hybridGatewayQualification.test.js",
-      "sha256": "f8288a351902aa4431f50df13c287c4fabc5d320e2acc5bfb2d05c8a3b31f567"
+      "sha256": "6b9f8a3cd43161f1879fcadee38ee0056a55446464a6b4980226ea807d138429"
     },
     {
       "path": "server/hybridLifecycle.integration.test.js",
@@ -2491,6 +2499,10 @@
       "sha256": "5fe9953afd271349872b6e04cbaf39d36e8386261ed508e05cae04addca5e812"
     },
     {
+      "path": "server/productionImageIdentity.test.js",
+      "sha256": "a7ce9ebd85b1d2783aa1d73a73c63e1b7d0b64dae82a2658283f473872fd3a3f"
+    },
+    {
       "path": "server/prompt.js",
       "sha256": "104ba80e369c90ee6634308bddfe928ea1c608aeaaefbb4138ba4758e6fe9f57"
     },
@@ -2716,7 +2728,7 @@
     },
     {
       "path": "server/runtimeFinalization.integration.test.js",
-      "sha256": "c3d976bc146b06abe62c825420b7710f7ec4387fd352be1bf24bff596c969645"
+      "sha256": "18cf4bbfa38e902914a0c5e0ca006aca940f20704c669e50e4b1ff02acc179fa"
     },
     {
       "path": "server/runtimeIdentity.js",

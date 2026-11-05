@@ -5,7 +5,11 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Installation, browser regressions, image build and image smoke share this
+    # finite CI deadline. It does not change any agent execution budget.
+    timeout-minutes: 90
+    env:
+      QASE_IMAGE: qase:sha-${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -13,8 +17,26 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium firefox webkit
-      - run: npm run verify
+      - name: Install native browser dependencies
+        shell: bash
+        run: |
+          set -o pipefail
+          npx playwright install --with-deps chromium firefox webkit 2>&1 | tee "$RUNNER_TEMP/qase-browser-installation.log"
+      - name: Verify source and regression suite
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run verify 2>&1 | tee "$RUNNER_TEMP/qase-verification.log"
+      - name: Retain verification diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: qase-verification-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/qase-browser-installation.log
+            ${{ runner.temp }}/qase-verification.log
+          if-no-files-found: warn
+          retention-days: 7
       - name: Verify dashboard navigation and secure credential handoff
         run: node scripts/qualify-live-preview.mjs
       - name: Verify release content when using the delivered snapshot
@@ -22,9 +44,26 @@ jobs:
       - name: Validate production image
         run: |
           RELEASE_ID=$(node -p "JSON.parse(require('fs').readFileSync('public/release.json')).releaseId")
-          docker build --build-arg QASE_RELEASE_ID="$RELEASE_ID" --build-arg QASE_SOURCE_REVISION="$GITHUB_SHA" --tag qase:verification .
+          docker build --build-arg QASE_RELEASE_ID="$RELEASE_ID" --build-arg QASE_SOURCE_REVISION="$GITHUB_SHA" --tag "$QASE_IMAGE" .
       - name: Smoke test hardened production image without live model calls
-        run: npm run test:production-image -- qase:verification
+        run: npm run test:production-image -- "$QASE_IMAGE" "$GITHUB_SHA"
+      - name: Export the smoke-tested image for a Docker-capable deployment host
+        shell: bash
+        run: |
+          set -o pipefail
+          docker save "$QASE_IMAGE" | gzip > "qase-image-${GITHUB_SHA}.tar.gz"
+          sha256sum "qase-image-${GITHUB_SHA}.tar.gz" > "qase-image-${GITHUB_SHA}.tar.gz.sha256"
+          docker image inspect "$QASE_IMAGE" --format '{{json .}}' > "qase-image-${GITHUB_SHA}.json"
+      - name: Retain production image and identity
+        uses: actions/upload-artifact@v4
+        with:
+          name: qase-production-image-${{ github.sha }}
+          path: |
+            qase-image-${{ github.sha }}.tar.gz
+            qase-image-${{ github.sha }}.tar.gz.sha256
+            qase-image-${{ github.sha }}.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Package reviewed source
         run: npm run package
       - uses: actions/upload-artifact@v4
