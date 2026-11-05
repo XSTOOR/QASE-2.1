@@ -15,6 +15,8 @@ import { test } from 'node:test';
 import { createApplication } from './app.js';
 import { createInstanceAccess } from './instanceAccess.js';
 import { createConfiguredApplicationServices } from './serviceFactory.js';
+import { createLocalMatrixBackend } from './matrixService.js';
+import { createLocalTestCaseBackend } from './testCaseService.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -30,7 +32,10 @@ const TENANT = Object.freeze({
 async function startApp() {
 	const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-matrix-api-'));
 	const composed = await createConfiguredApplicationServices({
-		stateDirectory: stateDir,
+		// The factory accepts backend factories, not a stateDirectory option.
+		// Keep these records out of other concurrently running API fixtures.
+		createLocalMatrixBackend: () => createLocalMatrixBackend({ stateDir }),
+		createLocalTestCaseBackend: () => createLocalTestCaseBackend({ stateDir }),
 		tenantContext: TENANT
 	});
 	const services = composed.services;
@@ -235,11 +240,17 @@ test('POST item retry refuses terminal-success and unknown ids; FAILED item retr
 		// Drive a FAILED item through the bounded retry (max 2), third refuses.
 		const failed = run.items.find((item) => item.status === 'PENDING');
 		await app.services.matrix.updateItem(run.id, failed.id, { status: 'FAILED', reason: 'seed failure', sessionId: 'seed-session' });
+		// Model the active worker whose failures this route test supplies below.
+		// Otherwise retry starts real external probes while we overwrite its state.
+		await app.services.matrix._setStatus(run.id, 'running', {});
 		// Drive the bounded retry (max 2): after each retry the item is QUEUED
 		// for a fresh execution; simulate that execution failing again, then
 		// retry once more. The third retry must hit the bound → 409.
 		const first = await app.json(`/api/matrix-runs/${run.id}/items/${failed.id}/retry`, { method: 'POST' });
 		assert.ok([200, 202].includes(first.status), `retry 1: ${JSON.stringify(first.body)}`);
+		const queued = (await app.services.matrix.get(run.id)).items.find(item => item.id === failed.id);
+		assert.equal(queued.status, 'QUEUED');
+		assert.equal(queued.retryCount, 1);
 		await app.services.matrix.updateItem(run.id, failed.id, { status: 'FAILED', reason: 'failed again', sessionId: 'seed-session-2' });
 		const second = await app.json(`/api/matrix-runs/${run.id}/items/${failed.id}/retry`, { method: 'POST' });
 		assert.ok([200, 202].includes(second.status), `retry 2: ${JSON.stringify(second.body)}`);

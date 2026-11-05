@@ -23,6 +23,9 @@ async function fixture(t, content) {
   await context.route('**/*', route => isolation.decision(route.request()) ? route.abort('blockedbyclient') : route.fallback());
   const page = await context.newPage(), origin = `http://127.0.0.1:${server.address().port}`;
   await page.goto(origin);
+  // Navigation can finish before the first compositor frame on a cold host.
+  // Start control-level readiness checks after the fixture has actually painted.
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   return { page, context, isolation, origin, requests, options: { protectInputs: page => isolation.protect(page) } };
 }
 
@@ -40,7 +43,7 @@ test('fixed input matrix is bounded, synthetic and includes negative type, white
 test('real inputs and negative paths run without submission, preserve private fields and block delayed autosaves after return', { timeout: 30000 }, async t => {
   const f = await fixture(t, `<form onsubmit="window.submits++;event.preventDefault()"><input id="text" name="message" required minlength="2" maxlength="12" oninput="fetch('/save',{method:'POST',body:this.value}).catch(()=>{});setTimeout(()=>fetch('/late?value='+encodeURIComponent(this.value)).catch(()=>{}),900)"><input id="email" type="email" required><input id="private" value="private-original-value"><input id="token" name="api_token"><button>Send</button></form><script>window.submits=0;window.inputs=0;document.addEventListener('input',()=>window.inputs++)</script>`);
   const result = await runLiveFormChecks(f.page, f.options);
-  assert.equal(result.formTesting.mode, 'live_non_submitting'); assert.equal(result.formTesting.fieldsFilled, 2);
+  assert.equal(result.formTesting.mode, 'live_non_submitting'); assert.equal(result.formTesting.fieldsFilled, 2, JSON.stringify(result));
   assert.ok(result.formTesting.casesExecuted >= 8); assert.ok(result.formTesting.negativeCases >= 3);
   assert.equal(result.formTesting.submissionExecuted, false); assert.equal(result.formTesting.restored, true);
   assert.ok(await f.page.evaluate(() => window.inputs) >= 8); assert.equal(await f.page.evaluate(() => window.submits), 0);

@@ -4,6 +4,7 @@ import { chromium } from 'playwright';
 import { attachBrowserBridge } from './browserBridge.js';
 import { captureRuntimeFacts } from './runtimeCapture.js';
 import { createQaTools } from './qaTools.js';
+import { resolveExecution } from './browserstackProvider.js';
 
 test('actual Chromium identity is available to the finalizer before turn cleanup', async () => {
 	const browser = await chromium.launch({ headless: true });
@@ -21,13 +22,18 @@ test('actual Chromium identity is available to the finalizer before turn cleanup
 	const store = { async commit() {}, publish() {}, subscribe() { return () => {}; } };
 	let bridge;
 	try {
-		bridge = await attachBrowserBridge(session, service, store, { environment });
+		// Hosted runners can have a different branded Chrome version installed.
+		// Select the actual available version; the identity gate still must verify it.
+		const execution = await resolveExecution(environment, null);
+		environment.browserVersion = execution.browserSupport?.detectedVersion ?? browser.version();
+		bridge = await attachBrowserBridge(session, service, store, { environment, execution });
 		await service.ensurePage();
 		assert.equal(session.runtimeFacts, undefined, 'reproduces lazy capture before finalization');
 		const tools = createQaTools(session, store, { captureRuntimeFacts: () => captureRuntimeFacts(session, bridge) });
 		const result = await tools[1].run({ verdict: 'pass_with_issues', summary: 'Browser observation recorded.', covered: ['Browser observation'], not_covered: ['Authentication not tested without credentials.'] });
-		assert.equal(result.verdict, 'pass_with_issues');
+		assert.equal(result.verdict, 'pass_with_issues', JSON.stringify(session.report));
 		assert.equal(session.report.runtimeIdentity.browserCode, 'chrome');
+		assert.equal(session.report.runtimeIdentity.browserVersion.split('.')[0], environment.browserVersion.split('.')[0]);
 		assert.equal(session.report.runtimeIdentity.platform, 'macos');
 		assert.equal(session.report.attestation.execution_type, 'SIMULATED');
 		assert.equal(session.report.bySeverity.medium, 1);

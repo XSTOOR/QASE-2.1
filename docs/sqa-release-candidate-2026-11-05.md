@@ -44,6 +44,32 @@ thirteen evidence records, exports, access isolation and restart persistence.
 Its npm audit reported zero findings. These are historical results for the
 pre-merge source, not an assertion that this merged candidate has passed CI.
 
+The merged candidate `55cced1` passed local verification (2,262 passes, 31
+skips, no failures), the dashboard fixture and both hosted SQA acceptance jobs
+(Ubuntu and Windows). Its live GLM fixture passed all six technical controls,
+verified 18 evidence bundles and covered all 30 controls: 13 passed and 17
+remained blocked for missing assurance artifacts. Historical exports, restart
+persistence, account isolation and credential scans passed. These results do
+not establish the missing assurance artifacts or optional qualified mode.
+
+The full Linux release job for that commit failed before image validation.
+Follow-up test corrections retain the gateway mock's pending I/O handle until
+abort, select the installed browser version for runtime identity verification,
+and isolate matrix/test-case records through supported backend factories. The
+retry route fixture models an active worker rather than starting external
+probes while overwriting that worker's state. Runtime identity, timeout,
+retry-limit and honest-status assertions remain required. Hosted verification
+of a follow-up commit, including the image checks, remains outstanding until
+its workflow succeeds. Do not interpret the local results as a green image gate.
+
+A subsequent Node 22 local run exposed a cold first-paint race in the live
+input fixture. Its control-readiness check correctly returned a coverage gap
+before the first compositor frame. The fixture now waits for paint before
+starting trials and includes result diagnostics on a field-count failure.
+Five separate repeat runs passed with the same input, restoration, delayed
+autosave and no-submission assertions. The production readiness window and
+network quarantine were not relaxed; full-suite revalidation remains required.
+
 For the exact committed source, require `npm run audit:dependencies`,
 `npm run verify`, `npm run test:sqa-release`, `npm run release:verify`, the
 production-image build and `npm run test:production-image`. The GitHub checks on

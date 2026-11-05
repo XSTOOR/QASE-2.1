@@ -7,7 +7,17 @@ function gatewayFixture() {
   return async (url, options) => {
     const body = JSON.parse(options.body);
     if (url.includes('/decisions')) return Response.json({ model: 'typesafe/jev-1.13-20260917', answers: { state: { type: 'choice', choice: 'unresolved' } }, usage: { input_tokens: 2, output_tokens: 2 } });
-    if (body.max_tokens === 128) return new Promise((resolve, reject) => { const cancel = () => reject(options.signal.reason); if (options.signal.aborted) cancel(); else options.signal.addEventListener('abort', cancel, { once: true }); });
+    if (body.max_tokens === 128) return new Promise((resolve, reject) => {
+      // Real pending network I/O keeps Node alive; an inert promise does not.
+      // AbortSignal.timeout uses an unref'ed timer, so model the I/O handle too.
+      const deadline = setTimeout(() => {
+        options.signal.removeEventListener('abort', cancel);
+        reject(new Error('Gateway fixture did not receive cancellation'));
+      }, 5000);
+      const cancel = () => { clearTimeout(deadline); reject(options.signal.reason); };
+      if (options.signal.aborted) cancel();
+      else options.signal.addEventListener('abort', cancel, { once: true });
+    });
     if (body.stream) return new Response(`data: ${JSON.stringify({ model: OPUS_MODEL, choices: [{ delta: { content: 'OK' } }] })}\n\ndata: ${JSON.stringify({ model: OPUS_MODEL, choices: [], usage: { prompt_tokens: 2, completion_tokens: 1 } })}\n\ndata: [DONE]\n\n`, { headers: { 'Content-Type': 'text/event-stream' } });
     let message = { content: 'OK' };
     if (body.tools && body.tool_choice !== 'none') message = { content: null, tool_calls: (body.parallel_tool_calls ? ['alpha', 'beta'] : ['alpha']).map((value, index) => ({ id: `call-${index}`, type: 'function', function: { name: 'qa_echo', arguments: JSON.stringify({ value }) } })) };
