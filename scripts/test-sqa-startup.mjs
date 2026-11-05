@@ -29,18 +29,20 @@ async function scenario({ baseline = false, mobile = false } = {}) {
 	const bootRelease = new Promise(resolve => { releaseBoot = resolve; });
 	const bootHeld = new Promise(resolve => { signalHeld = resolve; });
 	let held = false;
+	let page;
+	const errors = [], failedRequests = [];
 	try {
 		const registration = await context.request.post(`${base.origin}/api/auth/register`, {
 			data: { email: `sqa-startup-${Date.now()}-${mobile ? 'mobile' : 'desktop'}@local.example`, password: 'Local SQA startup regression 2026', displayName: 'SQA startup regression' }
 		});
 		assert.equal(registration.status(), 201);
-		const page = await context.newPage();
+		page = await context.newPage();
 		await page.route('**/api/sessions/*/message', async route => {
 			modelRequests++;
 			await route.fulfill({ status: 503, json: { error: 'Model turns are disabled in startup acceptance.' } });
 		});
-		const errors = [];
 		page.on('pageerror', error => errors.push(error.message));
+		page.on('requestfailed', request => failedRequests.push({ path: new URL(request.url()).pathname, error: request.failure()?.errorText }));
 		if (baseline) {
 			// Serve the old launcher/bootstrap behavior to prove this test catches the bug.
 			const oldSource = source
@@ -62,10 +64,15 @@ async function scenario({ baseline = false, mobile = false } = {}) {
 			? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Controlled catalog failure.' }) })
 			: route.continue());
 		await page.goto(base.origin, { waitUntil: 'domcontentloaded' });
-		await Promise.race([bootHeld, new Promise((_, reject) => {
-			const timer = setTimeout(() => reject(new Error('Boot request was not observed.')), 10_000);
-			timer.unref();
-		})]);
+		// Cold Firefox on hosted Windows can finish module boot after ten
+		// seconds. Keep the request held, with the normal 30s browser deadline.
+		let bootTimer;
+		try {
+			await Promise.race([bootHeld, new Promise((_, reject) => {
+				bootTimer = setTimeout(() => reject(new Error('Boot request was not observed within 30 seconds.')), 30_000);
+				bootTimer.unref();
+			})]);
+		} finally { clearTimeout(bootTimer); }
 		await page.locator('#new-sqa').click();
 		await page.locator('#sqa-catalog-retry').waitFor({ state: 'visible' });
 		releaseBoot();
@@ -96,6 +103,12 @@ async function scenario({ baseline = false, mobile = false } = {}) {
 			console.log(`${mobile ? 'Mobile' : 'Desktop'} passed: immediate SQA entry, retry, cancel, and return after QA setup.`);
 		}
 		assert.deepEqual(errors, []);
+	} catch (error) {
+		const diagnostic = { browser: browserName, startup: 'failed', scenario: baseline ? 'negative-control' : mobile ? 'mobile' : 'desktop', error: error.message, pageErrors: errors, failedRequests,
+			page: await page?.evaluate(() => ({ path: location.pathname, page: document.body.dataset.page, loading: document.body.dataset.pageLoading, authGateVisible: !document.querySelector('#auth-gate')?.hidden })).catch(() => null) };
+		await writeFile(`${directory}/result.json`, JSON.stringify(diagnostic, null, 2));
+		await page?.screenshot({ path: `${directory}/failure.png` }).catch(() => {});
+		throw error;
 	} finally {
 		releaseBoot();
 		await context.close();

@@ -244,7 +244,7 @@
     },
     {
       "path": "docs/sqa-release-candidate-2026-11-05.md",
-      "sha256": "13e41218456cb119a9612bc2dd18f215e8ac9917796ab303fb1c5d4aec151985"
+      "sha256": "9f8124da2f166af5dd2330d5c731e4ff44a4f87a9c4467ced7afb9647f06fb82"
     },
     {
       "path": "docs/sqa-release-readiness.md",
@@ -980,7 +980,7 @@
     },
     {
       "path": "scripts/qualify-live-preview.mjs",
-      "sha256": "6f5832f90ad741e2164aa1d4ab779763d610da64d4482da7de3ba8da0d7d8831"
+      "sha256": "e3fe29951b4830d7c278be48a13e2307c74ab2c0891e89cbf73b5aea4f4b92b7"
     },
     {
       "path": "scripts/qualify-qa-scheduler.mjs",
@@ -1088,7 +1088,7 @@
     },
     {
       "path": "scripts/test-sqa-startup.mjs",
-      "sha256": "add24127713202fbdb108dd58e5b3e2dfddc7c09f0eb59fe09d455f42093898d"
+      "sha256": "4c31598e515f3299d86c5b6ccaba525f5b9558d3516ad3eacf144178bc312fc8"
     },
     {
       "path": "scripts/test-ui-responsive.mjs",

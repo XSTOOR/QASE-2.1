@@ -85,6 +85,17 @@ a pending version-only lookup. Five regressions cover these cases; three fail
 against the previous implementation. Matrix route isolation alone did not fix
 the Linux timeout, and image validation remains pending until hosted CI passes.
 
+At `ce5ce17`, the full hosted Linux suite passed 2,268 tests with 30 skips and
+zero failures, confirming the matrix timeout was resolved. Subsequent fixtures
+exposed two further readiness assumptions. Dashboard credential interaction now
+waits for completed workspace boot and stream resync, then explicitly asserts
+the rejected request's HTTP 400 response. Cold Firefox boot observation uses
+the normal 30-second browser deadline instead of ten seconds, with failure
+screenshots and page/request diagnostics retained in the existing artifacts.
+The held-boot negative control, no-model-call assertions, consent requirements
+and secure-form checks remain mandatory. These changes affect qualification
+scripts; application modules remain identical to the Linux-verified candidate.
+
 For the exact committed source, require `npm run audit:dependencies`,
 `npm run verify`, `npm run test:sqa-release`, `npm run release:verify`, the
 production-image build and `npm run test:production-image`. The GitHub checks on

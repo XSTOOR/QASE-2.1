@@ -164,6 +164,9 @@ try {
   session.qaExecutionMode = 'hybrid'; session.hybrid = { authentication: { status: 'unrequested', required: true } };
   session.status = 'awaiting_input'; session.pendingQuestion = { question: 'Provide test account credentials securely or continue public-only?', credentialLike: true, options: ['Provide test account', 'Continue public-only'] };
   await page.reload();
+  // The initial session render precedes the stream's resync render. Finish
+  // workspace boot before typing into the final credential form.
+  await page.waitForFunction(() => document.body.dataset.page === 'run' && !document.body.dataset.pageLoading);
   const credentialForm = page.locator('.cred-form'); await credentialForm.waitFor();
   await credentialForm.getByLabel('Username or email', { exact: true }).fill('fixture@example.invalid');
   await credentialForm.getByLabel('Password', { exact: true }).fill('fixture-password');
@@ -171,8 +174,10 @@ try {
   assert.equal(await credentialForm.getByLabel('One-time code or extra field').count(), 0);
   await credentialForm.locator('input[type=checkbox]').check();
   await credentialForm.getByLabel('Expected signed-in page URL').fill('https://outside.test/');
-  const refused = page.waitForResponse(response => response.url().endsWith('/credentials') && response.status() === 400);
-  await credentialForm.getByRole('button', { name: 'Store and continue' }).click(); await refused;
+  const refused = page.waitForResponse(response => response.url().endsWith('/credentials') && response.request().method() === 'POST');
+  await credentialForm.getByRole('button', { name: 'Store and continue' }).click();
+  const refusedResponse = await refused;
+  assert.equal(refusedResponse.status(), 400, await refusedResponse.text());
   assert.equal(await credentialForm.getByLabel('Password', { exact: true }).inputValue(), 'fixture-password', 'Validation failure must retain the secure question/form.');
   await credentialForm.getByRole('button', { name: 'Skip login' }).click();
   await credentialForm.waitFor({ state: 'detached' });
