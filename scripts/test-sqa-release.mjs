@@ -67,7 +67,7 @@ try {
 	unit.tests = Object.fromEntries(['tests', 'pass', 'fail', 'skipped', 'cancelled'].map(name => [name, Number(tap.match(new RegExp(`^# ${name} (\\d+)$`, 'm'))?.[1] ?? NaN)]));
 	if (!Number.isFinite(unit.tests.tests) || !unit.tests.pass || unit.tests.fail || unit.tests.cancelled || unit.tests.skipped) throw new Error('SQA contract checks must report passing tests without skips.');
 	for (const browser of SQA_TEST_BROWSERS) {
-		for (const kind of ['startup', 'evidence']) {
+		for (const kind of ['startup', 'launch', 'evidence']) {
 			const output = path.join(directory, `${browser}-${kind}`);
 			await mkdir(output, { recursive: true });
 			const args = [path.join(root, 'scripts', `test-sqa-${kind}.mjs`), '--browser', browser, '--output-dir', output];

@@ -16,7 +16,7 @@
     },
     {
       "path": ".github/workflows/sqa-release.yml",
-      "sha256": "acb6c81d7017547b0ff00faa94511acf80a7ad977091c7775a64e4ee3467b665"
+      "sha256": "d3734cdb386a3f685011e0568d3f7445adc6f7b453c4fd7c34e092b68244638a"
     },
     {
       "path": ".github/workflows/verify.yml",
@@ -92,7 +92,7 @@
     },
     {
       "path": "DEPLOYMENT_PROMPT.md",
-      "sha256": "a063afdbe69379398ea1f96086486740b7686d1b79c8df7d5a108bc35887e1b5"
+      "sha256": "e078a182c84b58e52764cd470b0d5924f89043731a6453695b473e93ecac9318"
     },
     {
       "path": "Dockerfile",
@@ -243,6 +243,10 @@
       "sha256": "f35a97f17824552f3237bc8f26d3fb7b153681ca41a60056543fe3760b659dc2"
     },
     {
+      "path": "docs/sqa-launch-readiness-2026-11-05.md",
+      "sha256": "ea42e28768664398265020d6a3dce26491ba73262d4eaee6e06256e5b42f844a"
+    },
+    {
       "path": "docs/sqa-release-candidate-2026-11-05.md",
       "sha256": "9f8124da2f166af5dd2330d5c731e4ff44a4f87a9c4467ced7afb9647f06fb82"
     },
@@ -324,7 +328,7 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "9090b177ba22fc555dba919d0d95ce4c0d39406e94b2cc91ecab578d1a92e848"
+      "sha256": "05938f394e9476dbf8b41f30dc8b3551e031dd916120ddcf69adb2a635419acf"
     },
     {
       "path": "public/auth.css",
@@ -528,7 +532,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "c3151fbb4d91fc1d2a3be08189b0f3b2927ba900e535c5b509419622de8d4f63"
+      "sha256": "bfea4a79a1084e68efd4b108b1ba9944cc5908df7d7daa7d2c0e64e164e7e479"
     },
     {
       "path": "public/jevExecutionView.js",
@@ -704,7 +708,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "dde167c3a9bf4a926e704d7b5e8b769e5345ba9da534070d27047ecf58ff954d"
+      "sha256": "a18c257699e36cd8339c88a9a6d4f5f2391f4845822977b993cbbd38446dc8dc"
     },
     {
       "path": "public/renderHealth.js",
@@ -804,7 +808,7 @@
     },
     {
       "path": "public/styles.css",
-      "sha256": "f69966125411525c63257628e0f3baf65237ecaec443d7a319bbf396db2ef1d0"
+      "sha256": "98725a2bb3ca4abf81d0673c014aff1e76d464c06de4de330168673bc4048d35"
     },
     {
       "path": "public/tabWorkspace.test.js",
@@ -848,11 +852,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "36713b06fab5188ca6ec500fa4940fc8af25d177a83dc75230e6d742108a8c1b"
+      "sha256": "13137a2b2f569e2d0fda2212bf1cb24070efd125a435551a2979cab66f4fa5ca"
     },
     {
       "path": "RELEASE_NOTES.md",
-      "sha256": "e7469f33b13a81565ca8fc511d0e149bf7ecbd2b7267fa91ceac88d2ee596b8c"
+      "sha256": "33ad317d8183579e195e46ef68090b2cad894fa46fe89f3d65ce640e240cce7c"
     },
     {
       "path": "run-jev.command",
@@ -1036,7 +1040,7 @@
     },
     {
       "path": "scripts/sqa-test-runtime.mjs",
-      "sha256": "b15b0f1aeb395ee9e6402aa870c059c234c274867c776d474d7d5b18d0ce5130"
+      "sha256": "d6b6874d15419ef5f28d24c6d12e8a03410acb6e3ccac86f4a19dd156d3b3830"
     },
     {
       "path": "scripts/start-jev-local.mjs",
@@ -1079,8 +1083,12 @@
       "sha256": "ab989083786404a643d526ad81c5d5afc003ecabb9ce25b23f9ddada75d2d011"
     },
     {
+      "path": "scripts/test-sqa-launch.mjs",
+      "sha256": "b558845273f2d4eab516ef5069e96e15d7ca23dcfb90b56c2f5bbec0283c2159"
+    },
+    {
       "path": "scripts/test-sqa-release.mjs",
-      "sha256": "ba825151ad7c6dce4bdd6a36d2e839795314af366232b8316100ae54516dc810"
+      "sha256": "5177539ddd904bbc165e5fece795238e8ab3bca9a9f112908d64e215c0deb369"
     },
     {
       "path": "scripts/test-sqa-review.mjs",
@@ -2076,7 +2084,7 @@
     },
     {
       "path": "server/keepalive.test.js",
-      "sha256": "08b53834907c422714fe32c186a95019f6faa4cf429179d3c11de7ee787c61be"
+      "sha256": "a2cb733a91f270c957614dd27df025c073dc7f5e986126267ec354548b187782"
     },
     {
       "path": "server/legacyImport.js",
@@ -2912,7 +2920,7 @@
     },
     {
       "path": "server/sqaReleaseHarness.test.js",
-      "sha256": "53bee566d69911aa3e1adbff8199e64128feda4334427a9339927be02c56dc88"
+      "sha256": "b7dfa79359cff072331a79da265a6fcae6381ef3c0e964480dba2c00d60946c4"
     },
     {
       "path": "server/sqaReview.js",

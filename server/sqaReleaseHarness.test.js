@@ -26,3 +26,11 @@ test('release acceptance rejects incomplete, mismatched-browser and model-active
 		assert.throws(() => assertSqaAcceptanceResult({ ...evidence, ...update }, 'webkit', 'evidence'));
 	}
 });
+
+test('launcher acceptance requires restored-device readiness and one explicit launch without model activity', () => {
+	const result = { browser: 'chromium', browserVersion: 'test', modelCalls: 0, launcher: 'passed', delayedDeviceRestore: 'passed', explicitStart: 'passed', desktop: 'passed', mobile: 'passed', launchDispatches: 1, javascriptErrors: [] };
+	assert.doesNotThrow(() => assertSqaAcceptanceResult(result, 'chromium', 'launch'));
+	for (const update of [{ delayedDeviceRestore: undefined }, { explicitStart: undefined }, { mobile: undefined }, { launchDispatches: 0 }, { launchDispatches: 2 }, { modelCalls: 1 }, { javascriptErrors: ['failure'] }]) {
+		assert.throws(() => assertSqaAcceptanceResult({ ...result, ...update }, 'chromium', 'launch'));
+	}
+});

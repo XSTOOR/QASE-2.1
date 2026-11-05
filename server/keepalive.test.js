@@ -104,19 +104,26 @@ test('resolvePublicIp tolerates DoH failure and empty answers', async () => {
 });
 
 test('public IP resolution failure falls back to plain URL ping', async () => {
+	let pinged;
+	const ping = new Promise(resolve => { pinged = resolve; });
 	const { keepalive, calls } = harness({
 		getUrl: () => 'https://site.example.dev/healthz',
+		// This case tests DNS fallback during an active run, not 25ms expiry.
+		isActive: () => true,
 		fetchImpl: async url => {
 			if (String(url).includes('dns.google')) throw new Error('offline');
 			calls.push(url);
+			pinged();
 			return new Response('ok');
 		}
 	});
-	keepalive.noteActive();
-	await new Promise(resolve => setTimeout(resolve, 80));
-	assert.ok(calls.length >= 1, 'fallback ping fired');
-	assert.ok(calls.every(url => String(url).endsWith('/healthz')));
-	keepalive.stop();
+	let deadline;
+	try {
+		keepalive.noteActive();
+		await Promise.race([ping, new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('Fallback ping did not fire')), 2000); })]);
+		assert.ok(calls.length >= 1, 'fallback ping fired');
+		assert.ok(calls.every(url => String(url).endsWith('/healthz')));
+	} finally { clearTimeout(deadline); keepalive.stop(); }
 });
 
 test('isActive predicate keeps pinging when the bus has been quiet', async () => {

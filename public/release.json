@@ -1,6 +1,6 @@
 {
   "releaseId": "qase-sqa-2026-11-05-readiness-r1",
-  "uiVersion": "20261105-2",
+  "uiVersion": "20261105-4",
   "productionOrigin": "https://qase.drytis.com",
   "source": "SQA evidence review, immutable history, verified evidence inspection and security patches on codex/hybrid-production-readiness ad0afcd; reviewed candidate, not a deployment record"
 }

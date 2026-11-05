@@ -6082,6 +6082,7 @@ const sqaUi = {
 	close: $('sqa-close'),
 	cancel: $('sqa-cancel'),
 	submit: $('sqa-submit'),
+	launchStatus: $('sqa-launch-status'),
 	catalogState: $('sqa-catalog-state'),
 	catalogMessage: $('sqa-catalog-message'),
 	catalogRetry: $('sqa-catalog-retry'),
@@ -6218,16 +6219,20 @@ function sqaCatalogOption({ name, value, title, description = '', meta = '', che
 }
 
 function syncSqaSubmitState() {
-	const requiredDetailsPresent = Boolean(
-		sqaUi.targetUrl.value.trim()
-		&& sqaUi.targetRelease.value.trim()
-		&& sqaUi.targetEnvironment.value.trim()
-	);
-	sqaUi.submit.disabled = !state.sqaCatalog
-		|| !sqaUi.authorization.checked
-		|| !requiredDetailsPresent
-		|| !selectedEnvironmentForRun()
-		|| sqaUi.submit.dataset.busy === 'true';
+	const missing = [];
+	if (!state.sqaCatalog) missing.push('load the assessment catalog');
+	try {
+		if (!['http:', 'https:'].includes(new URL(sqaUi.targetUrl.value.trim()).protocol)) throw new TypeError();
+	} catch { missing.push('enter a complete HTTP or HTTPS target URL'); }
+	if (!sqaUi.targetRelease.value.trim()) missing.push('enter a release or build identifier');
+	if (!sqaUi.targetEnvironment.value.trim()) missing.push('name the environment');
+	if (!sqaUi.authorization.checked) missing.push('confirm testing permission');
+	if (!selectedEnvironmentForRun()) missing.push('choose a device and browser in TEST ON');
+	const busy = sqaUi.submit.dataset.busy === 'true';
+	sqaUi.submit.disabled = busy || missing.length > 0;
+	const message = busy ? 'Starting quality review…'
+		: missing.length ? `To start: ${missing.join('; ')}.` : 'Ready to start the quality review.';
+	if (sqaUi.launchStatus && sqaUi.launchStatus.textContent !== message) sqaUi.launchStatus.textContent = message;
 }
 
 function showSqaCatalogState(message, { retry = false } = {}) {
@@ -8122,6 +8127,9 @@ void (async () => {
 	matrixSidebar?.setSelection?.(focus.device, focus.osVersion);
 	renderMatrixColumns();
 	renderAllTestOnBlocks();
+	// A saved device can arrive after the user has completed the SQA form.
+	// Recompute readiness even though restoration does not fire onSelect.
+	syncSqaSubmitState();
 })();
 
 /* ── Device Matrix drawer (Phase 10) ─────────────────────────────── */

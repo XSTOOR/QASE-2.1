@@ -1,6 +1,11 @@
 # QASE SQA release candidate
 
-Release: `qase-sqa-2026-11-05-readiness-r1`. UI: `20261105-2`.
+Release: `qase-sqa-2026-11-05-readiness-r1`. UI: `20261105-4`.
+
+SQA launch now updates when a saved device finishes restoring, and explains
+missing URL, build, environment, permission or device requirements beside Start.
+The browser release gate now also verifies saved-device restoration and explicit
+assessment creation/launch dispatch on desktop and mobile without model calls.
 Target: `https://qase.drytis.com`. This is a source/image handoff, not a record
 of deployment or production activation.
 

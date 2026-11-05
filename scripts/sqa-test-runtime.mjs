@@ -18,6 +18,11 @@ export function assertSqaAcceptanceResult(result, browser, kind) {
 	if (result.browser !== browser || result.modelCalls !== 0 || !result.browserVersion) throw new Error(`${kind}/${browser}: missing browser identity or unexpected model activity.`);
 	if (kind === 'startup') {
 		if (['startup', 'negativeControl', 'desktop', 'mobile'].some(key => result[key] !== 'passed') || result.isolated !== true) throw new Error(`startup/${browser}: incomplete isolated acceptance result.`);
+	} else if (kind === 'launch') {
+		if (['launcher', 'delayedDeviceRestore', 'explicitStart', 'desktop', 'mobile'].some(key => result[key] !== 'passed')
+			|| result.launchDispatches !== 1 || !Array.isArray(result.javascriptErrors) || result.javascriptErrors.length) {
+			throw new Error(`launch/${browser}: incomplete launcher acceptance result.`);
+		}
 	} else if (kind === 'evidence') {
 		if (['browserJourney', 'restartPersistence', 'historicalMarkdown', 'historicalPdf'].some(key => result[key] !== 'passed')
 			|| result.versions !== 2 || result.oldVersionPreserved !== true || result.injectionPrevented !== true || result.mobileOverflow !== false

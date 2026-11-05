@@ -32,6 +32,8 @@ jobs:
             test-results/sqa-release/*/*.log
             test-results/sqa-release/*/*-startup/result.json
             test-results/sqa-release/*/*-startup/*.png
+            test-results/sqa-release/*/*-launch/result.json
+            test-results/sqa-release/*/*-launch/*.png
             test-results/sqa-release/*/*-evidence/result.json
             test-results/sqa-release/*/*-evidence/*.png
             test-results/sqa-release/*/*-evidence/assessment.pdf
