@@ -24,6 +24,7 @@ test('Quality launcher exposes an accessible recommended review with optional ad
 });
 
 test('SQA frontend uses the authenticated API contract and safe DOM construction', () => {
+	assert.match(app, /checked: \['web_application', 'user_interface'\]\.includes\(id\)/);
 	assert.match(app, /api\('\/sqa\/catalog'\)/);
 	assert.match(app, /api\('\/sqa\/sessions',\s*\{\s*method:\s*'POST'/);
 	assert.match(app, /authorizationConfirmed:\s*true/);

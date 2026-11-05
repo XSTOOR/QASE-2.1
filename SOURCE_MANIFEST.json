@@ -239,6 +239,10 @@
       "sha256": "f35a97f17824552f3237bc8f26d3fb7b153681ca41a60056543fe3760b659dc2"
     },
     {
+      "path": "docs/sqa-founder-hybrid-integration-2026-11-05.md",
+      "sha256": "889fdcf7d05361870fa0d99961c040b8c46f552130f57ce2c7f3ff005c903425"
+    },
+    {
       "path": "docs/sqa-runtime.md",
       "sha256": "73bd7ddc4e2b1eb8b7240ecb41dc11adff2a07b724b3c04e0ee70b2cef3eb025"
     },
@@ -312,7 +316,7 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "3e7a71e91ed9fe7f732aa36fe620348fbb8352c9610b35ed4ad6bc8b3a43d857"
+      "sha256": "156ca3674a1228feff5bc5ab7f82f25dd90073326ab6c10b4cc870363872effa"
     },
     {
       "path": "public/auth.css",
@@ -516,7 +520,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "b6fd2cf11c05f3b6f9d083a258c4d83995cead07b07799b4c0bf77dafa19187e"
+      "sha256": "af1bbd17311df1fa76feea1490ed570f0e2445e9602dd6b760ec9f3b0a276101"
     },
     {
       "path": "public/jevExecutionView.js",
@@ -556,7 +560,7 @@
     },
     {
       "path": "public/modeReasoningView.js",
-      "sha256": "a11d2feda36f1ddbe077183b6ca49fad1562193dcc123d2390c73aee85eaa7f9"
+      "sha256": "8064d4122ff0138277f2a12b3583038173e0c591e2d281a637840b8040b40bf4"
     },
     {
       "path": "public/modeReasoningView.test.js",
@@ -692,7 +696,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "7919d8ee9886d28550adfd99b8ca338dd990aaf5b27054359e3bcd7ef90242b3"
+      "sha256": "ca9c4b92269887fa8c4f5c75aa7a918dcd664b9e0861298cae40ccbaae041c41"
     },
     {
       "path": "public/renderHealth.js",
@@ -812,7 +816,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "514cf8b3ed0b8ab5d51ced717dde1eb506faede53e7f15b49e56d94c053e6c6c"
+      "sha256": "547b5876a6685b63d5f432f467b658942373483d1947c3347f38780df37f1b98"
     },
     {
       "path": "RELEASE_NOTES.md",
@@ -952,11 +956,11 @@
     },
     {
       "path": "scripts/qualify-system-mode.mjs",
-      "sha256": "3184d5a2965e1f81ecdc358fb4b1647d523212360f2eb039fba074cca051d41b"
+      "sha256": "1cac832621e98de16a1899a713f9f204f3604b235c058388f1c2808d425cabc9"
     },
     {
       "path": "scripts/qualify-system-ui.mjs",
-      "sha256": "e52527a4210f1df30bc6b35510988a528bf775a6fcd6163644a05928965f30a1"
+      "sha256": "5433842828c3c948c57785c45676b9e0ae5c293f898aaa485167d76ba7d5fd2e"
     },
     {
       "path": "scripts/reconcile-hybrid-budget.mjs",
@@ -1052,7 +1056,7 @@
     },
     {
       "path": "scripts/verify-system-mode-evidence.mjs",
-      "sha256": "09c58f2b941575c1e9f0288aea864183704e39526145fd38b9a7b0f25813b95c"
+      "sha256": "98cbe0f3e687cbd745ff47d9f24846f3a3072d6843ca8083849ba07c33820764"
     },
     {
       "path": "scripts/verify.mjs",
@@ -1068,7 +1072,7 @@
     },
     {
       "path": "server/agent.js",
-      "sha256": "fc32eb0559308538d05334f4d11166ce4212be63de26df33e5e7ded8cc1ad0b0"
+      "sha256": "3513167aad6b8abdeabd19c2ce7d09633ef4aeaeec49e5a031ac4f765d30e5b5"
     },
     {
       "path": "server/agent.test.js",
@@ -1128,7 +1132,7 @@
     },
     {
       "path": "server/browserBridge.js",
-      "sha256": "9c6174ecbf704caca847ad3bf5407ad0da72e245820e182c8bb0340e44f8508c"
+      "sha256": "a94fef4ca2588fcb628004172f3431929451a8e75134d07ce08753e390902b91"
     },
     {
       "path": "server/browserBridge.runDependability.test.js",
@@ -1684,11 +1688,11 @@
     },
     {
       "path": "server/founderReportDraft.js",
-      "sha256": "f26050c088e4d74a885ddf69e1bfc3df8796a1caf3b4b48e26cfe62dd6713ac7"
+      "sha256": "7a5187962aded1f22f9c32878cbb570eb798b35e00302189268c566fd71a8acb"
     },
     {
       "path": "server/founderReportDraft.test.js",
-      "sha256": "083f258ff85f5cdd2604664f7198e82d53cc3d23b12f3552df2770a87bb823ec"
+      "sha256": "30474d2710927abe04cc6e697f188481467446f265eeae7dd5487fcc81671f8a"
     },
     {
       "path": "server/founderSchema.js",
@@ -1696,7 +1700,7 @@
     },
     {
       "path": "server/founderService.js",
-      "sha256": "cd63f323f44671dd50cc04a8f6d14b84d997caa820f80addb3828bef4635d68d"
+      "sha256": "0e058b9507a3e5e84bec1fa79e03bb20e63dab6c29880f2db526f082e021b96f"
     },
     {
       "path": "server/founderService.test.js",
@@ -2119,28 +2123,40 @@
       "sha256": "51d8a5f80f0508536d874e8cdf23f6fbc59be91f0b01ef5753adbc4885ab3fd0"
     },
     {
+      "path": "server/modeDiscovery.js",
+      "sha256": "fcecee2446e92780d2959201e980e37661fb891bab7d6fa6058ab4eca6dd7d24"
+    },
+    {
+      "path": "server/modeDiscovery.test.js",
+      "sha256": "1ae13623e2cb3754774e403dfb9b05e6253d3583a930498c04e9bc185ccd0adf"
+    },
+    {
+      "path": "server/modeIntegrity.js",
+      "sha256": "ca17087b0b11cec2b2fc0478e5e58645e2af1f77a3aef7663538528bce224042"
+    },
+    {
       "path": "server/modelSelectorUi.test.js",
       "sha256": "270ed093839ac7250a378c0c33375012d97fbe02ca26a523de3d42e4c618b68b"
     },
     {
       "path": "server/modeReasoning.integration.test.js",
-      "sha256": "f51668136574fd9f6b3fdd3388853e04e327ef7213d30e411a656a8c15683ae8"
+      "sha256": "046660daf7e9fadc0f6fa3b932ea51d2711a789ba0b10f249176a1c9256f666b"
     },
     {
       "path": "server/modeReasoningContext.js",
-      "sha256": "ef1c5fcf474e1e9f949942242164e84bd6f7a6dfcd895161d1aa3a8d998afa8f"
+      "sha256": "18c15cc78d9243550e66312cf5211aac9217a4da41c7735022fbb9c0563e86a5"
     },
     {
       "path": "server/modeReasoningContext.test.js",
-      "sha256": "c8f3f3673721c3130ab65afab416274aadead31d1096cd19f322338bcc4d2026"
+      "sha256": "fd9528623b2cb236e12fa7bfaca780e01b6dd62eff46d3b19422c5f9ff4c4d56"
     },
     {
       "path": "server/modeReasoningRuntime.js",
-      "sha256": "d678090ff34d399dff2bdc0a62e555eecc5dbfa8b46fd14bc8cf8fa108cc1551"
+      "sha256": "80e886b6bf5533652245358103b47f08dbd8d81046dbe5bd2da77ca7eae4607a"
     },
     {
       "path": "server/modeReasoningRuntime.test.js",
-      "sha256": "b3ad517e513ea82bd46d3fbb2547dd376cd5c63a08416aee9cde3812aa6546a8"
+      "sha256": "16a7a202edea1607d70584cb0f2614807f357ff533b7644fd91abca3e21e6f14"
     },
     {
       "path": "server/modeWorkflow.test.js",
@@ -2600,7 +2616,7 @@
     },
     {
       "path": "server/qaTools.js",
-      "sha256": "50bbc2a62b0b21208a59f54be46349c507c00f29be78420b098bc7b587868124"
+      "sha256": "b24037492b48581117690459918e15b7c40dd456cbfa450b070c8332a97697d4"
     },
     {
       "path": "server/qaTools.test.js",
@@ -2832,7 +2848,7 @@
     },
     {
       "path": "server/sqaService.js",
-      "sha256": "138b8214b360e0b42502f1dc11d48d1706d772f0553163ed10893eef36cf40d6"
+      "sha256": "6579dd9a09af0415cc51a1adac6ec8b7ee5e61fded418930909a7ddf49e36123"
     },
     {
       "path": "server/sqaService.test.js",
@@ -2840,7 +2856,7 @@
     },
     {
       "path": "server/sqaTools.js",
-      "sha256": "c88540151186c00a2e74a3990013459dac55ddbc74da710f923ef92fe32dbc09"
+      "sha256": "8ecf404ed4a8de888c14af2e6c0e6972073bd4f6a5744aaf04e3e6c9440d0fd3"
     },
     {
       "path": "server/sqaTools.test.js",
@@ -2848,7 +2864,7 @@
     },
     {
       "path": "server/sqaUi.test.js",
-      "sha256": "06a4c9262cd8db0b526118494f957890094f8f6cd2e086511ac4c0c2989630f2"
+      "sha256": "dcebdb4dcad3aa1de64ad69b5f388fa9decef07d9495b65e929ca4a975471c23"
     },
     {
       "path": "server/stageCollapseUi.test.js",

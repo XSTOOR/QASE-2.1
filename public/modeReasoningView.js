@@ -8,9 +8,14 @@ export function modeReasoningSummary(session) {
   return `${Number(metric.calls)||0} calls · ${(Number(metric.inputTokens)||0)+(Number(metric.outputTokens)||0)} provider-reported tokens`;
  };
  const routes=state.routes||[];
+ const workflows=state.workflows||[];
+ const discovery=state.discovery;
  return ['Autonomous review · Opus 4.7 + JEV 1.13',
   `Host execution: ${String(state.status||'starting').replace(/_/g,' ')} · ${Number(state.telemetry?.browserActions)||0} browser actions`,
   `${routes.filter(r=>r.reviewed).length}/${routes.length} observed pages reviewed · sampled coverage`,
+  ...(discovery?[`Application discovery: ${discovery.status} · ${discovery.receipts?.length||0} observed states`,
+   `Workflow dispositions: ${workflows.filter(w=>['passed','failed','blocked','inconclusive'].includes(w.status)).length}/${workflows.length} · ${workflows.filter(w=>w.status==='passed').length} verified passes · ${workflows.filter(w=>w.status==='failed').length} failures`,
+   ...(session.mode==='sqa'?[`Control dispositions: ${session.sqa.observations?.length||0}/${session.sqa.scope?.applicableControlIds?.length||0}. Workflow completion does not establish evidence completeness or compliance.`]:[])]:[]),
   `Opus: ${usage('reasoner')}`,`JEV: ${usage('classifier')}`,
   ...(state.pauseReason?['Progress saved. Review the latest execution message before resuming.']:[])];
 }

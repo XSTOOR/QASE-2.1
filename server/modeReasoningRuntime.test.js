@@ -66,6 +66,15 @@ test('hostile oversized page metadata cannot expand classification checkpoints b
  assert.ok(JSON.stringify(f.state.evidence[0]).length<10000);assert.ok(JSON.stringify(f.state.actions[0].intent).length<1000);
 });
 
+test('browser check limitations may be text or lists without converting a completed check into uncertain execution',async()=>{
+ const f=fixture();
+ for(const limitations of ['A bounded native constraint sample',['A bounded native constraint sample']]){
+  await f.runtime.wrapTool({name:'browser_qa_check',async run(){return {success:true,limitations,assertions:[{check:'forms',outcome:'pass',name:'Native required constraint'}]};}}).run({action:'forms'});
+ }
+ assert.ok(f.state.actions.every(a=>a.status==='done'));
+ assert.ok(f.state.evidence.every(e=>Array.isArray(e.result.limitations)));
+});
+
 test('checkpoint failure prevents browser dispatch and usage uncertainty survives restart',async()=>{
  const f=fixture('founder',{async commit(){throw new Error('Storage fixture');}});let actions=0;
  await assert.rejects(f.runtime.wrapTool({name:'browser_click',async run(){actions++;}}).run({}),/persisted/);assert.equal(actions,0);
@@ -94,6 +103,16 @@ test('a failed read-only browser observation can recover without replaying any m
  await f.runtime.beginTurn(new AbortController().signal);assert.equal((await read.run({})).success,true);assert.equal(reads,2);
 });
 
+test('an immutable classifier failure does not become an uncertain browser mutation; usage gates remain independent',async()=>{
+ const f=fixture();await f.runtime.wrapTool({name:'browser_snapshot',async run(){return {success:true,bodyText:'Actual immutable observation'};}}).run({});
+ const tool=f.runtime.wrapTool(f.runtime.tools.find(t=>t.name==='classify_mode_observations')),input={evidence_ids:[f.state.evidence[0].id]};
+ f.runtime.router.classifier=async()=>{throw new Error('Verified-usage classification unavailable');};
+ await assert.rejects(tool.run(input),/classification unavailable/);assert.equal(f.state.actions.at(-1).status,'failed');
+ await f.runtime.beginTurn(new AbortController().signal);
+ f.runtime.router.classifier=async()=>({category:{choice:'insufficient'}});
+ assert.equal((await tool.run(input)).authority,'advisory');assert.equal(f.state.classifications.length,1);
+});
+
 test('stagnant SDK responses stop while genuine evidence permits continued execution',async()=>{
  const f=fixture();
  for(let i=0;i<3;i++)assert.equal(await f.runtime.continueSegment(f.runtime.progress()),i<2);
@@ -118,6 +137,15 @@ test('SDK summary requests preserve their own contract without mode execution co
  f.runtime.wrapChat(service);const request=[{role:'system',content:'Summarize the conversation.'}];
  for await(const _ of await service.chat(request,{maxOutputTokens:512})){}
  assert.deepEqual(seen.messages,request);assert.deepEqual(seen.options.tools,[]);assert.equal(seen.options.maxOutputTokens,512);
+});
+
+test('Founder completion schema is evaluated after seventeen observations without losing the host readiness binding',async()=>{
+ const f=fixture('founder');f.session.founder.observations=Array.from({length:17},(_,i)=>({id:'o'+i,category:'product_clarity'}));
+ const service={chat(){throw new Error('Fixture router owns transport');}};let seen;
+ f.runtime.router.reasoner=async(_original,_messages,options)=>{seen=options;return(async function*(){yield {type:'text',content:'Incomplete browser work remains.'};})();};
+ f.runtime.wrapChat(service);
+ for await(const _ of await service.chat([],{tools:[{name:'finish_founder_review'}]})){}
+ assert.deepEqual(seen.tools,[],'Observation count alone must not expose publication before verified browser work.');
 });
 
 test('snapshot clocks cannot buy mode continuations while new surfaces and report sections count as progress',async()=>{

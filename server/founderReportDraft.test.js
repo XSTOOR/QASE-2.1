@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {createFounderDraftTool,founderDraftSchema,founderDraftProgress,resolveFounderDraft,FOUNDER_REPORT_SECTIONS} from './founderReportDraft.js';
 import {founderReportToolSchema} from './founderTools.js';
 import {normalizeFounderReport} from './founderSchema.js';
+import {prepareModeReportContinuation} from './agent.js';
 
 function fixture(){
  const session={id:'draft-fixture',mode:'founder',status:'running',founder:{observations:[{id:'observed',category:'product_clarity'}]}};
@@ -36,6 +37,47 @@ test('eleven typed sections survive checkpoint restoration and the original comp
  assert.throws(()=>resolveFounderDraft(current,{draft_revision:'wrong'}),/exact revision/);
  const report=normalizeFounderReport(restored,{observations:current.founder.observations,target:{name:'Fixture',url:'https://fixture.test/'},generatedAt:new Date().toISOString()});
  assert.equal(report.recommendations.length,3);assert.equal(report.plan.days90.length,1);
+});
+
+test('new canonical Founder drafts retain integrity across JSONB key reordering',async()=>{
+ const {session,payload}=fixture();session.founder.execution={evidenceHashVersion:1};
+ const reorder=value=>Array.isArray(value)?value.map(reorder):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().reverse().map(key=>[key,reorder(value[key])])):value;
+ const tool=createFounderDraftTool(session,{async commit(){}},founderReportToolSchema());
+ await tool.run({section:'executive_summary',value:payload.executive_summary});await tool.run({section:'icp',value:payload.icp});
+ const saved=reorder(session);assert.equal(founderDraftProgress(saved).intact,true);assert.equal(founderDraftProgress(saved).revision,session.founder.reportDraft.revision);
+ saved.founder.reportDraft.input.icp.primary='Changed';assert.equal(founderDraftProgress(saved).intact,false);
+});
+
+test('each durable report revision can continue through the public SDK once without resetting usage or draft state',async()=>{
+ const {session,payload}=fixture();session.activities=[];
+ const state=session.founder.execution={discovery:{version:1},evidenceHashVersion:1,phase:'synthesis',actions:[],budgets:{reasonerTokens:1000000},telemetry:{reasoner:{inputTokens:40000}}};
+ const tool=createFounderDraftTool(session,{async commit(){}},founderReportToolSchema());
+ await tool.run({section:'executive_summary',value:payload.executive_summary});
+ let cleared=0;const record={founderSynthesis:true,modeReasoning:{state},runtime:{clearConversation(){cleared++;}}};
+ const usage=structuredClone(state.telemetry),revision=session.founder.reportDraft.revision;
+ assert.equal(prepareModeReportContinuation(session,record),true);assert.equal(cleared,1);
+ assert.equal(session.founder.reportDraft.revision,revision);assert.deepEqual(state.telemetry,usage);assert.equal(state.budgets.reasonerTokens,1000000);
+ assert.equal(prepareModeReportContinuation(session,record),false);
+ await tool.run({section:'icp',value:payload.icp});assert.equal(prepareModeReportContinuation(session,record),true);assert.equal(cleared,2);
+ session.founder.reportDraft.input.icp.primary='Tampered';assert.equal(prepareModeReportContinuation(session,record),false);
+});
+
+test('qualified Founder section bounds reduce verbose payloads while retaining every original required report field',async()=>{
+ const {session,payload}=fixture();session.founder.execution={evidenceHashVersion:1,discovery:{version:1}};
+ const schema=founderReportToolSchema(),store={async commit(){}};
+ const tool=createFounderDraftTool(session,store,schema);
+ const rejected=await tool.run({section:'executive_summary',value:'Verbose '.repeat(200)});
+ assert.equal(rejected.success,false);assert.equal(session.founder.reportDraft,undefined);
+ for(const section of FOUNDER_REPORT_SECTIONS){
+  const bounded=founderDraftSchema(session,schema).properties.value;
+  if(schema.properties[section].type==='object')assert.deepEqual(bounded.required,schema.properties[section].required);
+  for(const value of section==='recommendations'?payload.recommendations.map(item=>[item]):[payload[section]]){
+   const result=await tool.run({section,value});assert.equal(result.success,true,result.error);
+  }
+ }
+ const normalized=normalizeFounderReport(resolveFounderDraft(session,{draft_revision:session.founder.reportDraft.revision}),{observations:session.founder.observations,target:{name:'Fixture',url:'https://fixture.test/'},generatedAt:new Date().toISOString()});
+ assert.equal(normalized.recommendations.length,3);assert.ok(normalized.plan.days30.length&&normalized.plan.days60.length&&normalized.plan.days90.length);
+ assert.deepEqual(Object.keys(session.founder.reportDraft.input),FOUNDER_REPORT_SECTIONS);
 });
 
 test('malformed section types, unknown evidence and unsupported promises fail without publishing or overwriting a draft',async()=>{

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { projectModeMessages,compactModeEnvelopes } from './modeReasoningContext.js';
+import { projectModeMessages,compactModeEnvelopes,buildModeExecutionContext } from './modeReasoningContext.js';
+import {createSqaState} from './sqaService.js';
+import {buildSqaContext} from './sqaPrompt.js';
 import path from 'node:path';
 
 test('mode inference compacts complete rounds without orphaning results or losing human scope', () => {
@@ -33,4 +35,33 @@ test('duplicate SDK envelopes compact only against matching trusted workspace re
  assert.equal(result[1].content,'Inspect the authorized fixture.');assert.deepEqual(result[2],original[2]);assert.deepEqual(messages,original);
  assert.ok(JSON.stringify(result).length<JSON.stringify(messages).length*.6);
  assert.deepEqual(compactModeEnvelopes(messages,{id:'different-workspace'}),messages);
+});
+
+test('a changed browser location cannot retain an obsolete full SDK context in every continuation',()=>{
+ const session={id:'changing-context'},prefix=`Workspace root: ${path.join(process.cwd(),'.qase','workspaces',session.id)}\n\n`;
+ const initial=prefix+'Trusted initial mode policy. '.repeat(2000),latest=prefix+'Trusted current policy and verified browser location.';
+ const messages=[{role:'system',content:'SDK authority'},{role:'user',content:`[CONTEXT]\n${initial}\n\nUser Request: Preserve this exact authorized task.`},{role:'system',content:`[RUNTIME CONTEXT REMINDER]\n${latest}\n\nCurrent objective: Continue the original task.`}];
+ const original=structuredClone(messages);
+ const compacted=compactModeEnvelopes(messages,session,{trustedContexts:[initial]});
+ assert.equal(compacted[1].content,'Preserve this exact authorized task.');assert.equal(compacted[2].content,messages[2].content);assert.deepEqual(messages,original);
+ assert.ok(JSON.stringify(compacted).length<JSON.stringify(messages).length/10);
+ assert.equal(compactModeEnvelopes(messages,session)[1].content,messages[1].content,'Unmatched user content cannot be guessed away.');
+});
+
+test('large recent tool results keep failed assertions and exact evidence identifiers without replaying raw payloads',()=>{
+ const value={modeEvidenceId:'receipt',evidenceActivityId:'actual-browser',inventory:{url:'https://fixture.test/',bodyText:'Rendered actual page'},assertions:Array.from({length:200},(_,i)=>({name:'Check '+i,outcome:i===199?'fail':'pass',actual:'x'.repeat(200)}))};
+ const message={role:'tool',toolCallId:'native-call',content:JSON.stringify(value)};
+ const projected=projectModeMessages([message]);const compacted=JSON.parse(projected[0].content);
+ assert.equal(compacted.modeEvidenceId,'receipt');assert.equal(compacted.evidenceActivityId,'actual-browser');assert.equal(compacted.failedAssertions[0].name,'Check 199');assert.equal(compacted.assertionCounts.total,200);
+ assert.equal(message.content,JSON.stringify(value));assert.ok(projected[0].content.length<message.content.length/5);
+});
+
+test('qualified SQA phase brief retains exact reviewer requirements with less repeated legacy guidance',()=>{
+ const s={mode:'sqa',targetUrl:'https://fixture.test/',activities:[],todos:[],messages:[],sqa:createSqaState({authorizationConfirmed:true,profiles:['core'],attributes:['web_application','user_interface'],target:{name:'Fixture',url:'https://fixture.test/',release:'test',environment:'isolated'}})};
+ s.sqa.execution={discovery:{version:1,status:'pending'},phase:'discovery'};
+ const original=buildSqaContext(s),brief=buildModeExecutionContext(s);
+ assert.match(brief,/SQA-CHG-001/);assert.match(brief,/approval_record/);assert.match(brief,/BLOCKED/);assert.match(brief,/never certification/);assert.match(brief,/JEV only classifies/);assert.match(brief,/No server mutations/);
+ assert.ok(brief.length<original.length,'Remove duplicated operating manuals without dropping pending controls.');
+ s.sqa.observations.push({controlId:'SQA-CHG-001',status:'blocked'});
+ assert.doesNotMatch(buildModeExecutionContext(s).split('Pending scoped controls')[1],/SQA-CHG-001/,'Resolved controls remain in scope but do not demand another investigation.');
 });

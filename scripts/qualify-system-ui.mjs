@@ -68,6 +68,10 @@ try{
   await page.locator(`#${mode}-submit`).click();await page.locator(`#${mode}-start`).waitFor({state:'hidden'});
   await page.locator(`#tab-${mode}`).waitFor({state:'visible'});
   const session=[...sessions.values()].find(s=>s.mode===mode);assert.ok(session?.[mode].scope.authorization.confirmed);
+  if(mode==='sqa'){
+   assert.ok(['web_application','user_interface'].every(attribute=>session.sqa.scope.attributes.includes(attribute)),'Recommended website review must include its browser-app attributes.');
+   assert.ok(['001','002','003','004','005','006'].every(suffix=>session.sqa.scope.applicableControlIds.includes(`SQA-WEB-${suffix}`)),'The six browser smoke controls must not disappear from the default scope.');
+  }
   await page.reload();await page.locator(`#tab-${mode}`).waitFor({state:'visible'});
   assert.ok(new URL(page.url()).hash.includes('/runs/'));assert.ok(!new URL(page.url()).hash.endsWith('/results'));
   checks.push(`${mode}: launcher authorization, API creation, reload and retained run route`);

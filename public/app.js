@@ -6093,7 +6093,7 @@ function paintSqaCatalog(catalog) {
 	sqaUi.attributeOptions.replaceChildren(...attributes.map(attribute => {
 		const id = typeof attribute === 'string' ? attribute : attribute.id;
 		const title = typeof attribute === 'string' ? humanizeSqaId(attribute) : (attribute.title ?? humanizeSqaId(id));
-		return sqaCatalogOption({ name: 'sqa-attribute', value: id, title });
+		return sqaCatalogOption({ name: 'sqa-attribute', value: id, title, checked: ['web_application', 'user_interface'].includes(id) });
 	}));
 	sqaUi.profilesFieldset.disabled = false;
 	sqaUi.attributesFieldset.disabled = false;
@@ -6116,7 +6116,7 @@ function syncSqaSelectionSummary() {
 	if (attributes) additions.push(`${attributes} product characteristic${attributes === 1 ? '' : 's'}`);
 	sqaUi.selectionSummary.textContent = additions.length
 		? `Universal quality baseline · ${additions.join(' · ')}`
-		: 'Universal quality baseline · Recommended browser evidence';
+		: 'Universal quality baseline · No browser attributes selected; reviewer evidence is required';
 }
 
 function sqaCatalogOption({ name, value, title, description = '', meta = '', checked = false, disabled = false }) {

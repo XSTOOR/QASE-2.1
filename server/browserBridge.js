@@ -253,6 +253,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 	const emulationOptions = execution.mode === 'emulated'
 		? environmentEmulationOptions(environment)
 		: contextOptionsFor(deviceId, { landscape: deviceLandscape });
+	const readOnlyExecution = session.qaExecutionMode === 'hybrid' || session[session.mode]?.execution?.discovery?.version === 1;
 	const inputIsolation = createQaInputIsolation();
 	const authentication = createHybridAuthentication(session);
 	const testWrites = createQaTestWrites(session, () => runStore.commit(session, 'hybrid.state', {}));
@@ -656,8 +657,8 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 	 */
 	const installNetworkPolicy = async context => {
 		if (!context || protectedContexts.has(context)) return;
-		if (session.qaExecutionMode === 'hybrid') inputIsolation.attach(context);
-		if (session.qaExecutionMode === 'hybrid' && typeof context.addInitScript === 'function') await context.addInitScript(() => {
+		if (readOnlyExecution) inputIsolation.attach(context);
+		if (readOnlyExecution && typeof context.addInitScript === 'function') await context.addInitScript(() => {
 			// HTTP routing cannot intercept RTC data channels or WebTransport.
 			// Public hybrid QA does not authorize those out-of-band write paths.
 			for (const name of ['RTCPeerConnection', 'webkitRTCPeerConnection', 'WebTransport', 'SharedWorker']) {
@@ -669,7 +670,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 		// SDK-created tabs register diagnostics; window.open popups did not.
 		context.on?.('page', page => { attachDiagnostics(page); service.registerPage?.(page); });
 		for (const page of context.pages?.() ?? []) attachDiagnostics(page);
-		if ((policy.isProduction || session.qaExecutionMode === 'hybrid') && typeof context.addInitScript === 'function') {
+		if ((policy.isProduction || readOnlyExecution) && typeof context.addInitScript === 'function') {
 			// Playwright routing cannot observe requests intercepted by a Service
 			// Worker. A new Qase browser context has no existing registrations, so
 			// disabling registration before the first target navigation closes that
@@ -706,13 +707,13 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 			}
 			const writeDecision = session.qaExecutionMode === 'hybrid' && !authDecision?.allowed ? await testWrites.requestDecision(request) : null;
 			if (writeDecision?.allowed === false) { await route.abort('blockedbyclient'); return; }
-			const inputBlock = session.qaExecutionMode === 'hybrid' && !authDecision?.allowed && !writeDecision?.allowed && inputIsolation.decision(request);
+			const inputBlock = readOnlyExecution && !authDecision?.allowed && !writeDecision?.allowed && inputIsolation.decision(request);
 			if (inputBlock) {
 				const destination = new URL(request.url());
 				recordSecurityBlock(inputBlock, { method: request.method(), resourceType: request.resourceType(), url: `${destination.origin}${destination.pathname}` });
 				await route.abort('blockedbyclient').catch(() => undefined); return;
 			}
-			if (session.qaExecutionMode === 'hybrid' && !authDecision?.allowed && !writeDecision?.allowed && !['GET', 'HEAD', 'OPTIONS'].includes(request.method())) {
+			if (readOnlyExecution && !authDecision?.allowed && !writeDecision?.allowed && !['GET', 'HEAD', 'OPTIONS'].includes(request.method())) {
 				recordSecurityBlock({ code: 'HYBRID_WRITE_REQUEST_BLOCKED', message: 'Hybrid public QA does not authorize target data writes.' }, { method: request.method(), url: request.url() });
 				await route.abort('blockedbyclient').catch(() => undefined);
 				return;
@@ -748,7 +749,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 		}, decision => recordSecurityBlock(decision)));
 		if (typeof context.routeWebSocket === 'function') {
 			await context.routeWebSocket('**/*', async socket => {
-				if (session.qaExecutionMode === 'hybrid') { await socket.close({ code: 1008, reason: 'Hybrid public QA does not authorize WebSocket writes.' }).catch(() => undefined); return; }
+				if (readOnlyExecution) { await socket.close({ code: 1008, reason: 'Hybrid public QA does not authorize WebSocket writes.' }).catch(() => undefined); return; }
 				let decision;
 				try {
 					decision = await policy.evaluateRequest(socket.url(), { topLevel: false });
@@ -1743,14 +1744,26 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 				error: `No stored credential matches the placeholder in that value. Ask the user with ask_question before filling this field.`
 			};
 		}
-		if (session.qaExecutionMode === 'hybrid') inputIsolation.protect(currentPage());
+		if(readOnlyExecution&&session.mode!=='qa'){
+			// Resolve before dispatch. A missing field is a known locator error,
+			// not evidence that a browser mutation may have partially executed.
+			try{
+				await service.ensurePage();const page=currentPage();
+				if(!page||!service.hasLocator?.(input))return {success:false,dispatched:false,code:'BROWSER_TARGET_NOT_FOUND',error:'Use a field locator from a fresh browser snapshot; no fill was dispatched.'};
+				const locator=await service.locator(page,input);
+				await locator.first().waitFor({state:'visible',timeout:2500});
+				if(await locator.count()!==1||!await locator.isEditable({timeout:1000}))return {success:false,dispatched:false,code:'BROWSER_TARGET_NOT_EDITABLE',error:'The field must be unique and editable. No fill was dispatched; use another observed field or record the blocker.'};
+			}catch{return {success:false,dispatched:false,code:'BROWSER_TARGET_NOT_FOUND',error:'No visible editable field matched this locator within 2.5 seconds. No fill was dispatched; take a fresh snapshot and try one different observed locator.'};}
+			runStore.liveFor?.(session.id)?.controller?.signal?.throwIfAborted();
+		}
+		if (readOnlyExecution) inputIsolation.protect(currentPage());
 		return originalFill(surface, { ...input, value: resolveSecrets(session.id, input?.value ?? '') });
 	};
 
 	const originalType = service.typeText.bind(service);
 	service.typeText = async (surface, text) => {
 		if (session.qaExecutionMode === 'hybrid' && /\{\{/.test(text || '')) return { success: false, error: 'Use the approved browser_authenticate tool for vault credentials; native typing cannot inject secrets.' };
-		if (session.qaExecutionMode === 'hybrid') inputIsolation.protect(currentPage());
+		if (readOnlyExecution) inputIsolation.protect(currentPage());
 		if (hasUnresolvedPlaceholder(session.id, text)) {
 			return {
 				success: false,

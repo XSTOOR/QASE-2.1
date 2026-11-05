@@ -57,7 +57,7 @@ function finishReadiness(session, now = Date.now()) {
 export function createSqaTools(session, runStore, options = {}) {
 	const recordControl = {
 		name: 'record_sqa_control',
-		description: 'Records one scoped SQA control observation, or an atomic controls batch of up to 12 closely related observations. Capture a control-specific browser check immediately before pass/fail. Provide every required browser-eligible evidence type in evidence; manual and reviewer-only prerequisites remain blocked.',
+		description: 'Records one scoped SQA control observation, or a batch of up to 12. Pass/fail needs matching completed browser checks. New autonomous runs bind technical controls to their actual typed checks; broader control evidence needs an explicitly tagged workflow. A reviewer/mixed control may remain blocked WITHOUT evidence when its supporting checks or artifacts are unavailable. Do not invent partial security/documentary proof just to attach evidence. The deterministic evaluator owns the verdict.',
 		category: 'sqa',
 		parametersSchema: {
 			type: 'object',

@@ -8,6 +8,7 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {resolveFounderDraft} from '../server/founderReportDraft.js';
 import {normalizeFounderReport,FOUNDER_CATEGORY_IDS} from '../server/founderSchema.js';
+import {modeReceiptHash} from '../server/modeIntegrity.js';
 
 const hash=value=>createHash('sha256').update(value).digest('hex');
 export function verifySystemModeEvidence(directory){
@@ -21,18 +22,21 @@ export function verifySystemModeEvidence(directory){
  assert.ok(session.todos.every(todo=>todo.status==='completed'),'Publication and technical plan tasks must all be complete.');
  const execution=session[mode].execution;
  assert.ok(['/','/docs','/pricing','/practice'].every(p=>execution.routes.some(r=>r.reviewed&&new URL(r.url).pathname===p)));
- const receipts=execution.evidence;
- for(const receipt of receipts)assert.equal(hash(JSON.stringify(receipt.result)),receipt.digest,'A saved receipt must retain its original digest.');
+ const receipts=[...new Map([...execution.evidence,...(execution.workflows||[]).flatMap(w=>w.verification?.receipts||[])].map(e=>[e.id,e])).values()];
+ for(const receipt of receipts)assert.equal(modeReceiptHash(receipt),receipt.digest,'A saved receipt must retain its original versioned digest.');
  const practice=receipts.filter(r=>r.tool==='browser_snapshot'&&r.result.url&&new URL(r.result.url).pathname==='/practice').sort((a,b)=>a.at-b.at);
  const passed=practice.find(r=>r.result.bodyText.includes('Local task saved'));
  assert.ok(passed,'The actual Practice output must be observed after submission.');
  const unsuccessful=practice.filter(r=>r.at<passed.at&&!r.result.bodyText.includes('Local task saved'));
  assert.ok(unsuccessful.length>=3,'Initial, empty and one-character states require separate observations.');
  const activities=session.activities.filter(a=>a.status==='done');
- const negative=activities.find(a=>a.toolName==='browser_fill'&&/ = A$/.test(a.detail||''));
- const positive=activities.find(a=>a.toolName==='browser_fill'&&/ = Alpha$/.test(a.detail||''));
+ // The fixture rejects any one-character value, not only uppercase A.
+ // Prefer the actual typed tool input, rather than its presentation label.
+ const negative=activities.find(a=>a.toolName==='browser_fill'&&typeof a.input?.value==='string'&&a.input.value.length===1);
+ const positive=activities.find(a=>a.toolName==='browser_fill'&&a.input?.value==='Alpha');
  assert.ok(negative&&positive&&negative.ts<positive.ts);
  assert.ok(unsuccessful.some(r=>r.at>negative.ts&&r.at<positive.ts));
+ assert.ok(activities.some(a=>a.toolName==='browser_click'&&a.ts>negative.ts&&a.ts<positive.ts),'The one-character input must actually be attempted before the valid case.');
  assert.ok(activities.some(a=>a.toolName==='browser_click'&&a.ts>positive.ts&&a.ts<passed.at));
  for(const receipt of practice)assert.ok(activities.some(a=>a.id===receipt.activityId&&a.toolName==='browser_snapshot'));
  const roles=execution.modelBudget.roles;
