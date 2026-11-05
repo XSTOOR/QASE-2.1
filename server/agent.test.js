@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { activityLabel, allowedToolNames, ensureRuntime, guardSqaBrowserTool, isFounderSynthesisReady, modelActivityTimeoutMs, prepareFounderSynthesis, prepareSqaContextContinuation, restoreWaitingSnapshot, runTurn, summariseResult, withModelActivityDeadline } from './agent.js';
+import { activityLabel, allowedToolNames, ensureRuntime, guardSqaBrowserTool, isFounderSynthesisReady, modelActivityTimeoutMs, prepareFounderSynthesis, prepareSqaContextContinuation, prepareSqaSynthesis, restoreWaitingSnapshot, runTurn, summariseResult, withModelActivityDeadline } from './agent.js';
 import { attachUsageCapture, createUsageLogger } from './usageCapture.js';
 import { createBrowserTools } from './browserTools.js';
 import { createFounderReviewTodos, FOUNDER_CATEGORY_IDS } from './founderService.js';
@@ -27,6 +27,39 @@ function runtimeFixture(overrides = {}) {
 	};
 	return { session, record, store, statuses };
 }
+
+for(const mode of ['sqa','founder']) test(`${mode} host publication remains authoritative if SDK prefetch throws before yielding the tool result`,async()=>{
+ const f=runtimeFixture({mode,[mode]:{}});
+ f.record.runtime.run=async function*(){f.session[mode].finalizedAt='2026-11-03T00:00:00.000Z';f.record.onModePublished();throw new Error('SDK prefetched after durable publication');};
+ await runTurn(f.session,{task:'Finalize existing evidence'},f.store);
+ assert.equal(f.session.status,'done');assert.equal(f.statuses.some(s=>s.status==='error'||s.status==='interrupted'),false);
+});
+
+test('SQA closeout uses supported session clearing only after control evidence is accounted for and never completes todos itself',()=>{
+ const f=runtimeFixture({mode:'sqa',sqa:{scope:{applicableControlIds:['SQA-WEB-001']},observations:[],execution:{routes:[{url:'https://example.test',reviewed:true}],actions:[{tool:'browser_click',status:'done',interaction:true},{tool:'browser_diagnostics',status:'done'}]}},todos:[{text:'Record complete work',status:'pending'}]});
+ let clears=0;const tools=['browser_snapshot','update_todo','finish_sqa_assessment'].map(name=>({name}));
+ f.record.modeReasoning={state:f.session.sqa.execution};f.record.runtime.agentSession={clear(){clears++;}};f.record.runtime.headlessRuntime={options:{tools},getTools(){return this.options.tools;},toolsByName:new Map(tools.map(t=>[t.name,t]))};
+ assert.equal(prepareSqaSynthesis(f.session,f.record),false);
+ f.session.sqa.observations=[{controlId:'SQA-WEB-001',status:'blocked',rationale:'Required reviewed artifact unavailable',evidence:[]}];
+ f.session.findings=[{id:'confirmed-fixture',controlIds:['SQA-WEB-001']}];
+ assert.equal(prepareSqaSynthesis(f.session,f.record),false,'Synthesis must retain control-recording tools until confirmed findings are reconciled.');
+ assert.equal(clears,0);
+ f.session.findings=[];
+ assert.equal(prepareSqaSynthesis(f.session,f.record),true);assert.equal(clears,1);
+ assert.deepEqual(f.record.runtime.headlessRuntime.getTools().map(t=>t.name),['update_todo','finish_sqa_assessment']);
+ assert.equal(f.session.todos[0].status,'pending');assert.equal(f.session.sqa.finalizedAt,undefined);
+ assert.equal(f.record.modeReasoning.state.phase,'synthesis');
+ assert.equal(prepareSqaSynthesis(f.session,f.record),false);assert.equal(clears,1);
+});
+
+test('legacy SQA context compaction cannot reset the qualified mode runtime', () => {
+ const f=runtimeFixture({mode:'sqa',sqa:{},tokenUsage:{inputTokens:200000}});
+ let cleared=false;
+ f.record.modeReasoning={state:{phase:'exploration'}};
+ f.record.runtime.agentSession={clear(){cleared=true;}};
+ assert.equal(prepareSqaContextContinuation(f.session,f.record),false);
+ assert.equal(cleared,false);
+});
 
 test('fixed browser activities name their real action and atomic summaries use recorded assertion counts', () => {
 	assert.match(activityLabel('browser_qa_check', { action: 'navigation' }), /Clicked link/);
@@ -1200,7 +1233,7 @@ test('a user stop still ends interrupted when completions are healthy', async ()
 test('hybrid prose-only turns continue the same SDK session rather than marking unfinished work interrupted', async () => {
   const { session, record, store } = runtimeFixture({ qaExecutionMode: 'hybrid', hybrid: { scenarios: [] } });
   const checkpoints = []; let calls = 0;
-  record.hybrid = { async beginTurn() {}, async endTurn(status) { checkpoints.push(status); }, context() { return ''; } };
+  record.hybrid = { segmentProgress() { return "fixture"; }, async continueSegment() { return { continue: true }; }, async beginTurn() {}, async endTurn(status) { checkpoints.push(status); }, context() { return ''; } };
   record.runtime.getSessionSnapshot = () => ({});
   record.runtime.run = async function* () {
     calls++;
@@ -1220,7 +1253,7 @@ for (const throws of [false, true]) test(`a hybrid budget abort that ${throws ? 
     telemetry: { reasoner: {}, classifier: {} }, scenarios: [], modelBudget: { roles: {} }
   } });
   const checkpoints = [];
-  record.hybrid = { async beginTurn() {}, async endTurn(status) { checkpoints.push(status); }, context() { return ''; } };
+  record.hybrid = { segmentProgress() { return "fixture"; }, async continueSegment() { return { continue: true }; }, async beginTurn() {}, async endTurn(status) { checkpoints.push(status); }, context() { return ''; } };
   record.runtime.getSessionSnapshot = () => ({});
   record.runtime.agentSession = { pauseForQuestion() {} };
   record.runtime.run = async function* () {
@@ -1232,4 +1265,80 @@ for (const throws of [false, true]) test(`a hybrid budget abort that ${throws ? 
   assert.equal(session.status, 'awaiting_input'); assert.equal(session.pendingQuestion.hybridDecision, 'budget');
   assert.equal(session.pendingQuestion.credentialLike, false);
   assert.equal(checkpoints.at(-1), 'awaiting_input'); assert.equal(session.hybrid.budgets.reasonerTokens, 300000);
+});
+
+for (const stopped of [false, true]) test(`automatic hard-limit closeout ${stopped ? 'honors a simultaneous user stop' : 'finishes without an approval question'}`, async () => {
+  const { session, record, store } = runtimeFixture({ qaExecutionMode: 'hybrid', ownerUserId: 'owner', hybrid: {
+    continuationPolicyVersion: 2, executionPolicy: { mode: 'autonomous', limits: {} }, scenarios: [], modelBudget: { roles: {} }
+  } });
+  let calls = 0;
+  record.hybrid = { segmentProgress() { return "fixture"; }, async continueSegment() { return { continue: true }; }, async beginTurn() {}, async endTurn() {}, context() { return ''; } };
+  record.runtime.getSessionSnapshot = () => ({});
+  record.runtime.run = async function* () {
+    calls++;
+    if (calls === 1) {
+      record.hybridPause = Object.assign(new Error('Fixture configured limit'), { code: 'HYBRID_MODEL_BUDGET' });
+      record.controller.abort(record.hybridPause);
+      if (stopped) record.userStopRequested = true;
+      throw record.hybridPause;
+    }
+    session.report = { ts: 88, verdict: 'blocked', summary: 'Configured limit reached; no passing coverage claimed.' };
+    yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true } };
+  };
+  await runTurn(session, { task: 'Run the authorized tests.' }, store);
+  assert.equal(session.status, stopped ? 'interrupted' : 'done'); assert.equal(calls, stopped ? 1 : 2);
+  assert.equal(session.pendingQuestion, undefined);
+});
+
+for (const mode of ['qa', 'sqa', 'founder']) test(`${mode} continuation retains device ownership and releases it exactly once`, async () => {
+  const f = runtimeFixture({ mode }); let segments = 0, selections = 0; const releases = [];
+  const devices = { async selectForRun() { selections++; return { executionLevel: 'SIMULATED', provider: 'fixture', deviceSession: { sessionId: 'device-fixture' } }; }, async completeSession(id) { releases.push(id); } };
+  f.record.runtime.run = async function* () {
+    if (++segments === 1) { yield { type: 'chat_text', content: 'Continue remaining work.' }; return; }
+    if (mode === 'qa') f.session.report = { ts: 1, verdict: 'fail' };
+    else f.session[mode] = { finalizedAt: '2026-11-03T00:00:00Z' };
+    yield { type: 'tool_result', toolName: mode === 'qa' ? 'finish_qa_report' : mode === 'sqa' ? 'finish_sqa_assessment' : 'finish_founder_review', result: { success: true, published: true } };
+  };
+  await runTurn(f.session, { task: 'Complete fixture' }, f.store, devices);
+  assert.equal(f.session.status, 'done'); assert.equal(segments, 2);
+  assert.equal(selections, 1, 'Continuation must retain the already owned device rather than acquire another.');
+  assert.deepEqual(releases, ['device-fixture']); assert.equal(f.record.deviceSessionId, null);
+});
+
+test('initial persistence failure releases the running lock and controller', async () => {
+  const f = runtimeFixture(); f.store.setStatus = async () => { throw new Error('Fixture storage unavailable'); };
+  await assert.rejects(runTurn(f.session, { task: 'Start fixture' }, f.store), /storage unavailable/);
+  assert.equal(f.record.running, false); assert.equal(f.record.controller, undefined);
+});
+
+test('automatic continuation cannot reset the transient model retry allowance', async () => {
+  const f = runtimeFixture({ mode: 'sqa' }); let segments = 0;
+  f.record.runtime.run = async function* () {
+    segments++;
+    if (segments % 2) throw new Error('Connection error: socket hang up');
+    yield { type: 'chat_text', content: 'Still working on the scoped controls.' };
+  };
+  await runTurn(f.session, { task: 'Assess fixture' }, f.store);
+  assert.ok(segments <= 5, `Retry/continuation alternation must not replenish retry budget (${segments} segments).`);
+  assert.equal(f.session.status, 'error');
+});
+
+test('device selection is single-owner and cancellation before selection returns cannot dispatch the SDK', async () => {
+  const f = runtimeFixture(); let release, entered; const began=new Promise(resolve=>{entered=resolve;});
+  let selections=0, calls=0, releases=0;
+  const devices={async selectForRun(){selections++;entered();await new Promise(resolve=>{release=resolve;});return {deviceSession:{sessionId:'fixture'}};},async completeSession(){releases++;}};
+  f.record.runtime.run=async function*(){calls++;};
+  const first=runTurn(f.session,{task:'Start fixture'},f.store,devices);await began;
+  await assert.rejects(runTurn(f.session,{task:'Duplicate'},f.store,devices),/already running/);
+  f.record.userStopRequested=true;f.record.controller.abort();release();await first;
+  assert.equal(selections,1);assert.equal(calls,0);assert.equal(releases,1);
+  assert.equal(f.session.status,'interrupted');assert.equal(f.record.running,false);
+});
+
+test('checkpoint cleanup failure releases the runtime lock and device lease', async()=>{
+  const f=runtimeFixture();let released=0;
+  f.record.hybrid={segmentProgress(){return 'fixture';},async beginTurn(){},async continueSegment(){return {continue:true};},async endTurn(){throw new Error('Injected checkpoint failure');}};
+  const devices={async selectForRun(){return {deviceSession:{sessionId:'fixture'}};},async completeSession(){released++;}};
+  await assert.rejects(runTurn(f.session,{task:'Fixture'},f.store,devices),/checkpoint failure/);
+  assert.equal(f.record.running,false);assert.equal(f.record.controller,undefined);assert.equal(released,1);
 });

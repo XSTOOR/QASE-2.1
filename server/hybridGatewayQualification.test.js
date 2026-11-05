@@ -32,3 +32,9 @@ test('gateway qualification verifies protocol behavior and a separate actual-SDK
   assert.equal(report.passed, false);
   assert.doesNotMatch(JSON.stringify(report), /fixture-key/);
 });
+
+test('qualification deadline prevents subsequent gateway and SDK dispatch',async()=>{
+ let calls=0;
+ const report=await qualifyHybridGateway(hybridProfile({apiKey:'fixture-only'},{}),{signal:AbortSignal.abort(),fetchImpl:async()=>{calls++;throw Error('Must not dispatch');},sdkProbe:async()=>{calls++;}});
+ assert.equal(calls,0);assert.equal(report.passed,false);assert.ok(Object.values(report.capabilities).every(check=>check.passed===false));
+});

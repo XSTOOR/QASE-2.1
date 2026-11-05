@@ -45,6 +45,25 @@ function store() {
 	};
 }
 
+test('single and batch observations preserve the live qualified ledger without mutating prior observations', async () => {
+	const candidate = session(), previous = candidate.sqa;
+	const execution = { strategy: 'qualified-opus-jev-v1', segments: 0, actions: [], evidence: [] };
+	previous.execution = execution;
+	const blocked = control_id => ({ control_id, status: 'blocked', rationale: 'Control-specific fixture evidence is unavailable.' });
+	await recordAgentSqaObservation(candidate, blocked('SQA-WEB-001'), store(), fixedNow);
+	assert.equal(candidate.sqa.execution, execution);
+	assert.equal(previous.observations.length, 0);
+	execution.segments++;
+	await recordAgentSqaObservations(candidate, [blocked('SQA-WEB-002'), blocked('SQA-WEB-003')], store(), fixedNow);
+	assert.equal(candidate.sqa.execution, execution);
+	execution.segments++;
+	assert.equal(candidate.sqa.execution.segments, 2);
+	const saved = candidate.sqa;
+	await assert.rejects(recordAgentSqaObservation(candidate, blocked('SQA-WEB-004'), { async commit() { throw new Error('Fixture persistence failure'); } }, fixedNow), /persistence failure/);
+	assert.equal(candidate.sqa, saved);
+	assert.equal(candidate.sqa.execution, execution);
+});
+
 test('SQA state requires explicit authorization and resolves the universal core', () => {
 	assert.throws(() => createSqaState({
 		profiles: ['core'],

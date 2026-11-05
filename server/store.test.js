@@ -124,6 +124,8 @@ test('listSessions summaries carry plan progress alongside usage totals', async 
 	planned.report = { verdict: 'blocked', summary: 'Credentials were unavailable.' };
 	store.emit(planned, 'todos', { todos: planned.todos });
 	const empty = store.createSession('Idle run');
+	const partialHybrid = store.createSession('Hybrid with finding and gaps', { qaExecutionMode: 'hybrid' });
+	partialHybrid.report = { verdict: 'fail', notCovered: ['Unexecuted workflow'] };
 
 	const summary = Object.fromEntries(store.listSessions().map(entry => [entry.title, entry]));
 	assert.equal(summary['Partially planned run'].todoTotal, 4);
@@ -131,6 +133,7 @@ test('listSessions summaries carry plan progress alongside usage totals', async 
 	assert.equal(summary['Partially planned run'].reportVerdict, 'blocked');
 	assert.equal(summary['Idle run'].todoTotal, 0);
 	assert.equal(summary['Idle run'].todoCompleted, 0);
+	assert.equal(summary['Hybrid with finding and gaps'].coverageIncomplete, true);
 	store.flushSessions();
 });
 

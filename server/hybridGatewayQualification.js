@@ -4,17 +4,17 @@ import { createJevClient } from './jevClient.js';
 const tool = { type: 'function', function: { name: 'qa_echo', description: 'Harmless protocol probe. Return the supplied value.', parameters: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false } } };
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 
-export async function qualifyHybridGateway(profile, { fetchImpl = fetch, sdkProbe, imageUrl, now = Date.now } = {}) {
+export async function qualifyHybridGateway(profile, { fetchImpl = fetch, sdkProbe, imageUrl, now = Date.now, signal } = {}) {
   const report = { version: 1, sdkVersion: HYBRID_SDK_VERSION, usageTransport: profile.usageTransport, checkedAt: now(), profileIdentity: profileIdentity(profile),
     reasoner: { model: profile.reasoner.model, endpoint: profile.reasoner.endpoint }, classifier: { model: profile.classifier.model, endpoint: profile.classifier.endpoint }, capabilities: {}, requests: 0 };
   async function test(name, work) {
     const began = now();
-    try { const detail = await work(); report.capabilities[name] = { passed: true, elapsedMs: now() - began, ...(detail || {}) }; }
+    try { signal?.throwIfAborted(); const detail = await work(); report.capabilities[name] = { passed: true, elapsedMs: now() - began, ...(detail || {}) }; }
     catch (error) { report.capabilities[name] = { passed: false, elapsedMs: now() - began, reason: String(error.message || error.name).replaceAll(profile.reasoner.apiKey, '[REDACTED]').slice(0, 500) }; }
   }
-  async function request(body, { signal, streaming = false } = {}) {
+  async function request(body, { signal: requestSignal, streaming = false } = {}) {
     report.requests++;
-    const response = await fetchImpl(profile.reasoner.endpoint, { method: 'POST', redirect: 'error', signal: signal || AbortSignal.timeout(45000),
+    const response = await fetchImpl(profile.reasoner.endpoint, { method: 'POST', redirect: 'error', signal: AbortSignal.any([requestSignal || AbortSignal.timeout(45000), ...(signal ? [signal] : [])]),
       headers: { Authorization: `Bearer ${profile.reasoner.apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: OPUS_MODEL, messages: [{ role: 'user', content: 'Reply with exactly OK.' }], max_tokens: 512, ...body }) });
     assert(response.ok, `Gateway HTTP ${response.status}`);
     if (streaming) return response;
@@ -74,7 +74,7 @@ export async function qualifyHybridGateway(profile, { fetchImpl = fetch, sdkProb
   await test('sdkLoop', async () => { assert(typeof sdkProbe === 'function', 'Installed SDK loop probe is required'); sdkResult = await sdkProbe(); return sdkResult; });
   await test('sdkUsage', async () => { assert(sdkResult?.usageReported === true, 'Installed CleanSlate custom-provider stream does not expose provider usage; hybrid activation is blocked.'); return { usageReported: true }; });
   await test('jev', async () => {
-    const response = await createJevClient({ apiKey: profile.classifier.apiKey, baseUrl: profile.classifier.endpoint, model: profile.classifier.model }, { fetchImpl, timeoutMs: 30000 }).decide({ fixture: 'A browser tool returned success=false. No defect has been verified.' }, { state: { type: 'choice', instructions: 'Classify only this supplied fixture.', criteria: { unresolved: 'Tool failed; target defect is not established.', confirmed: 'A reproduced target defect is established.' } } });
+    const response = await createJevClient({ apiKey: profile.classifier.apiKey, baseUrl: profile.classifier.endpoint, model: profile.classifier.model }, { fetchImpl, timeoutMs: 30000 }).decide({ fixture: 'A browser tool returned success=false. No defect has been verified.' }, { state: { type: 'choice', instructions: 'Classify only this supplied fixture.', criteria: { unresolved: 'Tool failed; target defect is not established.', confirmed: 'A reproduced target defect is established.' } } }, { signal });
     assert(response.answers.state.choice === 'unresolved', 'Classifier could not distinguish an unresolved tool failure'); return { returnedModel: response.model };
   });
   report.passed = REQUIRED_CAPABILITIES.every(key => report.capabilities[key]?.passed === true);

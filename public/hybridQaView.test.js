@@ -2,6 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { hybridQaModel, renderHybridQa, hybridLaunchOptions, hybridScenarioProgress, hybridScenarioPlan, hybridAvailabilityMessage, holdPrimaryPreview, viewportStatusText } from './hybridQaView.js';
 
+test('owner-authorized test writes show acknowledged vs uncertain outcomes and cleanup labels', () => {
+  const nodes = [], document = { createElement() { const node = { textContent: '', setAttribute() {}, append() {} }; nodes.push(node); return node; } };
+  renderHybridQa({ mode: 'qa', qaExecutionMode: 'hybrid', hybrid: { writeTesting: { enabled: true, trials: [{ status: 'responded', testDataPrefix: 'QASE-fixture-1' }, { status: 'uncertain', testDataPrefix: 'QASE-fixture-2' }] } } }, document);
+  const text = nodes.map(node => node.textContent).join(' ');
+  assert.match(text, /1 submissions acknowledged.*1 uncertain/);
+  assert.match(text, /QASE-fixture-1, QASE-fixture-2/);
+  assert.match(text, /not a verified business outcome/);
+});
+
 test('hybrid launcher is explicit, qualified and exactly one observed available configuration', () => {
   const config = { hybridQa: { enabled: true, available: true } };
   const configurations = [{ envId: 'fixture-env', availability: 'AVAILABLE', browserSupport: { engine: 'chromium' } }];
@@ -33,6 +42,13 @@ test('plan resolution and verified platform access are distinct from executed co
   nodes.length = 0;
   renderHybridQa({ mode: 'qa', qaExecutionMode: 'hybrid', hybrid: { authentication: { status: 'unrequested', required: false }, scenarios: [] } }, document);
   assert.doesNotMatch(nodes.map(node => node.textContent).join(' '), /Platform access:/, 'A public run without an access prerequisite must not look blocked on credentials.');
+});
+
+test('discovery, executed attempts, accountable dispositions and conclusive coverage are shown separately',()=>{
+ const nodes=[],document={createElement(){const n={textContent:'',setAttribute(){},append(){}};nodes.push(n);return n;}};
+ renderHybridQa({mode:'qa',qaExecutionMode:'hybrid',hybrid:{counts:{passed:1,inconclusive:10},coverage:1/11,accountability:{total:11,attempted:8,accounted:9,pending:2},discovery:{status:'ready',features:17,observations:4}}},document);
+ const text=nodes.map(n=>n.textContent).join(' ');
+ assert.match(text,/Conclusive scenario coverage: 9%/);assert.match(text,/8\/11 scenarios attempted/);assert.match(text,/9\/11 accounted for/);assert.match(text,/17 observed features/);
 });
 
 test('temporary responsive samples cannot replace the selected-device preview or masquerade as another device', () => {
@@ -95,4 +111,12 @@ test('passed assertions on some pages do not label a suite with route gaps as a 
   assert.equal(hybridScenarioPlan(session)[0].status, 'partial');
   assert.deepEqual(hybridScenarioProgress(session), { total: 1, done: 0, percent: 0 });
   assert.equal(hybridQaModel(session).coverage, 0);
+});
+
+test('automatic completion status explains the no-approval flow without promising exhaustive coverage', () => {
+  const nodes = [], document = { createElement() { const node = { textContent: '', setAttribute() {}, append() {} }; nodes.push(node); return node; } };
+  renderHybridQa({ mode: 'qa', qaExecutionMode: 'hybrid', hybrid: { executionPolicy: { mode: 'autonomous' }, scenarios: [], counts: {} } }, document);
+  const text = nodes.map(node => node.textContent).join(' ');
+  assert.match(text, /continues without budget or coverage approval prompts/);
+  assert.match(text, /Secure access can still require your input/);
 });

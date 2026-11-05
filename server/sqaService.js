@@ -5,6 +5,7 @@ import { redact } from './secrets.js';
 import { PublicInputError, publicInput } from './publicErrors.js';
 import { assertSqaSize, preserveSqaPublication } from './sqaHistory.js';
 import { evidenceDigest } from './sqaEvidence.js';
+import { publicationTodos } from './finalizationGuard.js';
 
 const AGENT_EVIDENCE_TYPES = new Set([
 	'assessment_record', 'configuration_record', 'security_report', 'test_result', 'wcag_report'
@@ -325,12 +326,20 @@ function assertAgentRunMutable(session) {
  * The model can reference browser evidence only. Manual and documentary proof
  * must arrive through a separately authorized reviewer workflow.
  */
+function cloneObservationState(previous) {
+	const next = structuredClone(previous);
+	// The qualified runtime owns this live progress ledger. Keep its identity
+	// while replacing assessment data, so later receipts remain attached.
+	if (previous.execution) next.execution = previous.execution;
+	return next;
+}
+
 export async function recordAgentSqaObservation(session, input, runStore, now = () => Date.now()) {
 	assertAgentRunMutable(session);
 	const previous = session.sqa;
 	const records = new Map();
 	const observation = normalizeAgentObservation(session, input, now, records);
-	const next = structuredClone(previous);
+	const next = cloneObservationState(previous);
 	next.evidenceRecords = { ...previous.evidenceRecords, ...Object.fromEntries(records) };
 	const index = next.observations.findIndex(item => item.controlId === observation.controlId);
 	if (index >= 0) next.observations[index] = observation;
@@ -368,7 +377,7 @@ export async function recordAgentSqaObservations(session, inputs, runStore, now 
 	if (new Set(ids).size !== ids.length) {
 		throw new TypeError('SQA observation batch contains duplicate control IDs.');
 	}
-	const next = structuredClone(previous);
+	const next = cloneObservationState(previous);
 	next.evidenceRecords = { ...previous.evidenceRecords, ...Object.fromEntries(records) };
 	for (const observation of observations) {
 		const index = next.observations.findIndex(item => item.controlId === observation.controlId);
@@ -487,6 +496,7 @@ export async function finishSqaAssessment(session, runStore, now = () => Date.no
 		throw new TypeError('This SQA assessment is finalized and cannot be recalculated without an authorized reopen.');
 	}
 	const previous = session.sqa;
+	const previousTodos = session.todos;
 	const normalized = normalizePendingSqaState(previous);
 	const assessedAt = new Date(now()).toISOString();
 	session.sqa = {
@@ -495,12 +505,14 @@ export async function finishSqaAssessment(session, runStore, now = () => Date.no
 		finalizedAt: assessedAt,
 		assessment: evaluateSqaAssessment(assessmentInput(normalized, assessedAt))
 	};
+	session.todos = publicationTodos(previousTodos, 'sqa');
 	try {
 		session.sqa.publishedVersions = preserveSqaPublication(session.sqa, undefined, true);
 		assertSqaSize(session.sqa);
-		await runStore.commit(session, 'sqa', { assessment: session.sqa.assessment, final: true });
+		await runStore.commit(session, 'sqa', { assessment: session.sqa.assessment, final: true, todos: session.todos });
 	} catch (error) {
 		session.sqa = previous;
+		session.todos = previousTodos;
 		throw error;
 	}
 	return session.sqa.assessment;

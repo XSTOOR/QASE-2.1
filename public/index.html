@@ -9,7 +9,7 @@
 <title>QASE — Autonomous quality assurance</title>
 <script src="theme.js?v=20261015-11"></script>
 <script src="studioMode.js?v=20261014-6"></script>
-<link rel="stylesheet" href="styles.css?v=20261104-3">
+<link rel="stylesheet" href="styles.css?v=20261105-2">
 <link rel="stylesheet" href="bugsView.css?v=20261014-6">
 <link rel="stylesheet" href="studio-workspace.css?v=20261015-6">
 <link rel="stylesheet" href="studio-embed.css?v=20261015-7">
@@ -292,7 +292,7 @@
          Collapsible: toggle keeps the token row visible and swaps the detail for a
          compact one-line mirror (see #run-summary-mini). -->
     <section class="run-summary" id="run-summary" aria-label="Run summary" hidden>
-      <div class="journey-run-guide" id="journey-run-guide" hidden><div><strong id="journey-run-title"></strong><p id="journey-run-description"></p></div><button type="button" class="btn btn-ghost btn-sm" id="journey-run-action"></button></div>
+      <div class="journey-run-guide" id="journey-run-guide" hidden><div><strong id="journey-run-title"></strong><p id="journey-run-description"></p></div><button type="button" class="btn btn-ghost btn-sm" id="journey-run-action"></button><button type="button" class="btn btn-ghost btn-sm" id="journey-run-fresh-test" hidden>Set up a fresh test</button></div>
       <div class="run-summary-mini" id="run-summary-mini" hidden>
         <span class="mini-tokens" id="mini-tokens"></span>
         <span class="mini-status" id="mini-status"></span>
@@ -925,6 +925,7 @@
           <button type="button" class="link-btn" id="qa-demo-fill">Try the demo site</button></small>
       </label>
       <label class="field journey-goal"><span>Anything you’d like Qase to focus on? <small>Optional</small></span><textarea id="qa-goal" rows="3" maxlength="2000" placeholder="For example: check sign-in, project creation, and the mobile navigation."></textarea><small>Describe the workflow or concern. Provide sign-in credentials only when the agent asks.</small></label>
+      <label class="field qa-write-permission"><span><input id="qa-allow-test-writes" type="checkbox"> Allow test data writes</span><small>For an isolated test account: Qase may submit clearly marked test records. Records may persist. Account changes, payments, messages and destructive actions remain excluded. Read-only tests need no extra confirmation.</small></label>
       </section>
       <section class="journey-step" data-journey-panel="1" aria-labelledby="journey-coverage-title" hidden>
       <p class="journey-eyebrow">STEP 02 / YOUR TEST PLAN</p>
@@ -1094,7 +1095,7 @@
         <p class="journey-eyebrow">STEP 03 / READY WHEN YOU ARE</p>
         <h2 id="journey-review-title" tabindex="-1">Here’s your test run.</h2>
         <p class="journey-lead">Check the details, then let Qase take it from here.</p>
-        <div class="journey-review-card"><div class="journey-review-target"><span class="journey-site-icon" aria-hidden="true">↗</span><div><small>Website</small><strong id="journey-review-url"></strong></div><button type="button" class="link-btn" data-journey-edit="0">Edit</button></div><dl><div><dt>Checks selected</dt><dd id="journey-review-checks">—</dd></div><div><dt>Browser configurations</dt><dd id="journey-review-devices">—</dd></div><div><dt>Qase-provided model</dt><dd id="journey-review-model">—</dd></div><div id="journey-review-goal-row" hidden><dt>Your focus</dt><dd id="journey-review-goal"></dd></div></dl><button type="button" class="link-btn" data-journey-edit="1">Edit coverage and devices</button></div>
+        <div class="journey-review-card"><div class="journey-review-target"><span class="journey-site-icon" aria-hidden="true">↗</span><div><small>Website</small><strong id="journey-review-url"></strong></div><button type="button" class="link-btn" data-journey-edit="0">Edit</button></div><dl><div><dt>Checks selected</dt><dd id="journey-review-checks">—</dd></div><div><dt>Browser configurations</dt><dd id="journey-review-devices">—</dd></div><div><dt>Qase-provided model</dt><dd id="journey-review-model">—</dd></div><div><dt>Test access</dt><dd id="journey-review-access"></dd></div><div id="journey-review-goal-row" hidden><dt>Your focus</dt><dd id="journey-review-goal"></dd></div></dl><button type="button" class="link-btn" data-journey-edit="1">Edit coverage and devices</button></div>
         <p class="journey-volume-note" id="journey-volume-note" hidden></p>
         <div class="journey-next"><strong>What happens next</strong><ol><li>Qase opens your website in a real browser.</li><li>Follow progress live. Answer any sign-in or workflow questions.</li><li>Review findings, evidence, and the final report when the run finishes.</li></ol></div>
       </section>
@@ -1708,6 +1709,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261104-3" type="module"></script>
+<script src="app.js?v=20261105-2" type="module"></script>
 </body>
 </html>

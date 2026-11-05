@@ -1,3 +1,4 @@
+import { safeBrowserRoute } from './browserRouteSafety.js';
 import { hasUnresolvedPlaceholder, resolveSecrets, redact } from './secrets.js';
 import nodeFs from 'node:fs';
 import nodePath from 'node:path';
@@ -9,6 +10,7 @@ import { inspectFormValidation } from './browserFormAudit.js';
 import { runJevBrowserCheck } from './jevBrowserChecks.js';
 import { createQaInputIsolation } from './qaInputIsolation.js';
 import { createHybridAuthentication } from './hybridAuth.js';
+import { createQaTestWrites } from './qaTestWrites.js';
 import { resolveEngine, ensureXvfb, ENGINE_IDS } from './browserEngines.js';
 
 /** RT4: the Xvfb display id ensureXvfb manages (":77"). */
@@ -254,6 +256,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 		: contextOptionsFor(deviceId, { landscape: deviceLandscape });
 	const inputIsolation = createQaInputIsolation();
 	const authentication = createHybridAuthentication(session);
+	const testWrites = createQaTestWrites(session, () => runStore.commit(session, 'hybrid.state', {}));
 	const bridge = {
 		service,
 		execution: {
@@ -579,7 +582,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 				const current = await policy.evaluateNavigation(page.url());
 				if (!current.allowed) return policy.asBlockedResult(current);
 			}
-			if (['navigation', 'disclosure', 'dismiss_overlay'].includes(input?.action)) {
+			if (['navigation', 'navigation_control', 'open_test_form', 'disclosure', 'dismiss_overlay'].includes(input?.action)) {
 				const descriptor = await resolveActionDescriptor({ selector: input.selector });
 				// These scenarios never consume destructive-action approval grants.
 				if (classifyDestructiveAction('click', descriptor)) return { success: false, action: input.action, code: 'QA_RISKY_CONTROL', error: 'The observed control requires a separate authorized scenario; it is excluded from public read-only QA.' };
@@ -588,7 +591,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 					if (!destination.allowed) return policy.asBlockedResult(destination);
 				}
 			}
-			const run = () => runJevBrowserCheck(currentPage(), input, { signal, responsiveBoundaries: session.qaExecutionMode === 'hybrid',
+			const run = () => runJevBrowserCheck(currentPage(), input, { signal, executeTestForm: (selector, signal) => testWrites.run(currentPage(), selector, signal), responsiveBoundaries: session.qaExecutionMode === 'hybrid',
 				liveForms: session.qaExecutionMode === 'hybrid' && protectedContexts.has(currentPage().context?.()) && typeof currentPage().context?.()?.routeWebSocket === 'function', requireLiveForms: session.qaExecutionMode === 'hybrid',
 				protectInputs: page => inputIsolation.protect(page), onViewport: session.qaExecutionMode === 'hybrid' ? async viewport => {
 				if (!session.hybrid) return;
@@ -694,7 +697,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 				message: 'Service worker registration is disabled in production so network policy cannot be bypassed.'
 			}, { resourceType: 'serviceworker' });
 		}
-		await context.route('**/*', async route => {
+		await context.route('**/*', safeBrowserRoute(async route => {
 			const request = route.request();
 			const authDecision = session.qaExecutionMode === 'hybrid' ? authentication.requestDecision(request) : null;
 			if (authDecision?.allowed === false) {
@@ -702,13 +705,15 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 				recordSecurityBlock({ code: authDecision.code, message: 'Outside the single approved sign-in request.' }, { method: request.method(), resourceType: request.resourceType(), url: `${destination.origin}${destination.pathname}` });
 				await route.abort('blockedbyclient').catch(() => undefined); return;
 			}
-			const inputBlock = session.qaExecutionMode === 'hybrid' && !authDecision?.allowed && inputIsolation.decision(request);
+			const writeDecision = session.qaExecutionMode === 'hybrid' && !authDecision?.allowed ? await testWrites.requestDecision(request) : null;
+			if (writeDecision?.allowed === false) { await route.abort('blockedbyclient'); return; }
+			const inputBlock = session.qaExecutionMode === 'hybrid' && !authDecision?.allowed && !writeDecision?.allowed && inputIsolation.decision(request);
 			if (inputBlock) {
 				const destination = new URL(request.url());
 				recordSecurityBlock(inputBlock, { method: request.method(), resourceType: request.resourceType(), url: `${destination.origin}${destination.pathname}` });
 				await route.abort('blockedbyclient').catch(() => undefined); return;
 			}
-			if (session.qaExecutionMode === 'hybrid' && !authDecision?.allowed && !['GET', 'HEAD', 'OPTIONS'].includes(request.method())) {
+			if (session.qaExecutionMode === 'hybrid' && !authDecision?.allowed && !writeDecision?.allowed && !['GET', 'HEAD', 'OPTIONS'].includes(request.method())) {
 				recordSecurityBlock({ code: 'HYBRID_WRITE_REQUEST_BLOCKED', message: 'Hybrid public QA does not authorize target data writes.' }, { method: request.method(), url: request.url() });
 				await route.abort('blockedbyclient').catch(() => undefined);
 				return;
@@ -741,7 +746,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 				url: request.url()
 			});
 			await route.abort('blockedbyclient').catch(() => undefined);
-		});
+		}, decision => recordSecurityBlock(decision)));
 		if (typeof context.routeWebSocket === 'function') {
 			await context.routeWebSocket('**/*', async socket => {
 				if (session.qaExecutionMode === 'hybrid') { await socket.close({ code: 1008, reason: 'Hybrid public QA does not authorize WebSocket writes.' }).catch(() => undefined); return; }

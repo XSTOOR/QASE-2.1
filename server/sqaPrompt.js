@@ -4,6 +4,20 @@ import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { AGENT_EVIDENCE_TYPES } from './sqaService.js';
 import { countSqaBrowserActivities, countSqaBrowserActivitiesSinceControlCheckpoint, SQA_BROWSER_TOOL_BUDGET, SQA_BROWSER_WORKFLOW_CHECKPOINT, SQA_INPUT_TOKEN_BUDGET } from './sqaBrowserBudget.js';
 
+/** Evidence collection has ended; retain the actual control decisions and plan,
+ * rather than paying to resend browser/tool transcripts for publication. */
+export function buildSqaSynthesisContext(session) {
+ const controls=session.sqa.observations.map(({controlId,status,rationale,evidence})=>({controlId,status,rationale,evidence:evidence.map(({type,reference,digest})=>({type,reference,digest}))}));
+ return `Complete this SQA assessment using only its saved evidence and native finalizer.
+The host has accounted for every applicable control; missing reviewer artifacts remain blocked.
+Update the existing plan statuses from the completed work, then call finish_sqa_assessment.
+Do not claim compliance, certification, whole-product coverage or unsupported passes.
+The deterministic evaluator and finalizer still validate all required evidence and plan completion.
+Authorized target and scope: ${JSON.stringify(session.sqa.scope)}
+Plan: ${JSON.stringify(session.todos)}
+Recorded controls: ${JSON.stringify(controls)}`;
+}
+
 /** Build the bounded, standards-informed operating brief for a CleanSlate SQA run. */
 export function buildSqaContext(session, liveUrl) {
 	const scope = session.sqa?.scope;

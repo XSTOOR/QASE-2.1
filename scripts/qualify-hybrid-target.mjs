@@ -10,6 +10,7 @@ import { ensureRuntime, runTurn, deleteRunSnapshot } from '../server/agent.js';
 import { getConfig, withUserConfiguration } from '../server/config.js';
 import { hybridProfile, loadQualification } from '../server/hybridConfig.js';
 import { validateHybridFinding } from '../server/qaCompletionGate.js';
+import { recordHybridAnswer } from '../server/hybridAuth.js';
 
 assert.equal(process.env.QASE_LIVE_HYBRID_EXECUTION, 'true', 'Explicit live-model opt-in required.');
 assert.notEqual(process.env.NODE_ENV, 'production');
@@ -19,7 +20,7 @@ assert.ok(['http:', 'https:'].includes(target.protocol) && !target.username && !
 assert.equal(process.env.QASE_AUTHORIZED_TARGET, target.origin, 'The operator must first obtain explicit target authorization, then name its exact origin in QASE_AUTHORIZED_TARGET.');
 const settings = getConfig(); loadQualification(hybridProfile(settings));
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-hybrid-target-'));
-const session = { id: randomUUID(), ownerUserId: 'isolated-readonly-verification', mode: 'qa', qaExecutionMode: 'hybrid', status: 'idle',
+const session = { id: randomUUID(), ownerUserId: 'isolated-readonly-verification', mode: 'qa', qaExecutionMode: 'hybrid', qaDiscoveryVersion: 1, status: 'idle',
   targetUrl: target.href, selectedTests: ['navigation', 'broken_links', 'responsive', 'forms', 'search', 'authentication', 'media', 'accessibility', 'console_health', 'content', 'visual_consistency'],
   messages: [], activities: [], findings: [], todos: [], secretNames: [] };
 const live = {}, store = {
@@ -34,9 +35,11 @@ let record; const began = Date.now();
 try {
   await withUserConfiguration(settings, async () => { throw new Error('Configuration changes forbidden.'); }, async () => {
     record = await ensureRuntime(session, store);
+    if (process.env.QASE_LIVE_PUBLIC_ONLY === 'true') recordHybridAnswer(session, 'Public-only verification; no credentials available for this isolated run.');
     await runTurn(session, { task: `Read-only precision verification of ${target.href}. Use the existing approved route batches with default checks; include the entry page and prioritize distinct functional routes over repeated legal pages. Investigate observable failures, report only intact reproduced host assertions, and publish an honest report after every selected suite has an evidence-based disposition. No form submission, credentials, account changes, security payloads, external origins or other writes are authorized. Record missing expectations, authorization and unsupported workflows as gaps, not passes. Do not invent defects to meet a quota.` }, store);
   });
   const result = { status: session.status, detail: session.statusDetail, target: `${target.origin}${target.pathname}`, elapsedMs: Date.now() - began,
+    publicOnly: process.env.QASE_LIVE_PUBLIC_ONLY === 'true', sdkSegments: session.hybrid.sdkContinuation?.segments || 1,
     sdkLoopUnchanged: record.runtime.run === Object.getPrototypeOf(record.runtime).run,
     reasoner: session.hybrid.telemetry.reasoner, classifier: session.hybrid.telemetry.classifier,
     browserActions: session.hybrid.telemetry.browserActions, browserTimings: session.hybrid.telemetry.browserTimings,

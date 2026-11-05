@@ -52,6 +52,7 @@ const EVENT_CHILD_GROUPS = new Map([
 	['context', Object.freeze([])],
 	['usage', Object.freeze([])],
 	['hybrid.state', Object.freeze([])],
+	['mode.reasoning', Object.freeze([])],
 	['question', Object.freeze([])],
 	['run.recovered', Object.freeze([])],
 	['run.stop_requested', Object.freeze([])],
@@ -427,8 +428,8 @@ function eventOptions(options, fallbackDate, tenant) {
 
 async function setTenantContext(client, tenant) {
 	await client.query(
-		"SELECT set_config('qase.organization_id', $1, true), set_config('qase.project_id', $2, true)",
-		[tenant.organizationId, tenant.projectId]
+		"SELECT set_config('qase.organization_id', $1, true), set_config('qase.project_id', $2, true), set_config('qase.actor_user_id', $3, true)",
+		[tenant.organizationId, tenant.projectId, tenant.actorUserId]
 	);
 }
 
@@ -562,36 +563,34 @@ async function hydrateRows(client, tenant, runRows) {
 	if (!runRows?.length) return [];
 	const ids = runRows.map(row => row.id);
 	const childScope = [tenant.organizationId, tenant.projectId, ids];
-	const [messages, activities, planItems, findings, reports] = await Promise.all([
-		client.query(
+	const messages = await client.query(
 			`SELECT run_id, id, role, kind, content, actor_user_id, created_at
 			 FROM qa_messages
 			 WHERE organization_id = $1 AND project_id = $2 AND run_id = ANY($3::uuid[])
-			 ORDER BY run_id, ordinal`, childScope),
-		client.query(
+			 ORDER BY run_id, ordinal`, childScope);
+	const activities = await client.query(
 			`SELECT run_id, id, type, tool_name, label, detail, input, status, error, summary, created_at
 			 FROM qa_activities
 			 WHERE organization_id = $1 AND project_id = $2 AND run_id = ANY($3::uuid[])
-			 ORDER BY run_id, ordinal`, childScope),
-		client.query(
+			 ORDER BY run_id, ordinal`, childScope);
+	const planItems = await client.query(
 			`SELECT run_id, position, text, status
 			 FROM qa_plan_items
 			 WHERE organization_id = $1 AND project_id = $2 AND run_id = ANY($3::uuid[])
-			 ORDER BY run_id, position`, childScope),
-		client.query(
+			 ORDER BY run_id, position`, childScope);
+	const findings = await client.query(
 			`SELECT run_id, id, title, severity, category, page_url, steps, expected, actual, evidence,
 				status, status_note, status_at, created_at
 			 FROM qa_findings
 			 WHERE organization_id = $1 AND project_id = $2 AND run_id = ANY($3::uuid[])
-			 ORDER BY run_id, ordinal`, childScope),
-		client.query(
+			 ORDER BY run_id, ordinal`, childScope);
+	const reports = await client.query(
 			`SELECT run_id, verdict, summary, covered, not_covered, recommendations,
 				target_url, finding_count, severity_counts, published_at
 			 FROM qa_reports
 			 WHERE organization_id = $1 AND project_id = $2 AND run_id = ANY($3::uuid[])
 				AND is_current = true
-			 ORDER BY run_id`, childScope)
-	]);
+			 ORDER BY run_id`, childScope);
 	const children = {
 		messages: groupByRun(messages.rows),
 		activities: groupByRun(activities.rows),
@@ -823,21 +822,19 @@ export function createPostgresRunRepository({
 				[tenant.organizationId, tenant.organizationSlug, tenant.organizationName, timestamp]
 			);
 			if (organization.rows?.[0]?.status !== 'active') throw new TenantInactiveError('organization');
-			const user = await client.query(
+			// The trusted actor policy permits bootstrap visibility. Establish
+			// membership before updating an existing user: UPDATE RLS still
+			// requires active membership and must not be bypassed.
+			await client.query(
 				`INSERT INTO users (
 					id, email, normalized_email, display_name, status, created_at, updated_at
 				) VALUES ($1,$2,$3,$4,'active',$5,$5)
-				 ON CONFLICT (id) DO UPDATE SET
-					email = EXCLUDED.email, normalized_email = EXCLUDED.normalized_email,
-					display_name = EXCLUDED.display_name, updated_at = EXCLUDED.updated_at
-				 WHERE users.status = 'active'
-				 RETURNING status`,
+				 ON CONFLICT (id) DO NOTHING`,
 				[
 					tenant.actorUserId, tenant.actorEmail,
 					tenant.actorEmail.trim().toLowerCase(), tenant.actorName, timestamp
 				]
 			);
-			if (user.rows?.[0]?.status !== 'active') throw new TenantInactiveError('user');
 			const membership = await client.query(
 				`INSERT INTO organization_memberships (
 					organization_id, user_id, role, status, created_at, updated_at
@@ -849,6 +846,11 @@ export function createPostgresRunRepository({
 				[tenant.organizationId, tenant.actorUserId, tenant.actorRole, timestamp]
 			);
 			if (membership.rows?.[0]?.status !== 'active') throw new TenantInactiveError('membership');
+			const user = await client.query(
+				`UPDATE users SET email=$2, normalized_email=$3, display_name=$4, updated_at=$5 WHERE id=$1 AND status='active' RETURNING status`,
+				[tenant.actorUserId, tenant.actorEmail, tenant.actorEmail.trim().toLowerCase(), tenant.actorName, timestamp]
+			);
+			if (user.rows?.[0]?.status !== 'active') throw new TenantInactiveError('user');
 			const project = await client.query(
 				`INSERT INTO projects (id, organization_id, slug, name, status, created_at, updated_at)
 				 VALUES ($1,$2,$3,$4,'active',$5,$5)
@@ -913,6 +915,8 @@ export function createPostgresRunRepository({
 					(SELECT verdict FROM qa_reports
 						WHERE organization_id = $1 AND project_id = $2 AND run_id = qa_runs.id AND is_current = true
 						LIMIT 1) AS report_verdict,
+					(COALESCE(to_jsonb(qa_runs)->'hybrid_qa'->>'executionMode', '') = 'hybrid' AND EXISTS
+						(SELECT 1 FROM qa_reports WHERE organization_id = $1 AND project_id = $2 AND run_id = qa_runs.id AND is_current = true AND cardinality(not_covered) > 0)) AS coverage_incomplete,
 					(SELECT COUNT(*)::int FROM qa_plan_items
 						WHERE organization_id = $1 AND project_id = $2 AND run_id = id) AS todo_total,
 					(SELECT COUNT(*)::int FROM qa_plan_items
@@ -943,6 +947,7 @@ export function createPostgresRunRepository({
 				findingCount: Number(row.finding_count ?? 0),
 				messageCount: Number(row.message_count ?? 0),
 				...(row.report_verdict ? { reportVerdict: row.report_verdict } : {}),
+				...(row.coverage_incomplete === true ? { coverageIncomplete: true } : {}),
 				// Plan progress for the sidebar card — derived from the child table.
 				todoTotal: Number(row.todo_total ?? 0),
 				todoCompleted: Number(row.todo_completed ?? 0),
@@ -1062,10 +1067,10 @@ export function createPostgresRunRepository({
 					cancelled_at = COALESCE(cancelled_at, $29),
 					paused_at = $31,
 					paused_seconds = CASE
-						WHEN $31 IS NULL THEN COALESCE(paused_seconds, 0) + $32
+						WHEN $31::timestamptz IS NULL THEN COALESCE(paused_seconds, 0) + $32
 						ELSE COALESCE(paused_seconds, 0)
 					END,
-					failure_reason = CASE WHEN $30 IS NOT NULL THEN $30 ELSE failure_reason END,
+					failure_reason = CASE WHEN $30::text IS NOT NULL THEN $30::text ELSE failure_reason END,
 					engine = $33, device = $34, device_landscape = $35,
 					cohort = $36,
 					scope_selection = $38${hybrid ? ', hybrid_qa = $39' : ''}
@@ -1359,8 +1364,8 @@ export function createPostgresRunRepository({
 			const attestationReference = status === 'completed' ? referenceId : null;
 			const updated = await client.query(
 				`UPDATE qase_run_cleanup SET
-					status = $4, attempts = attempts + 1, last_attempt_at = $5,
-					completed_at = CASE WHEN $4 = 'completed' THEN $5 ELSE NULL END,
+					status = $4, attempts = attempts + 1, last_attempt_at = $5::timestamptz,
+					completed_at = CASE WHEN $4 = 'completed' THEN $5::timestamptz ELSE NULL END,
 					last_error_code = $6,
 					attestation_reference_id = CASE WHEN $4 = 'completed' THEN $7 ELSE NULL END
 				 WHERE organization_id = $1 AND project_id = $2 AND run_id = $3

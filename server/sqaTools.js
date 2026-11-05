@@ -1,3 +1,5 @@
+import { guardFinalization } from './finalizationGuard.js';
+import { modeExplorationReadiness } from './modeReasoningRuntime.js';
 import {
 	AGENT_EVIDENCE_TYPES,
 	closePendingSqaControlsAsBlocked,
@@ -67,7 +69,7 @@ function finishReadiness(session, now = Date.now()) {
 	};
 }
 
-export function createSqaTools(session, runStore) {
+export function createSqaTools(session, runStore, options = {}) {
 	const recordControl = {
 		name: 'record_sqa_control',
 		description: 'Records one scoped SQA control observation, or an atomic controls batch of up to 12 closely related observations. Capture a control-specific browser check immediately before pass/fail. Provide every required browser-eligible evidence type in evidence; manual and reviewer-only prerequisites remain blocked.',
@@ -215,6 +217,8 @@ export function createSqaTools(session, runStore) {
 						disclaimer: session.sqa.assessment.disclaimer
 					};
 				}
+				const exploration = modeExplorationReadiness(session);
+				if (!exploration.ready) return { success: false, error: 'Qualified SQA requires observed page exploration, an executed reversible interaction, and diagnostics before publication.', exploration };
 				let readiness = finishReadiness(session);
 				if (readiness.activeActivities.length > 0) {
 					return {
@@ -306,7 +310,7 @@ export function createSqaTools(session, runStore) {
 		}
 	};
 
-	return [recordControl, recordBlockers, finish];
+	return [recordControl, recordBlockers, guardFinalization(finish, session, options)];
 }
 
 export { finishReadiness };

@@ -2,6 +2,8 @@
 #cfg-managed-connection[hidden] { display: none !important; }
 body.studio-workspace .journey-run-guide { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 16px; margin: 0 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
 body.studio-workspace .journey-run-guide[hidden] { display: none; }
+body.studio-workspace #qa-start .qa-write-permission > span { display: flex; align-items: center; gap: 10px; }
+body.studio-workspace #qa-start #qa-allow-test-writes { width: 18px; height: 18px; min-height: 18px; padding: 0; margin: 0; flex: 0 0 18px; }
 body.studio-workspace .journey-run-guide > div { flex: 1 1 240px; min-width: 0; }
 body.studio-workspace .jev-execution-evidence details { margin-block: 10px; overflow-wrap: anywhere; }
 body.studio-workspace .jev-execution-evidence summary { cursor: pointer; font-weight: 600; }

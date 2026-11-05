@@ -3,6 +3,9 @@ import { redact } from './secrets.js';
 import { QA_STANDARD_TESTS } from './qaTestCatalog.js';
 import { jevRequestedChecks } from './jevQaRunner.js';
 import { jevDiagnosticCandidates } from './jevDiagnostics.js';
+import { scenarioExecutionAccount } from './qaExecutionState.js';
+import {scenarioObligation,validateScenarioDependencies,intactQaReceipt} from './qaScenarioScheduler.js';
+import { requireApplicationDiscovery, observeApplication } from './qaApplicationDiscovery.js';
 
 const text = (value, max = 1500) => String(value ?? '').slice(0, max);
 export const digestEvidence = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -34,17 +37,22 @@ export function createQaScenarioLedger(session, { persist = async () => {}, now 
     if (existing) return existing;
     if (state.scenarios.length >= 80) throw new Error('Scenario limit reached.');
     const item = { id: randomUUID(), category: input.category, required, objective: text(input.objective), expected: { text: text(input.expected?.text), source: ['request', 'specification', 'hypothesis'].includes(input.expected?.source) ? input.expected.source : 'hypothesis' },
-      preconditions: (input.preconditions || []).slice(0, 10).map(value => text(value)), authorization: 'public_read_only',
+      preconditions: (input.preconditions || []).slice(0, 10).map(value => text(value)), dependsOn:(input.depends_on||[]).slice(0,10), authorization: 'public_read_only',
       plannedActions: (input.plannedActions || []).slice(0, 20).map(value => text(value, 300)), executedActionIds: [], assertions: [], evidenceRefs: [], reproductionAttempts: [],
       status: 'planned', coverage: 'not_executed', uncertainty: [], createdAt: now(), updatedAt: now() };
     state.scenarios.push(item); return item;
   }
   if (!state.scenarios.length) for (const category of state.scope) addScenario({ category, objective: `Exercise selected ${category} scope`, expected: { source: 'hypothesis', text: 'Define a supported behavior and execute assertions.' } }, true);
   return {
-    state, evidence, scenario,
+    state, session, evidence, scenario,
     async plan(inputs) {
+      const discovery = requireApplicationDiscovery(session);
       if (!Array.isArray(inputs) || inputs.length > 20) throw new Error('Provide at most 20 scenarios.');
+      const previous=structuredClone(state.scenarios);
+      try{
       for (const input of inputs) {
+        const featureIds = input.feature_ids || (input.id && scenario(input.id).discoveryPlan?.featureIds);
+        if (discovery.required && (!Array.isArray(featureIds) || !featureIds.length || featureIds.some(id => !discovery.features.some(f => f.id === id)))) throw new Error('Discovery-first planning requires actual observed feature_ids; unrelated generic or invented features cannot enter the execution plan. Keep missing explicitly selected scope as its original obligation.');
         if (input.id) {
           const item = scenario(input.id);
           if (item.status !== 'planned') throw new Error('Only planned scenarios can be revised.');
@@ -52,37 +60,71 @@ export function createQaScenarioLedger(session, { persist = async () => {}, now 
           item.objective = text(input.objective); item.expected = { text: text(input.expected?.text), source: ['request', 'specification'].includes(input.expected?.source) ? input.expected.source : 'hypothesis' };
           item.preconditions = (input.preconditions || []).slice(0, 10).map(value => text(value));
           item.plannedActions = (input.plannedActions || []).slice(0, 20).map(value => text(value, 300));
+          if(input.depends_on!==undefined)item.dependsOn=input.depends_on.slice(0,10);
         } else addScenario(input);
+        if (discovery.required) {
+          const item = input.id ? scenario(input.id) : state.scenarios.find(s => s.category === input.category && s.objective === text(input.objective));
+          item.discoveryPlan = { ...item.discoveryPlan, authenticationContext: discovery.authenticationContext, featureIds: [...featureIds], featureTargets: discovery.features.filter(f=>featureIds.includes(f.id)).map(({id,name,kind,location,stateKey,controls})=>({id,name,kind,location,stateKey,controls})), evidenceRefs: [...new Set(discovery.features.filter(f => featureIds.includes(f.id)).flatMap(f => f.evidenceRefs))], applicability: 'observed', updatedAt: now() };
+        }
       }
+      validateScenarioDependencies(state.scenarios);
+      }catch(error){state.scenarios=previous;throw error;}
       await persist(); return state.scenarios;
     },
     async start(id) {
+      requireApplicationDiscovery(session);
       const item = scenario(id);
+      if((item.dependsOn||[]).some(parent=>scenario(parent).status!=='passed'))throw new Error('Scenario dependencies must pass before execution. Resolve the parent outcome or record its evidenced blocker.');
       if (state.currentScenarioId && state.currentScenarioId !== id && scenario(state.currentScenarioId).status === 'running') throw new Error('Finish the active scenario before starting another.');
-      if (!['planned', 'inconclusive', 'blocked'].includes(item.status)) throw new Error('Scenario is not available to start.');
+      if (item.status === 'running' && state.currentScenarioId === id) return item;
+      if (!['planned', 'inconclusive', 'blocked', 'not_executed'].includes(item.status)) throw new Error('Scenario is not available to start.');
+      if (state.actions.some(action => action.scenarioId === id && ['running', 'uncertain'].includes(action.status))) throw new Error('Scenario has an uncertain action; verify state before choosing a new investigation.');
+      const account = scenarioExecutionAccount(session, item);
+      if (item.status !== 'planned' && (account.attempted || account.absent)) throw new Error('This scenario already has an evidence-accounted outcome. Do not repeat the same check to turn a coverage gap into a pass. Continue remaining scenarios or publish; a distinct investigation needs its own validated scenario or fresh observed route.');
       item.status = 'running'; item.updatedAt = now(); state.currentScenarioId = id; await persist(); return item;
+    },
+    async investigate(id,observationId,strategyFeatureId){
+      const item=scenario(id),account=scenarioExecutionAccount(session,item),obligation=scenarioObligation(session,item,account),receipt=evidence(observationId);
+      if(!obligation.canInvestigate||!obligation.freshObservationIds.includes(observationId)||!intactQaReceipt(session,receipt))throw new Error('Investigation requires a fresh intact browser observation after the gap, and remaining bounded investigation attempts.');
+      let strategyKey;
+      if (state.discovery?.version === 1) {
+        const status = requireApplicationDiscovery(session), feature = status.features.find(f => f.id === strategyFeatureId && f.stateKey === receipt.result?.inventory?.stateKey && f.location === receipt.url);
+        if (!feature) throw new Error('Choose an evidenced strategy_feature_id on the fresh observed state; repeated inspection is not a different investigation strategy.');
+        strategyKey = digestEvidence([feature.id, feature.stateKey]);
+        if (item.investigations?.some(i => i.strategyKey === strategyKey)) throw new Error('This feature strategy was already investigated. Choose a materially different evidenced control or record the genuine blocker.');
+      }
+      if(state.currentScenarioId&&state.currentScenarioId!==id||state.recovery?.verificationRequired||state.actions.some(a=>['running','uncertain'].includes(a.status)))throw new Error('Verify action state and release browser ownership before investigating. Uncertain mutations cannot be replayed.');
+      item.investigations??=[];item.investigations.push({observationEvidenceId:observationId,...(strategyKey?{strategyKey,strategyFeatureId}:{}),assertionOffset:item.assertions.length,actionOffset:item.executedActionIds.length,startedAt:now()});
+      item.status='running';state.currentScenarioId=id;item.updatedAt=now();await persist();return item;
     },
     // Host-only suite continuation, never exposed as a model tool. A new,
     // observed route is a distinct execution, not a replay of an old action.
     async startRoute(id, url) {
+      requireApplicationDiscovery(session);
       const item = scenario(id);
       if (state.exploration?.version !== 2 || !state.exploration.routes.some(route => route.url === url && route.status === 'running') ||
           new URL(url).origin !== new URL(session.targetUrl).origin || state.budgetFinalizing || state.recovery?.verificationRequired ||
           state.currentScenarioId || state.actions.some(action => action.scenarioId === id && ['running', 'uncertain'].includes(action.status))) throw new Error('Suite continuation requires a fresh owned observed route and verified state.');
       item.routeRuns ??= [];
-      const authenticationContext = state.exploration.routes.find(route => route.url === url && route.status === 'running').authenticationContext || 'public';
-      if (item.routeRuns.some(run => run.url === url && (run.authenticationContext || 'public') === authenticationContext)) return null;
-      item.routeRuns.push({ url, authenticationContext, status: 'running', assertionOffset: item.assertions.length, actionOffset: item.executedActionIds.length, startedAt: now() });
+      const route = state.exploration.routes.find(route => route.url === url && route.status === 'running');
+      const authenticationContext = route.authenticationContext || 'public', featureId = route.kind === 'feature' ? route.id : undefined;
+      if (item.routeRuns.some(run => run.url === url && run.featureId === featureId && (run.authenticationContext || 'public') === authenticationContext)) return null;
+      item.routeRuns.push({ url, authenticationContext, ...(featureId ? { featureId, feature: route.label } : {}), status: 'running', assertionOffset: item.assertions.length, actionOffset: item.executedActionIds.length, startedAt: now() });
       item.status = 'running'; item.updatedAt = now(); state.currentScenarioId = id; await persist(); return item;
     },
     async close(id, disposition, reason) {
       const item = scenario(id);
       if (!['complete', 'blocked', 'inconclusive', 'not_executed'].includes(disposition)) throw new Error('Unknown disposition.');
+      const investigation=item.investigations?.at(-1);
+      if(investigation&&!investigation.completedAt&&!state.budgetFinalizing&&!item.assertions.slice(investigation.assertionOffset).length&&!item.executedActionIds.slice(investigation.actionOffset).some(id=>{const a=state.actions.find(a=>a.id===id);return a?.toolName==='browser_diagnostics'||a?.toolName==='browser_qa_check'&&!['inspect','scroll','dismiss_overlay'].includes(a.input?.action);}))throw new Error('Investigation requires an actual new check; a fresh snapshot alone is not a completed investigation.');
       if (disposition !== 'complete' && ['content', 'visual_consistency'].includes(item.category) && !['request', 'specification'].includes(item.expected.source)) {
         disposition = 'blocked';
         reason = `${item.category === 'content' ? 'Approved expected copy/content assertions' : 'An approved visual/design reference and comparison criteria'} are required; observed page content is not its own correctness oracle. ${reason || ''}`;
       }
-      if (item.routeRuns?.length && !item.routeRuns.some(run => run.status === 'running') && ['passed', 'failed'].includes(item.status)) throw new Error('A completed category suite cannot be relabeled; a fresh observed route execution is required.');
+      if (!item.routeRuns?.some(run => run.status === 'running') && ['passed', 'failed'].includes(item.status)) throw new Error('A completed category suite cannot be relabeled; a fresh observed route execution is required.');
+      const account = scenarioExecutionAccount(session, item);
+      const dependencyBlocked=(item.dependsOn||[]).some(id=>TERMINAL_SCENARIO_STATES.includes(scenario(id).status)&&scenario(id).status!=='passed');
+      if (disposition !== 'complete' && state.exploration?.version === 2 && !state.budgetFinalizing && account.supported && !account.attempted && !account.absent && !(disposition === 'blocked' && (account.readinessBlocked||dependencyBlocked))) throw new Error('Selected supported checks require an actual attempt or intact host absence evidence. Start this scenario and execute its matching fixed check; a prose disposition cannot complete it. A host-verified loading failure can only be closed as blocked.');
       const supported = ['navigation', 'responsive', 'forms', 'search', 'media', 'accessibility', 'console_health', 'broken_links'];
       const sampled = state.exploration?.routes.filter(route => route.status === 'tested') || [];
       const absentOnSample = sampled.length && sampled.every(route => route.absentChecks?.some(check => {
@@ -90,11 +132,11 @@ export function createQaScenarioLedger(session, { persist = async () => {}, now 
         return check.category === item.category && observed?.success && observed.digest === digestEvidence(observed.result) && observed.result.inventory;
       }));
       if (disposition !== 'complete' && !state.budgetFinalizing && supported.includes(item.category) && state.exploration?.routes.some(route => route.status === 'tested') &&
-          !absentOnSample && !state.scenarios.some(other => other.category === item.category && other.executedActionIds.length)) throw new Error('Selected supported checks require an actual attempt. Use qa_test_routes with the selected checks; a prose skip reason alone is not execution evidence.');
+          !(disposition==='blocked'&&dependencyBlocked) && !absentOnSample && !state.scenarios.some(other => other.category === item.category && other.executedActionIds.length)) throw new Error('Selected supported checks require an actual attempt. Use qa_test_routes with the selected checks; a prose skip reason alone is not execution evidence.');
       if (disposition === 'complete') {
         const routeRun = item.routeRuns?.findLast(run => run.status === 'running');
         if (item.status !== 'running' || !item.assertions.length || (routeRun && item.assertions.length <= routeRun.assertionOffset)) throw new Error('Scenario has no new executed host assertions.');
-        item.status = item.assertions.some(assertion => assertion.outcome === 'fail') ? 'failed' : !item.routeRuns?.length && item.executionGaps?.length ? 'inconclusive' : 'passed';
+        item.status = item.assertions.some(assertion => assertion.outcome === 'fail') ? 'failed' : !item.routeRuns?.length && item.executionGaps?.some(gap=>!gap.resolvedBy) ? 'inconclusive' : 'passed';
       } else { if (!reason?.trim()) throw new Error('A concrete gap reason is required.'); item.status = disposition; item.uncertainty.push(text(reason)); }
       const run = item.routeRuns?.findLast(run => run.status === 'running');
       if (run) {
@@ -110,6 +152,9 @@ export function createQaScenarioLedger(session, { persist = async () => {}, now 
         item.status = item.assertions.some(a => a.outcome === 'fail') ? 'failed' : item.routeRuns.some(r => r.status === 'passed') ? 'passed' : run.status;
       }
       item.coverage = item.status === 'passed' || item.status === 'failed' ? 'executed' : item.status;
+      if(investigation&&!investigation.completedAt){
+        investigation.completedAt=now();investigation.outcome=item.status;
+      }
       item.updatedAt = now(); if (state.currentScenarioId === id) state.currentScenarioId = undefined;
       await persist(); return item;
     },
@@ -126,12 +171,21 @@ export function createQaScenarioLedger(session, { persist = async () => {}, now 
         digest: digestEvidence(clean), success: clean?.success !== false, url: clean?.url || clean?.inventory?.url, result: clean };
       if (state.evidence.length >= 1200) throw new Error('Evidence ledger limit reached.');
       state.evidence.push(item); action.status = item.success ? 'done' : 'failed'; action.evidenceId = item.id; action.completedAt = now();
+      observeApplication(session, item);
       const current = action.scenarioId && scenario(action.scenarioId);
       if (current) {
         current.evidenceRefs.push(item.id);
+        if(item.success&&action.toolName==='browser_qa_check'&&!clean.gaps?.length&&clean.assertions?.some(a=>a.check===current.category))for(const gap of current.executionGaps||[]){
+          const old=evidence(gap.evidenceRef),prior=state.actions.find(a=>a.id===old?.actionId);
+          if(old?.result?.dispatched===false&&prior?.input?.action===action.input?.action&&prior?.input?.selector===action.input?.selector)gap.resolvedBy=item.id;
+        }
         // Tool/readiness failures are unresolved execution observations, not
         // target bugs. Persist them even when useful partial assertions exist.
-        if (action.toolName === 'browser_qa_check') for (const gap of [...(Array.isArray(clean.gaps) ? clean.gaps : []), ...(clean.success === false ? [clean.error || 'The browser check did not complete.'] : [])].slice(0, 12)) {
+        // A typed stale-control refusal happened before any target action.
+        // Keep its failed tool receipt, but it is not an executed test gap or
+        // an uncertain mutation. A later real check is still mandatory.
+        const staleBeforeDispatch = clean.code === 'QA_CONTROL_STALE' && clean.dispatched === false;
+        if (action.toolName === 'browser_qa_check' && !staleBeforeDispatch) for (const gap of [...(Array.isArray(clean.gaps) ? clean.gaps : []), ...(clean.success === false ? [clean.error || 'The browser check did not complete.'] : [])].slice(0, 12)) {
           current.executionGaps ??= [];
           current.executionGaps.push({ actionId: action.id, evidenceRef: item.id, reason: text(gap) });
           const key = digestEvidence([current.id, action.input.action, item.url, String(gap)]);

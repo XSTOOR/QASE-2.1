@@ -1,3 +1,4 @@
+import { renderModeReasoning } from './modeReasoningView.js';
 import {
 	collectFounderAssumptions,
 	describeFounderLifecycle,
@@ -715,6 +716,8 @@ export function createFounderView({
 		const lifecycle = describeFounderLifecycle(founder, session.status, session.activities?.length ?? 0);
 		elements.countFounder.textContent = lifecycle.badge;
 		elements.founderView.append(renderFounderHero(scope, lifecycle), renderFounderScope(scope));
+		const executionNotice=renderModeReasoning(session,doc);
+		if(executionNotice)elements.founderView.append(executionNotice);
 
 		if (!report) {
 			// Project-level restore (Phase 3): a previously saved recommendation

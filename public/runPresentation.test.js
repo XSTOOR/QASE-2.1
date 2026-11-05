@@ -3,6 +3,15 @@ import test from 'node:test';
 import { blockedRunReason, runPresentationLabel, runPresentationStatus } from './runPresentation.js';
 import { workflowStatus } from './workflowStatus.js';
 
+test('a severe finding does not hide incomplete hybrid coverage behind Complete', () => {
+  const session = { status: 'done', qaExecutionMode: 'hybrid', report: { verdict: 'fail', notCovered: ['Eight unexecuted checks'] } };
+  assert.equal(runPresentationStatus(session), 'partial');
+  assert.equal(runPresentationLabel(session), 'Completed with gaps');
+  assert.equal(session.report.verdict, 'fail');
+  assert.equal(runPresentationStatus({ ...session, qaExecutionMode: 'legacy' }), 'done');
+  assert.equal(runPresentationStatus({ status: 'done', reportVerdict: 'fail', coverageIncomplete: true }), 'partial');
+});
+
 test('a partial review is completed with gaps, never a prerequisite blocker or pass', () => {
 	const session = { status: 'done', report: { verdict: 'partial' } };
 	assert.equal(runPresentationStatus(session), 'partial');

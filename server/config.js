@@ -6,7 +6,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { PublicInputError } from './publicErrors.js';
 import { fileURLToPath } from 'node:url';
 import { createJevClient, JEV_ENDPOINT, JEV_MODEL, JEV_CAPABILITIES, validateJevConfiguration } from './jevClient.js';
-import { hybridAvailability, hybridProfile } from './hybridConfig.js';
+import { hybridProfile } from './hybridConfig.js';
+import { hybridQualificationService } from './hybridQualificationService.js';
 
 /**
  * UI asset version (ticket #16228 follow-up / #15766 round-3 rule): derived
@@ -224,7 +225,7 @@ export async function validateModelUsability(candidate, options = {}) {
 /** The same settings with the key reduced to a hint. Safe to send to a browser. */
 export function getPublicConfig() {
 	const config = getConfig();
-	const hybrid = hybridAvailability(hybridProfile(config));
+	const hybrid = hybridQualificationService.availability(hybridProfile(config));
 	return {
 		hybridQa: { ...hybrid, reasoner: 'drytis/claude-opus-4.7', classifier: 'jev-1.13' },
 		provider: config.provider,

@@ -12,6 +12,7 @@ import { JEV_ENDPOINT } from './jevClient.js';
 import { hybridProfile, profileIdentity, REQUIRED_CAPABILITIES, HYBRID_SDK_VERSION } from './hybridConfig.js';
 import { prepareHybridAuthGrant } from './hybridAuth.js';
 import { storeSecrets, clearSecrets } from './secrets.js';
+import {hybridUnreportedFindings} from './qaCompletionGate.js';
 
 test('installed CleanSlate asks, pauses, resumes through secure host grant and performs exactly one guarded sign-in', { timeout: 60000 }, async t => {
   // Owned loopback fixture and scripted inference; no live model or real account.
@@ -49,6 +50,7 @@ test('installed CleanSlate asks, pauses, resumes through secure host grant and p
     async updateActivity(s, id, value) { Object.assign(s.activities.find(item => item.id === id), value); }, async addMessage(s, item) { s.messages.push(item); } };
   await withUserConfiguration(settings, async () => {}, async () => {
     const record = await ensureRuntime(session, store);
+    session.hybrid.continuationPolicyVersion = 1; // Explicit interactive lifecycle rollback fixture.
     session.hybrid.partialReportApproved = { by: session.ownerUserId, at: Date.now() };
     t.signal.addEventListener('abort', () => record.controller?.abort(new Error('Owned fixture timeout')), { once: true });
     record.hybrid.router.classifier = async (_state, questions) => Object.fromEntries(Object.keys(questions).map(key => [key, { choice: key.startsWith('c') ? 'rendering' : 'investigate' }]));
@@ -68,6 +70,10 @@ test('installed CleanSlate asks, pauses, resumes through secure host grant and p
         ['qa_close_scenario', { scenario_id: session.hybrid.scenarios.find(scenario => scenario.category === 'authentication').id, disposition: 'blocked', reason: 'Access was verified; negative sign-in, logout and role permissions were not authorized or tested.' }],
         ['report_finding', { scenario_id: failureScenario?.id, assertion_id: failureScenario?.assertions.find(assertion => assertion.outcome === 'fail' && assertion.reproduction?.confirmed)?.id, title: 'Authenticated dashboard overflows the viewport', severity: 'medium' }],
         ['finish_qa_report', { verdict: 'partial', summary: 'Host evidence is authoritative.' }]];
+      if(step===calls.length-1){
+        const pending=hybridUnreportedFindings(session)[0];
+        if(pending){yield {type:'tool_call',call:{id:randomUUID(),toolName:'report_finding',input:{scenario_id:pending.scenarioId,assertion_id:pending.assertionId,title:'Authenticated surface reproduces a host-observed defect',severity:'medium'}}};return;}
+      }
       if (step >= calls.length) { yield { type: 'text', content: 'Waiting for workflow choice.' }; return; }
       const [toolName, input] = calls[step++];
       if (toolName === 'ask_question') assert.ok(options.tools.some(tool => tool.name === toolName), 'Native question must be advertised.');
@@ -93,7 +99,7 @@ test('installed CleanSlate asks, pauses, resumes through secure host grant and p
     assert.equal(session.hybrid.scenarios[0].status, 'planned', 'Successful access does not pass the authentication suite.');
     const replay = await record.bridge.authenticate(); assert.equal(replay.code, 'HYBRID_AUTH_APPROVAL_REQUIRED');
     await runTurn(session, { resumeAnswer: 'Prioritize navigation and input validation on the authenticated dashboard and settings, then finish with honest coverage.' }, store);
-    assert.equal(session.status, 'done', session.statusDetail);
+    assert.equal(session.status, 'done', JSON.stringify({detail:session.statusDetail,gaps:session.hybrid.scenarios.map(s=>({category:s.category,status:s.status,gaps:s.executionGaps})),errors:session.activities.filter(a=>a.status==='failed').map(a=>({tool:a.toolName,error:a.error}))}));
     assert.ok(session.findings.some(finding => /1800|overflow/i.test(JSON.stringify(finding))), JSON.stringify({ received, inventories: session.hybrid.evidence.filter(item => item.result.inventory).map(item => ({ title: item.result.inventory.title, url: item.result.inventory.url })), assertions: session.hybrid.scenarios.find(item => item.category === 'responsive').assertions.map(item => ({ actual: item.actual, outcome: item.outcome })), failures: session.activities.filter(item => item.status === 'failed').map(item => ({ tool: item.toolName, error: item.error })) }));
     assert.ok(session.hybrid.scenarios.every(scenario => !['planned', 'running'].includes(scenario.status)), 'Every scenario must have a host-supported result or explicit gap.');
     assert.ok(session.hybrid.evidence.some(item => item.result.formTesting?.fieldsFilled > 0 && item.result.formTesting?.negativeCases > 0));

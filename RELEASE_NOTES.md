@@ -1,8 +1,33 @@
-# QASE hybrid production candidate
+# QASE SQA release candidate
 
-Release: `qase-2026-10-27-hybrid-production-r1`. UI: `20261027-6`.
+Release: `qase-sqa-2026-11-05-readiness-r1`. UI: `20261105-2`.
 Target: `https://qase.drytis.com`. This is a source/image handoff, not a record
 of deployment or production activation.
+
+## SQA scope in this candidate
+
+The SQA work is reconciled with `codex/hybrid-production-readiness` at `ad0afcd`.
+It adds bounded technical smoke checks, evidence-gated control results, human
+review drafts, immutable published versions, authenticated evidence inspection
+and shared UI/Markdown/PDF traceability. Technical browser results remain
+separate from broader missing assurance evidence. Reviewer references are not
+independently authenticated documents.
+
+The reviewed lockfile clears the ten dependency findings identified during SQA
+qualification, with behavioral regressions for proxy trust and compressed-body
+process survival. CleanSlate remains 0.1.0 and Playwright remains 1.62.0. Both CI
+workflows now require the runtime dependency audit.
+
+The inherited shared runtime retains its newer cancellation/publication guards
+and opt-in qualified mode reasoning. Legacy SQA context compaction cannot reset
+the qualified runtime; synthesis cannot remove recording tools while a confirmed
+finding contradicts a control. Published versions, plan updates and size checks
+remain atomic. Prior local qualification results and exact promotion requirements
+are recorded in [SQA candidate review](docs/sqa-release-candidate-2026-11-05.md).
+
+Upstream migration 043 changes actor bootstrap visibility. Review the target
+schema and ownership mappings before any production migration; no migration or
+deployment is performed by this source handoff.
 
 ## Preserved history and compatibility
 
@@ -16,6 +41,20 @@ changed during preparation.
 
 ## Application changes since the previous GitHub release
 
+- Same-URL feature and subfeature exploration through verified native control
+  paths, including tabs and test-form dialogs, extends category suites without
+  inflating the plan. Pending feature states gate publication. Normal guarded
+  background reads work during navigation trials.
+- Optional owner-authorized marked test-record submissions are pinned at run
+  setup and shown in review. Durable dispatch intent, bounded per-form attempts,
+  no uncertain-write replay, and explicit business-outcome/cleanup gaps remain.
+- Approved sign-in followed by an observed platform can continue read tests
+  without a second access confirmation; this is not a passed authentication
+  assertion. Severe findings no longer hide incomplete coverage behind Complete.
+- Startup recovery preflights unresolved model receipts before constructing a
+  runtime, preserves retry counts and evidence, and does not log failed recovery
+  as success. Missing-receipt guidance offers an explicit fresh setup for the
+  same target without replaying actions, creating a run or copying credentials.
 - Opus 4.7 reasoning and JEV 1.13 typed classification through one CleanSlate
   loop, with host permission, usage, budget and completion authority.
 - Durable scenarios, evidence, conservative usage recovery and explicit gaps;
@@ -41,8 +80,8 @@ changed during preparation.
   to the current access state. Compact ledger-based closeout preserves more of the
   existing budget for exploration. Plan resolution is shown separately from coverage.
 
-- New runs enforce host-authored access and continuation questions through the
-  native SDK pause/resume lifecycle. Budget limits no longer silently publish
+- Existing interactive runs retain host-authored access and continuation questions through the
+  native SDK pause/resume lifecycle. For those runs, budget limits do not silently publish
   unfinished work: the owner can approve a displayed bounded extension or
   explicitly request a gap report. Exact usage and prior evidence are retained.
 - Premature prose-only stops get bounded automatic continuation. Budget abort
@@ -54,6 +93,46 @@ changed during preparation.
   cannot prove access. Anonymous and signed-in executions of the same URL are
   tracked separately. These controls apply to new continuation-policy runs;
   existing closed reports are preserved.
+
+## Automatic completion in r2
+
+New runs use continuation policy 2: no token-budget, workflow-priority or generic
+coverage-approval questions. Capacity is allocated automatically within a pinned
+operator envelope; explicit QASE_HYBRID_* limits remain hard ceilings. Without
+explicit overrides, ceilings are 2M Opus / 500k JEV tokens, 200/100 calls, 1,000
+browser tool actions and 60 active minutes. Observed page attempts expand up to
+40 by default, configurable to 80. At a configured limit, the host closes out
+honestly through the same native SDK tools without another model request.
+Unverified usage and uncertain actions still fail closed. Missing secure access
+can still require the owner. Set QASE_HYBRID_AUTONOMOUS_COMPLETION=false to
+retain the prior interactive policy for newly created runs; existing runs keep
+their originally pinned policy.
+
+Rolling inference context retains every human instruction and SDK policy,
+recent tool rounds and durable evidence references. Old anonymous limitations
+become history after confirmed access. Guarded onboarding Skip/dismiss and
+observed navigation-region buttons reveal routes that anchor-only discovery
+missed; writes remain blocked and navigation restores its source. A failed
+restore requires state verification. No complete-site or exhaustive workflow
+coverage is inferred from these bounded checks.
+
+## Stalled-run repair in r3
+
+A delayed onboarding modal could obstruct a navigation control after the initial
+inspection. The host now refreshes observations and dismisses supported safe
+close controls at action boundaries, including before trial-clicking. Only a
+confirmed pre-dispatch obstruction can be retried once; dispatched or uncertain
+actions are never replayed. Onboarding preparation no longer requires a model
+to create a separate plan item. Actual checks still require their scenario and
+host evidence.
+
+Cancelled/already-handled Playwright requests no longer escape asynchronous
+routing handlers and terminate the API process. Unexpected routing failures
+abort fail-closed and produce sanitized diagnostics. The dashboard explicitly
+shows reconnection and last-received progress during stream loss, then
+resynchronizes the authoritative state without navigating to Results. A prior
+run whose crash lost a provider receipt still needs exact reconciliation; the
+fix does not erase billing exposure or invent successful completion.
 
 ## Deployment changes
 

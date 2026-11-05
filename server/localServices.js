@@ -1,5 +1,7 @@
 import { closeBrowser, ensureRuntime, runTurn } from './agent.js';
-import { getPublicConfig, saveConfig, testConnection, withUserConfiguration } from './config.js';
+import { getConfig, getPublicConfig, saveConfig, testConnection, withUserConfiguration } from './config.js';
+import { hybridProfile } from './hybridConfig.js';
+import { hybridQualificationService } from './hybridQualificationService.js';
 import { buildReportMarkdown } from './report.js';
 import { clearSecrets, secretNames, storeSecrets } from './secrets.js';
 import {
@@ -80,6 +82,10 @@ export function createRuntimeApplicationServices(runStore, options = {}) {
 		},
 		configuration: {
 			getPublic: () => inWorkspace(getPublicConfig),
+			qualifyHybrid: () => inWorkspace(() => {
+				hybridQualificationService.start(hybridProfile(getConfig()));
+				return getPublicConfig();
+			}),
 			save: patch => inWorkspace(() => saveConfig(patch)),
 			testConnection: patch => inWorkspace(() => testConnection(patch))
 		},
@@ -126,6 +132,7 @@ export function createRuntimeApplicationServices(runStore, options = {}) {
 			stop(sessionId) {
 				const record = runStore.peekLive?.(sessionId);
 				if (record?.running) {
+					record.userStopRequested = true;
 					record.controller?.abort();
 					return;
 				}

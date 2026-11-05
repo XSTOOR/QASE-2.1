@@ -10,7 +10,7 @@ import { hydrateHybrid, hybridStorage } from './hybridPersistence.js';
 
 function fixture() {
   const session = { id: randomUUID(), mode: 'qa', qaExecutionMode: 'hybrid', ownerUserId: 'owner', targetUrl: 'https://fixture.test/', selectedTests: ['responsive'], messages: [], findings: [], todos: [], secretNames: [] };
-  const profile = hybridProfile({ apiKey: 'fixture-key' }, {}), record = {};
+  const profile = hybridProfile({ apiKey: 'fixture-key' }, { QASE_HYBRID_AUTONOMOUS_COMPLETION: 'false' }), record = {};
   const runtime = createHybridRuntime({ session, profile, record, runStore: { async commit() {} } });
   return { session, runtime, profile, record };
 }
@@ -65,6 +65,11 @@ test('unknown model receipts and forged question IDs cannot authorize more budge
 
 test('incomplete results need explicit publication consent; consent never turns gaps into a pass', async () => {
   const { session, runtime } = fixture();
+  for (const scenario of session.hybrid.scenarios) {
+    await runtime.ledger.start(scenario.id);
+    const action = await runtime.ledger.beginAction('browser_qa_check', { action: 'responsive' });
+    await runtime.ledger.record(action, { success: true, action:'responsive', assertions:[], limitations:'No eligible geometry could be asserted.' });
+  }
   for (const scenario of session.hybrid.scenarios) await runtime.ledger.close(scenario.id, 'inconclusive', 'No executable expectation was supplied.');
   assert.throws(() => validateHybridReport(session, { verdict: 'blocked' }), { code: 'HYBRID_COMPLETION_DECISION_REQUIRED' });
   const decision = prepareHostDecision(session); assert.equal(decision.kind, 'coverage');
@@ -104,7 +109,7 @@ test('owner-requested closeout cannot execute model-authored tools or spend an e
   let requests = 0; const service = { async chat() { requests++; throw new Error('No paid model work permitted'); } };
   runtime.wrapChat(service);
   await runtime.beginTurn(new AbortController().signal);
-  const calls = []; for await (const part of await service.chat([], {})) calls.push(part.call);
+  const calls = []; for await (const part of await service.chat([], { tools: [] })) calls.push(part.call);
   await assert.rejects(runtime.wrapTool({ name: 'qa_ledger', run() { throw new Error('not allowed'); } }).run({}), /exact host-issued/);
   assert.equal(calls[0].toolName, 'qa_close_scenario');
   await runtime.wrapTool(runtime.tools.find(tool => tool.name === 'qa_close_scenario')).run(calls[0].input);
@@ -120,6 +125,8 @@ test('same URL is a fresh suite execution after authenticated access, without di
   state.exploration.routes = [{ url, status: 'running', authenticationContext: 'owner-grant' }];
   await runtime.ledger.startRoute(scenario.id, url);
   assert.equal(scenario.routeRuns.length, 2); assert.equal(scenario.routeRuns[1].authenticationContext, 'owner-grant');
+  const action = await runtime.ledger.beginAction('browser_qa_check', { action: 'responsive' });
+  await runtime.ledger.record(action, { success: false, dispatched:true, error: 'Fixture viewport unavailable.' });
   await runtime.ledger.close(scenario.id, 'inconclusive', 'No new assertions yet.');
   assert.equal(await runtime.ledger.startRoute(scenario.id, url), null, 'Do not replay the same access-context execution.');
   assert.equal(scenario.routeRuns.length, 2);
