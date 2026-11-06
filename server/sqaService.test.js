@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
 	closePendingSqaControlsAsBlocked,
+	closePendingReviewerSqaControlsAsBlocked,
 	createSqaState,
 	createSqaTodoPlan,
 	finishSqaAssessment,
 	normalizePendingSqaState,
+	pendingAgentSqaControlIds,
 	recordAgentSqaBlockers,
 	recordAgentSqaObservation,
 	recordAgentSqaObservations,
@@ -92,10 +94,33 @@ test('URL-based SQA state always includes browser review attributes and all six 
 test('URL-based SQA state preserves additional attributes without duplicating browser defaults', () => {
 	const state = createSqaState({
 		authorizationConfirmed: true,
+		expandedScopeConfirmed: true,
 		attributes: ['handles_personal_data', 'web_application'],
+		scopeNotes: 'The reviewed release processes customer contact details.',
 		target: { name: 'Example', release: 'build-123', environment: 'staging' }
 	}, fixedNow);
 	assert.deepEqual(state.scope.attributes, ['web_application', 'user_interface', 'handles_personal_data']);
+	assert.equal(state.scope.selectionReview.expanded, true);
+	assert.ok(state.scope.selectionReview.additionalControlCount > 0);
+	assert.equal(state.scope.selectionReview.confirmedAt, '2026-08-15T00:00:00.000Z');
+});
+
+test('expanded SQA scopes require an explicit confirmation and written rationale', () => {
+	const expanded = {
+		authorizationConfirmed: true,
+		profiles: ['core', 'medical'],
+		target: { name: 'Example', release: 'build-123', environment: 'staging' }
+	};
+	assert.throws(() => createSqaState(expanded, fixedNow), /Confirm.*expanded SQA scope/);
+	assert.throws(() => createSqaState({ ...expanded, expandedScopeConfirmed: true }, fixedNow), /scope notes are required/);
+	const state = createSqaState({
+		...expanded,
+		expandedScopeConfirmed: true,
+		scopeNotes: 'The product is regulated as software in a medical-device context.'
+	}, fixedNow);
+	assert.deepEqual(state.scope.profiles, ['core', 'medical']);
+	assert.equal(state.scope.selectionReview.expanded, true);
+	assert.equal(state.scope.selectionReview.additionalControlCount, 3);
 });
 
 test('SQA finalization storage failure preserves the pending assessment and permits a durable retry', async () => {
@@ -239,6 +264,37 @@ test('reviewer-only blockers can be recorded in one bounded batch', async () => 
 	assert.deepEqual(results.map(item => item.controlId), ['SQA-GOV-001', 'SQA-GOV-004']);
 	assert.equal(runStore.commits.length, 1);
 	assert.equal(runStore.commits[0].payload.batch, true);
+});
+
+test('host reviewer closeout derives precise catalog blockers and commits atomically', async () => {
+	const candidate = session();
+	candidate.sqa.scope.applicableControlIds = ['SQA-WEB-001', 'SQA-GOV-001', 'SQA-GOV-004'];
+	assert.deepEqual(pendingAgentSqaControlIds(candidate), ['SQA-WEB-001']);
+	await assert.rejects(
+		closePendingReviewerSqaControlsAsBlocked(candidate, store(), fixedNow),
+		/Finish browser-eligible SQA controls.*SQA-WEB-001/
+	);
+	candidate.sqa.observations.push({
+		controlId: 'SQA-WEB-001', status: 'blocked', rationale: 'Controlled browser sample unavailable.', evidence: []
+	});
+	const runStore = store();
+	const results = await closePendingReviewerSqaControlsAsBlocked(candidate, runStore, fixedNow);
+	assert.deepEqual(results.map(item => item.controlId), ['SQA-GOV-001', 'SQA-GOV-004']);
+	assert.match(candidate.sqa.observations.find(item => item.controlId === 'SQA-GOV-001').rationale,
+		/risk_register \(product-risk-baseline\).*qualified human review/);
+	assert.match(candidate.sqa.observations.find(item => item.controlId === 'SQA-GOV-004').rationale,
+		/approval_record \(assurance-roles\).*no pass or fail is claimed/);
+	assert.equal(runStore.commits.length, 1);
+	assert.equal(runStore.commits[0].payload.reviewerCloseout, true);
+
+	const beforeFailure = structuredClone(candidate.sqa);
+	candidate.sqa.observations = candidate.sqa.observations.filter(item => item.controlId !== 'SQA-GOV-004');
+	const beforeRetry = structuredClone(candidate.sqa);
+	await assert.rejects(closePendingReviewerSqaControlsAsBlocked(candidate, {
+		async commit() { throw new Error('reviewer closeout persistence failed'); }
+	}, fixedNow), /persistence failed/);
+	assert.deepEqual(candidate.sqa, beforeRetry);
+	assert.notDeepEqual(candidate.sqa, beforeFailure);
 });
 
 test('blocker batches cannot skip browser-eligible checks', async () => {

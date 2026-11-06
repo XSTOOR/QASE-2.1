@@ -15,6 +15,8 @@ for (const profiles of [...Object.keys(SQA_PROFILES).map(profile => [profile]), 
 			id: randomUUID(), mode: 'sqa', messages: [], activities: [],
 			sqa: createSqaState({
 				authorizationConfirmed: true, profiles, attributes: SQA_PRODUCT_ATTRIBUTES,
+				expandedScopeConfirmed: true,
+				scopeNotes: 'Broad deterministic fixture scope for every catalog workflow.',
 				target: { name: 'Deterministic meeting application fixture', release: 'test', environment: 'test' }
 			})
 		};
@@ -62,6 +64,8 @@ for (const profiles of [...Object.keys(SQA_PROFILES).map(profile => [profile]), 
 		assert.match(markdown, /^# SQA assessment/);
 		assert.match(markdown, /Missing reviewed artifacts/);
 		assert.match(markdown, /not legal advice/);
+		assert.match(markdown, /## Execution budget/);
+		assert.match(markdown, /Budget closeout: not used/);
 		for (const id of session.sqa.scope.applicableControlIds) assert.ok(markdown.includes(id));
 		const commitsBeforeReplay = commits.length;
 		assert.equal((await finish.run()).already_finalized, true);

@@ -25,7 +25,9 @@ import { sanitizeErrorDetail } from './errorSanitizer.js';
 import {
 	countSqaBrowserActivities,
 	guardSqaBrowserTool,
-	sqaContextCompactionDue
+	sqaContextCompactionDue,
+	SQA_BROWSER_EVIDENCE_LIMIT,
+	SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD
 } from './sqaBrowserBudget.js';
 import { guardSecurityPayloadTool } from './securityPayloadBudget.js';
 import { applyUsage, attachUsageCapture, createEmptyOutputGuard, createUsageLedger, createUsageLogger, subtractUsage } from './usageCapture.js';
@@ -318,6 +320,21 @@ function finalArtifact(session) {
 function finalizerName(session) {
 	return session.mode === 'founder' ? 'finish_founder_review'
 		: session.mode === 'sqa' ? 'finish_sqa_assessment' : 'finish_qa_report';
+}
+
+export function sqaAutomaticBudgetCloseoutInput(result, session) {
+	if (!result || typeof result !== 'object') return undefined;
+	if (['SQA_INPUT_TOKEN_CLOSEOUT_REQUIRED', 'SQA_EVIDENCE_COLLECTION_COMPLETE'].includes(result.code)) {
+		return { close_from_saved_evidence: true };
+	}
+	if (['SQA_INPUT_TOKEN_BUDGET_EXHAUSTED', 'SQA_BROWSER_BUDGET_EXHAUSTED'].includes(result.code)) {
+		return { close_after_safety_limit: true };
+	}
+	if (session?.mode === 'sqa' && !session.sqa?.finalizedAt && (
+		Math.max(0, Number(session.tokenUsage?.inputTokens) || 0) >= SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD
+		|| countSqaBrowserActivities(session) >= SQA_BROWSER_EVIDENCE_LIMIT
+	)) return { close_from_saved_evidence: true };
+	return undefined;
 }
 
 export function isFounderSynthesisReady(session) {
@@ -990,6 +1007,7 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 	let modelResponseTimedOut = false;
 	let touchModelActivity = () => {};
 	let handoffToSqaSynthesis = false;
+	let sqaAutomaticCloseoutAttempted = false;
 	record.onModePublished = () => { successfulFinalizer = true; };
 
 	const appendText = async (content, kind) => {
@@ -1365,6 +1383,34 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 					});
 					openActivities.delete(part.toolCallId);
 					snapshots.maybePersist();
+					const automaticSqaCloseout = session.mode === 'sqa' && !sqaAutomaticCloseoutAttempted
+						? sqaAutomaticBudgetCloseoutInput(result, session)
+						: undefined;
+					if (automaticSqaCloseout) {
+						sqaAutomaticCloseoutAttempted = true;
+						const finalizer = runtime.headlessRuntime.getTools().find(tool => tool.name === 'finish_sqa_assessment');
+						if (finalizer) {
+							const closeoutCallId = `sqa-budget-closeout-${randomUUID()}`;
+							const closeoutActivity = await beginActivity(finalizer.name, automaticSqaCloseout, closeoutCallId);
+							let closeoutResult;
+							try {
+								closeoutResult = await finalizer.run(automaticSqaCloseout, { signal: controller.signal });
+							} catch (error) {
+								closeoutResult = { success: false, error: error instanceof Error ? error.message : String(error) };
+							}
+							const closeoutOk = closeoutResult?.success !== false;
+							await runStore.updateActivity(session, closeoutActivity.id, {
+								status: closeoutOk ? 'done' : 'failed',
+								error: closeoutOk ? undefined : sanitizeErrorDetail(closeoutResult?.error ?? closeoutResult?.message),
+								summary: summariseResult(finalizer.name, closeoutResult)
+							});
+							openActivities.delete(closeoutCallId);
+							if (closeoutResult?.success === true && closeoutResult.published === true && finalArtifact(session)) {
+								successfulFinalizer = true;
+								break streamLoop;
+							}
+						}
+					}
 					if (record.hybridPause) break streamLoop;
 					if(ok&&['record_sqa_control','record_sqa_blockers'].includes(part.toolName)&&prepareSqaSynthesis(session,record)){
 						handoffToSqaSynthesis=true;break streamLoop;
@@ -1670,7 +1716,7 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 		record.running = false;
 		record.controller = undefined;
 		return runTurn(session, {
-			task: 'Continue the unfinished SQA assessment from the durable Progress section and current browser state. Do not repeat recorded controls or completed workflows. Complete the next bounded workflow, record its control decisions immediately, update the plan, and finish with reviewer-only blockers plus finish_sqa_assessment.',
+			task: 'Continue the unfinished SQA assessment from the durable Progress section and current browser state. Do not repeat recorded controls or completed workflows. Complete the next bounded workflow and record its control decisions immediately. The host automatically closes reviewer-only prerequisites after the final browser-backed control. Update the plan and call finish_sqa_assessment.',
 			incompleteAttempt
 		}, runStore, deviceRuntime);
 	}
@@ -1679,7 +1725,7 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 		const completionInstruction = session.mode === 'founder'
 			? 'Continue the unfinished Founder review now. Read the current Progress section, immediately complete the remaining route/surface inventory, representative workflow, diagnostics, and evidence-backed category observations without repeating finished work. Ask for critical founder context or an authenticated/public-only scope decision only when genuinely required. Then call finish_founder_review with the complete evidence-linked strategy; never invent customer, analytics, market, or revenue facts.'
 			: session.mode === 'sqa'
-				? 'Continue the unfinished SQA assessment now. Read the current Progress section, immediately perform each remaining browser-first technical check, then use record_sqa_blockers once for reviewer-only prerequisites. If authentication blocks representative scoped workflows, call ask_question for vaulted credentials or an explicit public-only scope decision before publishing. Do not repeat recorded checks. Call finish_sqa_assessment only after the plan and every control are complete. Never invent documentary evidence or claim certification.'
+				? 'Continue the unfinished SQA assessment now. Read the current Progress section and immediately perform each remaining browser-first technical check. The host automatically closes reviewer-only prerequisites after the final browser-backed result; do not enumerate them. If authentication blocks representative scoped workflows, call ask_question for vaulted credentials or an explicit public-only scope decision before publishing. Do not repeat recorded checks. Call finish_sqa_assessment only after the plan and every control are complete. Never invent documentary evidence or claim certification.'
 				: record.hybrid ? `The SDK segment ended, but QASE has not completed this run. Preserve the same session and browser owner. Remaining authoritative work: ${JSON.stringify(session.hybrid.sdkContinuation?.remaining || {})}. Use qa_route_frontier and execute pending routes with default checks; otherwise activate each remaining supported scenario and execute its matching fixed check. Close only evidence-accounted outcomes. Never replay uncertain actions. Publish only when the host completion gate permits it.`
 					: 'Continue the unfinished QA run now. Do not stop with a progress update or a description of what you will do next. Immediately use the next required tool, complete every remaining test-plan item without repeating finished work, and call finish_qa_report when the run is complete. Only call ask_question if user input is genuinely required.';
 		// No asynchronous gap between releasing this turn and acquiring the next.
@@ -1753,6 +1799,7 @@ export function summariseResult(toolName, result) {
 		if (result.action === 'accessibility') return `Accessibility smoke: ${result.uniqueForwardTargets ?? 0} unique focus target(s), ${result.noFocusSteps ?? 0} no-focus step(s), wrapped=${Boolean(result.wrappedDuringSample)}`;
 		if (result.action === 'responsive') return `Responsive smoke: ${(result.samples ?? []).length} viewport(s), max overflow ${Math.max(0, ...(result.samples ?? []).map(sample => Number(sample.horizontalOverflowPx) || 0))}px`;
 		if (result.action === 'navigation') return `Navigation smoke: ${(result.samples ?? []).filter(sample => sample.ok).length}/${(result.samples ?? []).length} same-origin link destination(s) loaded`;
+		if (result.action === 'form_validation' && result.eligible === false) return `Form smoke unavailable: ${result.blockerReason ?? result.code ?? 'no eligible safe form'}`;
 		if (result.action === 'form_validation') return `Form smoke: ${(result.cases ?? []).length} generated case(s), stale success after invalid=${Boolean(result.staleSuccessSignalAfterInvalid)}`;
 	}
 	if (result.recorded) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { activityLabel, allowedToolNames, ensureRuntime, guardSqaBrowserTool, isFounderSynthesisReady, modelActivityTimeoutMs, prepareFounderSynthesis, prepareSqaContextContinuation, prepareSqaSynthesis, restoreWaitingSnapshot, runTurn, summariseResult, withModelActivityDeadline } from './agent.js';
+import { activityLabel, allowedToolNames, ensureRuntime, guardSqaBrowserTool, isFounderSynthesisReady, modelActivityTimeoutMs, prepareFounderSynthesis, prepareSqaContextContinuation, prepareSqaSynthesis, restoreWaitingSnapshot, runTurn, sqaAutomaticBudgetCloseoutInput, summariseResult, withModelActivityDeadline } from './agent.js';
 import { attachUsageCapture, createUsageLogger } from './usageCapture.js';
 import { createBrowserTools } from './browserTools.js';
 import { createFounderReviewTodos, FOUNDER_CATEGORY_IDS } from './founderService.js';
@@ -398,6 +398,7 @@ test('new browser capabilities validate model arguments before invoking the brid
 	assert.equal((await meeting.run({ selector: '#meeting' })).success, true);
 	assert.equal((await smoke.run({ action: 'accessibility', steps: 8, reverse_steps: 2 })).success, true);
 	assert.equal((await smoke.run({ action: 'navigation', links: ['Privacy'] })).success, true);
+	assert.equal((await smoke.run({ action: 'form_validation' })).success, true);
 	assert.equal((await smoke.run({ action: 'form_validation', field_label: 'Email', submit_name: 'Validate' })).success, true);
 });
 
@@ -457,6 +458,57 @@ test('SQA browser budget blocks more browser work without blocking finalization 
 	}, session, 2);
 	assert.equal((await finalizer.run({}, {})).success, true);
 	assert.equal(finalizerCalls, 1);
+});
+
+test('SQA budget guard results map to one host-owned finalizer path', () => {
+	assert.deepEqual(sqaAutomaticBudgetCloseoutInput({ code: 'SQA_INPUT_TOKEN_CLOSEOUT_REQUIRED' }), { close_from_saved_evidence: true });
+	assert.deepEqual(sqaAutomaticBudgetCloseoutInput({ code: 'SQA_EVIDENCE_COLLECTION_COMPLETE' }), { close_from_saved_evidence: true });
+	assert.deepEqual(sqaAutomaticBudgetCloseoutInput({ code: 'SQA_INPUT_TOKEN_BUDGET_EXHAUSTED' }), { close_after_safety_limit: true });
+	assert.deepEqual(sqaAutomaticBudgetCloseoutInput({ code: 'SQA_BROWSER_BUDGET_EXHAUSTED' }), { close_after_safety_limit: true });
+	assert.equal(sqaAutomaticBudgetCloseoutInput({ code: 'SQA_WORKFLOW_CHECKPOINT_REQUIRED' }), undefined);
+	assert.deepEqual(sqaAutomaticBudgetCloseoutInput({ success: true }, {
+		mode: 'sqa', sqa: {}, tokenUsage: { inputTokens: 300_000 }, activities: []
+	}), { close_from_saved_evidence: true });
+	assert.equal(sqaAutomaticBudgetCloseoutInput({ success: true }, {
+		mode: 'sqa', sqa: {}, tokenUsage: { inputTokens: 299_999 }, activities: []
+	}), undefined);
+});
+
+test('SQA threshold publishes through the host after any completed tool without another model turn', async () => {
+	const fixture = runtimeFixture({
+		mode: 'sqa',
+		sqa: { scope: { applicableControlIds: [] }, observations: [] },
+		tokenUsage: { inputTokens: 300_000 },
+		status: 'running'
+	});
+	const closeoutInputs = [];
+	const finalizer = {
+		name: 'finish_sqa_assessment',
+		async run(input) {
+			closeoutInputs.push(input);
+			fixture.session.sqa.finalizedAt = '2026-11-06T08:00:00.000Z';
+			fixture.session.sqa.assessment = { assessmentId: 'sqa-host-closeout', verdict: 'blocked' };
+			return { success: true, published: true, assessment_id: 'sqa-host-closeout', verdict: 'blocked' };
+		}
+	};
+	fixture.record.runtime.headlessRuntime = { getTools: () => [finalizer] };
+	let modelTurns = 0;
+	fixture.record.runtime.run = async function* () {
+		modelTurns++;
+		yield {
+			type: 'tool_result', toolName: 'update_todo', toolCallId: 'budget-plan', input: {},
+			result: { success: true, todos: [] }
+		};
+		yield { type: 'text', content: 'This text must not require another turn.' };
+	};
+
+	await runTurn(fixture.session, { task: 'Complete the bounded SQA run.' }, fixture.store);
+
+	assert.equal(modelTurns, 1);
+	assert.deepEqual(closeoutInputs, [{ close_from_saved_evidence: true }]);
+	assert.equal(fixture.session.status, 'done');
+	assert.equal(fixture.session.sqa.assessment.assessmentId, 'sqa-host-closeout');
+	assert.equal(fixture.session.activities.find(item => item.toolName === 'finish_sqa_assessment')?.status, 'done');
 });
 
 test('media evidence summaries fit Founder evidence limits and retain the latest app track state', () => {
@@ -1011,22 +1063,29 @@ test('deterministic fake-model SQA agent completes the real closeout path withou
 	fixture.record.runtime.run = async function* () {
 		const tools = createSqaTools(fixture.session, fixture.store);
 		const record = tools.find(tool => tool.name === 'record_sqa_control');
-		const blockers = tools.find(tool => tool.name === 'record_sqa_blockers');
 		const finish = tools.find(tool => tool.name === 'finish_sqa_assessment');
-		const reviewerOnly = [];
+		if (fixture.record.sqaSynthesis) {
+			fixture.session.todos = fixture.session.todos.map(todo => ({ ...todo, status: 'completed' }));
+			yield {
+				type: 'tool_result', toolName: 'update_todo', toolCallId: 'complete-plan',
+				result: { success: true, todos: fixture.session.todos }
+			};
+			const final = await finish.run({});
+			assert.equal(final.success, true, final.error);
+			yield { type: 'tool_result', toolName: 'finish_sqa_assessment', toolCallId: 'finish', result: final };
+			return;
+		}
 		let callIndex = 0;
 		const orderedControlIds = [
 			...SQA_TECHNICAL_CONTROL_IDS.filter(controlId => fixture.session.sqa.scope.applicableControlIds.includes(controlId)),
 			...fixture.session.sqa.scope.applicableControlIds.filter(controlId => !SQA_TECHNICAL_CONTROL_IDS.includes(controlId))
-		];
+		].filter(controlId => getSqaControl(controlId).evidenceRequirements
+			.some(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type)));
 		for (const controlId of orderedControlIds) {
 			const control = getSqaControl(controlId);
 			const hasAgentEvidence = control.evidenceRequirements.some(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type));
 			const allEvidenceIsAgentEvidence = control.evidenceRequirements.every(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type));
-			if (!hasAgentEvidence) {
-				reviewerOnly.push({ control_id: controlId, rationale: 'Required reviewed documentary evidence was not supplied to the deterministic fixture.' });
-				continue;
-			}
+			assert.equal(hasAgentEvidence, true);
 			const input = allEvidenceIsAgentEvidence ? {
 				control_id: controlId, status: 'pass',
 				evidence: control.evidenceRequirements.flatMap(requirement => Array.from(
@@ -1042,10 +1101,9 @@ test('deterministic fake-model SQA agent completes the real closeout path withou
 			assert.equal(result.success, true, `${controlId}: ${result.error}`);
 			yield { type: 'tool_result', toolName: 'record_sqa_control', toolCallId: `record-${callIndex++}`, input, result };
 		}
-		const blockerInput = { controls: reviewerOnly };
-		const blockerResult = await blockers.run(blockerInput);
-		assert.equal(blockerResult.success, true, blockerResult.error);
-		yield { type: 'tool_result', toolName: 'record_sqa_blockers', toolCallId: 'reviewer-blockers', input: blockerInput, result: blockerResult };
+		// This deterministic fixture uses the legacy runtime without the qualified
+		// synthesis handoff. Reviewer prerequisites were still host-closed by the
+		// final record call, so it can finish directly without a blocker tool call.
 		fixture.session.todos = fixture.session.todos.map(todo => ({ ...todo, status: 'completed' }));
 		yield {
 			type: 'tool_result', toolName: 'update_todo', toolCallId: 'complete-plan',
@@ -1063,6 +1121,8 @@ test('deterministic fake-model SQA agent completes the real closeout path withou
 	assert.equal(fixture.session.sqa.assessment.technicalSummary.verdict, 'pass');
 	assert.equal(fixture.session.sqa.assessment.verdict, 'blocked');
 	assert.equal(fixture.session.todos.every(todo => todo.status === 'completed'), true);
+	assert.equal(fixture.session.activities.some(activity => activity.toolName === 'record_sqa_blockers'), false);
+	assert.ok(commits.some(item => item.payload?.reviewerCloseout === true));
 	assert.ok(commits.some(item => item.type === 'sqa' && item.payload?.final === true));
 });
 

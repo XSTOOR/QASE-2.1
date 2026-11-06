@@ -2,14 +2,21 @@ import { guardFinalization } from './finalizationGuard.js';
 import { modeExplorationReadiness } from './modeReasoningRuntime.js';
 import {
 	AGENT_EVIDENCE_TYPES,
+	closePendingReviewerSqaControlsAsBlocked,
 	closePendingSqaControlsAsBlocked,
 	finishSqaAssessment,
-	recordAgentSqaBlockers,
 	recordAgentSqaObservation,
-	recordAgentSqaObservations
+	recordAgentSqaObservations,
+	pendingAgentSqaControlIds
 } from './sqaService.js';
 import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
-import { countSqaBrowserActivities, SQA_BROWSER_TOOL_BUDGET, SQA_INPUT_TOKEN_BUDGET } from './sqaBrowserBudget.js';
+import {
+	countSqaBrowserActivities,
+	SQA_BROWSER_EVIDENCE_LIMIT,
+	SQA_BROWSER_TOOL_BUDGET,
+	SQA_INPUT_TOKEN_BUDGET,
+	SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD
+} from './sqaBrowserBudget.js';
 
 const AGENT_EVIDENCE_TYPE_VALUES = [...AGENT_EVIDENCE_TYPES];
 const PUBLIC_ONLY_SCOPE = /\b(public[- ]only|anonymous[- ]only|unauthenticated[- ]only|login[- ]only|auth(?:entication)? surface only|continue without (?:credentials|sign[- ]?in))\b/i;
@@ -84,9 +91,18 @@ function finishReadiness(session, now = Date.now()) {
 }
 
 export function createSqaTools(session, runStore, options = {}) {
+	async function automaticReviewerCloseout() {
+		const pendingBrowserControlIds = pendingAgentSqaControlIds(session);
+		if (pendingBrowserControlIds.length > 0) {
+			return { closed_count: 0, pending_browser_count: pendingBrowserControlIds.length };
+		}
+		const closed = await closePendingReviewerSqaControlsAsBlocked(session, runStore);
+		return { closed_count: closed.length };
+	}
+
 	const recordControl = {
 		name: 'record_sqa_control',
-		description: 'Records one scoped SQA control observation, or an atomic controls batch of up to 12 closely related observations. Capture a control-specific browser check immediately before pass/fail. Provide every required browser-eligible evidence type in evidence; manual and reviewer-only prerequisites remain blocked.',
+		description: 'Records one scoped SQA control observation, or an atomic controls batch of up to 12 closely related observations. Capture a control-specific browser check immediately before pass/fail. Provide every required browser-eligible evidence type in evidence. After the final browser-eligible result, the host automatically closes every still-pending reviewer-only prerequisite with its catalog-derived missing-evidence reason.',
 		category: 'sqa',
 		parametersSchema: {
 			type: 'object',
@@ -147,6 +163,7 @@ export function createSqaTools(session, runStore, options = {}) {
 						? input.controls.map(item => item?.control_id)
 						: []);
 					const results = await recordAgentSqaObservations(session, input.controls, runStore);
+					const reviewerCloseout = await automaticReviewerCloseout();
 					return {
 						success: true,
 						recorded: results.map(result => `${result.controlId}: ${result.status}`),
@@ -156,18 +173,21 @@ export function createSqaTools(session, runStore, options = {}) {
 							status: result.status,
 							decision_notes: result.decisionNotes,
 							evidence_coverage: result.evidenceCoverage
-						}))
+						})),
+						reviewer_closeout: reviewerCloseout
 					};
 				}
 				requireTechnicalControlsFirst(session, [input?.control_id]);
 				const result = await recordAgentSqaObservation(session, input, runStore);
+				const reviewerCloseout = await automaticReviewerCloseout();
 				return {
 					success: true,
 					recorded: `${result.controlId}: ${result.status}`,
 					control_id: result.controlId,
 					status: result.status,
 					decision_notes: result.decisionNotes,
-					evidence_coverage: result.evidenceCoverage
+					evidence_coverage: result.evidenceCoverage,
+					reviewer_closeout: reviewerCloseout
 				};
 			} catch (error) {
 				return { success: false, error: error instanceof Error ? error.message : String(error) };
@@ -177,33 +197,25 @@ export function createSqaTools(session, runStore, options = {}) {
 
 	const recordBlockers = {
 		name: 'record_sqa_blockers',
-		description: 'Records a bounded batch of reviewer-only or unavailable-prerequisite controls as blocked after browser-observable technical checks are complete. Give one precise missing prerequisite per control.',
+		description: 'Fallback reviewer closeout. Normally the host runs this automatically after the final browser-eligible control. If needed, call once with close_remaining=true; the host identifies all pending reviewer-only controls and derives each precise missing-evidence reason from the catalog. Never enumerate controls or write blocker rationales.',
 		category: 'sqa',
 		parametersSchema: {
-			type: 'object',
+			type: 'object', additionalProperties: false,
 			properties: {
-				controls: {
-					type: 'array', minItems: 1, maxItems: 50,
-					items: {
-						type: 'object',
-						properties: {
-							control_id: { type: 'string' },
-							rationale: { type: 'string', description: 'Exact reviewed artifact, authorization, environment, account, or other prerequisite that is missing.' }
-						},
-						required: ['control_id', 'rationale']
-					}
-				}
+				close_remaining: { type: 'boolean', enum: [true], description: 'Close every pending reviewer-only prerequisite using its host catalog evidence contract.' }
 			},
-			required: ['controls']
+			required: ['close_remaining']
 		},
 		async run(input) {
 			try {
-				requireTechnicalControlsFirst(session, (input?.controls ?? []).map(item => item?.control_id));
-				const results = await recordAgentSqaBlockers(session, input?.controls, runStore);
+				if (input?.close_remaining !== true || Object.keys(input ?? {}).some(key => key !== 'close_remaining')) {
+					throw new TypeError('Call reviewer closeout once with close_remaining=true; do not enumerate controls or rationales.');
+				}
+				const results = await closePendingReviewerSqaControlsAsBlocked(session, runStore);
 				return {
 					success: true,
-					recorded: results.map(result => `${result.controlId}: ${result.status}`),
-					count: results.length
+					closed_count: results.length,
+					remaining_pending_control_ids: finishReadiness(session).pendingControlIds
 				};
 			} catch (error) {
 				return { success: false, error: error instanceof Error ? error.message : String(error) };
@@ -213,11 +225,12 @@ export function createSqaTools(session, runStore, options = {}) {
 
 	const finish = {
 		name: 'finish_sqa_assessment',
-		description: 'Ends the SQA run by invoking the deterministic verdict engine. Call once after every applicable control has a result. If a hard browser or input-token safety limit was reached, set close_after_safety_limit=true once; the host durably blocks all pending controls with the exact limit reason, completes the plan, and publishes without inventing evidence. The result is a scoped technical assessment, never a certification or regulatory approval.',
+		description: 'Ends the SQA run by invoking the deterministic verdict engine. Call once after every applicable control has a result. At the reserved evidence/input closeout threshold, set close_from_saved_evidence=true; after a hard safety limit, set close_after_safety_limit=true. The host durably blocks only pending controls with the exact reason, completes the plan, and publishes without inventing evidence. The result is a scoped technical assessment, never a certification or regulatory approval.',
 		category: 'sqa',
 		parametersSchema: {
 			type: 'object', additionalProperties: false,
 			properties: {
+				close_from_saved_evidence: { type: 'boolean', description: 'Use only after the host reports the SQA evidence-collection or input-token closeout threshold is reached.' },
 				close_after_safety_limit: { type: 'boolean', description: 'Use only after the host reports the SQA browser-tool or input-token safety limit is exhausted.' }
 			}
 		},
@@ -254,18 +267,32 @@ export function createSqaTools(session, runStore, options = {}) {
 					};
 				}
 				let safetyClosedControlIds = [];
-				if (input?.close_after_safety_limit === true) {
+				const closeFromSavedEvidence = input?.close_from_saved_evidence === true;
+				const closeAfterSafetyLimit = input?.close_after_safety_limit === true;
+				if (closeFromSavedEvidence && closeAfterSafetyLimit) {
+					return { success: false, error: 'Choose one SQA budget closeout path, not both.' };
+				}
+				if (closeFromSavedEvidence || closeAfterSafetyLimit) {
 					const inputTokens = Math.max(0, Number(session.tokenUsage?.inputTokens) || 0);
 					const browserTools = countSqaBrowserActivities(session);
 					const tokenLimitReached = inputTokens >= SQA_INPUT_TOKEN_BUDGET;
 					const browserLimitReached = browserTools >= SQA_BROWSER_TOOL_BUDGET;
-					if (!tokenLimitReached && !browserLimitReached) {
+					const tokenCloseoutReached = inputTokens >= SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD;
+					const browserCloseoutReached = browserTools >= SQA_BROWSER_EVIDENCE_LIMIT;
+					const closeoutAllowed = closeAfterSafetyLimit
+						? tokenLimitReached || browserLimitReached
+						: tokenCloseoutReached || browserCloseoutReached;
+					if (!closeoutAllowed) {
 						return {
 							success: false,
-							error: 'Safety closeout is available only after the host SQA input-token or browser-tool limit is exhausted.',
+							error: closeAfterSafetyLimit
+								? 'Safety closeout is available only after the host SQA input-token or browser-tool hard limit is exhausted.'
+								: 'Saved-evidence closeout is available only after the host SQA evidence-collection or input-token closeout threshold is reached.',
 							input_tokens: inputTokens,
+							input_token_closeout_threshold: SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD,
 							input_token_limit: SQA_INPUT_TOKEN_BUDGET,
 							browser_tools: browserTools,
+							browser_evidence_limit: SQA_BROWSER_EVIDENCE_LIMIT,
 							browser_tool_limit: SQA_BROWSER_TOOL_BUDGET
 						};
 					}
@@ -277,14 +304,38 @@ export function createSqaTools(session, runStore, options = {}) {
 							auth_blocked_control_ids: readiness.authBlockedControlIds
 						};
 					}
-					const reason = tokenLimitReached
-						? `Stopped early: budget reached. The host SQA input-token safety limit was exhausted (${inputTokens}/${SQA_INPUT_TOKEN_BUDGET}) before control-specific evidence was collected. Conservatively blocked; no pass or fail is claimed.`
-						: `Stopped early: budget reached. The host SQA browser-tool safety limit was exhausted (${browserTools}/${SQA_BROWSER_TOOL_BUDGET}) before control-specific evidence was collected. Conservatively blocked; no pass or fail is claimed.`;
-					const closed = await closePendingSqaControlsAsBlocked(session, reason, runStore);
+					const trigger = tokenLimitReached || (!browserLimitReached && tokenCloseoutReached)
+						? 'input_tokens' : 'browser_tools';
+					const used = trigger === 'input_tokens' ? inputTokens : browserTools;
+					const threshold = closeAfterSafetyLimit
+						? (trigger === 'input_tokens' ? SQA_INPUT_TOKEN_BUDGET : SQA_BROWSER_TOOL_BUDGET)
+						: (trigger === 'input_tokens' ? SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD : SQA_BROWSER_EVIDENCE_LIMIT);
+					const hardLimit = trigger === 'input_tokens' ? SQA_INPUT_TOKEN_BUDGET : SQA_BROWSER_TOOL_BUDGET;
+					const limitName = closeAfterSafetyLimit ? 'hard safety limit was exhausted' : 'reserved closeout threshold was reached';
+					const reason = `Stopped early: budget reached. The host SQA ${trigger === 'input_tokens' ? 'input-token' : 'browser evidence-collection'} ${limitName} (${used}/${threshold}; hard limit ${hardLimit}) before control-specific evidence was collected. Conservatively blocked; no pass or fail is claimed.`;
+					const previousBudgetCloseout = session.sqa.budgetCloseout;
+					session.sqa = {
+						...session.sqa,
+						budgetCloseout: {
+							mode: closeAfterSafetyLimit ? 'safety_limit' : 'saved_evidence',
+							trigger,
+							used,
+							threshold,
+							hardLimit
+						}
+					};
+					let closed;
+					try {
+						closed = await closePendingSqaControlsAsBlocked(session, reason, runStore);
+					} catch (error) {
+						if (previousBudgetCloseout === undefined) delete session.sqa.budgetCloseout;
+						else session.sqa.budgetCloseout = previousBudgetCloseout;
+						throw error;
+					}
 					safetyClosedControlIds = closed.map(result => result.controlId);
 					if ((session.todos ?? []).some(todo => todo.status !== 'completed')) {
 						session.todos = session.todos.map(todo => ({ ...todo, status: 'completed' }));
-						await runStore.commit(session, 'todos', { todos: session.todos, safetyCloseout: true });
+						await runStore.commit(session, 'todos', { todos: session.todos, budgetCloseout: session.sqa.budgetCloseout });
 					}
 					readiness = finishReadiness(session);
 				}
@@ -315,7 +366,8 @@ export function createSqaTools(session, runStore, options = {}) {
 				return {
 					success: true,
 					published: true,
-					safety_closeout: safetyClosedControlIds.length > 0,
+					budget_closeout: session.sqa?.budgetCloseout ?? null,
+					safety_closeout: session.sqa?.budgetCloseout?.mode === 'safety_limit',
 					safety_closed_control_ids: safetyClosedControlIds,
 					assessment_id: assessment.assessmentId,
 					verdict: assessment.verdict,

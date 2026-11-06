@@ -91,6 +91,65 @@ async function validityState(field) {
 	}));
 }
 
+async function inspectFormEligibility(page) {
+	return page.evaluate(() => {
+		const normalize = value => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+		const visible = element => {
+			const rect = element.getBoundingClientRect();
+			const style = getComputedStyle(element);
+			return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+		};
+		const accessibleName = element => {
+			const ariaLabel = normalize(element.getAttribute('aria-label'));
+			if (ariaLabel) return ariaLabel;
+			const labelledBy = normalize((element.getAttribute('aria-labelledby') ?? '').split(/\s+/)
+				.filter(Boolean).map(id => document.getElementById(id)?.textContent ?? '').join(' '));
+			if (labelledBy) return labelledBy;
+			const labels = normalize([...(element.labels ?? [])].map(label => label.textContent ?? '').join(' '));
+			if (labels) return labels;
+			if (element instanceof HTMLInputElement && element.type === 'submit') return normalize(element.value);
+			return normalize(element.textContent);
+		};
+		const forms = [...document.forms];
+		const allEmailFields = forms.flatMap(form => [...form.querySelectorAll('input[type="email"]')]);
+		const names = allEmailFields.map(accessibleName);
+		const candidates = [];
+		const rejectionCodes = new Set();
+		let labeledEmptyEmailFields = 0;
+		for (const [formIndex, form] of forms.entries()) {
+			let action;
+			try { action = new URL(form.action || location.href, location.href); }
+			catch { rejectionCodes.add('invalid_action'); continue; }
+			const method = String(form.method || 'get').toLowerCase();
+			const safeForm = method === 'get' && action.origin === location.origin && form.target !== '_blank';
+			if (!safeForm) rejectionCodes.add('unsafe_form');
+			const submits = [...form.querySelectorAll('button:not([type]),button[type="submit"],input[type="submit"]')]
+				.filter(element => !element.disabled && visible(element))
+				.map(element => accessibleName(element)).filter(Boolean);
+			for (const field of form.querySelectorAll('input[type="email"]')) {
+				const fieldLabel = accessibleName(field);
+				if (!fieldLabel) { rejectionCodes.add('unlabeled_email'); continue; }
+				if (field.disabled || !visible(field)) { rejectionCodes.add('unavailable_email'); continue; }
+				if (field.value) { rejectionCodes.add('nonempty_email'); continue; }
+				labeledEmptyEmailFields++;
+				if (names.filter(name => name === fieldLabel).length !== 1) { rejectionCodes.add('nonunique_email_label'); continue; }
+				const submitName = submits.find(name => submits.filter(candidate => candidate === name).length === 1);
+				if (!submitName) { rejectionCodes.add('missing_unique_submit'); continue; }
+				if (!safeForm) continue;
+				candidates.push({ formIndex, fieldLabel, submitName });
+			}
+		}
+		return {
+			formsScanned: forms.length,
+			emailFields: allEmailFields.length,
+			labeledEmptyEmailFields,
+			eligibleForms: candidates.length,
+			candidates: candidates.slice(0, 5),
+			rejectionCodes: [...rejectionCodes]
+		};
+	});
+}
+
 /**
  * Bounded, deterministic SQA browser checks that collapse repetitive driver
  * actions into one tool call. Results are sampled evidence, never a WCAG or
@@ -255,11 +314,36 @@ export function createSqaBrowserSmoke(page) {
 		},
 
 		async formValidation(input = {}) {
-			if (typeof input.fieldLabel !== 'string' || !input.fieldLabel.trim() || input.fieldLabel.length > 120
-				|| typeof input.submitName !== 'string' || !input.submitName.trim() || input.submitName.length > 120) {
-				throw new TypeError('fieldLabel and submitName must be exact accessible names of at most 120 characters.');
+			const suppliedField = typeof input.fieldLabel === 'string' && input.fieldLabel.trim();
+			const suppliedSubmit = typeof input.submitName === 'string' && input.submitName.trim();
+			if (Boolean(suppliedField) !== Boolean(suppliedSubmit)
+				|| (suppliedField && (input.fieldLabel.length > 120 || input.submitName.length > 120))) {
+				throw new TypeError('Provide both fieldLabel and submitName exact accessible names, or omit both for deterministic form discovery.');
 			}
-			const field = page.getByLabel(input.fieldLabel.trim(), { exact: true });
+			const inspection = await inspectFormEligibility(page);
+			if (!suppliedField && inspection.eligibleForms === 0) {
+				const { candidates: _candidates, ...inspectionSummary } = inspection;
+				const blockerReason = inspection.formsScanned === 0
+					? 'Deterministic form preflight found no forms on the current public page, so the bounded email validation workflow is unavailable.'
+					: inspection.emailFields === 0
+						? `Deterministic form preflight inspected ${inspection.formsScanned} form(s) and found no email field. The bounded validation workflow requires one empty labeled email field on a same-origin GET form.`
+						: `Deterministic form preflight inspected ${inspection.formsScanned} form(s) and ${inspection.emailFields} email field(s), but found no empty, uniquely labeled email field with a unique submit control on a safe same-origin GET form.`;
+				return {
+					success: true,
+					action: 'form_validation',
+					eligible: false,
+					outcome: 'unavailable',
+					code: 'FORM_SMOKE_NO_ELIGIBLE_FORM',
+					blockerReason,
+					inspection: inspectionSummary,
+					cases: [],
+					limitation: 'No form was submitted and no field value was read or changed.'
+				};
+			}
+			const selected = suppliedField
+				? { fieldLabel: input.fieldLabel.trim(), submitName: input.submitName.trim() }
+				: inspection.candidates[0];
+			const field = page.getByLabel(selected.fieldLabel, { exact: true });
 			if (await field.count() !== 1) {
 				return { success: false, code: 'FORM_SMOKE_FIELD_UNAVAILABLE', error: 'The exact accessible field label was not found or was not unique.' };
 			}
@@ -267,7 +351,7 @@ export function createSqaBrowserSmoke(page) {
 			if (await form.count() !== 1) {
 				return { success: false, code: 'FORM_SMOKE_FORM_UNAVAILABLE', error: 'The labeled field is not inside one form.' };
 			}
-			const submit = form.getByRole('button', { name: input.submitName.trim(), exact: true });
+			const submit = form.getByRole('button', { name: selected.submitName, exact: true });
 			if (await submit.count() !== 1) {
 				return { success: false, code: 'FORM_SMOKE_SUBMIT_UNAVAILABLE', error: 'The exact submit button was not found uniquely inside the field form.' };
 			}
@@ -316,7 +400,7 @@ export function createSqaBrowserSmoke(page) {
 				if (page.url() !== originalUrl) {
 					await page.goto(originalUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => undefined);
 				}
-				const restored = page.getByLabel(input.fieldLabel.trim(), { exact: true });
+				const restored = page.getByLabel(selected.fieldLabel, { exact: true });
 				if (await restored.count() === 1) await restored.fill('').catch(() => undefined);
 			}
 			const validSignals = cases.find(item => item.name === 'valid_email')?.statusSignals ?? [];
@@ -324,8 +408,10 @@ export function createSqaBrowserSmoke(page) {
 			return {
 				success: true,
 				action: 'form_validation',
-				field: { label: input.fieldLabel.trim(), type: fieldMetadata.type, required: fieldMetadata.required },
+				eligible: true,
+				field: { label: selected.fieldLabel, type: fieldMetadata.type, required: fieldMetadata.required },
 				form: { method: metadata.method, sameOrigin: true },
+				discovery: { automatic: !suppliedField, eligibleForms: inspection.eligibleForms },
 				cases,
 				staleSuccessSignalAfterInvalid: validSignals.length > 0 && JSON.stringify(validSignals) === JSON.stringify(recoverySignals),
 				restoredUrl: page.url(),

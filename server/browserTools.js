@@ -20,7 +20,7 @@ export function createBrowserTools(getBridge) {
 		{
 			name: 'browser_sqa_smoke',
 			category: 'browser',
-			description: 'Runs one bounded SQA browser smoke workflow with real driver input. accessibility performs up to 12 Tab plus 3 Shift+Tab steps and returns the observed focus/semantic path. responsive samples up to 3 explicit viewport sizes, reports horizontal overflow and clipped interactive controls, then restores the original viewport. navigation samples up to 4 exact accessible same-origin link destinations and restores the original page. form_validation exercises generated empty, invalid, valid, and invalid-after-valid cases on one empty labeled email field only when its form is a same-origin GET; it never submits POST, account, message, or purchase forms. Every result states its sampling limitation.',
+			description: 'Runs one bounded SQA browser smoke workflow with real driver input. accessibility performs up to 12 Tab plus 3 Shift+Tab steps and returns the observed focus/semantic path. responsive samples up to 3 explicit viewport sizes, reports horizontal overflow and clipped interactive controls, then restores the original viewport. navigation samples up to 4 exact accessible same-origin link destinations and restores the original page. form_validation first discovers an eligible empty labeled email field on a same-origin GET form; omit field_label and submit_name for deterministic discovery and automatic selection. If none exists it returns one precise unavailable blocker without submitting or retrying. Eligible forms receive generated empty, invalid, valid, and invalid-after-valid cases. It never submits POST, account, message, or purchase forms. Every result states its sampling limitation.',
 			parametersSchema: {
 				type: 'object', additionalProperties: false,
 				properties: {
@@ -39,8 +39,8 @@ export function createBrowserTools(getBridge) {
 						}
 					},
 					links: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string', minLength: 1, maxLength: 120 }, description: 'Navigation action: exact accessible link names from the current snapshot.' },
-					field_label: { type: 'string', minLength: 1, maxLength: 120, description: 'Form-validation action: exact accessible label of one empty email field.' },
-					submit_name: { type: 'string', minLength: 1, maxLength: 120, description: 'Form-validation action: exact accessible name of its submit button.' }
+					field_label: { type: 'string', minLength: 1, maxLength: 120, description: 'Optional form-validation override: exact accessible label of one empty email field. Omit with submit_name for deterministic discovery.' },
+					submit_name: { type: 'string', minLength: 1, maxLength: 120, description: 'Optional form-validation override: exact accessible name of its submit button. Omit with field_label for deterministic discovery.' }
 				},
 				required: ['action']
 			},
@@ -72,8 +72,10 @@ export function createBrowserTools(getBridge) {
 				const unexpected = Object.keys(input).filter(key => !allowedFields.has(key));
 				if (unexpected.length > 0) return { success: false, error: `${unexpected.join(', ')} is not valid for ${input.action}.` };
 				if (input.action === 'navigation' && input.links === undefined) return { success: false, error: 'navigation requires links.' };
-				if (input.action === 'form_validation' && (![input.field_label, input.submit_name].every(value => typeof value === 'string' && value.trim() && value.length <= 120))) {
-					return { success: false, error: 'form_validation requires field_label and submit_name exact accessible names.' };
+				if (input.action === 'form_validation') {
+					const supplied = [input.field_label, input.submit_name]
+						.map(value => typeof value === 'string' && value.trim() && value.length <= 120);
+					if (supplied[0] !== supplied[1]) return { success: false, error: 'form_validation accepts both field_label and submit_name, or neither for deterministic discovery.' };
 				}
 				return getBridge().sqaSmoke(input);
 			}

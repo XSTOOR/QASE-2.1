@@ -2098,7 +2098,8 @@ export function createApplication(options = {}) {
 			await services.runs.commit(session, 'sqa.created', {
 				catalogVersion: sqa.scope.catalogVersion,
 				profiles: sqa.scope.profiles,
-				attributes: sqa.scope.attributes
+				attributes: sqa.scope.attributes,
+				selectionReview: sqa.scope.selectionReview
 			});
 			response.status(201).json(session);
 		} catch (error) {

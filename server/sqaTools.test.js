@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createSqaState } from './sqaService.js';
 import { createSqaTools, finishReadiness } from './sqaTools.js';
-import { SQA_INPUT_TOKEN_BUDGET } from './sqaBrowserBudget.js';
+import { SQA_INPUT_TOKEN_BUDGET, SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD } from './sqaBrowserBudget.js';
 
 const fixedNow = () => Date.parse('2026-08-17T00:00:00.000Z');
 
@@ -39,7 +39,9 @@ test('SQA tool contract supports multi-evidence observations and bounded blocker
 	assert.equal(record.parametersSchema.properties.evidence.items.properties.type.enum.includes('risk_register'), false);
 	assert.equal(record.parametersSchema.properties.controls.maxItems, 12);
 	assert.deepEqual(record.parametersSchema.required, []);
-	assert.equal(blockers.parametersSchema.properties.controls.maxItems, 50);
+	assert.deepEqual(blockers.parametersSchema.required, ['close_remaining']);
+	assert.deepEqual(blockers.parametersSchema.properties.close_remaining.enum, [true]);
+	assert.equal(blockers.parametersSchema.properties.controls, undefined);
 });
 
 test('SQA record tool accepts an atomic controls batch without a new runtime permission', async () => {
@@ -71,11 +73,29 @@ test('SQA record tools keep non-technical work behind the six web controls', asy
 	assert.equal(premature.success, false);
 	assert.match(premature.error, /Finish the six technical web controls first/);
 	assert.match(premature.error, /SQA-WEB-001/);
-	const prematureBatch = await blockers.run({ controls: [{
-		control_id: 'SQA-GOV-001', rationale: 'No reviewed risk register.'
-	}] });
+	const prematureBatch = await blockers.run({ close_remaining: true });
 	assert.equal(prematureBatch.success, false);
-	assert.match(prematureBatch.error, /Finish the six technical web controls first/);
+	assert.match(prematureBatch.error, /Finish browser-eligible SQA controls/);
+});
+
+test('final browser-backed result automatically closes reviewer-only prerequisites', async () => {
+	const candidate = session();
+	candidate.sqa.scope.applicableControlIds = ['SQA-WEB-001', 'SQA-GOV-001'];
+	const commits = [];
+	const runStore = { async commit(_session, type, payload) { commits.push({ type, payload }); } };
+	const tools = createSqaTools(candidate, runStore);
+	const record = tools.find(tool => tool.name === 'record_sqa_control');
+	const result = await record.run({
+		control_id: 'SQA-WEB-001',
+		status: 'blocked',
+		rationale: 'The controlled page did not expose a usable application shell.'
+	});
+	assert.equal(result.success, true, result.error);
+	assert.deepEqual(result.reviewer_closeout, { closed_count: 1 });
+	assert.deepEqual(candidate.sqa.observations.map(item => item.controlId), ['SQA-WEB-001', 'SQA-GOV-001']);
+	assert.match(candidate.sqa.observations.at(-1).rationale, /risk_register \(product-risk-baseline\)/);
+	assert.equal(commits.filter(item => item.payload?.reviewerCloseout).length, 1);
+	assert.equal(tools.find(tool => tool.name === 'record_sqa_blockers').parametersSchema.properties.controls, undefined);
 });
 
 test('finish readiness reports missing controls, incomplete work, and recent in-flight browser tools', () => {
@@ -124,6 +144,29 @@ test('safety closeout is rejected early and finishes exhausted runs in one call'
 	assert.equal(exhausted.sqa.observations.every(item => item.status === 'blocked'), true);
 	assert.ok(exhausted.sqa.observations.every(item => item.rationale.startsWith('Stopped early: budget reached.')));
 	assert.ok(exhausted.sqa.observations[0].rationale.includes(`${SQA_INPUT_TOKEN_BUDGET}/${SQA_INPUT_TOKEN_BUDGET}`));
+	assert.equal(exhausted.sqa.assessment.executionBudget.closeout.mode, 'safety_limit');
+});
+
+test('reserved closeout threshold publishes from saved evidence before hard exhaustion', async () => {
+	const candidate = session();
+	candidate.todos = [{ text: 'Run technical checks', status: 'pending' }];
+	candidate.tokenUsage = { inputTokens: SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD };
+	const finish = createSqaTools(candidate, store()).find(tool => tool.name === 'finish_sqa_assessment');
+	const result = await finish.run({ close_from_saved_evidence: true });
+	assert.equal(result.success, true, result.error);
+	assert.equal(result.safety_closeout, false);
+	assert.equal(result.budget_closeout.mode, 'saved_evidence');
+	assert.equal(result.budget_closeout.trigger, 'input_tokens');
+	assert.equal(candidate.sqa.assessment.executionBudget.inputTokens.remainingBeforeCloseout, 0);
+	assert.equal(candidate.sqa.assessment.executionBudget.closeout.mode, 'saved_evidence');
+	assert.ok(candidate.sqa.observations.every(item => item.status === 'blocked'));
+	assert.match(candidate.sqa.observations[0].rationale, /reserved closeout threshold was reached/);
+
+	const early = session();
+	const earlyFinish = createSqaTools(early, store()).find(tool => tool.name === 'finish_sqa_assessment');
+	const rejected = await earlyFinish.run({ close_from_saved_evidence: true });
+	assert.equal(rejected.success, false);
+	assert.match(rejected.error, /closeout threshold is reached/i);
 });
 
 test('authentication-blocked representative scope requires a user decision before finish', async () => {

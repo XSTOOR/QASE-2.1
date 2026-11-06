@@ -4068,6 +4068,7 @@ function renderSqaReportTab() {
 
 	el.reportView.append(notice);
 	if (assessment.technicalSummary) el.reportView.append(renderSqaTechnicalSummary(assessment.technicalSummary));
+	if (assessment.executionBudget) el.reportView.append(renderSqaExecutionBudget(assessment.executionBudget));
 	el.reportView.append(renderSqaFailures(assessment), renderSqaVerdict(assessment, lifecycle), renderSqaReportActions());
 	el.reportView.append(
 		renderSqaUnresolved(assessment),
@@ -4175,6 +4176,7 @@ function renderSqa() {
 	el.sqaView.append(notice);
 
 	if (assessment?.technicalSummary) el.sqaView.append(renderSqaTechnicalSummary(assessment.technicalSummary));
+	if (assessment?.executionBudget) el.sqaView.append(renderSqaExecutionBudget(assessment.executionBudget));
 	if (assessment) el.sqaView.append(renderSqaFailures(assessment));
 	el.sqaView.append(renderSqaVerdict(assessment, lifecycle));
 	el.sqaView.append(renderSqaReviewPanel({
@@ -4418,6 +4420,26 @@ function renderSqaTechnicalSummary(summary) {
 		counts.append(item);
 	}
 	node.append(counts);
+	return node;
+}
+
+function renderSqaExecutionBudget(budget) {
+	const browser = budget?.browserTools ?? {};
+	const tokens = budget?.inputTokens ?? {};
+	const node = sqaSection(
+		'Run budget',
+		'Usage is shown against the reserved closeout threshold; the hard limit remains a safety net.'
+	);
+	const grid = document.createElement('dl');
+	grid.className = 'sqa-scope-grid';
+	appendSqaDefinition(grid, 'Browser actions', `${Number(browser.used) || 0} / ${Number(browser.evidenceLimit) || 0}`);
+	appendSqaDefinition(grid, 'Browser actions remaining', Math.max(0, Number(browser.remainingForEvidence) || 0));
+	appendSqaDefinition(grid, 'Input tokens', `${Number(tokens.used) || 0} / ${Number(tokens.closeoutThreshold) || 0}`);
+	appendSqaDefinition(grid, 'Tokens before closeout', Math.max(0, Number(tokens.remainingBeforeCloseout) || 0));
+	appendSqaDefinition(grid, 'Budget closeout', budget.closeout
+		? `${humanizeSqaId(budget.closeout.mode)} · ${humanizeSqaId(budget.closeout.trigger)}`
+		: 'Not used');
+	node.append(grid);
 	return node;
 }
 
@@ -6090,6 +6112,7 @@ const sqaUi = {
 	catalogVersion: $('sqa-catalog-version'),
 	selectionSummary: $('sqa-selection-summary'),
 	selectionReasons: $('sqa-selection-reasons'),
+	scopeWarning: $('sqa-scope-warning'),
 	customize: $('sqa-customize'),
 	disclaimer: $('sqa-catalog-disclaimer'),
 	deviceSelect: null, // legacy select removed (DX Phase 3)
@@ -6104,6 +6127,8 @@ const sqaUi = {
 	targetRelease: $('sqa-target-release'),
 	targetEnvironment: $('sqa-target-environment'),
 	scopeNotes: $('sqa-scope-notes'),
+	expandedConfirmation: $('sqa-expanded-confirmation'),
+	expandedScope: $('sqa-expanded-scope'),
 	authorization: $('sqa-authorization'),
 	error: $('sqa-form-error')
 };
@@ -6183,11 +6208,30 @@ function syncSqaSelectionSummary() {
 	const attributes = [...sqaUi.attributeOptions.querySelectorAll('input:checked')].map(input => input.value);
 	const preview = describeSqaScopeSelection(state.sqaCatalog, { profiles, attributes });
 	sqaUi.selectionSummary.textContent = preview.text;
+	if (sqaUi.scopeWarning) {
+		sqaUi.scopeWarning.hidden = !preview.expanded;
+		sqaUi.scopeWarning.textContent = preview.warning;
+	}
+	if (sqaUi.expandedConfirmation) sqaUi.expandedConfirmation.hidden = !preview.requiresConfirmation;
+	if (sqaUi.expandedScope) {
+		sqaUi.expandedScope.required = preview.requiresConfirmation;
+		if (!preview.requiresConfirmation) sqaUi.expandedScope.checked = false;
+	}
+	if (sqaUi.scopeNotes) sqaUi.scopeNotes.required = preview.requiresRationale;
 	sqaUi.selectionReasons?.replaceChildren(...preview.reasons.map(reason => {
 		const item = document.createElement('li');
 		item.textContent = reason;
 		return item;
 	}));
+	syncSqaSubmitState();
+}
+
+function currentSqaScopePreview() {
+	if (!state.sqaCatalog) return undefined;
+	return describeSqaScopeSelection(state.sqaCatalog, {
+		profiles: [...sqaUi.profileOptions.querySelectorAll('input:checked')].map(input => input.value),
+		attributes: [...sqaUi.attributeOptions.querySelectorAll('input:checked')].map(input => input.value)
+	});
 }
 
 function sqaCatalogOption({ name, value, title, description = '', meta = '', checked = false, disabled = false }) {
@@ -6228,6 +6272,9 @@ function syncSqaSubmitState() {
 	if (!sqaUi.targetRelease.value.trim()) missing.push('enter a release or build identifier');
 	if (!sqaUi.targetEnvironment.value.trim()) missing.push('name the environment');
 	if (!sqaUi.authorization.checked) missing.push('confirm testing permission');
+	const scopePreview = currentSqaScopePreview();
+	if (scopePreview?.requiresRationale && !sqaUi.scopeNotes.value.trim()) missing.push('explain the expanded scope in Review notes');
+	if (scopePreview?.requiresConfirmation && !sqaUi.expandedScope.checked) missing.push('confirm the expanded scope');
 	if (!selectedEnvironmentForRun()) missing.push('choose a device and browser in TEST ON');
 	const busy = sqaUi.submit.dataset.busy === 'true';
 	sqaUi.submit.disabled = busy || missing.length > 0;
@@ -6298,10 +6345,11 @@ function closeSqaStart() {
 sqaUi.close.onclick = closeSqaStart;
 sqaUi.cancel.onclick = closeSqaStart;
 sqaUi.authorization.onchange = syncSqaSubmitState;
+sqaUi.expandedScope.onchange = syncSqaSubmitState;
 sqaUi.catalogRetry.onclick = () => void refreshSqaCatalog({ force: true });
 sqaUi.profileOptions.onchange = syncSqaSelectionSummary;
 sqaUi.attributeOptions.onchange = syncSqaSelectionSummary;
-for (const input of [sqaUi.targetUrl, sqaUi.targetRelease, sqaUi.targetEnvironment]) {
+for (const input of [sqaUi.targetUrl, sqaUi.targetRelease, sqaUi.targetEnvironment, sqaUi.scopeNotes]) {
 	input.addEventListener('input', syncSqaSubmitState);
 }
 
@@ -6335,6 +6383,18 @@ sqaUi.form.onsubmit = async event => {
 	const profiles = [...sqaUi.profileOptions.querySelectorAll('input:checked')].map(input => input.value);
 	if (!profiles.includes('core')) profiles.unshift('core');
 	const attributes = [...sqaUi.attributeOptions.querySelectorAll('input:checked')].map(input => input.value);
+	const scopePreview = describeSqaScopeSelection(state.sqaCatalog, { profiles, attributes });
+	if (scopePreview.requiresRationale && !sqaUi.scopeNotes.value.trim()) {
+		setSqaFormError('Explain why the additional profiles or product characteristics apply in Review notes.');
+		sqaUi.customize.open = true;
+		sqaUi.scopeNotes.focus();
+		return;
+	}
+	if (scopePreview.requiresConfirmation && !sqaUi.expandedScope.checked) {
+		setSqaFormError('Confirm that the expanded scope applies to this product.');
+		sqaUi.expandedScope.focus();
+		return;
+	}
 	const environmentId = selectedEnvironmentForRun();
 	if (!environmentId) {
 		setSqaFormError('Choose an available device and browser before starting the quality review.');
@@ -6352,6 +6412,7 @@ sqaUi.form.onsubmit = async event => {
 				attributes,
 				target,
 				scopeNotes: sqaUi.scopeNotes.value.trim(),
+				expandedScopeConfirmed: scopePreview.requiresConfirmation && sqaUi.expandedScope.checked,
 				authorizationConfirmed: true,
 				deviceLandscape: (sqaUi.deviceLandscape?.checked) === true,
 				environmentId

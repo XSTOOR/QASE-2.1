@@ -6,6 +6,7 @@ import { PublicInputError, publicInput } from './publicErrors.js';
 import { assertSqaSize, preserveSqaPublication } from './sqaHistory.js';
 import { evidenceDigest } from './sqaEvidence.js';
 import { publicationTodos } from './finalizationGuard.js';
+import { sqaExecutionBudget } from './sqaBrowserBudget.js';
 
 const AGENT_EVIDENCE_TYPES = new Set([
 	'assessment_record', 'configuration_record', 'security_report', 'test_result', 'wcag_report'
@@ -87,12 +88,32 @@ export function createSqaState(input = {}, now = () => Date.now()) {
 		: input.attributes === undefined ? [...SQA_BROWSER_REVIEW_ATTRIBUTES] : input.attributes;
 	const resolved = resolveSqaScope({ profiles: input.profiles, attributes });
 	const authorizedAt = new Date(now()).toISOString();
+	const scopeNotes = text(input.scopeNotes, 'SQA scope notes', 4_000);
+	const baseline = resolveSqaScope({ profiles: ['core'], attributes: [...SQA_BROWSER_REVIEW_ATTRIBUTES] });
+	const baselineIds = new Set(baseline.applicableControls.map(control => control.id));
+	const additionalControlIds = resolved.applicableControls
+		.map(control => control.id)
+		.filter(controlId => !baselineIds.has(controlId));
+	const expanded = resolved.profiles.some(profile => profile !== 'core')
+		|| resolved.attributes.some(attribute => !SQA_BROWSER_REVIEW_ATTRIBUTES.includes(attribute));
+	if (expanded && input.expandedScopeConfirmed !== true) {
+		throw new TypeError('Confirm that the expanded SQA scope applies to this product.');
+	}
+	if (expanded && !scopeNotes) {
+		throw new TypeError('SQA scope notes are required when additional profiles or product characteristics expand the recommended review.');
+	}
 	const scope = {
 		catalogVersion: resolved.catalogVersion,
 		profiles: resolved.profiles,
 		attributes: resolved.attributes,
 		target: target(input.target),
-		...(text(input.scopeNotes, 'SQA scope notes', 4_000) ? { scopeNotes: text(input.scopeNotes, 'SQA scope notes', 4_000) } : {}),
+		...(scopeNotes ? { scopeNotes } : {}),
+		selectionReview: {
+			expanded,
+			baselineControlCount: baselineIds.size,
+			additionalControlCount: additionalControlIds.length,
+			...(expanded ? { confirmedAt: authorizedAt } : {})
+		},
 		authorization: {
 			confirmed: true,
 			confirmedAt: authorizedAt,
@@ -443,6 +464,84 @@ export async function recordAgentSqaBlockers(session, inputs, runStore, now = ()
 	return session.sqa.assessment.results.filter(result => ids.includes(result.controlId));
 }
 
+function pendingControlIds(session) {
+	const observations = new Map((session.sqa?.observations ?? [])
+		.map(observation => [observation.controlId, observation.status]));
+	return (session.sqa?.scope?.applicableControlIds ?? []).filter(controlId => (
+		!observations.has(controlId) || observations.get(controlId) === 'not_assessed'
+	));
+}
+
+/** Pending controls that still require a browser-backed agent decision. */
+export function pendingAgentSqaControlIds(session) {
+	return pendingControlIds(session).filter(controlId => (
+		getSqaControl(controlId)?.evidenceRequirements
+			.some(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type))
+	));
+}
+
+function reviewerPrerequisiteRationale(control) {
+	const required = control.evidenceRequirements
+		.filter(requirement => !AGENT_EVIDENCE_TYPES.has(requirement.type))
+		.map(requirement => `${requirement.type} (${requirement.id})`);
+	return `Reviewer-supplied evidence was not provided to this run: ${required.join(', ')}. This prerequisite remains blocked for qualified human review; no pass or fail is claimed.`;
+}
+
+/**
+ * Once every browser-eligible control has a result, close all remaining
+ * reviewer-only prerequisites in one host-owned transaction. The catalog,
+ * rather than the model, supplies each exact missing evidence contract.
+ */
+export async function closePendingReviewerSqaControlsAsBlocked(session, runStore, now = () => Date.now()) {
+	assertAgentRunMutable(session);
+	const pendingAgentIds = pendingAgentSqaControlIds(session);
+	if (pendingAgentIds.length > 0) {
+		throw new TypeError(`Finish browser-eligible SQA controls before reviewer closeout: ${pendingAgentIds.join(', ')}.`);
+	}
+	const reviewerControlIds = pendingControlIds(session);
+	if (reviewerControlIds.length === 0) return [];
+	if (reviewerControlIds.length > MAX_BLOCKER_BATCH) {
+		throw new TypeError(`Reviewer closeout exceeds the ${MAX_BLOCKER_BATCH}-control host limit.`);
+	}
+	const previous = session.sqa;
+	const next = cloneObservationState(previous);
+	const closed = reviewerControlIds.map(controlId => {
+		const control = getSqaControl(controlId);
+		if (!control || control.evidenceRequirements.some(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type))) {
+			throw new TypeError(`SQA control ${controlId} is not eligible for reviewer-only closeout.`);
+		}
+		return {
+			controlId,
+			status: 'blocked',
+			rationale: reviewerPrerequisiteRationale(control),
+			evidence: []
+		};
+	});
+	for (const observation of closed) {
+		const index = next.observations.findIndex(item => item.controlId === observation.controlId);
+		if (index >= 0) next.observations[index] = observation;
+		else next.observations.push(observation);
+	}
+	const assessedAt = new Date(now()).toISOString();
+	next.updatedAt = assessedAt;
+	next.assessment = evaluateSqaAssessment(assessmentInput(next, assessedAt));
+	try {
+		assertSqaSize(next);
+		session.sqa = next;
+		await runStore.commit(session, 'sqa', {
+			assessment: next.assessment,
+			controlIds: reviewerControlIds,
+			status: 'blocked',
+			reviewerCloseout: true,
+			batch: true
+		});
+	} catch (error) {
+		session.sqa = previous;
+		throw error;
+	}
+	return session.sqa.assessment.results.filter(result => reviewerControlIds.includes(result.controlId));
+}
+
 /**
  * Host-owned safety closeout for an exhausted SQA run. Every still-pending
  * control becomes blocked in one durable transaction with the exact host
@@ -499,11 +598,13 @@ export async function finishSqaAssessment(session, runStore, now = () => Date.no
 	const previousTodos = session.todos;
 	const normalized = normalizePendingSqaState(previous);
 	const assessedAt = new Date(now()).toISOString();
+	const assessment = evaluateSqaAssessment(assessmentInput(normalized, assessedAt));
+	assessment.executionBudget = sqaExecutionBudget(session);
 	session.sqa = {
 		...normalized,
 		updatedAt: assessedAt,
 		finalizedAt: assessedAt,
-		assessment: evaluateSqaAssessment(assessmentInput(normalized, assessedAt))
+		assessment
 	};
 	session.todos = publicationTodos(previousTodos, 'sqa');
 	try {
@@ -554,6 +655,7 @@ export async function recordReviewerSqaObservation(session, observation, reviewe
 		...assessmentInput(workingSqa, reviewedAt),
 		observations: candidate
 	}));
+	assessment.executionBudget = previous.assessment?.executionBudget ?? sqaExecutionBudget(session);
 	const normalized = assessment.results.find(result => result.controlId === controlId);
 	if (!normalized) throw new PublicInputError(`SQA control ${controlId} is outside this assessment scope.`);
 	// Preserve the evaluator-normalized input representation, not arbitrary body fields.

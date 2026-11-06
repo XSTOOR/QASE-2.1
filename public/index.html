@@ -1173,6 +1173,7 @@
         <h3>Recommended quality review</h3>
         <p>Qase includes the universal product-quality baseline and uses evidence it can observe directly.</p>
         <p class="sqa-selection-summary" id="sqa-selection-summary" role="status" aria-live="polite">Loading the recommended scope…</p>
+        <p class="sqa-scope-warning" id="sqa-scope-warning" role="alert" hidden></p>
         <ul class="sqa-selection-reasons" id="sqa-selection-reasons" aria-label="Why these controls are selected"></ul>
         <details class="sqa-boundary">
           <summary>About this review</summary>
@@ -1234,8 +1235,9 @@
           <fieldset class="sqa-fieldset sqa-target-fields">
             <legend>Review notes</legend>
             <label class="field">
-              <span>Scope notes <small>(optional)</small></span>
+              <span>Scope notes <small>(optional for the recommended scope)</small></span>
               <textarea id="sqa-scope-notes" name="scopeNotes" rows="3" maxlength="4000" placeholder="In-scope workflows, exclusions, assumptions, and evidence locations…"></textarea>
+              <small>Required when additional profiles or product characteristics expand the recommended review.</small>
             </label>
           </fieldset>
 
@@ -1246,6 +1248,10 @@
           </aside>
         </div>
       </details>
+      <label class="check sqa-expanded-confirmation" id="sqa-expanded-confirmation" hidden>
+        <input id="sqa-expanded-scope" type="checkbox">
+        <span>I confirmed that the expanded scope applies to this product.<small>The added standards profiles and product characteristics will create additional evidence requirements.</small></span>
+      </label>
       <fieldset class="qa-device-fieldset sqa-device-fieldset test-on-fieldset">
         <legend>TEST ON</legend>
         <div class="test-on-summary" id="sqa-test-on" data-empty="true">

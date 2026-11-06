@@ -52,6 +52,9 @@ test('SQA frontend uses the authenticated API contract and safe DOM construction
 	assert.match(styles, /\.sqa-modal/);
 	assert.match(styles, /\.sqa-verdict\[data-status="blocked"\]/);
 	assert.match(app, /function renderSqaTechnicalSummary\(summary\)/);
+	assert.match(app, /function renderSqaExecutionBudget\(budget\)/);
+	assert.match(app, /'Browser actions remaining'/);
+	assert.match(app, /'Tokens before closeout'/);
 	assert.match(app, /'Automated web checks'/);
 	assert.match(app, /'Reviewer evidence required'/);
 	assert.match(app, /'Mixed evidence incomplete'/);

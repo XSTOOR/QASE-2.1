@@ -797,6 +797,18 @@ test('SQA catalog and authorized scope creation stay pending until evidence is e
 	assert.equal(unauthorized.status, 400);
 	assert.match((await body(unauthorized)).error, /authorized/i);
 
+	const unconfirmedExpanded = await fixture.request('/api/sqa/sessions', {
+		method: 'POST',
+		json: {
+			authorizationConfirmed: true,
+			profiles: ['core', 'medical'],
+			target: { name: 'Expanded example', release: '1.0', environment: 'staging' },
+			scopeNotes: 'Medical-device profile requested.'
+		}
+	});
+	assert.equal(unconfirmedExpanded.status, 400);
+	assert.match((await body(unconfirmedExpanded)).error, /Confirm.*expanded SQA scope/);
+
 	const createdResponse = await fixture.request('/api/sqa/sessions', {
 		method: 'POST',
 		json: {

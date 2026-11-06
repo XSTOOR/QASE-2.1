@@ -476,6 +476,14 @@ export function buildSqaReportMarkdown(assessment) {
 			`- Method: risk-ordered, non-destructive browser sampling plus deterministic evidence-contract evaluation against Qase catalog ${markdown(assessment.catalogVersion)}.`,
 			...(assessment.scopeNotes ? [`- Scope notes: ${markdown(assessment.scopeNotes)}`] : []),
 			'',
+			'## Execution budget',
+			'',
+			...(assessment.executionBudget ? [
+				`- Browser actions used: ${markdown(assessment.executionBudget.browserTools?.used)}/${markdown(assessment.executionBudget.browserTools?.evidenceLimit)} evidence limit; hard limit ${markdown(assessment.executionBudget.browserTools?.hardLimit)}.`,
+				`- Input tokens used: ${markdown(assessment.executionBudget.inputTokens?.used)}/${markdown(assessment.executionBudget.inputTokens?.closeoutThreshold)} closeout threshold; hard limit ${markdown(assessment.executionBudget.inputTokens?.hardLimit)}.`,
+				`- Budget closeout: ${assessment.executionBudget.closeout ? `${markdown(assessment.executionBudget.closeout.mode)} (${markdown(assessment.executionBudget.closeout.trigger)})` : 'not used; all scoped control decisions were recorded before the closeout thresholds.'}`
+			] : ['Execution-budget usage was not recorded for this legacy assessment.']),
+			'',
 			'## Priority action plan',
 			''
         ];

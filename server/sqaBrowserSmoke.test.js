@@ -82,14 +82,17 @@ test('navigation smoke samples exact same-origin links and restores the page', a
 	}
 });
 
-test('form smoke runs safe generated cases and detects stale success recovery state', async () => {
+test('form smoke discovers one safe form, runs generated cases, and detects stale success recovery state', async () => {
 	await withPage(`<!doctype html><html><body>
 		<form><label>Work email <input type="email" required></label><button type="submit">Validate email</button></form>
 		<output role="status"></output>
 		<script>document.querySelector('form').addEventListener('submit', event => { event.preventDefault(); document.querySelector('output').textContent = 'Email format accepted locally.'; });</script>
 	</body></html>`, async page => {
-		const result = await createSqaBrowserSmoke(page).formValidation({ fieldLabel: 'Work email', submitName: 'Validate email' });
+		const result = await createSqaBrowserSmoke(page).formValidation();
 		assert.equal(result.success, true);
+		assert.equal(result.eligible, true);
+		assert.deepEqual(result.discovery, { automatic: true, eligibleForms: 1 });
+		assert.equal(result.field.label, 'Work email');
 		assert.deepEqual(result.cases.map(item => item.name), ['empty', 'invalid_email', 'valid_email', 'invalid_after_valid']);
 		assert.equal(result.cases[0].validity.valid, false);
 		assert.ok(result.cases[0].validity.failures.includes('valueMissing'));
@@ -97,6 +100,28 @@ test('form smoke runs safe generated cases and detects stale success recovery st
 		assert.equal(result.cases[2].validity.valid, true);
 		assert.equal(result.staleSuccessSignalAfterInvalid, true);
 		assert.equal(await page.getByLabel('Work email').inputValue(), '');
+	});
+});
+
+test('form smoke returns one deterministic blocker when no eligible email form exists', async () => {
+	await withPage(`<!doctype html><html><body>
+		<form><label>Describe your idea <input type="text"></label><button type="submit">Continue</button></form>
+	</body></html>`, async page => {
+		const result = await createSqaBrowserSmoke(page).formValidation();
+		assert.equal(result.success, true);
+		assert.equal(result.eligible, false);
+		assert.equal(result.outcome, 'unavailable');
+		assert.equal(result.code, 'FORM_SMOKE_NO_ELIGIBLE_FORM');
+		assert.match(result.blockerReason, /inspected 1 form.*no email field/i);
+		assert.deepEqual(result.inspection, {
+			formsScanned: 1,
+			emailFields: 0,
+			labeledEmptyEmailFields: 0,
+			eligibleForms: 0,
+			rejectionCodes: []
+		});
+		assert.deepEqual(result.cases, []);
+		assert.equal(await page.getByLabel('Describe your idea').inputValue(), '');
 	});
 });
 

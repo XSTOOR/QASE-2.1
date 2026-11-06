@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildSqaContext } from './sqaPrompt.js';
 import { createSqaState } from './sqaService.js';
-import { SQA_BROWSER_WORKFLOW_CHECKPOINT, SQA_INPUT_TOKEN_BUDGET } from './sqaBrowserBudget.js';
+import { SQA_BROWSER_EVIDENCE_LIMIT, SQA_BROWSER_WORKFLOW_CHECKPOINT, SQA_INPUT_TOKEN_BUDGET, SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD } from './sqaBrowserBudget.js';
 
 test('SQA context makes progress explicit and orders technical smoke checks before documentary assurance', () => {
 	const session = {
@@ -27,6 +27,9 @@ test('SQA context makes progress explicit and orders technical smoke checks befo
 
 	assert.match(context, /Recorded controls: 1\/\d+\./);
 	assert.match(context, /record_sqa_blockers/);
+	assert.match(context, /host automatically[\s\S]*reviewer-only prerequisite/i);
+	assert.match(context, /close_remaining=true/);
+	assert.match(context, /Do not enumerate reviewer-only control\s+IDs/i);
 	assert.match(context, /authentication prevents representative workflows/);
 	assert.match(context, /SQA-WEB-001 \[PENDING/);
 	assert.doesNotMatch(context, /SQA-QUA-001 \[PENDING/);
@@ -40,8 +43,12 @@ test('SQA context makes progress explicit and orders technical smoke checks befo
 	assert.match(context, /browser_sqa_smoke once with action=responsive/i);
 	assert.match(context, /browser_sqa_smoke action=navigation/i);
 	assert.match(context, /action=form_validation/i);
+	assert.match(context, /without field_label or submit_name/i);
+	assert.match(context, /eligible=false.*immediately record/i);
 	assert.match(context, /close_after_safety_limit=true/i);
-	assert.ok(context.includes(`Input-token safety budget: 0/${SQA_INPUT_TOKEN_BUDGET} used`));
+	assert.match(context, /close_from_saved_evidence=true/i);
+	assert.ok(context.includes(`Evidence-collection limit: ${SQA_BROWSER_EVIDENCE_LIMIT}`));
+	assert.ok(context.includes(`Input-token closeout threshold: 0/${SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD} used; hard limit ${SQA_INPUT_TOKEN_BUDGET}`));
 	assert.ok(context.includes(`Workflow checkpoint: 2/${SQA_BROWSER_WORKFLOW_CHECKPOINT} browser actions`));
 	assert.match(context, /two verified locator strategies/);
 	assert.match(context, /controls batch for SQA-WEB-001, SQA-WEB-004,/);
