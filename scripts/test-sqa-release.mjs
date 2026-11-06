@@ -62,7 +62,7 @@ try {
 		}
 	}
 	tests.push(path.join(root, 'server', 'browserEngines.test.js'), path.join(root, 'server', 'app.test.js'));
-	const unit = await run('contracts', ['--test', '--test-concurrency=2', '--test-reporter=tap', ...tests], path.join(directory, 'unit-runtime'));
+	const unit = await run('contracts', ['--test', '--test-concurrency=1', '--test-reporter=tap', ...tests], path.join(directory, 'unit-runtime'));
 	const tap = await readFile(path.join(directory, unit.log), 'utf8');
 	unit.tests = Object.fromEntries(['tests', 'pass', 'fail', 'skipped', 'cancelled'].map(name => [name, Number(tap.match(new RegExp(`^# ${name} (\\d+)$`, 'm'))?.[1] ?? NaN)]));
 	if (!Number.isFinite(unit.tests.tests) || !unit.tests.pass || unit.tests.fail || unit.tests.cancelled || unit.tests.skipped) throw new Error('SQA contract checks must report passing tests without skips.');

@@ -1092,7 +1092,7 @@
     },
     {
       "path": "scripts/test-sqa-release.mjs",
-      "sha256": "5177539ddd904bbc165e5fece795238e8ab3bca9a9f112908d64e215c0deb369"
+      "sha256": "524dc913581e9ddb820057db67cc8a711102846f17fafc5596c478d1cbc50b05"
     },
     {
       "path": "scripts/test-sqa-review.mjs",
