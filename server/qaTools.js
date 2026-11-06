@@ -5,6 +5,7 @@ import { isEngineId } from './browserEngines.js';
 import { verifyRuntimeIdentity } from './runtimeIdentity.js';
 import { validateHybridFinding, validateHybridReport } from './qaCompletionGate.js';
 import { publicHybridState } from './hybridQaRuntime.js';
+import {modeDiscoveryRequired,validateModeFinding} from './modeDiscovery.js';
 
 /**
  * The two tools the SDK's registry does not ship, because they are specific to
@@ -124,6 +125,7 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 		parametersSchema: {
 			type: 'object',
 			properties: {
+				...(modeDiscoveryRequired(session)?{mode_evidence_id:{type:'string',description:'Intact receipt ID containing the actual failed host assertion.'},assertion_name:{type:'string',description:'Exact failed assertion name in that receipt.'}}:{}),
 				...(session.qaExecutionMode === 'hybrid' ? { scenario_id: { type: 'string' }, assertion_id: { type: 'string' } } : {}),
 				title: { type: 'string', description: 'One line naming the defect, written from the user\'s point of view.' },
 				severity: { type: 'string', enum: SEVERITIES, description: 'User impact: critical blocks the core flow, high breaks an important flow, medium is a real but survivable defect, low is polish, info is an observation.' },
@@ -143,6 +145,10 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 		},
 		async run(input) {
 			let hybridEvidence;
+			if(modeDiscoveryRequired(session)){
+				try{const binding=validateModeFinding(session,input||{});const existing=session.findings.find(f=>f.evidence===binding.evidence);if(existing)return {success:true,finding_id:existing.id,total_findings:session.findings.length};input={...input,...binding};}
+				catch(error){return {success:false,error:error.message};}
+			}
 			if (session.qaExecutionMode === 'hybrid') {
 				try { hybridEvidence = validateHybridFinding(session, input || {}); }
 				catch (error) { return { success: false, error: error.message }; }

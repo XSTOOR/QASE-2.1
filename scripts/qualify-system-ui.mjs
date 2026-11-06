@@ -2,9 +2,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { parseArgs } from 'node:util';
 import { chromium } from 'playwright';
 import { createApplication } from '../server/app.js';
 import { buildReportMarkdown } from '../server/report.js';
+
+const { values } = parseArgs({ options: { 'launch-only': { type: 'boolean', default: false } } });
+const launchOnly = values['launch-only'];
+const environment = { envId:'ENV-UI-FIXTURE', active:true, platform:'windows', device:'Desktop', deviceType:'desktop', os:'Windows', osVersion:'11', browser:'Chrome', browserCode:'chrome', browserVersion:'151', executionType:'SIMULATED', executionProvider:'local', emulation:{ viewport:{width:1440,height:1000}, deviceScaleFactor:1, isMobile:false, hasTouch:false } };
 
 // Real dashboard + HTTP handlers, isolated in-memory storage and a stub model.
 const sessions = new Map();
@@ -30,9 +35,9 @@ const services = {
 	secrets:{clear(){},names:()=>[],store:()=>[]}, reports:{buildMarkdown:buildReportMarkdown},
 	agent:{ensureRuntime(){},async runTurn(s,options){turns.push({mode:s.mode,options});await services.runs.setStatus(s,'idle');},closeBrowser:async()=>{},getLiveState:()=>({running:false}),stop(){},invalidateIdleRuntimes:()=>({kept:0})},
 	environments: {
-		seed(){}, async list(){ return []; },
-		async facets(){ return { total: 0, devices: [], osVersions: [], browsers: [] }; },
-		async get(){ return null; }, async create(){ return {}; }, async update(){ return null; },
+		seed(){}, async list(){ return [environment]; },
+		async facets(){ return { total: 1, devices: [], osVersions: [], browsers: [] }; },
+		async get(id){ return id===environment.envId ? environment : null; }, async create(){ return {}; }, async update(){ return null; },
 		async availability(){ return { available: 0, busy: 0 }; }, async catalogVersion(){ return 'fixture'; }
 	},
 	bugs: { async list(){ return []; }, async get(){ return null; }, async create(input){ return input; }, async update(){ return null; }, async remove(){ return null; } },
@@ -54,6 +59,7 @@ const output = path.resolve(process.env.QASE_SYSTEM_UI_OUTPUT||'test-results/sys
 const browser=await chromium.launch();const errors=[],checks=[];
 try{
  const page=await browser.newPage({viewport:{width:1440,height:1000}});
+ await page.addInitScript(envId=>localStorage.setItem('qase.activeTestEnvironment',JSON.stringify({envId})),environment.envId);
  page.on('pageerror',error=>errors.push(error.message));
  await page.route('**/api/profile',route=>route.fulfill({json:{email:'fixture@example.test',displayName:'Fixture owner',profile:{timezone:'Asia/Kolkata'}}}));
  await page.route('**/api/memory*',route=>route.fulfill({json:[]}));
@@ -64,15 +70,24 @@ try{
   await page.locator(`#new-${mode}`).click();await page.locator(`#${mode}-start[open]`).waitFor();
   assert.equal(await page.locator(`#${mode}-submit`).isDisabled(),true);
   await page.locator(`#${mode}-target-url`).fill(targetUrl);
+  if(mode==='sqa'){
+   await page.locator('#sqa-target-release').fill('integration-fixture');
+   await page.locator('#sqa-target-environment').fill('isolated local fixture');
+  }
   await page.locator(`#${mode}-authorization`).check();
+  await page.waitForFunction(mode=>!document.querySelector(`#${mode}-submit`).disabled,mode);
   await page.locator(`#${mode}-submit`).click();await page.locator(`#${mode}-start`).waitFor({state:'hidden'});
   await page.locator(`#tab-${mode}`).waitFor({state:'visible'});
   const session=[...sessions.values()].find(s=>s.mode===mode);assert.ok(session?.[mode].scope.authorization.confirmed);
+  if(mode==='sqa'){
+   assert.ok(['web_application','user_interface'].every(attribute=>session.sqa.scope.attributes.includes(attribute)),'Recommended website review must include its browser-app attributes.');
+   assert.ok(['001','002','003','004','005','006'].every(suffix=>session.sqa.scope.applicableControlIds.includes(`SQA-WEB-${suffix}`)),'The six browser smoke controls must not disappear from the default scope.');
+  }
   await page.reload();await page.locator(`#tab-${mode}`).waitFor({state:'visible'});
   assert.ok(new URL(page.url()).hash.includes('/runs/'));assert.ok(!new URL(page.url()).hash.endsWith('/results'));
   checks.push(`${mode}: launcher authorization, API creation, reload and retained run route`);
  }
- for(const mode of ['qa','sqa','founder']){
+ for(const mode of launchOnly?[]:['qa','sqa','founder']){
   const file=path.resolve(process.env.QASE_SYSTEM_QUALIFICATION_OUTPUT||'test-results/system-qualification',mode,'checkpoint.json');
   const session=JSON.parse(fs.readFileSync(file,'utf8'));assert.equal(session.status,'done');
   const finalTodos=session.todos;
@@ -122,6 +137,7 @@ try{
   checks.push(`${mode}: actual saved fixture report reload, Markdown/PDF HTTP exports, desktop/mobile render`);
  }
  assert.deepEqual(errors,[]);
- fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({passed:true,checks,pageErrors:errors,execution:'Injected frontend services; reports from separately recorded live-model fixtures'},null,2));
- console.log(JSON.stringify({passed:true,checks,pageErrors:errors},null,2));
+ const result={passed:true,checks,pageErrors:errors,reportReplay:launchOnly?'not requested':'passed',execution:launchOnly?'Real launch handlers and SSE with injected execution; no live-model qualification':'Injected frontend services; reports from separately recorded live-model fixtures'};
+ fs.writeFileSync(path.join(output,'result.json'),JSON.stringify(result,null,2));
+ console.log(JSON.stringify(result,null,2));
 }finally{for(const response of streams.values())if(!response.writableEnded)response.end();await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}

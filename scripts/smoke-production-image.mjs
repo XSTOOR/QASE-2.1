@@ -4,8 +4,10 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import { verifyProductionImageIdentity } from './production-image-identity.mjs';
 
 const image = process.argv[2] || 'qase:verification';
+const expectedRevision = process.argv[3];
 if (!/^[A-Za-z0-9][A-Za-z0-9_./:@-]*$/.test(image)) throw new Error('Provide a valid image tag or digest.');
 const suffix = randomUUID(), name = `qase-image-smoke-${suffix}`;
 const volumes = [`${name}-state`, `${name}-evidence`], createdVolumes = [];
@@ -14,8 +16,7 @@ const release = JSON.parse(fs.readFileSync(new URL('../public/release.json', imp
 let containerCreated = false;
 try {
   const info = JSON.parse(docker(['image', 'inspect', image]))[0];
-  assert.equal(info.Config.User, 'node');
-  assert.equal(info.Config.Labels['org.opencontainers.image.version'], release.releaseId);
+  const identity = verifyProductionImageIdentity(info, release, expectedRevision);
   for (const volume of volumes) { docker(['volume', 'create', volume]); createdVolumes.push(volume); }
   const environment = {
     NODE_ENV: 'production', QASE_HOST: '0.0.0.0', PORT: '5173', QASE_PUBLIC_URL: 'https://fixture.example.invalid',
@@ -56,7 +57,7 @@ try {
     }
     console.log('Three installed browser engines launched successfully.');`;
   docker(['exec', name, 'node', '--input-type=module', '-e', browserProbe]);
-  console.log(JSON.stringify({ passed: true, releaseId: release.releaseId, nonRoot: true, readOnlyRoot: true, persistentVolumes: true,
+  console.log(JSON.stringify({ passed: true, ...identity, nonRoot: true, readOnlyRoot: true, persistentVolumes: true,
     authenticationRequired: true, registrationClosed: true, demoDisabled: true, browserEngines: ['chromium', 'firefox', 'webkit'], modelCalls: 0 }));
 } catch (error) {
   if (containerCreated) { try { process.stderr.write(docker(['logs', '--tail', '35', name]) + '\n'); } catch { /* preserve primary failure */ } }

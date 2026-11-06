@@ -9,7 +9,8 @@ Production deployment targets `https://qase.drytis.com`. Never deploy the
 parent workspace or copy developer `.qase` state into production.
 
 This release adds hybrid QA (Opus reasoning, JEV classification, one CleanSlate
-loop), the reviewed SQA evidence workflow and UI `20261106-1`. SQA now completes
+loop), discovery-gated Founder/SQA workflows, the reviewed SQA evidence workflow
+and UI `20261107-1`. SQA now completes
 and records each browser workflow before compacting its model context, reducing
 repeated input while preserving the fixed safety limit. Production activation requires gateway qualification
 on the execution host and an explicit opt-in; see [DEPLOYMENT_PROMPT.md](DEPLOYMENT_PROMPT.md).
@@ -18,6 +19,14 @@ coverage questions do not interrupt new runs. Secure access may still need your
 input; unsupported requirements remain honest report limitations. The operator's
 fixed lifetime limits and exact usage accounting stay in force. Existing saved
 runs retain their selected policy and reports.
+
+SQA and Founder also have opt-in qualified Opus/JEV execution through the same
+installed SDK, with discovery, evidence-linked workflows and independent mode
+completion gates. `QASE_SQA_REASONING_ENABLED` and
+`QASE_FOUNDER_REASONING_ENABLED` remain false by default; existing runs retain
+their selected strategy. These paths are not automatically approved for
+production. Read the [current integration and qualification report](docs/sqa-founder-hybrid-integration-2026-11-05.md)
+for actual live results, public-only boundaries and remaining release gates.
 
 Existing PostgreSQL installations need the reviewed migrations through 043
 before using the current actor visibility, hybrid state and partial QA reports.

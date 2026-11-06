@@ -7,6 +7,7 @@ import { assertSqaSize, preserveSqaPublication } from './sqaHistory.js';
 import { evidenceDigest } from './sqaEvidence.js';
 import { publicationTodos } from './finalizationGuard.js';
 import { sqaExecutionBudget } from './sqaBrowserBudget.js';
+import { modeSqaEvidenceActivityIds,modeSqaHasFailedAssertions,modeDiscoveryRequired,modeExplorationReadiness } from './modeDiscovery.js';
 
 const AGENT_EVIDENCE_TYPES = new Set([
 	'assessment_record', 'configuration_record', 'security_report', 'test_result', 'wcag_report'
@@ -202,9 +203,10 @@ export function normalizePendingSqaState(input) {
 	return pending;
 }
 
-function relevantBrowserActivities(session) {
+function relevantBrowserActivities(session, controlId) {
+	const allowed = modeSqaEvidenceActivityIds(session,controlId);
 	return (session.activities ?? [])
-		.filter(activity => activity.status === 'done' && String(activity.toolName ?? '').startsWith('browser_'))
+		.filter(activity => activity.status === 'done' && String(activity.toolName ?? '').startsWith('browser_') && (!allowed || allowed.has(activity.id)))
 		.slice(-12)
 		.map(activity => ({
 			id: String(activity.id),
@@ -215,12 +217,13 @@ function relevantBrowserActivities(session) {
 		}));
 }
 
-function evidenceFromBrowser(session, type, summary, now, records) {
+function evidenceFromBrowser(session, type, summary, now, records, controlId) {
 	if (!AGENT_EVIDENCE_TYPES.has(type)) {
 		throw new TypeError('The SQA agent cannot attest documentary, regulatory, approval, or independent-review evidence.');
 	}
-	const activities = relevantBrowserActivities(session);
+	const activities = relevantBrowserActivities(session,controlId);
 	if (activities.length === 0) {
+		if(modeDiscoveryRequired(session))throw new TypeError(`Control ${controlId} needs completed matching checks in a workflow tagged with that control_id. Add a feature-linked workflow for missing checks; completed workflows cannot replay. A generic snapshot or unrelated control check cannot support pass/fail.`);
 		throw new TypeError('A pass or fail requires a completed browser observation in this run.');
 	}
 	const collectedAt = new Date(now()).toISOString();
@@ -302,6 +305,7 @@ function normalizeAgentObservation(session, input, now, records) {
 		summary: item.summary ? redact(session.id, item.summary) : undefined
 	}));
 	if (status === 'pass') {
+		if(modeSqaHasFailedAssertions(session,controlId))throw new TypeError(`A pass for ${controlId} contradicts its failed matching host assertions. Investigate and record the actual failure or an evidenced blocker; model opinion cannot erase executed failures.`);
 		const required = new Map(control.evidenceRequirements.map(requirement => [requirement.type, requirement.minimum]));
 		for (const item of requestedEvidence) {
 			if (!required.has(item.type)) {
@@ -320,7 +324,8 @@ function normalizeAgentObservation(session, input, now, records) {
 		item.type,
 		item.summary ?? `Browser evidence for ${control.id}.`,
 		now,
-		records
+		records,
+		control.id
 	));
 	return {
 		controlId: control.id,
@@ -594,6 +599,7 @@ export async function finishSqaAssessment(session, runStore, now = () => Date.no
 		if (session.sqa.assessment) return session.sqa.assessment;
 		throw new TypeError('This SQA assessment is finalized and cannot be recalculated without an authorized reopen.');
 	}
+	if(modeDiscoveryRequired(session)&&!modeExplorationReadiness(session).ready)throw new TypeError('SQA publication requires intact discovery, completed evidence-backed workflows, verified browser state and classification.');
 	const previous = session.sqa;
 	const previousTodos = session.todos;
 	const normalized = normalizePendingSqaState(previous);

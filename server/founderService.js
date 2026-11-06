@@ -16,6 +16,7 @@ import {
 } from './founderSchema.js';
 import { redact } from './secrets.js';
 import { publicationTodos } from './finalizationGuard.js';
+import {modeDiscoveryRequired,modeExplorationReadiness} from './modeDiscovery.js';
 
 const observationTypes = new Set(FOUNDER_OBSERVATION_TYPES);
 export const MAX_FOUNDER_STATE_BYTES = 1_000_000;
@@ -388,6 +389,7 @@ export async function finishFounderReview(session, input, runStore, now = () => 
 		throw new TypeError('This Founder review is finalized without a report and cannot be recalculated.');
 	}
 	assertMutable(session);
+	if(modeDiscoveryRequired(session)&&!modeExplorationReadiness(session).ready)throw new TypeError('Founder publication requires intact discovery, completed evidence-backed workflows, verified browser state and classification.');
 	const coverage = founderCoverage(session.founder);
 	if (coverage.missing.length > 0) {
 		throw new TypeError(`Founder review is missing evidence-backed categories: ${coverage.missing.join(', ')}.`);

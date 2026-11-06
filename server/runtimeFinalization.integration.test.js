@@ -4,9 +4,8 @@ import { chromium } from 'playwright';
 import { attachBrowserBridge } from './browserBridge.js';
 import { captureRuntimeFacts } from './runtimeCapture.js';
 import { createQaTools } from './qaTools.js';
-import { resolveExecution } from './browserstackProvider.js';
 
-test('actual Chromium identity is available to the finalizer before turn cleanup', async () => {
+for (const mismatchedVersion of [false, true]) test(`actual Chromium identity is captured before finalization${mismatchedVersion ? ' and a mismatched selection stays blocked' : ''}`, async () => {
 	const browser = await chromium.launch({ headless: true });
 	const service = {
 		browser, context: null, activePage: null, options: { headless: true },
@@ -22,22 +21,26 @@ test('actual Chromium identity is available to the finalizer before turn cleanup
 	const store = { async commit() {}, publish() {}, subscribe() { return () => {}; } };
 	let bridge;
 	try {
-		// Hosted runners can have a different branded Chrome version installed.
-		// Select the actual available version; the identity gate still must verify it.
-		const execution = await resolveExecution(environment, null);
-		environment.browserVersion = execution.browserSupport?.detectedVersion ?? browser.version();
-		bridge = await attachBrowserBridge(session, service, store, { environment, execution });
+		// This fixture exercises a simulated profile on the installed bundled
+		// engine. Host Chrome auto-updates are a separate registry contract;
+		// selecting one implicitly made this test depend on the CI host image.
+		environment.browserVersion = browser.version();
+		bridge = await attachBrowserBridge(session, service, store, { environment, execution: { mode: 'emulated', executionEngine: 'chromium', brandedExecutablePath: null } });
 		await service.ensurePage();
 		assert.equal(session.runtimeFacts, undefined, 'reproduces lazy capture before finalization');
-		const tools = createQaTools(session, store, { captureRuntimeFacts: () => captureRuntimeFacts(session, bridge) });
+		const tools = createQaTools(session, store, { captureRuntimeFacts: async () => {
+			await captureRuntimeFacts(session, bridge);
+			if (mismatchedVersion) session.environmentSnapshot = { ...environment, browserVersion: '1' };
+		} });
 		const result = await tools[1].run({ verdict: 'pass_with_issues', summary: 'Browser observation recorded.', covered: ['Browser observation'], not_covered: ['Authentication not tested without credentials.'] });
-		assert.equal(result.verdict, 'pass_with_issues', JSON.stringify(session.report));
+		assert.equal(result.verdict, mismatchedVersion ? 'blocked' : 'pass_with_issues', JSON.stringify(session.report));
 		assert.equal(session.report.runtimeIdentity.browserCode, 'chrome');
 		assert.equal(session.report.runtimeIdentity.browserVersion.split('.')[0], environment.browserVersion.split('.')[0]);
 		assert.equal(session.report.runtimeIdentity.platform, 'macos');
 		assert.equal(session.report.attestation.execution_type, 'SIMULATED');
 		assert.equal(session.report.bySeverity.medium, 1);
-		assert.deepEqual(session.report.notCovered, ['Authentication not tested without credentials.']);
+		if (mismatchedVersion) assert.ok(session.report.notCovered.some(text => text.includes('browser version mismatch')));
+		else assert.deepEqual(session.report.notCovered, ['Authentication not tested without credentials.']);
 	} finally {
 		try { bridge?.dispose?.(); } finally {
 			await service.browser?.close().catch(() => {});

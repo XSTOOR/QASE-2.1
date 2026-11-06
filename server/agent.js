@@ -19,6 +19,8 @@ import { createFounderReviewTodos } from './founderService.js';
 import { buildSqaContext, buildSqaSynthesisContext } from './sqaPrompt.js';
 import { createSqaTools, finishReadiness as sqaFinishReadiness } from './sqaTools.js';
 import { modeExplorationReadiness } from './modeReasoningRuntime.js';
+import {buildModeExecutionContext} from './modeReasoningContext.js';
+import {founderDraftProgress} from './founderReportDraft.js';
 import { isCredentialQuestion } from '../public/questionPresentation.js';
 import { clearSecrets, redact, secretNames } from './secrets.js';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
@@ -340,7 +342,7 @@ export function sqaAutomaticBudgetCloseoutInput(result, session) {
 export function isFounderSynthesisReady(session) {
 	if (session.mode !== 'founder' || !session.founder || session.founder.finalizedAt) return false;
 	const ready = founderFinishReadiness(session);
-	return ready.missing.length===0 && ready.activeActivities.length===0 && ready.incompleteTodos.length===0
+	return modeExplorationReadiness(session).ready && ready.missing.length===0 && ready.activeActivities.length===0 && ready.incompleteTodos.length===0
 		&& ready.inventoryComplete && ready.representativeWorkflowComplete && ready.browserEvidenceComplete
 		&& ready.contextDecisionRecorded && !ready.authenticationDecisionRequired;
 }
@@ -405,6 +407,38 @@ export function prepareSqaSynthesis(session, record) {
  for(const tool of tools)runtime.headlessRuntime.toolsByName.set(tool.name,tool);
  runtime.getToolDescriptions=()=> 'Use the supplied native schemas to update the existing plan and publish the deterministic SQA assessment.';
  record.sqaSynthesis=true;record.modeReasoning.state.phase='synthesis';return true;
+}
+
+/** A verified workflow boundary is not run completion. Start a compact native
+ * SDK evidence-review segment while retaining the same browser and host ledger. */
+export function prepareModeEvidenceReview(session,record) {
+ const state=record.modeReasoning?.state;
+ if(!state?.discovery||state.phase==='synthesis'||session.activities.some(a=>a.status==='running')||state.actions.some(a=>a.status==='uncertain'))return false;
+ const completed=state.workflows.filter(w=>['passed','failed','blocked','inconclusive'].includes(w.status)&&w.verification);
+ const fresh=completed.filter(w=>!state.contextBoundaryIds?.includes(w.id));
+ const readiness=modeExplorationReadiness(session);
+ if(!fresh.length&&!(state.phase==='coverage_recovery'&&readiness.ready)||readiness.work.invalidProofIds?.length)return false;
+ if(typeof record.runtime?.clearConversation!=='function')return false;
+ // Public SDK 0.1.0 API: clears inference/task transcript only. Browser,
+ // permissions, evidence, user requirements, model usage and retry state stay
+ // in this same QASE runtime. Each verified workflow can hand off only once.
+ record.runtime.clearConversation();
+ state.contextBoundaryIds=[...(state.contextBoundaryIds||[]),...fresh.map(w=>w.id)];
+ state.phase=readiness.ready?'evidence_review':state.workflows.some(w=>['planned','running'].includes(w.status))?'execution':'coverage_recovery';
+ state.evidenceReviewSegments=(state.evidenceReviewSegments||0)+1;
+ return true;
+}
+
+/** A saved report section is another verified SDK boundary. Retain the full
+ * durable draft and original validator, without resending completed tool-call
+ * arguments in every later section. This never publishes or changes budgets. */
+export function prepareModeReportContinuation(session,record) {
+ const state=record.modeReasoning?.state;
+ if(session.mode!=='founder'||!record.founderSynthesis||!state?.discovery||state.phase!=='synthesis'||session.founder.finalizedAt||session.activities.some(a=>a.status==='running')||state.actions.some(a=>a.status==='uncertain'))return false;
+ const progress=founderDraftProgress(session);
+ if(!progress.intact||!progress.revision||state.reportBoundaryRevision===progress.revision||typeof record.runtime?.clearConversation!=='function')return false;
+ record.runtime.clearConversation();state.reportBoundaryRevision=progress.revision;
+ return true;
 }
 
 /** Tool name -> how the activity feed should announce it. */
@@ -621,7 +655,7 @@ async function constructRuntime(session, runStore) {
 		}
 	}
 	const allowedTools = allowedToolNames(session.mode);
-	if (isModeReasoning) for (const name of ['classify_mode_observations', 'mode_execution_progress',...(session.mode==='founder'?['draft_founder_report_section']:[])]) allowedTools.add(name);
+	if (isModeReasoning) for (const name of ['mode_discover_application','mode_read_discovery','mode_plan_work','mode_run_workflow','mode_start_workflow','mode_close_workflow','mode_test_surface','mode_execute_steps','mode_verify_recovery','mode_load_tools','classify_mode_observations', 'mode_execution_progress',...(session.mode==='founder'?['draft_founder_report_section']:[])]) allowedTools.add(name);
 	if (isHybrid) allowedTools.add('browser_authenticate');
 	if (isHybrid) for (const name of ['qa_discover_application','qa_read_discovery','qa_work_schedule','qa_investigate_scenario','qa_plan_scenarios', 'qa_start_scenario', 'qa_close_scenario', 'qa_assert_snapshot', 'qa_assert_diagnostics', 'qa_ledger', 'qa_read_evidence', 'browser_qa_scenario', 'qa_route_frontier', 'qa_test_routes', 'qa_load_tools', 'classify_qa_observations', 'rank_qa_candidates']) allowedTools.add(name);
 	const problem = getPublicConfig().problem;
@@ -708,14 +742,23 @@ async function constructRuntime(session, runStore) {
 			// explicit means the policy survives an SDK default changing.
 			approveCommand: async () => false,
 			approveTool: async ({ toolName }) => allowedTools.has(toolName),
-			additionalContext: () => appendUserMemory(
-				session.mode === 'founder'
+			additionalContext: () => {
+				const context=appendUserMemory(
+				record.modeReasoning?.state.discovery && !record.founderSynthesis && !record.sqaSynthesis ? buildModeExecutionContext(session,liveBrowserUrl(record)) : session.mode === 'founder'
 				? record.founderSynthesis ? buildFounderSynthesisContext(session) : buildFounderContext(session, liveBrowserUrl(record))
 				: session.mode === 'sqa'
 					? record.sqaSynthesis ? buildSqaSynthesisContext(session) : buildSqaContext(session, liveBrowserUrl(record))
 					: record.hybrid ? record.hybrid.context(liveBrowserUrl(record)) : buildQaContext(session, liveBrowserUrl(record)),
 				session
-			)
+				);
+				if(record.modeReasoning){
+					const trusted=`Workspace root: ${rootPath}\n\n${context.trim()}`;
+					const contexts=record.modePromptContexts??=[];
+					if(!contexts.includes(trusted))contexts.push(trusted);
+					if(contexts.length>12)contexts.splice(1,1);
+				}
+				return context;
+			}
 		});
 
 		// CleanSlate's default continuation appends a fresh system message before
@@ -798,6 +841,7 @@ async function constructRuntime(session, runStore) {
 			return guardedTool;
 		});
 		headless.options.tools = registeredTools;
+		if(record.modeReasoning)record.modeToolNames=registeredTools.map(tool=>tool.name);
 		headless.toolsByName.clear();
 		for (const tool of registeredTools) {
 			headless.toolsByName.set(tool.name, tool);
@@ -824,8 +868,8 @@ async function constructRuntime(session, runStore) {
 				yield* parts;
 			} else yield* originalExecute(toolName, input, toolCallId, signal);
 		};
-		if (isHybrid) record.invokeHybridTool = async (toolName, input, signal) => {
-			if (!['browser_open', 'browser_get_url', 'browser_snapshot', 'browser_qa_check', 'browser_qa_scenario', 'browser_diagnostics'].includes(toolName)) throw new Error('This tool is not approved for route composition.');
+		if (isQualified) record[isHybrid?'invokeHybridTool':'invokeModeTool'] = async (toolName, input, signal) => {
+			if (!['browser_open', 'browser_get_url', 'browser_snapshot', 'browser_qa_check', 'browser_qa_scenario', 'browser_diagnostics',...(!isHybrid?['browser_fill','browser_click','browser_key']:[])].includes(toolName)) throw new Error('This tool is not approved for route composition.');
 			let result;
 			for await (const part of headless.executeTool(toolName, input, randomUUID(), signal)) {
 				if (part.type === 'tool_result') { result = part.result; await record.onNestedToolResult?.(part); }
@@ -915,7 +959,7 @@ export async function runTurn(session, input, runStore, deviceRuntime) {
 	}
 }
 
-async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incompleteAttempt = 0 }, runStore, deviceRuntime, record) {
+async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incompleteAttempt = 0,hostContinuation=false }, runStore, deviceRuntime, record) {
 	// Rehydrate only placeholder names before rebuilding prompt context. Values
 	// remain inside the encrypted host vault and browser substitution boundary.
 	session.secretNames = secretNames(session.id);
@@ -1003,6 +1047,7 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 	let automaticCloseout = false;
 	let handoffToFounderSynthesis = false;
 	let handoffToSqaContinuation = false;
+	let handoffToModeEvidenceReview = false;
 	let successfulFinalizer = false;
 	let modelResponseTimedOut = false;
 	let touchModelActivity = () => {};
@@ -1292,6 +1337,13 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 		controller.signal.throwIfAborted();
 		if (record.hybrid) await record.hybrid.beginTurn(controller.signal);
 		if (record.modeReasoning) await record.modeReasoning.beginTurn(controller.signal);
+		if(record.modeReasoning&&!hostContinuation&&incompleteAttempt===0&&retryAttempt===0){
+			const requests=record.modeReasoning.state.requests??=[];
+			const request=redact(session.id,String(task||'').slice(0,8000));
+			if(request&&!requests.includes(request))requests.push(request);
+			if(requests.length>8)requests.splice(1,1);
+			await record.modeReasoning.checkpoint();
+		}
 		const recoveryTask = resumeAnswer === undefined || canResumePendingQuestion
 			? task
 			: [
@@ -1415,6 +1467,12 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 					if(ok&&['record_sqa_control','record_sqa_blockers'].includes(part.toolName)&&prepareSqaSynthesis(session,record)){
 						handoffToSqaSynthesis=true;break streamLoop;
 					}
+					if(ok&&record.modeReasoning&&['mode_run_workflow','mode_close_workflow','classify_mode_observations','record_sqa_control','record_founder_observation','mode_execution_progress'].includes(part.toolName)&&prepareModeEvidenceReview(session,record)){
+						handoffToModeEvidenceReview=true;break streamLoop;
+					}
+					if(ok&&part.toolName==='draft_founder_report_section'&&prepareModeReportContinuation(session,record)){
+						handoffToModeEvidenceReview=true;break streamLoop;
+					}
 
 					if (part.toolName === 'update_todo' && ok) {
 						session.todos = normaliseTodos(part.result, session.todos);
@@ -1496,6 +1554,9 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 		} else if (handoffToSqaSynthesis) {
 			continueIncompleteRun=true;
 			await runStore.setStatus(session,'running','Control evidence is accounted for. Validating the SQA plan and publishing its assessment.');
+		} else if(handoffToModeEvidenceReview){
+			continueIncompleteRun=true;
+			await runStore.setStatus(session,'running','Continuing the next workflow or evidence review from the verified mode checkpoint.');
 		} else if (pending) {
 			const hostDecision = session.hybrid?.pendingDecision?.id === pending.toolCallId ? session.hybrid.pendingDecision : null;
 			session.pendingQuestion = {
@@ -1733,8 +1794,9 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 		record.controller = undefined;
 		return runTurn(session, {
 			task: completionInstruction,
+			hostContinuation:true,
 			retryAttempt,
-			incompleteAttempt: handoffToFounderSynthesis || handoffToSqaSynthesis ? incompleteAttempt : incompleteAttempt + 1
+			incompleteAttempt: handoffToFounderSynthesis || handoffToSqaSynthesis || handoffToModeEvidenceReview ? incompleteAttempt : incompleteAttempt + 1
 		}, runStore, deviceRuntime);
 	}
 

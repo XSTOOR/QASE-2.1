@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "releaseId": "qase-sqa-2026-11-06-efficiency-r1",
+  "releaseId": "qase-founder-sqa-2026-11-07-integration-r1",
   "files": [
     {
       "path": ".dockerignore",
@@ -20,7 +20,7 @@
     },
     {
       "path": ".github/workflows/verify.yml",
-      "sha256": "556e748233f275a691a4770d017b5d362d5c2103f2aaed82674d35b1379d1ed0"
+      "sha256": "ee8af0d66d1da0bb724dbc30bdc1cbc040c9cc7a39362bf5c8680ec4ff126d1c"
     },
     {
       "path": ".gitignore",
@@ -92,11 +92,11 @@
     },
     {
       "path": "DEPLOYMENT_PROMPT.md",
-      "sha256": "9574cd97daa5e4ef8e7ddeb5e72adf81dcad04f95a9ba15a84ae104228966ae5"
+      "sha256": "e21da501382f3bffbfe86216dff663c008ebc4a69c5cf7ca28e0f1d40b79aaee"
     },
     {
       "path": "Dockerfile",
-      "sha256": "6b532ca53307dc351a9f55094484f70d930c5226f5d7b774649decf3cc5d3f22"
+      "sha256": "08363808c992ec9d890bc08a421fb2fe966135c22b1af9c8cc10ef8e566140fd"
     },
     {
       "path": "docs/auth-architecture-2026-09-10.md",
@@ -109,6 +109,10 @@
     {
       "path": "docs/brand-system.md",
       "sha256": "75c3b2835cd14d82854383e33df377097c8dc9ca2406a77908d77da3293ebb1d"
+    },
+    {
+      "path": "docs/deployment-handoff-2026-11-05.md",
+      "sha256": "3b9b373404c8ab083f23bccad864848f4059c742cf8bb370ef58110da738c57d"
     },
     {
       "path": "docs/discovery-first-qa-repair-2026-11-05.md",
@@ -179,6 +183,10 @@
       "sha256": "81f7667c858becd685b8dcffa0ff1199a4d6cc560c3d99b41cb1b1db9e5a71a8"
     },
     {
+      "path": "docs/founder-sqa-integration-2026-11-07.md",
+      "sha256": "0d4cd963ec57a8ba031450e0a0a332ccb7f4d5f6a75c055222824b0f57bad9da"
+    },
+    {
       "path": "docs/hybrid-qa-implementation-report.md",
       "sha256": "8f118c49577ded8ae1bfb83db47a9be297ef817427e297f1a2ff8bd5b1b9653a"
     },
@@ -245,6 +253,10 @@
     {
       "path": "docs/sqa-execution-efficiency-2026-11-06.md",
       "sha256": "23b32e7e0f44b82b1f7ab811bbc895c601d2cfb9d384846c38096df00922affc"
+    },
+    {
+      "path": "docs/sqa-founder-hybrid-integration-2026-11-05.md",
+      "sha256": "889fdcf7d05361870fa0d99961c040b8c46f552130f57ce2c7f3ff005c903425"
     },
     {
       "path": "docs/sqa-launch-readiness-2026-11-05.md",
@@ -536,7 +548,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "91b762fb5fff816d29db455f746fb24bf171309c730dd52efc140b824b576b2a"
+      "sha256": "138e108ccdef8573315625f8afdab095c40c833c9114324159b9286fd131691f"
     },
     {
       "path": "public/jevExecutionView.js",
@@ -576,7 +588,7 @@
     },
     {
       "path": "public/modeReasoningView.js",
-      "sha256": "a11d2feda36f1ddbe077183b6ca49fad1562193dcc123d2390c73aee85eaa7f9"
+      "sha256": "8064d4122ff0138277f2a12b3583038173e0c591e2d281a637840b8040b40bf4"
     },
     {
       "path": "public/modeReasoningView.test.js",
@@ -712,7 +724,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "47e95207f2a5a80245e283e8fc79dce0f2bc0ae775f5fa71a2455067da378ca7"
+      "sha256": "2da944d64b23b6001a013fb33f0d35baf0e50b93253a916df0f477fab4910982"
     },
     {
       "path": "public/renderHealth.js",
@@ -856,7 +868,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "f99f58a17c2ff384345517c18f058a95a62a72cf13eda66161debe5e51e1a995"
+      "sha256": "00d55de2e46f6cf23dc3d96f9c8812f4638e915037497b13b9952d9c2305df87"
     },
     {
       "path": "RELEASE_NOTES.md",
@@ -951,6 +963,10 @@
       "sha256": "14452d8be06e18476137897be0cc83077c354df3909c6e6b6d18e1236f05d74a"
     },
     {
+      "path": "scripts/production-image-identity.mjs",
+      "sha256": "a113e19071736ffea79b1bcf843a0b75c27040024d1f634224a7400bd28558a6"
+    },
+    {
       "path": "scripts/prune-local.mjs",
       "sha256": "b77d62d4465426b8abbb7d23f224a1c9d1f3769206eb8e1c14b336cee4ce953d"
     },
@@ -1004,11 +1020,11 @@
     },
     {
       "path": "scripts/qualify-system-mode.mjs",
-      "sha256": "3184d5a2965e1f81ecdc358fb4b1647d523212360f2eb039fba074cca051d41b"
+      "sha256": "1cac832621e98de16a1899a713f9f204f3604b235c058388f1c2808d425cabc9"
     },
     {
       "path": "scripts/qualify-system-ui.mjs",
-      "sha256": "e52527a4210f1df30bc6b35510988a528bf775a6fcd6163644a05928965f30a1"
+      "sha256": "1279acdc6fe94029f0311b052735fc1d7f4b4a8b38aeaf6ef31144ae2cd618aa"
     },
     {
       "path": "scripts/reconcile-hybrid-budget.mjs",
@@ -1040,7 +1056,7 @@
     },
     {
       "path": "scripts/smoke-production-image.mjs",
-      "sha256": "7cc091a27cab35a328c4254bc589ee5df396b6705712a0a83daaac270a94dcf0"
+      "sha256": "867d8c7bf700850c63c063f113676c9506ae6f391f3907e0c16dfd2f76cd163d"
     },
     {
       "path": "scripts/sqa-test-runtime.mjs",
@@ -1072,7 +1088,7 @@
     },
     {
       "path": "scripts/test-founder-completion-browser.mjs",
-      "sha256": "4f26d319a8b6d415c1ee96a2249a1c1bea416d0959f8af8fe22b29f288ef8ff4"
+      "sha256": "afd340462c2a00a08034d609cf46510f286ffc8b480e3bdcc72f87cde244a988"
     },
     {
       "path": "scripts/test-qa-chat-report-browser.mjs",
@@ -1128,7 +1144,7 @@
     },
     {
       "path": "scripts/verify-system-mode-evidence.mjs",
-      "sha256": "09c58f2b941575c1e9f0288aea864183704e39526145fd38b9a7b0f25813b95c"
+      "sha256": "98cbe0f3e687cbd745ff47d9f24846f3a3072d6843ca8083849ba07c33820764"
     },
     {
       "path": "scripts/verify.mjs",
@@ -1144,7 +1160,7 @@
     },
     {
       "path": "server/agent.js",
-      "sha256": "c91282dd34053c585cb29a8b945d9975dd81c94a5c0cf6850019951e2d9e7301"
+      "sha256": "25430f8c8fef1d205710ea02b8bb18410c2b8c48dddaff3ee7bb55fd0ea8f017"
     },
     {
       "path": "server/agent.test.js",
@@ -1204,7 +1220,7 @@
     },
     {
       "path": "server/browserBridge.js",
-      "sha256": "fc5a5d63cbc0118c79f2619ea8708c60a80347bcf2027c7da590d2a78c115162"
+      "sha256": "94d3367e9066b14450369a7b6016186ad7b6853f24be8a7afa27e812a49b8541"
     },
     {
       "path": "server/browserBridge.runDependability.test.js",
@@ -1760,11 +1776,11 @@
     },
     {
       "path": "server/founderReportDraft.js",
-      "sha256": "f26050c088e4d74a885ddf69e1bfc3df8796a1caf3b4b48e26cfe62dd6713ac7"
+      "sha256": "7a5187962aded1f22f9c32878cbb570eb798b35e00302189268c566fd71a8acb"
     },
     {
       "path": "server/founderReportDraft.test.js",
-      "sha256": "083f258ff85f5cdd2604664f7198e82d53cc3d23b12f3552df2770a87bb823ec"
+      "sha256": "30474d2710927abe04cc6e697f188481467446f265eeae7dd5487fcc81671f8a"
     },
     {
       "path": "server/founderSchema.js",
@@ -1772,7 +1788,7 @@
     },
     {
       "path": "server/founderService.js",
-      "sha256": "cd63f323f44671dd50cc04a8f6d14b84d997caa820f80addb3828bef4635d68d"
+      "sha256": "0e058b9507a3e5e84bec1fa79e03bb20e63dab6c29880f2db526f082e021b96f"
     },
     {
       "path": "server/founderService.test.js",
@@ -2195,28 +2211,40 @@
       "sha256": "51d8a5f80f0508536d874e8cdf23f6fbc59be91f0b01ef5753adbc4885ab3fd0"
     },
     {
+      "path": "server/modeDiscovery.js",
+      "sha256": "fcecee2446e92780d2959201e980e37661fb891bab7d6fa6058ab4eca6dd7d24"
+    },
+    {
+      "path": "server/modeDiscovery.test.js",
+      "sha256": "ab8e17622f3608c443052faf0a76441f3b2013c98ae6f630bc5c41e15db0e825"
+    },
+    {
+      "path": "server/modeIntegrity.js",
+      "sha256": "ca17087b0b11cec2b2fc0478e5e58645e2af1f77a3aef7663538528bce224042"
+    },
+    {
       "path": "server/modelSelectorUi.test.js",
       "sha256": "270ed093839ac7250a378c0c33375012d97fbe02ca26a523de3d42e4c618b68b"
     },
     {
       "path": "server/modeReasoning.integration.test.js",
-      "sha256": "ea7bc474728a4f22d36500aa2869245083e974c5371c3411674a9e4e3bd58e41"
+      "sha256": "8973d25ca2b712e04c34988fe68a422381056909bc42c4f98b9fda6490f64299"
     },
     {
       "path": "server/modeReasoningContext.js",
-      "sha256": "05a3ea72d573588a8df484e9e3099e62e5645184c2086ec5dbbb584e8ec058fe"
+      "sha256": "8c4bddf95b91b281f856d3d6429061f9ef1428216a444e4926f9c6b368d1641d"
     },
     {
       "path": "server/modeReasoningContext.test.js",
-      "sha256": "4cbfccad076f9d77d2ae76bcd261b7bd5bf75f9e96c3155a00d93f53b082ddb3"
+      "sha256": "47c8246c7bcc1c23c549f00057131a842d2761bf98cc6a064fca69069d34d70b"
     },
     {
       "path": "server/modeReasoningRuntime.js",
-      "sha256": "d678090ff34d399dff2bdc0a62e555eecc5dbfa8b46fd14bc8cf8fa108cc1551"
+      "sha256": "80e886b6bf5533652245358103b47f08dbd8d81046dbe5bd2da77ca7eae4607a"
     },
     {
       "path": "server/modeReasoningRuntime.test.js",
-      "sha256": "b3ad517e513ea82bd46d3fbb2547dd376cd5c63a08416aee9cde3812aa6546a8"
+      "sha256": "16a7a202edea1607d70584cb0f2614807f357ff533b7644fd91abca3e21e6f14"
     },
     {
       "path": "server/modeWorkflow.test.js",
@@ -2551,6 +2579,10 @@
       "sha256": "5fe9953afd271349872b6e04cbaf39d36e8386261ed508e05cae04addca5e812"
     },
     {
+      "path": "server/productionImageIdentity.test.js",
+      "sha256": "a7ce9ebd85b1d2783aa1d73a73c63e1b7d0b64dae82a2658283f473872fd3a3f"
+    },
+    {
       "path": "server/prompt.js",
       "sha256": "104ba80e369c90ee6634308bddfe928ea1c608aeaaefbb4138ba4758e6fe9f57"
     },
@@ -2676,7 +2708,7 @@
     },
     {
       "path": "server/qaTools.js",
-      "sha256": "5bda05a826b65b4e603fc3f2d35b9e13377ccc40d8080076d4abaebc1205910d"
+      "sha256": "ed769e428f703872aa6160ab53b8e1e7322269ccfe4f77c35e53d28edb945d95"
     },
     {
       "path": "server/qaTools.test.js",
@@ -2776,7 +2808,7 @@
     },
     {
       "path": "server/runtimeFinalization.integration.test.js",
-      "sha256": "ddca35d760fed15de71a0d5dac08876e50fc7c40e67b7885a536b0124c46ece3"
+      "sha256": "7c8edefe9c315bf6c3b869794808b49d4d129a02d0ce5f996cab123f26deacc3"
     },
     {
       "path": "server/runtimeIdentity.js",
@@ -2948,7 +2980,7 @@
     },
     {
       "path": "server/sqaService.js",
-      "sha256": "85ad23d6e5128b164e33f481ca634be0ad28b1cb97bb4934a1ee8486f9469f6c"
+      "sha256": "1da2bdf0baa6ca1ef9849498792ba407efb98a13fb58c7ab820ed343d552dcb2"
     },
     {
       "path": "server/sqaService.test.js",
@@ -2956,7 +2988,7 @@
     },
     {
       "path": "server/sqaTools.js",
-      "sha256": "7e6492b37e84b83bb7965981001be62caff32c7d037c74daef1059ad7f29cc30"
+      "sha256": "8a4458be8deedd8476266b99dd9687acf2561f4c84ebe2dec12556eebc2fe7e3"
     },
     {
       "path": "server/sqaTools.test.js",
