@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-founder-sqa-2026-11-07-setup-r1",
-  "uiVersion": "20261107-2",
+  "releaseId": "qase-founder-sqa-2026-11-07-report-r1",
+  "uiVersion": "20261107-3",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Founder setup on integration 9be05b2: explicit public/authenticated scope, business context or assumptions, device preflight and secure pre-start credential handoff; production qualification remains required"
+  "source": "Founder durable report generation on integration dd81cae: bounded typed sections, exact revision publication, configured-provider continuation and saved draft recovery; production qualification remains required"
 }

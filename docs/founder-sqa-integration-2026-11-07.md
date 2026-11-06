@@ -92,10 +92,15 @@ production activation remain part of Phase 8.
 3. Completed locally: upfront public/authenticated scope, business context or
    explicit assumptions, device preflight and secure pre-start credential
    handling. See [Phase 3 setup and verification](founder-setup-2026-11-07.md).
-4. Qualify durable report completion on the active provider path and large live
-   reports. Staged report support exists in the opt-in qualified path; merging it
-   alone does not migrate legacy runs or prove the default path is repaired.
-5. Clear progress, actionable pause reasons and publication recovery controls.
+4. Completed locally for durable report generation and recovery on the
+   configured-provider path: eleven sections, exact-revision publication,
+   preserved checkpoints and working Markdown/PDF exports verified with the
+   live gateway. Autonomous investigation still reaches the fixture ceiling;
+   that efficiency issue remains open for Phases 5 and 8. See
+   [Phase 4 report completion](founder-report-completion-2026-11-07.md).
+5. Clear progress, actionable pause reasons and publication recovery controls;
+   reduce repeated investigation context and qualify the complete flow within
+   an explicit time/token budget.
 6. Clickable evidence, visible assumptions, section navigation and preserved
    focus, scroll, disclosure and selection state.
 7. Reliable recommendation saving and immediate Studio delivery feedback,

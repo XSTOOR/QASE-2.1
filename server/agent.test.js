@@ -370,6 +370,29 @@ test('the real SDK registry and advertised descriptions enforce each mode bounda
 	} finally {if(saved===undefined)delete process.env.QASE_API_KEY;else process.env.QASE_API_KEY=saved;}
 });
 
+test('the real configured-provider SDK persists the new Founder report protocol before registering its staged finalizer',async()=>{
+ const saved={...process.env};const keys=['QASE_PROVIDER','QASE_BASE_URL','QASE_API_KEY','QASE_FOUNDER_REASONING_ENABLED'];
+ Object.assign(process.env,{QASE_PROVIDER:'custom',QASE_BASE_URL:'https://llm.drytis.ai',QASE_API_KEY:'qualification-placeholder',QASE_FOUNDER_REASONING_ENABLED:'false'});
+ const session={id:randomUUID(),mode:'founder',founder:{observations:[]},secretNames:[],activities:[],findings:[],todos:[],messages:[]};
+ const live={},commits=[];const store={liveFor:()=>live,publish(){},async commit(s,type){commits.push({type,generation:structuredClone(s.founder.reportGeneration)});}};
+ try{
+  const record=await ensureRuntime(session,store);
+  try{
+   assert.equal(commits[0].type,'founder.report_protocol');assert.equal(commits[0].generation.protocol,'section-draft-v1');
+   const tools=record.runtime.headlessRuntime.getTools();assert.ok(tools.some(t=>t.name==='draft_founder_report_section'));
+   assert.deepEqual(tools.find(t=>t.name==='finish_founder_review').parametersSchema.required,['draft_revision']);
+   assert.doesNotMatch(record.runtime.getToolDescriptions(),/- finish_founder_review:/,'The unbounded native report schema must not be copied into exploration context.');
+   assert.ok(record.runtime.getToolDescriptions().length<1000,'Native tool schemas must not be duplicated in the system context.');
+  }finally{record.dispose?.();}
+ }finally{for(const key of keys){if(key in saved)process.env[key]=saved[key];else delete process.env[key];}}
+ const failed={...session,id:randomUUID(),founder:{observations:[]}};const record={};
+ Object.assign(process.env,{QASE_PROVIDER:'custom',QASE_BASE_URL:'https://llm.drytis.ai',QASE_API_KEY:'qualification-placeholder',QASE_FOUNDER_REASONING_ENABLED:'false'});
+ try{
+  await assert.rejects(ensureRuntime(failed,{liveFor:()=>record,async commit(){throw new Error('Storage unavailable');}}),/Storage unavailable/);
+  assert.equal(failed.founder.reportGeneration,undefined);assert.equal(record.runtime,undefined);
+ }finally{for(const key of keys){if(key in saved)process.env[key]=saved[key];else delete process.env[key];}}
+});
+
 test('new browser capabilities validate model arguments before invoking the bridge', async () => {
 	const calls = [];
 	const tools = createBrowserTools(() => ({
@@ -916,6 +939,15 @@ test('Founder synthesis readiness retains every prerequisite and clears only the
 	assert.doesNotMatch(fixture.record.runtime.getToolDescriptions(), /browser_snapshot/);
 	assert.equal(prepareFounderSynthesis(fixture.session, fixture.record), false);
 	assert.equal(fixture.clearCount(), 1);
+});
+
+test('configured-provider Founder synthesis keeps durable draft tools and removes browser work at the SDK boundary',()=>{
+ const f=founderSynthesisFixture();f.session.founder.reportGeneration={version:1,protocol:'section-draft-v1',evidenceHashVersion:1};
+ const draft={name:'draft_founder_report_section',parametersSchema:{type:'object'}};f.headless.options.tools.push(draft);f.headless.toolsByName.set(draft.name,draft);
+ const before=structuredClone(f.session);
+ assert.equal(prepareFounderSynthesis(f.session,f.record),true);assert.equal(f.clearCount(),1);
+ assert.deepEqual(f.headless.getTools().map(t=>t.name),['finish_founder_review','draft_founder_report_section']);
+ assert.deepEqual(f.session,before);assert.match(f.record.runtime.getToolDescriptions(),/typed report draft/);
 });
 
 test('SQA context continuation clears only redundant model history at bounded evidence checkpoints', () => {

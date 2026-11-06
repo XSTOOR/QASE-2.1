@@ -2,6 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRunResume } from './runResume.js';
 
+test('staged Founder recovery preserves sections and uses the exact completed draft revision',()=>{
+	const session={mode:'founder',targetUrl:'https://fixture.test/',founder:{reportGeneration:{version:1,protocol:'section-draft-v1',evidenceHashVersion:1}}};
+	const instruction=createRunResume().recoveryInstruction(session);
+	assert.match(instruction,/Preserve all saved report sections/);assert.match(instruction,/draft_founder_report_section/);assert.match(instruction,/exact complete draft_revision/);
+	assert.doesNotMatch(createRunResume().recoveryInstruction({...session,mode:'sqa'}),/draft_founder_report_section/);
+});
+
 function interruptedSession(overrides = {}) {
 	return {
 		id: 'run-1',

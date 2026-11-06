@@ -32,6 +32,11 @@ for(const mode of ['sqa','founder']) test(`${mode} durable publication stops SDK
  assert.equal(requests,0);assert.equal(f.state.telemetry.reasoner.calls,0);
 });
 
+test('a saved configured-provider Founder report cannot switch to qualified reasoning after a flag change',()=>{
+ const session={mode:'founder',activities:[],founder:{observations:[],reportGeneration:{version:1,protocol:'section-draft-v1',evidenceHashVersion:1}}};
+ assert.equal(selectsModeReasoning(session,{QASE_FOUNDER_REASONING_ENABLED:'true'}),false);
+});
+
 test('browser budgets and cancellation prevent dispatch while prior accounting remains authoritative',async()=>{
  const f=fixture();let calls=0;f.state.budgets.browserActions=1;
  const tool=f.runtime.wrapTool({name:'browser_click',async run(){calls++;return {success:true};}});

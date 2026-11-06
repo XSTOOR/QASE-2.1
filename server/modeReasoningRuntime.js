@@ -33,6 +33,7 @@ export function selectsModeReasoning(session, env = process.env) {
   const selected = session[session.mode]?.execution?.strategy;
   if (selected && selected !== MODE_REASONING_STRATEGY) throw new Error('Unsupported saved mode reasoning strategy.');
   if (selected) return true;
+  if (session.mode==='founder'&&session.founder?.reportGeneration) return false;
   // Never switch the architecture of an already-executed legacy run.
   return env[`QASE_${session.mode.toUpperCase()}_REASONING_ENABLED`] === 'true' && !(session.activities?.length || session[session.mode]?.observations?.length || session[session.mode]?.finalizedAt);
 }

@@ -13,6 +13,7 @@
  */
 
 import { hybridRecoveryProblem } from './hybridRecoveryGate.js';
+import { usesFounderDraft } from './founderReportDraft.js';
 
 const MAX_AUTO_RESUME_ATTEMPTS = 3;
 
@@ -71,6 +72,7 @@ export function createRunResume(overrides = {}) {
 			parts.push('Preserve recorded control evidence and blocker decisions. Complete only the remaining scoped controls, then call finish_sqa_assessment to durably publish the final assessment.');
 		} else if (session?.mode === 'founder') {
 			parts.push('Preserve recorded observations, browser evidence, and plan progress. Complete only the remaining review work, then call finish_founder_review to durably publish the final report.');
+			if(usesFounderDraft(session))parts.push('Preserve all saved report sections. Continue only the next advertised draft_founder_report_section from the durable report checkpoint, then publish with its exact complete draft_revision. Do not replay completed browser work.');
 		} else {
 			parts.push('Continue from where your prior progress left off, verify remaining items, then publish the final report.');
 		}

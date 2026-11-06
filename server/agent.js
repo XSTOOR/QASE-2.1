@@ -20,7 +20,7 @@ import { buildSqaContext, buildSqaSynthesisContext } from './sqaPrompt.js';
 import { createSqaTools, finishReadiness as sqaFinishReadiness } from './sqaTools.js';
 import { modeExplorationReadiness } from './modeReasoningRuntime.js';
 import {buildModeExecutionContext} from './modeReasoningContext.js';
-import {founderDraftProgress} from './founderReportDraft.js';
+import {founderDraftProgress,usesFounderDraft,initializeFounderReportGeneration,founderDraftTools} from './founderReportDraft.js';
 import { isCredentialQuestion } from '../public/questionPresentation.js';
 import { clearSecrets, redact, secretNames } from './secrets.js';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
@@ -357,12 +357,14 @@ export function prepareFounderSynthesis(session, record) {
 	// Only the model's redundant page/tool transcript is replaced at the phase
 	// boundary, keeping the final structured response within provider budgets.
 	runtime.agentSession.clear();
-	const tools=record.modeReasoning?.state.reportProtocol==='section-draft-v1'?runtime.headlessRuntime.getTools().filter(t=>['draft_founder_report_section','finish_founder_review'].includes(t.name)):[tool];
+	const staged=usesFounderDraft(session);
+	const tools=staged?runtime.headlessRuntime.getTools().filter(t=>['draft_founder_report_section','finish_founder_review'].includes(t.name)):[tool];
 	runtime.headlessRuntime.options.tools=tools;
 	runtime.headlessRuntime.toolsByName.clear();
 	for(const item of tools)runtime.headlessRuntime.toolsByName.set(item.name,item);
-	runtime.getToolDescriptions=()=>record.modeReasoning
-		? record.modeReasoning.state.reportProtocol==='section-draft-v1'?`Use the advertised typed report draft section, then finish_founder_review with its exact saved revision. Keep sections concise, cite observation IDs and label hypotheses. Three focused recommendations suffice.\n`:`Use finish_founder_review with the full native schema and saved observations.\n`
+	runtime.getToolDescriptions=()=>staged
+		? `Use the advertised typed report draft section, then finish_founder_review with its exact saved revision. Keep sections concise, cite observation IDs and label hypotheses. Three focused recommendations suffice.\n`
+		: record.modeReasoning ? `Use finish_founder_review with the full native schema and saved observations.\n`
 		: `Available finalization tool:\n- ${tool.name}: ${tool.description}\n  Parameters: ${JSON.stringify(tool.parametersSchema)}\n`;
 	record.founderSynthesis=true;
 	if(record.modeReasoning)record.modeReasoning.state.phase='synthesis';
@@ -434,10 +436,12 @@ export function prepareModeEvidenceReview(session,record) {
  * arguments in every later section. This never publishes or changes budgets. */
 export function prepareModeReportContinuation(session,record) {
  const state=record.modeReasoning?.state;
- if(session.mode!=='founder'||!record.founderSynthesis||!state?.discovery||state.phase!=='synthesis'||session.founder.finalizedAt||session.activities.some(a=>a.status==='running')||state.actions.some(a=>a.status==='uncertain'))return false;
+ const configured=usesFounderDraft(session)&&!record.modeReasoning;
+ if(session.mode!=='founder'||!record.founderSynthesis||(!configured&&(!state?.discovery||state.phase!=='synthesis'))||session.founder.finalizedAt||session.activities.some(a=>a.status==='running')||state?.actions?.some(a=>a.status==='uncertain'))return false;
+ const boundary=state||record;
  const progress=founderDraftProgress(session);
- if(!progress.intact||!progress.revision||state.reportBoundaryRevision===progress.revision||typeof record.runtime?.clearConversation!=='function')return false;
- record.runtime.clearConversation();state.reportBoundaryRevision=progress.revision;
+ if(!progress.intact||!progress.revision||boundary.reportBoundaryRevision===progress.revision||typeof record.runtime?.clearConversation!=='function')return false;
+ record.runtime.clearConversation();boundary.reportBoundaryRevision=progress.revision;
  return true;
 }
 
@@ -655,6 +659,11 @@ async function constructRuntime(session, runStore) {
 		}
 	}
 	const allowedTools = allowedToolNames(session.mode);
+	if(!isQualified&&initializeFounderReportGeneration(session,settings.provider)){
+		try{await runStore.commit(session,'founder.report_protocol',{protocol:session.founder.reportGeneration.protocol});}
+		catch(error){delete session.founder.reportGeneration;throw error;}
+	}
+	if(usesFounderDraft(session))allowedTools.add('draft_founder_report_section');
 	if (isModeReasoning) for (const name of ['mode_discover_application','mode_read_discovery','mode_plan_work','mode_run_workflow','mode_start_workflow','mode_close_workflow','mode_test_surface','mode_execute_steps','mode_verify_recovery','mode_load_tools','classify_mode_observations', 'mode_execution_progress',...(session.mode==='founder'?['draft_founder_report_section']:[])]) allowedTools.add(name);
 	if (isHybrid) allowedTools.add('browser_authenticate');
 	if (isHybrid) for (const name of ['qa_discover_application','qa_read_discovery','qa_work_schedule','qa_investigate_scenario','qa_plan_scenarios', 'qa_start_scenario', 'qa_close_scenario', 'qa_assert_snapshot', 'qa_assert_diagnostics', 'qa_ledger', 'qa_read_evidence', 'browser_qa_scenario', 'qa_route_frontier', 'qa_test_routes', 'qa_load_tools', 'classify_qa_observations', 'rank_qa_candidates']) allowedTools.add(name);
@@ -789,7 +798,7 @@ async function constructRuntime(session, runStore) {
 		// Founder observations replace QA findings in that mode; withholding the QA
 		// finalizer prevents an accidental second, semantically unrelated report.
 		const modeTools = session.mode === 'founder'
-			? createFounderTools(session, runStore, { isCancelled: () => Boolean(record.controller?.signal.aborted),stagedReport:record.modeReasoning?.state.reportProtocol==='section-draft-v1' })
+			? createFounderTools(session, runStore, { isCancelled: () => Boolean(record.controller?.signal.aborted),stagedReport:usesFounderDraft(session) })
 			: [
 				...createQaTools(session, runStore, {
 					deviceRuntime: null,
@@ -802,7 +811,7 @@ async function constructRuntime(session, runStore) {
 			.filter(tool => allowedTools.has(tool.name));
 		if (isHybrid) sessionTools.push(createHybridScenarioTool(sessionTools.find(tool => tool.name === 'browser_qa_check')));
 		const headless = runtime.headlessRuntime;
-		if(record.modeReasoning&&session.mode==='founder')record.founderDraftSchema=founderReportToolSchema();
+		if(usesFounderDraft(session))record.founderDraftSchema=founderReportToolSchema();
 		const registeredTools = [...ALL_TOOLS, ...sessionTools].filter(tool => allowedTools.has(tool.name) && (!record.hybrid || record.hybrid.allows(tool.name))).map(tool => {
 			const legacyGuarded = guardSecurityPayloadTool(guardSqaBrowserTool(tool, session), session, settings.securityPayloadLimit);
 			const guardedTool = record.hybrid ? record.hybrid.wrapTool(legacyGuarded) : record.modeReasoning ? record.modeReasoning.wrapTool(legacyGuarded) : legacyGuarded;
@@ -848,9 +857,13 @@ async function constructRuntime(session, runStore) {
 		}
 		record.hybrid?.registerToolCatalog(registeredTools.map(tool => tool.name));
 		// Do not advertise blocked filesystem/shell tools or another mode's finalizer.
-		runtime.getToolDescriptions = () => isQualified ? '\nUse the supplied native tool schemas and only tools advertised for this mode.\n' : `\n\nAvailable browser and assessment tools:\n${registeredTools
+		runtime.getToolDescriptions = () => isQualified||usesFounderDraft(session) ? '\nUse the supplied native tool schemas and only tools advertised for this mode.\n' : `\n\nAvailable browser and assessment tools:\n${registeredTools
 			.map(tool => `- ${tool.name}: ${tool.description}\n  Parameters: ${JSON.stringify(tool.parametersSchema)}`)
 			.join('\n')}\n`;
+		if(!isQualified&&usesFounderDraft(session)){
+			const originalChat=runtime.cleanSlateService.chat.bind(runtime.cleanSlateService);
+			runtime.cleanSlateService.chat=(messages,options={})=>originalChat(messages,Array.isArray(options.tools)?{...options,tools:founderDraftTools(session,options.tools,record.founderDraftSchema,{synthesis:Boolean(record.founderSynthesis)})}:options);
+		}
 
 		// The SDK's stream reports tool_result but never tool_start, so the only
 		// way to know a tool has begun — and to show it as running — is to wrap the
@@ -1556,7 +1569,7 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 			await runStore.setStatus(session,'running','Control evidence is accounted for. Validating the SQA plan and publishing its assessment.');
 		} else if(handoffToModeEvidenceReview){
 			continueIncompleteRun=true;
-			await runStore.setStatus(session,'running','Continuing the next workflow or evidence review from the verified mode checkpoint.');
+			await runStore.setStatus(session,'running',record.founderSynthesis&&usesFounderDraft(session)?'Founder report section saved. Continuing the remaining report sections.':'Continuing the next workflow or evidence review from the verified mode checkpoint.');
 		} else if (pending) {
 			const hostDecision = session.hybrid?.pendingDecision?.id === pending.toolCallId ? session.hybrid.pendingDecision : null;
 			session.pendingQuestion = {
@@ -1784,7 +1797,9 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 
 	if (continueIncompleteRun) {
 		const completionInstruction = session.mode === 'founder'
-			? 'Continue the unfinished Founder review now. Read the current Progress section, immediately complete the remaining route/surface inventory, representative workflow, diagnostics, and evidence-backed category observations without repeating finished work. Ask for critical founder context or an authenticated/public-only scope decision only when genuinely required. Then call finish_founder_review with the complete evidence-linked strategy; never invent customer, analytics, market, or revenue facts.'
+			? record.founderSynthesis&&usesFounderDraft(session)
+				? 'Continue Founder report synthesis from the authoritative saved report checkpoint. Immediately write only the next advertised typed section using draft_founder_report_section. Do not replay browser work or saved sections. Once every section is saved, call finish_founder_review with the exact saved draft_revision. Never invent customer, analytics, market or revenue facts.'
+				: 'Continue the unfinished Founder review now. Read the current Progress section, immediately complete the remaining route/surface inventory, representative workflow, diagnostics, and evidence-backed category observations without repeating finished work. Ask for critical founder context or an authenticated/public-only scope decision only when genuinely required. Then complete the evidence-linked strategy through the advertised report tools; never invent customer, analytics, market, or revenue facts.'
 			: session.mode === 'sqa'
 				? 'Continue the unfinished SQA assessment now. Read the current Progress section and immediately perform each remaining browser-first technical check. The host automatically closes reviewer-only prerequisites after the final browser-backed result; do not enumerate them. If authentication blocks representative scoped workflows, call ask_question for vaulted credentials or an explicit public-only scope decision before publishing. Do not repeat recorded checks. Call finish_sqa_assessment only after the plan and every control are complete. Never invent documentary evidence or claim certification.'
 				: record.hybrid ? `The SDK segment ended, but QASE has not completed this run. Preserve the same session and browser owner. Remaining authoritative work: ${JSON.stringify(session.hybrid.sdkContinuation?.remaining || {})}. Use qa_route_frontier and execute pending routes with default checks; otherwise activate each remaining supported scenario and execute its matching fixed check. Close only evidence-accounted outcomes. Never replay uncertain actions. Publish only when the host completion gate permits it.`

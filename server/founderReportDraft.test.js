@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createFounderDraftTool,founderDraftSchema,founderDraftProgress,resolveFounderDraft,FOUNDER_REPORT_SECTIONS} from './founderReportDraft.js';
+import {createFounderDraftTool,founderDraftSchema,founderDraftProgress,resolveFounderDraft,FOUNDER_REPORT_SECTIONS,FOUNDER_DRAFT_PROTOCOL,initializeFounderReportGeneration,usesFounderDraft,founderDraftTools} from './founderReportDraft.js';
 import {founderReportToolSchema} from './founderTools.js';
 import {normalizeFounderReport} from './founderSchema.js';
 import {prepareModeReportContinuation} from './agent.js';
+import {buildFounderSynthesisContext} from './founderPrompt.js';
 
 function fixture(){
  const session={id:'draft-fixture',mode:'founder',status:'running',founder:{observations:[{id:'observed',category:'product_clarity'}]}};
@@ -115,4 +116,102 @@ test('unfinished exploration cannot draft a report, and tampered sections cannot
  ready=true;await tool.run({section:'executive_summary',value:payload.executive_summary});
  session.founder.reportDraft.input.executive_summary='Tampered';
  assert.equal(founderDraftProgress(session).intact,false);assert.throws(()=>resolveFounderDraft(session,{}),/intact/);
+});
+
+test('configured-provider draft selection is durable and never migrates executed legacy, qualified or bounded JEV runs',()=>{
+ const fresh=()=>({mode:'founder',activities:[],founder:{observations:[]}});
+ const session=fresh();assert.equal(initializeFounderReportGeneration(session,'custom'),true);
+ assert.equal(usesFounderDraft(JSON.parse(JSON.stringify(session))),true);
+ assert.equal(initializeFounderReportGeneration(session,'custom'),false);
+ for(const mutate of [s=>s.activities.push({toolName:'browser_open'}),s=>s.founder.observations.push({id:'observed'}),s=>s.founder.execution={strategy:'qualified-opus-jev-v1'},s=>s.founder.reportDraft={},s=>s.founder.finalizedAt='saved',s=>s.tokenUsage={totalTokens:20},s=>s.messages=[{role:'agent',text:'Prior model response'}],s=>s.mode='sqa']){
+  const candidate=fresh();mutate(candidate);const before=structuredClone(candidate);
+  assert.equal(initializeFounderReportGeneration(candidate,'custom'),false);assert.deepEqual(candidate,before);
+ }
+ assert.equal(initializeFounderReportGeneration(fresh(),'jev'),false);
+ assert.throws(()=>initializeFounderReportGeneration(session,'jev'),/cannot resume/);
+ assert.throws(()=>initializeFounderReportGeneration({mode:'founder',founder:{reportGeneration:{protocol:'unknown'}}},'custom'),/Unsupported saved/);
+ assert.equal(usesFounderDraft({mode:'founder',founder:{execution:{reportProtocol:FOUNDER_DRAFT_PROTOCOL}}}),true);
+});
+
+test('configured-provider schemas advertise only the next bounded section, then the exact complete revision',async()=>{
+ const {session,payload}=fixture();session.founder.reportGeneration={version:1,protocol:FOUNDER_DRAFT_PROTOCOL,evidenceHashVersion:1};
+ const schema=founderReportToolSchema(),tools=[{name:'browser_snapshot',parametersSchema:{type:'object',properties:{}}},{name:'draft_founder_report_section'},{name:'finish_founder_review',parametersSchema:{type:'object',required:['draft_revision']}}];
+ const tool=createFounderDraftTool(session,{async commit(){}},schema);
+ assert.deepEqual(founderDraftTools(session,tools,schema).map(t=>t.name),['browser_snapshot']);
+ assert.equal(founderDraftTools(session,tools,schema)[0],tools[0],'The original browser tool schema is forwarded intact.');
+ for(const section of FOUNDER_REPORT_SECTIONS){
+  const projected=founderDraftTools(session,tools,schema,{synthesis:true});
+  assert.equal(projected.some(t=>t.name==='finish_founder_review'),false);
+  const advertised=projected.find(t=>t.name==='draft_founder_report_section').parametersSchema;
+  assert.deepEqual(advertised.properties.section.enum,[section]);
+  if(section==='executive_summary')assert.equal(advertised.properties.value.maxLength,1200);
+  for(const value of section==='recommendations'?payload.recommendations.map(item=>[item]):[payload[section]])assert.equal((await tool.run({section,value})).success,true);
+ }
+ const projected=founderDraftTools(session,tools,schema,{synthesis:true});
+ assert.equal(projected.some(t=>t.name==='draft_founder_report_section'),false);
+ assert.deepEqual(projected.find(t=>t.name==='finish_founder_review').parametersSchema.properties.draft_revision.enum,[session.founder.reportDraft.revision]);
+ const untouched=tools.map(t=>({...t}));assert.deepEqual(founderDraftTools({mode:'sqa'},untouched,schema,{synthesis:true}),untouched);
+});
+
+test('configured-provider continuation and synthesis context restore saved sections without browser replay or usage reset',async()=>{
+ const {session,payload}=fixture();session.activities=[];session.tokenUsage={inputTokens:42000,outputTokens:2000};
+ session.founder.observations[0].summary='Observed practice entry in the controlled browser fixture.';
+ session.founder.scope={target:{url:'https://fixture.test/'},access:{decision:'public_only'},contextDecision:{mode:'assumptions'}};
+ session.founder.reportGeneration={version:1,protocol:FOUNDER_DRAFT_PROTOCOL,evidenceHashVersion:1};
+ const tool=createFounderDraftTool(session,{async commit(){}},founderReportToolSchema());
+ for(const section of ['executive_summary','icp','positioning','monetization'])await tool.run({section,value:payload[section]});
+ await tool.run({section:'recommendations',value:[payload.recommendations[0]]});
+ const restored=JSON.parse(JSON.stringify(session));let clears=0;
+ const record={founderSynthesis:true,runtime:{clearConversation(){clears++;}}};
+ assert.equal(prepareModeReportContinuation(restored,record),true);assert.equal(prepareModeReportContinuation(restored,record),false);
+ assert.deepEqual(restored.tokenUsage,session.tokenUsage);assert.deepEqual(restored.founder.reportDraft,session.founder.reportDraft);
+ const context=buildFounderSynthesisContext(restored);assert.match(context,/draft_founder_report_section/);assert.match(context,/public_only/);assert.match(context,/rec-0/);assert.match(context,/"next":"recommendations"/);
+ restored.activities.push({status:'running'});assert.equal(prepareModeReportContinuation(restored,{...record,reportBoundaryRevision:undefined}),false);assert.equal(clears,1);
+ const reorder=value=>Array.isArray(value)?value.map(reorder):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).reverse().map(key=>[key,reorder(value[key])])):value;
+ assert.equal(founderDraftProgress(reorder(restored)).intact,true);
+});
+
+test('redelivery of the final recommendation is idempotent after advancing and rejects changed duplicate IDs',async()=>{
+ const {session,payload}=fixture(),tool=createFounderDraftTool(session,{async commit(){}},founderReportToolSchema());
+ for(const section of ['executive_summary','icp','positioning','monetization'])await tool.run({section,value:payload[section]});
+ for(const recommendation of payload.recommendations)await tool.run({section:'recommendations',value:[recommendation]});
+ const before=structuredClone(session.founder.reportDraft);
+ assert.equal((await tool.run({section:'recommendations',value:[payload.recommendations[2]]})).cached,true);
+ assert.equal((await tool.run({section:'recommendations',value:[{...payload.recommendations[2],title:'Changed'}]})).success,false);
+ assert.deepEqual(session.founder.reportDraft,before);
+});
+
+test('concurrent section deliveries serialize persistence and a failed write cannot roll back a later section',async()=>{
+ const {session,payload}=fixture();let release,entered;
+ const began=new Promise(resolve=>{entered=resolve;}),gate=new Promise(resolve=>{release=resolve;});let commits=0;
+ const tool=createFounderDraftTool(session,{async commit(){commits++;if(commits===1){entered();await gate;throw new Error('Storage unavailable');}}},founderReportToolSchema());
+ const first=tool.run({section:'executive_summary',value:payload.executive_summary});await began;
+ const retry=tool.run({section:'executive_summary',value:payload.executive_summary});
+ const next=tool.run({section:'icp',value:payload.icp});release();
+ const results=await Promise.all([first,retry,next]);assert.deepEqual(results.map(r=>r.success),[false,true,true]);
+ assert.equal(founderDraftProgress(session).next,'positioning');assert.equal(founderDraftProgress(session).intact,true);
+});
+
+test('typed report schemas constrain evidence and quick-win references to exact saved IDs',async()=>{
+ const {session,payload}=fixture(),schema=founderReportToolSchema(),tool=createFounderDraftTool(session,{async commit(){}},schema);
+ for(const section of FOUNDER_REPORT_SECTIONS){
+  const advertised=founderDraftSchema(session,schema).properties.value;
+  const check=(node,name)=>{
+   if(name==='evidence_observation_ids')assert.deepEqual(node.items.enum,['observed']);
+   if(name==='quick_wins')assert.deepEqual(node.items.enum,payload.recommendations.map(r=>r.id));
+   if(node.type==='object')for(const [key,item]of Object.entries(node.properties))check(item,key);
+   if(node.type==='array')check(node.items);
+  };check(advertised,section);
+  for(const value of section==='recommendations'?payload.recommendations.map(r=>[r]):[payload[section]])assert.equal((await tool.run({section,value})).success,true);
+ }
+});
+
+test('unknown evidence returns exact repair choices without changing saved sections or accepting guessed references',async()=>{
+ const {session,payload}=fixture(),schema=founderReportToolSchema(),tool=createFounderDraftTool(session,{async commit(){}},schema);
+ await tool.run({section:'executive_summary',value:payload.executive_summary});const before=structuredClone(session.founder.reportDraft);
+ const result=await tool.run({section:'icp',value:{...payload.icp,evidence_observation_ids:['mistyped-observation']}});
+ assert.equal(result.success,false);assert.equal(result.code,'FOUNDER_DRAFT_UNKNOWN_EVIDENCE');
+ assert.deepEqual(result.invalid_observation_ids,['mistyped-observation']);assert.deepEqual(result.allowed_observation_ids,['observed']);
+ assert.deepEqual(session.founder.reportDraft,before);
+ assert.equal((await tool.run({section:'icp',value:payload.icp})).success,true);assert.equal(founderDraftProgress(session).next,'positioning');
 });
