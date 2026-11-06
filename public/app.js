@@ -47,6 +47,7 @@ import { fallbackOptionsFor, availabilityMeta, describeQueue } from './deviceRun
 import { resolveActiveRuntimeEnvironment, viewForSelection } from './activeRuntimeEnvironment.js';
 import { chromeViewModel } from './browserChrome.js';
 import { SQA_REQUIRED_BROWSER_ATTRIBUTES, describeSqaScopeSelection } from './sqaScopeSelection.js';
+import { founderLaunchProblems } from './founderLaunch.js';
 import {
 	lastRunByCase, caseStatus, platformsOf, caseEnvLines,
 	filterCasesForWizard, resolveRunPairs
@@ -2624,6 +2625,11 @@ function scrollTranscript() {
 
 function renderQuestion() {
 	const question = state.session?.pendingQuestion;
+	const questionKey = question ? JSON.stringify([state.sessionId, question.toolCallId, question.kind, question.question]) : '';
+	// A reconnect or duplicate question must not erase an in-progress vault form.
+	// Values remain only in its DOM inputs; a different question/run replaces it.
+	if (question && isCredentialQuestion(question) && el.questionSlot.querySelector('.cred-form')
+		&& el.questionSlot.firstElementChild?.dataset.questionKey === questionKey) return;
 	el.questionSlot.replaceChildren();
 	if (!question) {
 		return;
@@ -2631,6 +2637,7 @@ function renderQuestion() {
 
 	const card = document.createElement('div');
 	card.className = 'question';
+	card.dataset.questionKey = questionKey;
 
 	const tag = document.createElement('span');
 	tag.className = 'question-tag';
@@ -2707,6 +2714,7 @@ function credentialForm() {
 	const form = document.createElement('form');
 	form.className = 'cred-form';
 	const hybrid = state.session?.qaExecutionMode === 'hybrid';
+	const founderLaunch = state.session?.mode === 'founder' && state.session?.pendingQuestion?.kind === 'founder_launch_credentials';
 
 	const row = document.createElement('div');
 	row.className = 'cred-row';
@@ -2734,8 +2742,10 @@ function credentialForm() {
 	consent.className = 'cred-note';
 	const authorize = document.createElement('input');
 	authorize.type = 'checkbox';
-	authorize.required = hybrid;
-	consent.append(authorize, ' I am authorized to use this test account and approve one sign-in attempt on this website. Continue with read-only testing afterward.');
+	authorize.required = hybrid || founderLaunch;
+	consent.append(authorize, founderLaunch
+		? ' I am authorized to use this test account for sign-in on this website. Continue with read-only testing afterward.'
+		: ' I am authorized to use this test account and approve one sign-in attempt on this website. Continue with read-only testing afterward.');
 	const expectedUrl = document.createElement('input');
 	expectedUrl.type = 'url';
 	expectedUrl.placeholder = 'Expected signed-in page URL (optional)';
@@ -2746,6 +2756,7 @@ function credentialForm() {
 	loginEndpoint.setAttribute('aria-label', 'Approved sign-in API URL');
 	if (hybrid) consent.append(' If a sign-in API URL is supplied below, I also approve sending this test account to that exact endpoint once.');
 	if (hybrid) note.textContent = 'Use a test account. Credentials are encrypted in this run’s vault; the model receives placeholders only. One sign-in is allowed on this website or the exact API URL you approve. Account creation and SSO/MFA are not automated. You can skip login and continue public-only.';
+	if (founderLaunch) note.textContent = 'Use a test account for this website. Credentials are encrypted for this run; only placeholders reach the model. The review begins after you store the account or choose Skip login. Other websites remain outside the review scope.';
 
 	const actions = document.createElement('div');
 	actions.className = 'cred-actions';
@@ -2760,14 +2771,14 @@ function credentialForm() {
 	submit.textContent = 'Store and continue';
 	actions.append(skip, submit);
 
-	form.append(row, ...(hybrid ? [expectedUrl, loginEndpoint, consent] : [extra]), note, actions);
+	form.append(row, ...(hybrid ? [expectedUrl, loginEndpoint, consent] : founderLaunch ? [consent] : [extra]), note, actions);
 	form.onsubmit = async event => {
 		event.preventDefault();
 		const fields = {};
 		if (username.value) fields.QA_USERNAME = username.value;
 		if (password.value) fields.QA_PASSWORD = password.value;
-		if (!hybrid && extra.value) fields.QA_OTP = extra.value;
-		if (hybrid && (!username.value || !password.value || !authorize.checked)) {
+		if (!hybrid && !founderLaunch && extra.value) fields.QA_OTP = extra.value;
+		if ((hybrid || founderLaunch) && (!username.value || !password.value || !authorize.checked)) {
 			toast('Enter both test-account fields and approve one sign-in, or choose Skip login.', 'bad');
 			return;
 		}
@@ -2777,7 +2788,7 @@ function credentialForm() {
 		}
 		submit.disabled = true;
 		try {
-			await api(`/sessions/${state.sessionId}/credentials`, { method: 'POST', body: JSON.stringify({ fields, ...(hybrid ? { authorizeLogin: authorize.checked, expectedUrl: expectedUrl.value.trim(), loginEndpoint: loginEndpoint.value.trim() } : {}) }) });
+			await api(`/sessions/${state.sessionId}/credentials`, { method: 'POST', body: JSON.stringify({ fields, ...((hybrid || founderLaunch) ? { authorizeLogin: authorize.checked } : {}), ...(hybrid ? { expectedUrl: expectedUrl.value.trim(), loginEndpoint: loginEndpoint.value.trim() } : {}) }) });
 			el.questionSlot.replaceChildren();
 			state.session.pendingQuestion = undefined;
 			password.value = ''; username.value = ''; extra.value = '';
@@ -6455,6 +6466,14 @@ const founderUi = {
 	targetRelease: $('founder-target-release'),
 	targetEnvironment: $('founder-target-environment'),
 	primaryGoal: $('founder-primary-goal'),
+	stage: $('founder-stage'),
+	businessModel: $('founder-business-model'),
+	targetCustomer: $('founder-target-customer'),
+	access: $('founder-access'),
+	accessHelp: $('founder-access-help'),
+	contextMode: $('founder-context-mode'),
+	businessFields: $('founder-business-fields'),
+	launchStatus: $('founder-launch-status'),
 	constraints: $('founder-constraints'),
 	authorization: $('founder-authorization'),
 	advanced: $('founder-advanced'),
@@ -6492,9 +6511,37 @@ function paintFounderCatalog(catalog) {
 }
 
 function syncFounderSubmitState() {
-	founderUi.submit.disabled = !state.founderCatalog
-		|| !founderUi.authorization.checked
-		|| founderUi.submit.dataset.busy === 'true';
+	const provided = founderUi.contextMode.value === 'provided';
+	founderUi.businessFields.hidden = !provided;
+	for (const field of [founderUi.stage, founderUi.businessModel, founderUi.targetCustomer, founderUi.primaryGoal]) field.required = provided;
+	$('founder-goal-optional').hidden = provided;
+	const authenticatedAvailable = state.founderCatalog?.launch?.authenticatedAvailable !== false;
+	founderUi.access.querySelector('option[value="authenticated"]').disabled = !authenticatedAvailable;
+	founderUi.accessHelp.textContent = founderUi.access.value === 'authenticated'
+		? 'Provide a test account securely in the next step. Browser review waits until you supply it or choose public pages only.'
+		: authenticatedAvailable ? 'Signed-in pages are excluded. Qase will record that boundary and continue without asking for credentials.'
+			: 'Signed-in review is unavailable in the current execution mode. Public pages can still be reviewed.';
+	const missing = founderLaunchProblems({
+		catalogReady: Boolean(state.founderCatalog), targetUrl: founderUi.targetUrl.value,
+		authorizationConfirmed: founderUi.authorization.checked, environmentId: selectedEnvironmentForRun(),
+		accessDecision: founderUi.access.value, authenticatedAvailable,
+		contextMode: founderUi.contextMode.value, productContext: founderProductContext()
+	});
+	const busy = founderUi.submit.dataset.busy === 'true';
+	founderUi.submit.disabled = busy || missing.length > 0;
+	founderUi.submit.textContent = busy ? 'Creating review…' : founderUi.access.value === 'authenticated' ? 'Continue to secure sign-in' : 'Start Product Review';
+	const message = busy ? 'Creating your review…'
+		: missing.length ? `To start: ${missing[0]}.`
+			: founderUi.access.value === 'authenticated' ? 'Ready to continue to secure sign-in. Browser work has not started.' : 'Ready to start the public-page review.';
+	if (founderUi.launchStatus.textContent !== message) founderUi.launchStatus.textContent = message;
+}
+
+function founderProductContext() {
+	const values = { primaryGoal: founderUi.primaryGoal.value, constraints: founderUi.constraints.value };
+	if (founderUi.contextMode.value === 'provided') Object.assign(values, {
+		stage: founderUi.stage.value, businessModel: founderUi.businessModel.value, targetCustomer: founderUi.targetCustomer.value
+	});
+	return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value.trim()]).filter(([, value]) => value));
 }
 
 async function openFounderStart() {
@@ -6540,7 +6587,7 @@ function applyFounderDetectedContext(context) {
 	} else {
 		// Distinct missing-context state: no prior Qase context exists for this
 		// project, so only the essential target fields are needed.
-		founderUi.detectedContext.textContent = 'No prior project context was found for this workspace yet — just enter the target URL and product name below to get started. Everything else is optional.';
+		founderUi.detectedContext.textContent = 'No prior project context was found. Choose a review scope and either supply business context or allow clearly labeled assumptions.';
 	}
 	founderUi.detectedContext.hidden = false;
 	if (context.targetUrl && !founderUi.targetUrl.value.trim()) founderUi.targetUrl.value = context.targetUrl;
@@ -6551,6 +6598,10 @@ function applyFounderDetectedContext(context) {
 	if (context.previousFounder?.productContext?.constraints && !founderUi.constraints.value.trim()) {
 		founderUi.constraints.value = context.previousFounder.productContext.constraints;
 	}
+	for (const key of ['stage', 'businessModel', 'targetCustomer']) {
+		if (context.previousFounder?.productContext?.[key] && !founderUi[key].value.trim()) founderUi[key].value = context.previousFounder.productContext[key];
+	}
+	syncFounderSubmitState();
 }
 
 function closeFounderStart() {
@@ -6565,10 +6616,16 @@ function founderOptional(value) {
 founderUi.close.onclick = closeFounderStart;
 founderUi.cancel.onclick = closeFounderStart;
 founderUi.authorization.onchange = syncFounderSubmitState;
+for (const field of [founderUi.targetUrl, founderUi.primaryGoal, founderUi.stage, founderUi.businessModel, founderUi.targetCustomer, founderUi.contextMode, founderUi.access]) {
+	field.addEventListener('input', syncFounderSubmitState);
+	field.addEventListener('change', syncFounderSubmitState);
+}
 
 founderUi.form.onsubmit = async event => {
 	event.preventDefault();
 	setFounderFormError();
+	syncFounderSubmitState();
+	if (founderUi.submit.disabled) return;
 	if (!founderUi.form.reportValidity()) return;
 	if (!ensureModelConfigured('Founder launcher')) return;
 	let targetUrl;
@@ -6593,10 +6650,7 @@ founderUi.form.onsubmit = async event => {
 		...(founderOptional(founderUi.targetRelease.value) ? { release: founderUi.targetRelease.value.trim() } : {}),
 		...(founderOptional(founderUi.targetEnvironment.value) ? { environment: founderUi.targetEnvironment.value.trim() } : {})
 	};
-	const productContext = {
-		...(founderOptional(founderUi.primaryGoal.value) ? { primaryGoal: founderUi.primaryGoal.value.trim() } : {}),
-		...(founderOptional(founderUi.constraints.value) ? { constraints: founderUi.constraints.value.trim() } : {})
-	};
+	const productContext = founderProductContext();
 
 	founderUi.submit.dataset.busy = 'true';
 	founderUi.submit.textContent = 'Creating review…';
@@ -6607,6 +6661,9 @@ founderUi.form.onsubmit = async event => {
 			method: 'POST',
 			body: JSON.stringify({
 				authorizationConfirmed: true,
+				setupVersion: 1,
+				accessDecision: founderUi.access.value,
+				contextMode: founderUi.contextMode.value,
 				target,
 				device: activeTestEnvStore?.get?.()?.device || pendingDeviceId(),
 				deviceLandscape: (founderUi.deviceLandscape?.checked) === true,
@@ -6618,6 +6675,11 @@ founderUi.form.onsubmit = async event => {
 		if (!session?.id) throw new Error('The server did not return the new Founder review session.');
 		closeFounderStart();
 		await selectSession(session.id);
+		if (session.pendingQuestion?.kind === 'founder_launch_credentials') {
+			setWorkspaceView('agent');
+			el.questionSlot.querySelector('input')?.focus();
+			return;
+		}
 		const startError = await api(`/sessions/${session.id}/message`, {
 			method: 'POST',
 			body: JSON.stringify({ text: `Review ${targetUrl}` })
@@ -6631,7 +6693,6 @@ founderUi.form.onsubmit = async event => {
 		setFounderFormError(error instanceof Error ? error.message : String(error));
 	} finally {
 		founderUi.submit.dataset.busy = 'false';
-		founderUi.submit.textContent = 'Start founder review';
 		founderUi.form.removeAttribute('aria-busy');
 		syncFounderSubmitState();
 	}
@@ -8024,6 +8085,7 @@ const devicePicker = $('device-picker') ? createDevicePicker({
 		renderLiveDeviceViewHeader(state.session ?? null, state.activeRuntimeEnvironment);
 		renderAllTestOnBlocks(); // start dialogs read the same selection (DX Phase 3)
 		syncSqaSubmitState();
+		syncFounderSubmitState();
 		// M3 (#14422): keep the sidebar highlight in sync with card selections.
 		matrixSidebar?.setSelection?.(selection?.device ?? null, selection?.osVersion ?? null);
 	},
@@ -8192,6 +8254,7 @@ void (async () => {
 	// A saved device can arrive after the user has completed the SQA form.
 	// Recompute readiness even though restoration does not fire onSelect.
 	syncSqaSubmitState();
+	syncFounderSubmitState();
 })();
 
 /* ── Device Matrix drawer (Phase 10) ─────────────────────────────── */

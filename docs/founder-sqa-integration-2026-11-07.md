@@ -89,8 +89,9 @@ production activation remain part of Phase 8.
 
 ## Remaining Founder phases
 
-3. Upfront public/authenticated scope, business context/assumptions and device
-   readiness, including an early decision for known authentication boundaries.
+3. Completed locally: upfront public/authenticated scope, business context or
+   explicit assumptions, device preflight and secure pre-start credential
+   handling. See [Phase 3 setup and verification](founder-setup-2026-11-07.md).
 4. Qualify durable report completion on the active provider path and large live
    reports. Staged report support exists in the opt-in qualified path; merging it
    alone does not migrate legacy runs or prove the default path is repaired.

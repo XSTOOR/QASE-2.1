@@ -4035,6 +4035,31 @@ padding: 8px 11px;
   gap: 12px;
 }
 
+.founder-modal .field select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  background: var(--panel-chat);
+  font: inherit;
+}
+
+.founder-launch-status {
+  flex: 1 0 100%;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+body.studio-workspace #founder-start .founder-modal-foot { flex-wrap: wrap; gap: 8px; }
+
+#founder-business-fields[hidden] { display: none; }
+
 .founder-intro {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr);

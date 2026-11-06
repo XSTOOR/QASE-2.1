@@ -22,6 +22,7 @@ function productContext(scope) {
 	const lines = entries.length > 0
 		? entries.map(([label, value]) => `- ${label}: ${value}`)
 		: ['- No founder context was supplied.'];
+	if (scope?.contextDecision?.mode === 'assumptions') lines.push('- The user explicitly approved an assumption-led review. Infer only from observed evidence, label assumptions and do not ask again for optional business context.');
 	if (missing.length > 0) {
 		lines.push(`- Context not supplied: ${missing.join(', ')}. Continue using browser evidence and clearly labeled assumptions with lower confidence. Ask one concise question only if the user's requested outcome genuinely cannot be produced without a factual answer.`);
 	}
@@ -113,7 +114,9 @@ export function buildFounderContext(session, liveUrl) {
 		: 'No credentials are vaulted.';
 	const accessDecision = hasFounderPublicOnlyDecision(session)
 		? 'The user chose a public-only review. Authenticated surfaces are excluded and must be labeled not observed. Do not attempt login and do not ask for credentials again in this review.'
-		: 'No public-only access decision has been recorded.';
+		: scope?.access?.decision === 'authenticated'
+			? 'The user requested public and authenticated surfaces on the declared target. Use the run vault placeholders for the approved test account. Other origins remain out of scope; do not silently replace requested authenticated coverage with public-only coverage.'
+			: 'No public-only access decision has been recorded.';
 	const observationIndex = (founder?.observations ?? []).length > 0
 		? founder.observations.map(item => `- ${item.id} | ${item.category} | ${item.type} | ${item.title}`).join('\n')
 		: '- None yet.';

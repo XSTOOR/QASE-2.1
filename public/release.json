@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-founder-sqa-2026-11-07-integration-r1",
-  "uiVersion": "20261107-1",
+  "releaseId": "qase-founder-sqa-2026-11-07-setup-r1",
+  "uiVersion": "20261107-2",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Integration candidate combining Push-SQA 6f4a4d8 and codex/hybrid-production-readiness 21aeb0b: SQA evidence review and budget closeout, Founder/SQA discovery and durable report recovery; production qualification remains required"
+  "source": "Founder setup on integration 9be05b2: explicit public/authenticated scope, business context or assumptions, device preflight and secure pre-start credential handoff; production qualification remains required"
 }

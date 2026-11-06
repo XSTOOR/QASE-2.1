@@ -145,7 +145,7 @@ export function founderFinishReadiness(session, now = Date.now()) {
 	// Browser evidence plus the report's mandatory assumptions arrays provides a
 	// safe assumption-led fallback. Missing optional founder context must not turn
 	// an otherwise complete autonomous review into a late, avoidable pause.
-	const contextDecisionRecorded = suppliedContext || contextSignals >= 3
+	const contextDecisionRecorded = ['provided', 'assumptions'].includes(session.founder?.scope?.contextDecision?.mode) || suppliedContext || contextSignals >= 3
 		|| CONTEXT_INFERENCE_DECISION.test(userText) || coverage.evidenceBackedObservations > 0;
 	const explicitlyPublicOnly = hasFounderPublicOnlyDecision(session) || PUBLIC_ONLY_SCOPE.test(userText);
 	const observedAuthGate = (session.founder?.observations ?? []).some(item => {

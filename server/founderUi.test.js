@@ -31,12 +31,17 @@ test('Founder launcher matches the authenticated API input contract and limits',
 		['founder-target-environment', 100],
 		['founder-target-url', 8192],
 		['founder-primary-goal', 1000],
+		['founder-stage', 200],
+		['founder-business-model', 500],
+		['founder-target-customer', 1000],
 		['founder-constraints', 2000]
 	]) assert.match(html, new RegExp(`id="${id}"[^>]+maxlength="${maximum}"`));
 	assert.match(html, /id="founder-target-url"[^>]+type="url"[^>]+required/);
 	assert.match(html, /id="founder-authorization"[^>]+type="checkbox"[^>]+required/);
-	// Business context the model can infer from the URL is no longer asked for.
-	assert.doesNotMatch(html, /id="founder-(?:stage|business-model|target-customer|competitors)"/);
+	assert.match(html, /id="founder-access"[^>]+aria-describedby="founder-access-help"/);
+	assert.match(html, /id="founder-context-mode"[^>]+aria-describedby="founder-context-help"/);
+	assert.match(html, /id="founder-business-fields" hidden/);
+	assert.match(html, /id="founder-launch-status"[^>]+role="status"[^>]+aria-live="polite"/);
 	assert.match(html, /id="founder-catalog-meta"[^>]+aria-live="polite"/);
 	assert.match(html, /id="tab-founder"[^>]+role="tab"[^>]+aria-controls="pane-founder"[^>]+hidden/);
 	assert.match(html, /id="pane-founder"[^>]+role="tabpanel"[^>]+aria-labelledby="tab-founder"/);

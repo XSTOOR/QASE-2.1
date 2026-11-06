@@ -937,6 +937,87 @@ test('a pending SQA scope accepts its first target URL and starts the agent', as
 	await fixture.whenIdle();
 });
 
+async function founderLaunchFixture(t, options={}) {
+	const fixture=await startFixture(options); t.after(()=>fixture.close());
+	const environment={envId:'founder-launch-env',active:true,platform:'windows',device:'Desktop',deviceType:'desktop',os:'Windows',osVersion:'11',browser:'Chrome',browserCode:'chrome',browserVersion:'151',executionType:'SIMULATED',executionProvider:'local',emulation:{viewport:{width:1440,height:1000},deviceScaleFactor:1,isMobile:false,hasTouch:false}};
+	fixture.services.environments.get=async id=>id===environment.envId?environment:null;
+	const input={setupVersion:1,authorizationConfirmed:true,target:{name:'Launch fixture',url:'https://example.test/'},environmentId:environment.envId,accessDecision:'public_only',contextMode:'assumptions'};
+	return {...fixture,input,environment};
+}
+
+test('Founder versioned setup persists scope/context and rejects missing or inactive device selections before dispatch',async t=>{
+	const f=await founderLaunchFixture(t);
+	for(const patch of [{environmentId:''},{accessDecision:'invented'},{contextMode:'provided'},{target:{name:'Bad',url:'https://user:password@example.test/'}}]){
+		const response=await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,...patch}});
+		assert.equal(response.status,400);
+	}
+	assert.equal((await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,environmentId:'missing'}})).status,422);
+	f.environment.active=false;
+	assert.equal((await f.request('/api/founder/sessions',{method:'POST',json:f.input})).status,422);
+	f.environment.active=true;
+	assert.equal(f.state.runCalls.length,0); assert.equal(f.state.ensureCalls.length,0);
+	const response=await f.request('/api/founder/sessions',{method:'POST',json:f.input});assert.equal(response.status,201);
+	const created=await body(response),restored=await body(await f.request(`/api/sessions/${created.id}`));
+	assert.equal(restored.founder.scope.access.decision,'public_only');
+	assert.equal(restored.founder.scope.contextDecision.mode,'assumptions');
+	assert.equal(restored.environmentId,f.environment.envId);assert.equal(restored.status,'idle');
+	assert.equal(f.state.runCalls.length,0);
+});
+
+test('Founder authenticated setup waits for secure credentials, rejects missing consent, and starts with placeholders only',async t=>{
+	const f=await founderLaunchFixture(t);
+	const created=await body(await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,accessDecision:'authenticated'}}));
+	const session=f.services.runs.get(created.id);
+	assert.equal(session.status,'awaiting_input');assert.equal(session.pendingQuestion.kind,'founder_launch_credentials');
+	assert.equal(f.state.runCalls.length,0);assert.equal(f.state.ensureCalls.length,0);
+	assert.equal((await f.request(`/api/sessions/${session.id}/message`,{method:'POST',json:{text:'continue'}})).status,409);
+	const fields={QA_USERNAME:'fixture@example.invalid',QA_PASSWORD:'private fixture password'};
+	assert.equal((await f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:{fields}})).status,400);
+	assert.deepEqual(await f.services.secrets.names(session.id),[]);
+	const result=await f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:{fields,authorizeLogin:true}});
+	assert.equal(result.status,200);await f.whenIdle();
+	assert.equal(session.pendingQuestion,undefined);assert.ok(session.founder.scope.access.credentialsProvidedAt);
+	assert.deepEqual(session.secretNames,['QA_USERNAME','QA_PASSWORD']);assert.equal(f.state.runCalls.length,1);
+	assert.match(f.state.runCalls[0].options.task,/\{\{QA_PASSWORD\}\}/);
+	assert.ok(!JSON.stringify({session,calls:f.state.runCalls,events:f.state.events,result:await body(result)}).includes(fields.QA_PASSWORD));
+	assert.equal((await f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:{fields,authorizeLogin:true}})).status,409);
+});
+
+test('Founder credential setup survives vault failure and serializes competing credential/skip answers',async t=>{
+	const f=await founderLaunchFixture(t);
+	const created=await body(await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,accessDecision:'authenticated'}}));
+	const session=f.services.runs.get(created.id),store=f.services.secrets.store;
+	const input={fields:{QA_USERNAME:'fixture@example.invalid',QA_PASSWORD:'private fixture password'},authorizeLogin:true};
+	f.services.secrets.store=async()=>{throw new Error('Fixture vault unavailable');};
+	assert.equal((await f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:input})).status,500);
+	assert.equal(session.pendingQuestion.kind,'founder_launch_credentials');assert.equal(f.state.runCalls.length,0);
+	let release,entered;const waiting=new Promise(resolve=>{release=resolve;});const observed=new Promise(resolve=>{entered=resolve;});
+	t.after(()=>release());
+	f.services.secrets.store=async(...args)=>{entered();await waiting;return store(...args);};
+	const first=f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:input});await observed;
+	assert.equal((await f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:input})).status,409);
+	assert.equal((await f.request(`/api/sessions/${session.id}/answer`,{method:'POST',json:{answer:'Skip login'}})).status,409);
+	assert.equal(session.founder.scope.access.decision,'authenticated');release();
+	assert.equal((await first).status,200);await f.whenIdle();assert.equal(f.state.runCalls.length,1);
+});
+
+test('Founder early Skip login records public-only scope and qualified execution refuses authenticated setup',async t=>{
+	const f=await founderLaunchFixture(t);
+	const created=await body(await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,accessDecision:'authenticated'}}));
+	assert.equal((await f.request(`/api/sessions/${created.id}/answer`,{method:'POST',json:{answer:'Skip login'}})).status,200);
+	await f.whenIdle();const session=f.services.runs.get(created.id);
+	assert.equal(session.founder.scope.access.decision,'public_only');assert.equal(session.pendingQuestion,undefined);
+	assert.deepEqual(session.secretNames,[]);assert.match(f.state.runCalls[0].options.task,/public-only/);
+	const qualified=await founderLaunchFixture(t,{environment:{QASE_FOUNDER_REASONING_ENABLED:'true'}});
+	const catalog=await body(await qualified.request('/api/founder/catalog'));assert.equal(catalog.launch.authenticatedAvailable,false);
+	const rejected=await qualified.request('/api/founder/sessions',{method:'POST',json:{...qualified.input,accessDecision:'authenticated'}});
+	assert.equal(rejected.status,400);assert.match((await body(rejected)).error,/sign-in review is unavailable/);
+	assert.equal(qualified.state.runCalls.length,0);
+	f.services.configuration.getPublic=()=>({provider:'jev',model:'jev-1.13',ready:true});
+	assert.equal((await body(await f.request('/api/founder/catalog'))).launch.authenticatedAvailable,false);
+	assert.equal((await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,accessDecision:'authenticated'}})).status,400);
+});
+
 test('Founder Mode creates an authorized pending review and starts only from a target URL message', async t => {
 	const fixture = await startFixture();
 	t.after(() => fixture.close());

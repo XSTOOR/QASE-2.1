@@ -180,6 +180,8 @@ export function createFounderView({
 			['Primary goal', context.primaryGoal],
 			['Review lenses', `${scope.categories?.length ?? 0} categories`]
 		]) node.append(founderScopeItem(label, value));
+		if (scope.access?.decision) node.append(founderScopeItem('Review scope', scope.access.decision === 'public_only' ? 'Public pages only; signed-in pages excluded' : 'Public and signed-in product requested'));
+		if (scope.contextDecision?.mode) node.append(founderScopeItem('Business context source', scope.contextDecision.mode === 'provided' ? 'Supplied by the user' : 'Observed evidence and explicitly labeled assumptions'));
 		return node;
 	}
 

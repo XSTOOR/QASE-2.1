@@ -17,6 +17,7 @@ import {
 import { redact } from './secrets.js';
 import { publicationTodos } from './finalizationGuard.js';
 import {modeDiscoveryRequired,modeExplorationReadiness} from './modeDiscovery.js';
+import { founderLaunchProblems } from '../public/founderLaunch.js';
 
 const observationTypes = new Set(FOUNDER_OBSERVATION_TYPES);
 export const MAX_FOUNDER_STATE_BYTES = 1_000_000;
@@ -100,6 +101,12 @@ export function createFounderState(input = {}, now = () => Date.now()) {
 		throw new TypeError('You must confirm that you are authorized to review this target.');
 	}
 	const createdAt = new Date(now()).toISOString();
+	if (input.setupVersion !== undefined && input.setupVersion !== 1) throw new TypeError('Unsupported Founder setup version.');
+	const productContext = normalizeProductContext(input.productContext);
+	if (input.setupVersion === 1) {
+		const problems = founderLaunchProblems({ ...input, targetUrl: input.target?.url, productContext });
+		if (problems.length) throw new TypeError(`Before starting: ${problems.join('; ')}.`);
+	}
 	return {
 		schemaVersion: FOUNDER_SCHEMA_VERSION,
 		scope: {
@@ -109,7 +116,12 @@ export function createFounderState(input = {}, now = () => Date.now()) {
 				confirmedAt: createdAt,
 				policy: 'non_destructive_product_review'
 			},
-			productContext: normalizeProductContext(input.productContext),
+			productContext,
+			...(input.setupVersion === 1 ? {
+				setupVersion: 1,
+				contextDecision: { mode: input.contextMode, decidedAt: createdAt, source: 'user' },
+				access: { decision: input.accessDecision, authenticatedSurfaces: input.accessDecision === 'public_only' ? 'excluded' : 'requested', decidedAt: createdAt, source: 'user' }
+			} : {}),
 			categories: [...FOUNDER_CATEGORY_IDS],
 			// Trusted project context detected server-side (Phase 1). Never
 			// sourced from request bodies — see app.js detectFounderProjectContext.
@@ -454,6 +466,8 @@ export function buildFounderReportMarkdown(founderOrSession) {
 		...(report.target.url ? [`- **Target URL:** ${report.target.url}`] : []),
 		...(report.target.release ? [`- **Release:** ${report.target.release}`] : []),
 		...(report.target.environment ? [`- **Environment:** ${report.target.environment}`] : []),
+		...(founder.scope?.access?.decision ? [`- **Review scope:** ${founder.scope.access.decision === 'public_only' ? 'Public pages only; signed-in pages excluded.' : 'Public and signed-in product requested; coverage is limited to recorded evidence.'}`] : []),
+		...(founder.scope?.contextDecision?.mode ? [`- **Business context:** ${founder.scope.contextDecision.mode === 'provided' ? 'Supplied by the user.' : 'Observed evidence and explicitly labeled assumptions approved by the user.'}`] : []),
 		`- **Coverage:** ${report.coverage.categoriesReviewed.length}/${report.coverage.totalCategories} areas`,
 		`- **Evidence-backed observations:** ${report.coverage.evidenceBackedObservations}`,
 		'',

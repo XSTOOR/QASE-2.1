@@ -9,7 +9,7 @@
 <title>QASE — Autonomous quality assurance</title>
 <script src="theme.js?v=20261015-11"></script>
 <script src="studioMode.js?v=20261014-6"></script>
-<link rel="stylesheet" href="styles.css?v=20261106-1">
+<link rel="stylesheet" href="styles.css?v=20261107-2">
 <link rel="stylesheet" href="bugsView.css?v=20261014-6">
 <link rel="stylesheet" href="studio-workspace.css?v=20261015-6">
 <link rel="stylesheet" href="studio-embed.css?v=20261015-7">
@@ -1311,6 +1311,50 @@
         </label>
       </fieldset>
 
+      <fieldset class="founder-fieldset">
+        <legend>Review scope</legend>
+        <label class="field">
+          <span>Which pages should Qase review?</span>
+          <select id="founder-access" name="accessDecision" aria-describedby="founder-access-help">
+            <option value="public_only">Public pages only</option>
+            <option value="authenticated">Public pages and signed-in product</option>
+          </select>
+          <small id="founder-access-help">Signed-in pages are excluded. Qase will record that boundary and continue without asking for credentials.</small>
+        </label>
+      </fieldset>
+
+      <fieldset class="founder-fieldset">
+        <legend>Business context</legend>
+        <label class="field">
+          <span>How should Qase use business context?</span>
+          <select id="founder-context-mode" name="contextMode" aria-describedby="founder-context-help">
+            <option value="assumptions">Use visible evidence and label assumptions</option>
+            <option value="provided">I will supply the business context</option>
+          </select>
+          <small id="founder-context-help">Unknown customers, stage and business model remain explicit assumptions in the report.</small>
+        </label>
+        <div id="founder-business-fields" hidden>
+          <div class="field-row founder-context-row">
+            <label class="field">
+              <span>Product stage</span>
+              <input id="founder-stage" name="stage" maxlength="200" autocomplete="off" placeholder="MVP, beta, or established product">
+            </label>
+            <label class="field">
+              <span>Business model</span>
+              <input id="founder-business-model" name="businessModel" maxlength="500" autocomplete="off" placeholder="Subscription, marketplace, or internal tool">
+            </label>
+          </div>
+          <label class="field">
+            <span>Target customer</span>
+            <textarea id="founder-target-customer" name="targetCustomer" rows="2" maxlength="1000" placeholder="Who uses and buys the product?"></textarea>
+          </label>
+        </div>
+        <label class="field">
+          <span>Primary goal <small id="founder-goal-optional">(optional)</small></span>
+          <textarea id="founder-primary-goal" name="primaryGoal" rows="2" maxlength="1000" placeholder="The outcome this review should focus on"></textarea>
+        </label>
+      </fieldset>
+
       <label class="check founder-authorization">
         <input id="founder-authorization" type="checkbox" required>
         <span>I have permission to review this product.<small>Qase observes the product without changing it or taking external business actions.</small></span>
@@ -1338,11 +1382,7 @@
           </fieldset>
 
           <fieldset class="founder-fieldset">
-            <legend>Business Context <small class="founder-context-note">optional</small></legend>
-            <label class="field">
-              <span>Primary goal</span>
-              <textarea id="founder-primary-goal" name="primaryGoal" rows="2" maxlength="1000" placeholder="The outcome this review should optimize for…"></textarea>
-            </label>
+            <legend>Additional context <small class="founder-context-note">optional</small></legend>
             <label class="field">
               <span>Constraints</span>
               <textarea id="founder-constraints" name="constraints" rows="3" maxlength="2000" placeholder="Team, runway, compliance, or launch constraints…"></textarea>
@@ -1368,7 +1408,8 @@
       <div class="test-result" id="founder-form-error" role="alert" aria-live="assertive"></div>
     </div>
 
-    <footer class="modal-foot">
+    <footer class="modal-foot founder-modal-foot">
+      <p id="founder-launch-status" class="founder-launch-status" role="status" aria-live="polite">Complete the review setup to start.</p>
       <button class="btn btn-ghost" type="button" id="founder-cancel">Cancel</button>
       <button class="btn btn-primary founder-submit" type="submit" id="founder-submit">Start Product Review</button>
     </footer>
@@ -1716,6 +1757,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261107-1" type="module"></script>
+<script src="app.js?v=20261107-2" type="module"></script>
 </body>
 </html>

@@ -93,6 +93,8 @@ test('Founder state requires authorization and exposes the complete bounded taxo
 
 test('Founder complete tool workflow records all lenses, finalizes strategy, and exports a traceable report', async () => {
 	const candidate = founderSession();
+	recordFounderPublicOnlyDecision(candidate, fixedNow);
+	candidate.founder.scope.contextDecision = { mode: 'assumptions', source: 'user' };
 	candidate.todos = createFounderReviewTodos().map(todo => ({ ...todo, status: 'completed' }));
 	candidate.todos.at(-1).status = 'in_progress';
 	const persistence = runStore();
@@ -114,6 +116,8 @@ test('Founder complete tool workflow records all lenses, finalizes strategy, and
 	const markdown = buildFounderReportMarkdown(candidate);
 	assert.match(markdown, /30 \/ 60 \/ 90-day plan/);
 	assert.match(markdown, /Metrics & experiments/);
+	assert.match(markdown, /Public pages only; signed-in pages excluded/);
+	assert.match(markdown, /explicitly labeled assumptions approved by the user/);
 	for (const recommendation of candidate.founder.report.recommendations) {
 		for (const id of recommendation.evidenceObservationIds) {
 			assert.ok(candidate.founder.observations.some(observation => observation.id === id));

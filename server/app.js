@@ -51,7 +51,7 @@ import { normalizeQaScopeSelection } from '../public/qaScopeCatalog.js';
 import { createConfiguredTelegramNotifier } from './telegramNotifier.js';
 import { resolveDisplayTimeZone, formatFeedbackTimestamp } from './displayTime.js';
 import { createSqaState, createSqaTodoPlan, publicSqaCatalog, recordReviewerSqaObservation } from './sqaService.js';
-import { preflightSqaRuntime } from './sqaRuntime.js';
+import { preflightSqaRuntime, preflightFounderRuntime } from './sqaRuntime.js';
 import { changeSqaReview, assertSqaReviewIdle, assertSqaReviewRevision } from './sqaReview.js';
 import { sqaPublishedVersions, sqaVersion } from './sqaHistory.js';
 import { inspectSqaEvidence } from './sqaEvidence.js';
@@ -200,6 +200,25 @@ export function createApplication(options = {}) {
 	const isDraining = typeof options.isDraining === 'function' ? options.isDraining : () => false;
 	const mailer = options.mailer ?? createMailer({ environment, logger });
 	const activeTurns = new Set();
+	const founderSetupAnswers = new Set();
+	async function answerFounderSetup(session, response, action) {
+		if (session.pendingQuestion?.kind !== 'founder_launch_credentials' || founderSetupAnswers.has(session.id)) return response.status(409).json({ error: 'The review setup is already being submitted or answered. Refresh the saved run.' });
+		founderSetupAnswers.add(session.id);
+		try {
+			const latest = await services.runs.get(session.id);
+			if (latest?.pendingQuestion?.kind !== 'founder_launch_credentials'
+				|| latest.pendingQuestion.toolCallId !== session.pendingQuestion.toolCallId) {
+				return response.status(409).json({ error: 'The review setup has already been answered. Refresh the saved run.' });
+			}
+			return await action();
+		}
+		finally { founderSetupAnswers.delete(session.id); }
+	}
+	async function founderAuthenticatedAvailable() {
+		if (environment.QASE_FOUNDER_REASONING_ENABLED === 'true') return false;
+		const configuration = await services.configuration.getPublic();
+		return configuration?.provider !== 'jev';
+	}
 	const drytisIntegrationApi = options.drytisIntegrationApi;
 	if (drytisIntegrationApi !== undefined && typeof drytisIntegrationApi?.mount !== 'function') {
 		throw new TypeError('Drytis integration API must provide mount(app).');
@@ -757,14 +776,15 @@ export function createApplication(options = {}) {
 		response.json(publicQaTestCatalog());
 	});
 
-	app.get('/api/founder/catalog', (_request, response) => {
-		response.set('Cache-Control', 'private, max-age=300');
+	app.get('/api/founder/catalog', async (_request, response) => {
+		response.set('Cache-Control', 'no-store');
 		response.json({
 			schemaVersion: FOUNDER_SCHEMA_VERSION,
 			categories: FOUNDER_CATEGORIES,
 			observationTypes: FOUNDER_OBSERVATION_TYPES,
 			confidenceLevels: FOUNDER_LEVELS,
-			caveat: FOUNDER_CAVEAT
+			caveat: FOUNDER_CAVEAT,
+			launch: { setupVersion: 1, authenticatedAvailable: await founderAuthenticatedAvailable() }
 		});
 	});
 
@@ -2116,28 +2136,46 @@ export function createApplication(options = {}) {
 			// Detected project context is resolved server-side (never from the body)
 			// so the launcher cannot inject untrusted Studio or findings data.
 			const detectedContext = await founderDetectedContext(request);
+			const authenticatedAvailable = await founderAuthenticatedAvailable();
 			const founder = publicInput(() => createFounderState({
 				authorizationConfirmed: request.body?.authorizationConfirmed,
 				target: request.body?.target,
 				productContext: request.body?.productContext,
+				setupVersion: request.body?.setupVersion,
+				environmentId: request.body?.environmentId,
+				accessDecision: request.body?.accessDecision,
+				contextMode: request.body?.contextMode,
+				authenticatedAvailable,
 				projectContext: detectedContext
 			}));
 			const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
 			const deviceLandscape = request.body?.deviceLandscape === true;
 			const engine = isEngineId(request.body?.engine) ? request.body.engine : 'chromium';
-			const environment = await resolveEnvironmentForRun(services, request.body?.environmentId);
+			const reviewEnvironment = await resolveEnvironmentForRun(services, request.body?.environmentId);
+			const executionEngine = founder.scope.setupVersion === 1
+				? await preflightFounderRuntime({ environment: reviewEnvironment, engine }) : engine;
 			session = await services.runs.create(`Founder — ${founder.scope.target.name}`, {
-				device, deviceLandscape, engine, ownerUserId: request.auth?.userId,
+				device, deviceLandscape, engine: executionEngine, ownerUserId: request.auth?.userId,
 				cohort: cohortFor(request.auth?.role).cohort,
-				environmentId: environment?.envId, environmentSnapshot: environment
+				environmentId: reviewEnvironment?.envId, environmentSnapshot: reviewEnvironment
 			});
 			session.mode = 'founder';
 			session.founder = founder;
 			session.todos = createFounderReviewTodos();
 			session.device = device;
 			session.deviceLandscape = deviceLandscape;
-			session.environmentId = environment?.envId;
-			session.environmentSnapshot = environment;
+			session.environmentId = reviewEnvironment?.envId;
+			session.environmentSnapshot = reviewEnvironment;
+			if (founder.scope.setupVersion === 1) {
+				session.targetUrl = founder.scope.target.url;
+				if (founder.scope.access.decision === 'authenticated') {
+					session.pendingQuestion = {
+						toolCallId: randomUUID(), kind: 'founder_launch_credentials', credentialLike: true,
+						question: 'Provide a test account before the Founder review starts, or choose Skip login to review public pages only.'
+					};
+					await services.runs.setStatus(session, 'awaiting_input');
+				}
+			}
 			// `founder.created` intentionally skips relational child rewrites in the
 			// PostgreSQL repository. Persist the host-owned plan explicitly first so
 			// progress is visible before the model's first update_todo call.
@@ -2347,6 +2385,9 @@ export function createApplication(options = {}) {
 	app.post('/api/sessions/:id/message', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
+		if (session.pendingQuestion?.kind === 'founder_launch_credentials') {
+			return response.status(409).json({ error: 'Provide the test account through the secure form, or choose Skip login before starting.' });
+		}
 		if (session.sqa?.review?.status === 'in_review' || activeSqaReviews.has(session.id)) return response.status(409).json({ error: 'Human review is in progress. Publish the reviewed version before starting another model turn.' });
 		const text = String(request.body?.text ?? '').trim();
 		if (!text) {
@@ -2461,19 +2502,28 @@ export function createApplication(options = {}) {
 			response.status(400).json({ error: 'Answer is empty.' });
 			return;
 		}
-		if (session.mode === 'founder' && session.pendingQuestion.credentialLike === true) {
-			recordFounderPublicOnlyDecision(session);
-			answer = FOUNDER_PUBLIC_ONLY_ANSWER;
-		}
-		try {
-			const applied = applyHostDecision(session, answer);
-			if (session.pendingQuestion.hybridDecision && !applied) { response.status(409).json({ error: 'This host decision has already been answered. Refresh the saved run.' }); return; }
-		}
-		catch (error) { response.status(400).json({ error: error.message }); return; }
-		await services.runs.addMessage(session, { role: 'user', text: answer, kind: 'answer' });
-		recordHybridAnswer(session, answer);
-		startTurn(session, { resumeAnswer: answer });
-		response.json({ ok: true });
+		const founderLaunch = session.mode === 'founder' && session.pendingQuestion.kind === 'founder_launch_credentials';
+		const applyAnswer = async () => {
+			if (session.mode === 'founder' && session.pendingQuestion.credentialLike === true) {
+				recordFounderPublicOnlyDecision(session);
+				answer = FOUNDER_PUBLIC_ONLY_ANSWER;
+			}
+			try {
+				const applied = applyHostDecision(session, answer);
+				if (session.pendingQuestion.hybridDecision && !applied) { response.status(409).json({ error: 'This host decision has already been answered. Refresh the saved run.' }); return; }
+			}
+			catch (error) { response.status(400).json({ error: error.message }); return; }
+			await services.runs.addMessage(session, { role: 'user', text: answer, kind: 'answer' });
+			recordHybridAnswer(session, answer);
+			if (founderLaunch) {
+				session.pendingQuestion = undefined;
+				await services.runs.commit(session, 'question', { question: null });
+			}
+			startTurn(session, founderLaunch ? { task: `Review ${session.targetUrl}. ${answer}` } : { resumeAnswer: answer });
+			response.json({ ok: true });
+		};
+		if (founderLaunch) return answerFounderSetup(session, response, applyAnswer);
+		await applyAnswer();
 	});
 
 	/** Credential answers are stored in the vault; only placeholders reach the agent. */
@@ -2490,37 +2540,60 @@ export function createApplication(options = {}) {
 			response.status(400).json({ error: 'No credentials supplied.' });
 			return;
 		}
-
-		let authGrant;
-		try { authGrant = prepareHybridAuthGrant(session, request.body); }
-		catch (error) { response.status(400).json({ error: error.message }); return; }
-		const names = await services.secrets.store(session.id, fields);
-		if (names.length === 0) {
-			response.status(400).json({ error: 'No usable credentials supplied.' });
-			return;
+		const founderLaunch = session.mode === 'founder' && session.pendingQuestion.kind === 'founder_launch_credentials';
+		if (session.mode === 'founder' && session.founder?.scope?.setupVersion === 1
+			&& session.founder.scope.access?.decision === 'public_only') {
+			return response.status(409).json({ error: 'This review is limited to public pages. Start a separate review to include sign-in.' });
 		}
-		session.secretNames = await services.secrets.names(session.id);
-		if (authGrant) session.hybrid.authentication = authGrant;
-		if (authGrant && session.hybrid.pendingDecision?.kind === 'credentials') session.hybrid.pendingDecision = undefined;
+		if (founderLaunch && (request.body.authorizeLogin !== true
+			|| !['QA_USERNAME', 'QA_PASSWORD'].every(key => typeof fields[key] === 'string' && fields[key].trim() && fields[key].length <= 4096)
+			|| Object.keys(fields).some(key => !['QA_USERNAME', 'QA_PASSWORD'].includes(key)))) {
+			return response.status(400).json({ error: 'Provide both test-account fields and approve sign-in, or choose Skip login.' });
+		}
+		if (founderLaunch && !await founderAuthenticatedAvailable()) {
+			return response.status(409).json({ error: 'Sign-in review is unavailable in the current execution mode. Choose Skip login for a public-only review.' });
+		}
 
-		const note = String(request.body?.note ?? '').trim();
-		const placeholders = names.map(name => `{{${name}}}`).join(', ');
-		const answer = [
-			'The credentials are stored in the host vault. You will not be shown the values.',
-			authGrant?.loginEndpoint && `The owner approved exactly this sign-in API endpoint for one credential POST: ${authGrant.loginEndpoint}. This does not authorize other writes or navigation outside the target origin.`,
-			authGrant ? 'The owner authorized one test-account sign-in on the target origin. Open the observed sign-in page, then use browser_authenticate with no arguments. Continue read-only testing after verified access. Other writes remain forbidden.' : `Fill the sign-in form using these literal placeholders as the browser_fill value: ${placeholders}.`,
-			'The host substitutes the real secret at the keyboard. Never print, repeat or report a credential value.',
-			note && `Note from the user: ${note}`
-		].filter(Boolean).join(' ');
+		const applyCredentials = async () => {
+			let authGrant;
+			try { authGrant = prepareHybridAuthGrant(session, request.body); }
+			catch (error) { response.status(400).json({ error: error.message }); return; }
+			const names = await services.secrets.store(session.id, fields);
+			if (names.length === 0) {
+				response.status(400).json({ error: 'No usable credentials supplied.' });
+				return;
+			}
+			session.secretNames = await services.secrets.names(session.id);
+			if (authGrant) session.hybrid.authentication = authGrant;
+			if (authGrant && session.hybrid.pendingDecision?.kind === 'credentials') session.hybrid.pendingDecision = undefined;
 
-		await services.runs.addMessage(session, {
-			role: 'user',
-			kind: 'credentials',
-			text: `Provided ${names.length} credential${names.length === 1 ? '' : 's'} securely: ${placeholders}`
-		});
-		await services.runs.commit(session, 'secrets', { secretNames: session.secretNames });
-		startTurn(session, { resumeAnswer: answer });
-		response.json({ ok: true, secretNames: names });
+			const note = String(request.body?.note ?? '').trim();
+			const placeholders = names.map(name => `{{${name}}}`).join(', ');
+			const answer = [
+				'The credentials are stored in the host vault. You will not be shown the values.',
+				founderLaunch && 'The owner approved test-account sign-in on the declared target. Continue read-only review after sign-in; other origins remain out of scope.',
+				authGrant?.loginEndpoint && `The owner approved exactly this sign-in API endpoint for one credential POST: ${authGrant.loginEndpoint}. This does not authorize other writes or navigation outside the target origin.`,
+				authGrant ? 'The owner authorized one test-account sign-in on the target origin. Open the observed sign-in page, then use browser_authenticate with no arguments. Continue read-only testing after verified access. Other writes remain forbidden.' : `Fill the sign-in form using these literal placeholders as the browser_fill value: ${placeholders}.`,
+				'The host substitutes the real secret at the keyboard. Never print, repeat or report a credential value.',
+				note && `Note from the user: ${note}`
+			].filter(Boolean).join(' ');
+
+			await services.runs.addMessage(session, {
+				role: 'user',
+				kind: 'credentials',
+				text: `Provided ${names.length} credential${names.length === 1 ? '' : 's'} securely: ${placeholders}`
+			});
+			await services.runs.commit(session, 'secrets', { secretNames: session.secretNames });
+			if (founderLaunch) {
+				session.founder.scope.access.credentialsProvidedAt = new Date().toISOString();
+				session.pendingQuestion = undefined;
+				await services.runs.commit(session, 'question', { question: null });
+			}
+			startTurn(session, founderLaunch ? { task: `Review ${session.targetUrl}. ${answer}` } : { resumeAnswer: answer });
+			response.json({ ok: true, secretNames: names });
+		};
+		if (founderLaunch) return answerFounderSetup(session, response, applyCredentials);
+		await applyCredentials();
 	});
 
 	app.post('/api/sessions/:id/stop', async (request, response) => {

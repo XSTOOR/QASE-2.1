@@ -13,6 +13,7 @@ const environment = { envId:'ENV-UI-FIXTURE', active:true, platform:'windows', d
 
 // Real dashboard + HTTP handlers, isolated in-memory storage and a stub model.
 const sessions = new Map();
+const vaults = new Map();
 const turns = [];
 const listeners = new Map();
 const publish = (s, type, payload = {}) => { for (const listener of listeners.get(s.id) ?? []) listener({ type, sessionId:s.id, ts:Date.now(), ...payload }); };
@@ -32,7 +33,7 @@ const services = {
 	},
 	events:{publish,async subscribe(id,listener){await new Promise(resolve=>setTimeout(resolve,150));const group=listeners.get(id)??new Set();group.add(listener);listeners.set(id,group);return()=>group.delete(listener);}},
 	configuration:{getPublic:()=>config,save:()=>config,testConnection:async()=>({ok:true,models:['dashboard-fixture']})},
-	secrets:{clear(){},names:()=>[],store:()=>[]}, reports:{buildMarkdown:buildReportMarkdown},
+	secrets:{clear(id){vaults.delete(id);},names:id=>Object.keys(vaults.get(id)??{}),store(id,fields){vaults.set(id,{...fields});return Object.keys(fields);}}, reports:{buildMarkdown:buildReportMarkdown},
 	agent:{ensureRuntime(){},async runTurn(s,options){turns.push({mode:s.mode,options});await services.runs.setStatus(s,'idle');},closeBrowser:async()=>{},getLiveState:()=>({running:false}),stop(){},invalidateIdleRuntimes:()=>({kept:0})},
 	environments: {
 		seed(){}, async list(){ return [environment]; },
@@ -57,8 +58,11 @@ const output = path.resolve(process.env.QASE_SYSTEM_UI_OUTPUT||'test-results/sys
 // Current UI qualification: real handlers/assets/SSE and browser; injected
 // execution services. Actual live-model evidence is replayed only for export.
 const browser=await chromium.launch();const errors=[],checks=[];
+let page;
+const failedResponses=[];
 try{
- const page=await browser.newPage({viewport:{width:1440,height:1000}});
+ page=await browser.newPage({viewport:{width:1440,height:1000}});
+ page.on('response',async response=>{if(response.status()>=400)failedResponses.push({path:new URL(response.url()).pathname,status:response.status(),error:await response.json().then(value=>value.error).catch(()=>undefined)});});
  await page.addInitScript(envId=>localStorage.setItem('qase.activeTestEnvironment',JSON.stringify({envId})),environment.envId);
  page.on('pageerror',error=>errors.push(error.message));
  await page.route('**/api/profile',route=>route.fulfill({json:{email:'fixture@example.test',displayName:'Fixture owner',profile:{timezone:'Asia/Kolkata'}}}));
@@ -75,6 +79,15 @@ try{
    await page.locator('#sqa-target-environment').fill('isolated local fixture');
   }
   await page.locator(`#${mode}-authorization`).check();
+  if(mode==='founder'){
+   await page.locator('#founder-context-mode').selectOption('provided');
+   assert.equal(await page.locator('#founder-submit').isDisabled(),true);
+   for(const [id,value]of [['stage','Beta'],['business-model','Subscription'],['target-customer','Small product teams'],['primary-goal','Improve first-run completion']])await page.locator(`#founder-${id}`).fill(value);
+   await page.locator('#founder-context-mode').selectOption('assumptions');
+   assert.equal(await page.locator('#founder-business-fields').isHidden(),true);
+   assert.equal(await page.locator('#founder-stage').evaluate(input=>input.required),false);
+   await page.locator('#founder-context-mode').selectOption('provided');
+  }
   await page.waitForFunction(mode=>!document.querySelector(`#${mode}-submit`).disabled,mode);
   await page.locator(`#${mode}-submit`).click();await page.locator(`#${mode}-start`).waitFor({state:'hidden'});
   await page.locator(`#tab-${mode}`).waitFor({state:'visible'});
@@ -83,10 +96,88 @@ try{
    assert.ok(['web_application','user_interface'].every(attribute=>session.sqa.scope.attributes.includes(attribute)),'Recommended website review must include its browser-app attributes.');
    assert.ok(['001','002','003','004','005','006'].every(suffix=>session.sqa.scope.applicableControlIds.includes(`SQA-WEB-${suffix}`)),'The six browser smoke controls must not disappear from the default scope.');
   }
+  if(mode==='founder'){
+   assert.equal(session.founder.scope.access.decision,'public_only');
+   assert.equal(session.founder.scope.contextDecision.mode,'provided');
+   assert.equal(session.founder.scope.productContext.targetCustomer,'Small product teams');
+  }
   await page.reload();await page.locator(`#tab-${mode}`).waitFor({state:'visible'});
   assert.ok(new URL(page.url()).hash.includes('/runs/'));assert.ok(!new URL(page.url()).hash.endsWith('/results'));
   checks.push(`${mode}: launcher authorization, API creation, reload and retained run route`);
  }
+
+ // Scope and context choices use the real HTTP handlers; no model is executed.
+ await page.locator('#new-founder').click();
+ await page.locator('#founder-target-url').fill(targetUrl);
+ await page.locator('#founder-authorization').check();
+ await page.locator('#founder-access').selectOption('authenticated');
+ const beforeCredentials=turns.length;
+ await page.locator('#founder-submit').click();
+ await page.locator('.cred-form').waitFor();
+ assert.equal(turns.length,beforeCredentials,'No browser/model turn starts before secure setup is answered.');
+ const authenticated=[...sessions.values()].find(s=>s.pendingQuestion?.kind==='founder_launch_credentials');
+ assert.ok(authenticated);assert.equal(authenticated.founder.scope.contextDecision.mode,'assumptions');
+ await page.reload();await page.locator('.cred-form').waitFor();
+ const password='Local Founder UI fixture password';
+ await page.locator('.cred-form').getByLabel('Username or email',{exact:true}).fill('founder-fixture@example.invalid');
+ await page.locator('.cred-form').getByLabel('Password',{exact:true}).fill(password);
+ publish(authenticated,'question',{question:authenticated.pendingQuestion});
+ await page.waitForFunction(()=>document.querySelector('.cred-form input[type="password"]')?.value.length>0);
+ assert.equal(await page.locator('.cred-form').getByLabel('Password',{exact:true}).inputValue(),password,'A repeated question must preserve unsent values in the current vault form.');
+ await page.getByRole('button',{name:'Store and continue',exact:true}).click();
+ assert.equal(turns.length,beforeCredentials,'Native consent validation prevents dispatch.');
+ assert.equal(vaults.has(authenticated.id),false);
+ await page.locator('.cred-form input[type="checkbox"]').check();
+ await page.getByRole('button',{name:'Store and continue',exact:true}).click();
+ await page.locator('.cred-form').waitFor({state:'hidden'});
+ assert.equal(turns.length,beforeCredentials+1);
+ assert.match(turns.at(-1).options.task,/\{\{QA_PASSWORD\}\}/);
+ assert.ok(!JSON.stringify({sessions:[...sessions.values()],turns}).includes(password));
+ checks.push('founder: authenticated setup survives reload, waits for consent and vault storage, then starts once with placeholders only');
+
+ await page.locator('#new-founder').click();
+ await page.locator('#founder-target-url').fill(targetUrl);
+ await page.locator('#founder-authorization').check();
+ await page.locator('#founder-access').selectOption('authenticated');
+ await page.locator('#founder-submit').click();await page.locator('.cred-form').waitFor();
+ const skipped=[...sessions.values()].find(s=>s.pendingQuestion?.kind==='founder_launch_credentials');
+ await page.getByRole('button',{name:'Skip login',exact:true}).click();
+ await page.locator('.cred-form').waitFor({state:'hidden'});
+ assert.equal(skipped.founder.scope.access.decision,'public_only');assert.equal(vaults.has(skipped.id),false);
+ checks.push('founder: Skip login saves an early public-only boundary without storing credentials');
+
+ // Restored selections can finish loading after all form inputs are complete.
+ const delayed=await browser.newPage({viewport:{width:1440,height:1000}});
+ delayed.on('pageerror',error=>errors.push(error.message));
+ await delayed.route('**/api/profile',route=>route.fulfill({json:{email:'fixture@example.test',displayName:'Fixture owner',profile:{timezone:'Asia/Kolkata'}}}));
+ await delayed.route('**/api/memory*',route=>route.fulfill({json:[]}));
+ await delayed.addInitScript(envId=>localStorage.setItem('qase.activeTestEnvironment',JSON.stringify({envId})),environment.envId);
+ let releaseDevice;
+ const deviceReady=new Promise(resolve=>{releaseDevice=resolve;});
+ await delayed.route(url=>url.pathname==='/api/environments',async route=>{await deviceReady;await route.continue();});
+ try{
+  await delayed.goto(`${base}/#/runs/${seed.id}`);
+  await delayed.locator('#new-founder').click();
+  await delayed.locator('#founder-target-url').fill(targetUrl);
+  await delayed.locator('#founder-authorization').check();
+  assert.equal(await delayed.locator('#founder-submit').isDisabled(),true);
+  assert.match(await delayed.locator('#founder-launch-status').textContent(),/choose a device and browser/);
+  releaseDevice();
+  await delayed.waitForFunction(()=>!document.querySelector('#founder-submit').disabled);
+  await delayed.locator('#founder-target-url').fill('not-a-url');
+  assert.equal(await delayed.locator('#founder-submit').isDisabled(),true);
+  await delayed.locator('#founder-target-url').fill(targetUrl);
+  await delayed.waitForFunction(()=>!document.querySelector('#founder-submit').disabled);
+  await delayed.screenshot({path:path.join(output,'founder-setup-desktop.png')});
+  await delayed.setViewportSize({width:390,height:844});
+  assert.ok(await delayed.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+  assert.ok(await delayed.locator('#founder-launch-status').evaluate(node=>{
+   const bounds=node.getBoundingClientRect();return bounds.width>0&&bounds.height>0&&bounds.left>=0&&bounds.right<=innerWidth&&bounds.top>=0&&bounds.bottom<=innerHeight;
+  }),'The launch-readiness message must remain visible beside the submit actions on mobile.');
+  await delayed.screenshot({path:path.join(output,'founder-setup-mobile.png')});
+  checks.push('founder: invalid URL and missing device block launch; delayed device restoration enables it on desktop/mobile');
+ }finally{releaseDevice();await delayed.close();}
+
  for(const mode of launchOnly?[]:['qa','sqa','founder']){
   const file=path.resolve(process.env.QASE_SYSTEM_QUALIFICATION_OUTPUT||'test-results/system-qualification',mode,'checkpoint.json');
   const session=JSON.parse(fs.readFileSync(file,'utf8'));assert.equal(session.status,'done');
@@ -140,4 +231,9 @@ try{
  const result={passed:true,checks,pageErrors:errors,reportReplay:launchOnly?'not requested':'passed',execution:launchOnly?'Real launch handlers and SSE with injected execution; no live-model qualification':'Injected frontend services; reports from separately recorded live-model fixtures'};
  fs.writeFileSync(path.join(output,'result.json'),JSON.stringify(result,null,2));
  console.log(JSON.stringify(result,null,2));
+}catch(error){
+ const state=await page?.evaluate(()=>({route:location.hash,toasts:document.querySelector('#toasts')?.textContent,question:document.querySelector('#question-slot')?.textContent})).catch(()=>null);
+ const result={passed:false,checks,pageErrors:errors,failedResponses,error:error.message,state,turns:turns.length};
+ fs.writeFileSync(path.join(output,'result.json'),JSON.stringify(result,null,2));console.error(JSON.stringify(result,null,2));
+ await page?.screenshot({path:path.join(output,'failure.png')}).catch(()=>{});throw error;
 }finally{for(const response of streams.values())if(!response.writableEnded)response.end();await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
