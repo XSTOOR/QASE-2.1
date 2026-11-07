@@ -172,6 +172,7 @@ const el = {
 	sqaView: $('sqa-view'),
 	founderTab: $('tab-founder'),
 	founderView: $('founder-view'),
+	founderProgress: $('founder-progress'),
 	countPlan: $('count-plan'),
 	countFindings: $('count-findings'),
 	countSqa: $('count-sqa'),
@@ -403,8 +404,13 @@ const founderView = createFounderView({
 	onClearSelection: () => founderSaveSelections([]),
 	onSendToStudio: founderSendToStudio,
 	onExportHandoff: founderExportHandoff,
+	onContinue: founderContinue,
+	onReviewActivity: ()=>{activateDetailTab($('tab-activity'));setWorkspaceView('results');},
+	onAnswer: ()=>{setWorkspaceView('agent');el.questionSlot.scrollIntoView({block:'nearest'});el.questionSlot.querySelector('input, textarea, button')?.focus();},
+	onOpenSettings: ()=>{void openSettings().catch(fail);},
 	elements: {
 		founderView: el.founderView,
+		founderProgress: el.founderProgress,
 		countFounder: el.countFounder,
 		reportView: el.reportView
 	},
@@ -513,6 +519,41 @@ async function founderExportHandoff(mode) {
 }
 const renderFounder = founderView.render;
 const renderFounderReportTab = founderView.renderReportTab;
+
+const founderProgressRequests=new Map(),founderContinueRequests=new Map();
+let founderProgressTimer;
+function scheduleFounderProgress(){
+	if(state.session?.mode!=='founder')return;
+	clearTimeout(founderProgressTimer);
+	founderProgressTimer=setTimeout(()=>{void refreshFounderProgress(state.sessionId);},150);
+}
+async function refreshFounderProgress(id){
+	if(!id||state.session?.mode!=='founder'||state.sessionId!==id)return;
+	const existing=founderProgressRequests.get(id);if(existing){existing.dirty=true;return existing.promise;}
+	const session=state.session,request={dirty:false};founderProgressRequests.set(id,request);
+	request.promise=(async()=>{
+		try{
+			const progress=await api(`/sessions/${id}/founder/progress`);
+			if(state.session===session){session.founderProgress=progress;renderFounder();renderHeader();}
+		}catch{/* SSE reconnect retains the last saved progress; continuation fetches fresh state. */}
+		finally{founderProgressRequests.delete(id);if(request.dirty&&state.session===session)scheduleFounderProgress();}
+	})();
+	return request.promise;
+}
+async function founderContinue(id=state.sessionId){
+	if(founderContinueRequests.has(id))return founderContinueRequests.get(id);
+	const session=state.session;
+	const work=(async()=>{
+		const progress=await api(`/sessions/${id}/founder/progress`);
+		if(state.session===session){session.founderProgress=progress;renderFounder();}
+		if(!progress.recovery?.available)throw new Error(progress.recovery?.reason||'Review saved progress before continuing.');
+		const result=await api(`/sessions/${id}/founder/continue`,{method:'POST',body:JSON.stringify({expectedCheckpoint:progress.recovery.token})});
+		if(state.session===session&&!session.founder?.finalizedAt){session.founderProgress=result.progress;renderFounder();renderHeader();}
+		scheduleFounderProgress();return result;
+	})();
+	founderContinueRequests.set(id,work);
+	try{return await work;}finally{if(founderContinueRequests.get(id)===work)founderContinueRequests.delete(id);}
+}
 
 /* ── Bug tracker (standalone view) ───────────────────────────────── */
 
@@ -1690,6 +1731,7 @@ function renderHeader() {
 		})().catch(fail); };
 		action.onclick = () => {
 			if (guidance.destination === 'results') void pageRouter.navigate({ name: 'results', runId: state.sessionId });
+			else if(guidance.destination==='founder'){activateDetailTab($('tab-founder'));setWorkspaceView('results');}
 			else if (guidance.destination === 'progress') { activateDetailTab($('tab-plan')); setWorkspaceView('results'); }
 			else if (guidance.destination === 'question') { setWorkspaceView('agent'); el.questionSlot.scrollIntoView({ block: 'nearest' }); el.questionSlot.querySelector('input, textarea, button')?.focus(); }
 			else if (guidance.destination === 'conversation') { setWorkspaceView('agent'); el.transcript.scrollTop = el.transcript.scrollHeight; el.composerInput.focus(); }
@@ -1702,7 +1744,7 @@ function renderHeader() {
 	el.statusChip.hidden = !hasRun;
 	el.runSummary.hidden = !hasRun;
 	el.tokenText.classList.remove('is-pending');
-	el.tokenText.textContent = 'Run progress';
+	el.tokenText.textContent = session.mode==='founder'?'Review plan':'Run progress';
 	el.tokenText.title = '';
 	// LIVE pill: only while the run is actively working.
 	el.livePill.hidden = session.status !== 'running';
@@ -1768,7 +1810,8 @@ function renderProgressCard() {
 	const session = state.session;
 	const { total, done, percent } = runProgress();
 	el.progressSteps.textContent = total > 0 ? `${done}/${total}` : '';
-	el.progressPct.textContent = percent !== undefined ? `${percent}%` : '';
+	el.progressPct.textContent = session.mode==='founder'&&total>0?'plan steps':percent !== undefined ? `${percent}%` : '';
+	el.progressBar.setAttribute('aria-label',session.mode==='founder'?'Review plan steps':'Run progress');
 	if (percent !== undefined) {
 		el.progressBar.setAttribute('aria-valuenow', String(percent));
 		el.progressBar.firstElementChild.style.width = `${percent}%`;
@@ -4831,6 +4874,7 @@ function connect(id) {
 }
 
 function handleEvent(event) {
+	if(['activity','todos','question','status','founder.created','founder.observation','founder.report_draft','founder.finalized'].includes(event.type))scheduleFounderProgress();
 	const session = state.session;
 	switch (event.type) {
 		case 'frame':
@@ -8463,8 +8507,11 @@ el.stopRun.onclick = async () => {
 };
 el.resumeRun.onclick = async () => {
 	if (workflowStatus(state.session).resumeBlocked) { toast(workflowStatus(state.session).resumeBlocked, 'bad'); return; }
+	const founderFocus=state.session?.mode==='founder'&&document.activeElement===el.resumeRun;
 	el.resumeRun.disabled = true;
+	if(founderFocus)document.getElementById('founder-progress-title')?.focus({preventScroll:true});
 	try {
+		if(state.session?.mode==='founder'){await founderContinue();return;}
 		await api(`/sessions/${state.sessionId}/message`, {
 			method: 'POST',
 			body: JSON.stringify({ text: 'continue' })

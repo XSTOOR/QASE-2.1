@@ -4254,6 +4254,22 @@ body.studio-workspace #founder-start .founder-modal-foot { flex-wrap: wrap; gap:
 .founder-hero,
 .founder-section,
 .founder-scope,
+.founder-progress { margin: 0 0 12px; padding: 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-chat); color: var(--text); overflow-wrap: anywhere; }
+.founder-progress[hidden] { display: none; }
+.founder-progress h3, .founder-progress p { margin: 0 0 10px; }
+.founder-progress h3 { font-size: 14px; }
+.founder-progress-state { font-size: 13px; font-weight: 600; }
+.founder-progress-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 10px; margin: 14px 0; padding: 0; list-style: none; }
+.founder-progress-steps li { min-width: 0; padding: 0 0 8px; border-bottom: 2px solid var(--border); font-size: 12px; }
+.founder-progress-steps small { display: block; margin-top: 3px; color: var(--text-secondary); font-size: 11px; }
+.founder-progress-steps [aria-current="step"] { border-color: var(--accent); font-weight: 600; }
+.founder-progress-steps [data-status="complete"] { border-color: var(--success); }
+.founder-progress-counts { font-size: 12px; font-variant-numeric: tabular-nums; }
+.founder-progress-detail { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.founder-progress-error { color: var(--danger); font-size: 12px; line-height: 1.5; }
+.founder-progress button { min-height: 44px; max-width: 100%; white-space: normal; touch-action: manipulation; }
+.founder-progress :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
 .founder-pending {
   overflow: hidden;
   border: 1px solid #3f3f46;

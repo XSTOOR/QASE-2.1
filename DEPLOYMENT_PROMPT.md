@@ -4,8 +4,8 @@ This is the operator runbook for the reviewed release targeting **https://qase.d
 
 ## Required release
 
-- Release ID: `qase-founder-sqa-2026-11-07-report-r1`.
-- UI version: `20261107-3`, adding durable, bounded Founder report generation on the configured-provider path to the integrated SQA/Founder workflows. See [Founder report completion](docs/founder-report-completion-2026-11-07.md), [Founder setup](docs/founder-setup-2026-11-07.md), [SQA execution efficiency](docs/sqa-execution-efficiency-2026-11-06.md) and [hybrid integration qualification](docs/sqa-founder-hybrid-integration-2026-11-05.md) for validation scope and remaining gates.
+- Release ID: `qase-founder-sqa-2026-11-07-progress-r1`.
+- UI version: `20261107-4`, adding host-derived Founder progress, guarded saved-work continuation and bounded investigation context. See [Founder progress and recovery](docs/founder-progress-recovery-2026-11-07.md), [Founder report completion](docs/founder-report-completion-2026-11-07.md), [Founder setup](docs/founder-setup-2026-11-07.md) and [SQA execution efficiency](docs/sqa-execution-efficiency-2026-11-06.md) for validation scope and remaining gates.
 - Integration baselines: `6f4a4d8c5a29642ec00a368e5014ddfcf38f09de` on `Push-SQA` and `21aeb0b1968e8a15a86290578c93ff67ca7486e2` on `codex/hybrid-production-readiness`. Deploy only a verified descendant with its full SHA recorded as `EXPECTED_SHA`; a release ID alone is not source identity.
 - The application root is the extracted folder containing `package.json`, `public/`, and `server/`. It is a Node.js Express application serving static ES modules, NOT a Next.js or Vite build. Do not deploy the parent workspace, an old `apps/` project, or a generated `dist/` directory.
 - Run Node.js 22 or 24. Keep `package-lock.json` and Playwright `1.62.0` unchanged; use `npm ci`, not dependency upgrades.

@@ -9,10 +9,10 @@
 <title>QASE — Autonomous quality assurance</title>
 <script src="theme.js?v=20261015-11"></script>
 <script src="studioMode.js?v=20261014-6"></script>
-<link rel="stylesheet" href="styles.css?v=20261107-3">
+<link rel="stylesheet" href="styles.css?v=20261107-4">
 <link rel="stylesheet" href="bugsView.css?v=20261014-6">
 <link rel="stylesheet" href="studio-workspace.css?v=20261015-6">
-<link rel="stylesheet" href="studio-embed.css?v=20261015-7">
+<link rel="stylesheet" href="studio-embed.css?v=20261107-4">
 <link rel="stylesheet" href="journey.css?v=20261015-4">
 <link rel="stylesheet" href="matrixPicker.css?v=20261015-5">
 <link rel="stylesheet" href="resultsPage.css?v=20261015-8">
@@ -501,7 +501,7 @@
       <section class="tab-pane" id="pane-bugs" data-pane="bugs" role="tabpanel" aria-label="Bugs"><div class="feed" id="bugs-list" role="list"><div class="feed-empty">No bugs detected yet — use Report bug on a run with findings.</div></div></section>
       <section class="tab-pane" id="pane-report" data-pane="report" role="tabpanel" aria-labelledby="tab-report"><div class="feed" id="report-view"></div></section>
       <section class="tab-pane" id="pane-sqa" data-pane="sqa" role="tabpanel" aria-labelledby="tab-sqa"><div class="feed sqa-view" id="sqa-view" aria-live="polite"></div></section>
-      <section class="tab-pane" id="pane-founder" data-pane="founder" role="tabpanel" aria-labelledby="tab-founder"><div class="feed founder-view" id="founder-view" aria-live="polite"></div></section>
+      <section class="tab-pane" id="pane-founder" data-pane="founder" role="tabpanel" aria-labelledby="tab-founder"><section id="founder-progress" hidden></section><div class="feed founder-view" id="founder-view"></div></section>
     </div>
 
   </aside>
@@ -1757,6 +1757,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261107-3" type="module"></script>
+<script src="app.js?v=20261107-4" type="module"></script>
 </body>
 </html>

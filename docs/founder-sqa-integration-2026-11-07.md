@@ -98,9 +98,13 @@ production activation remain part of Phase 8.
    live gateway. Autonomous investigation still reaches the fixture ceiling;
    that efficiency issue remains open for Phases 5 and 8. See
    [Phase 4 report completion](founder-report-completion-2026-11-07.md).
-5. Clear progress, actionable pause reasons and publication recovery controls;
-   reduce repeated investigation context and qualify the complete flow within
-   an explicit time/token budget.
+5. Implemented and accepted locally: real stage/section counters, actionable
+   pause reasons, guarded continuation, durable local checkpoints/usage and
+   reduced repeated investigation context. Full regression: 2,354 passed,
+   zero failed, 33 skipped; final durability checks: 39 passed. Live tests found
+   and corrected a restart persistence gap, but complete live execution within
+   the unchanged time/token ceilings remains an open qualification gate.
+   See [Phase 5 progress and recovery](founder-progress-recovery-2026-11-07.md).
 6. Clickable evidence, visible assumptions, section navigation and preserved
    focus, scroll, disclosure and selection state.
 7. Reliable recommendation saving and immediate Studio delivery feedback,

@@ -20,6 +20,7 @@ import { buildSqaContext, buildSqaSynthesisContext } from './sqaPrompt.js';
 import { createSqaTools, finishReadiness as sqaFinishReadiness } from './sqaTools.js';
 import { modeExplorationReadiness } from './modeReasoningRuntime.js';
 import {buildModeExecutionContext} from './modeReasoningContext.js';
+import {projectFounderMessages,rememberFounderEvidence} from './founderInvestigation.js';
 import {founderDraftProgress,usesFounderDraft,initializeFounderReportGeneration,founderDraftTools} from './founderReportDraft.js';
 import { isCredentialQuestion } from '../public/questionPresentation.js';
 import { clearSecrets, redact, secretNames } from './secrets.js';
@@ -760,9 +761,9 @@ async function constructRuntime(session, runStore) {
 					: record.hybrid ? record.hybrid.context(liveBrowserUrl(record)) : buildQaContext(session, liveBrowserUrl(record)),
 				session
 				);
-				if(record.modeReasoning){
+				if(record.modeReasoning||session.founder?.reportGeneration){
 					const trusted=`Workspace root: ${rootPath}\n\n${context.trim()}`;
-					const contexts=record.modePromptContexts??=[];
+					const contexts=record.modeReasoning?(record.modePromptContexts??=[]):(record.founderPromptContexts??=[]);
 					if(!contexts.includes(trusted))contexts.push(trusted);
 					if(contexts.length>12)contexts.splice(1,1);
 				}
@@ -862,7 +863,9 @@ async function constructRuntime(session, runStore) {
 			.join('\n')}\n`;
 		if(!isQualified&&usesFounderDraft(session)){
 			const originalChat=runtime.cleanSlateService.chat.bind(runtime.cleanSlateService);
-			runtime.cleanSlateService.chat=(messages,options={})=>originalChat(messages,Array.isArray(options.tools)?{...options,tools:founderDraftTools(session,options.tools,record.founderDraftSchema,{synthesis:Boolean(record.founderSynthesis)})}:options);
+			runtime.cleanSlateService.chat=(messages,options={})=>Array.isArray(options.tools)
+				?originalChat(projectFounderMessages(messages,session,{trustedContexts:record.founderPromptContexts||[],synthesis:Boolean(record.founderSynthesis)}),{...options,tools:founderDraftTools(session,options.tools,record.founderDraftSchema,{synthesis:Boolean(record.founderSynthesis)})})
+				:originalChat(messages,options);
 		}
 
 		// The SDK's stream reports tool_result but never tool_start, so the only
@@ -1447,6 +1450,7 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 						summary: summariseResult(part.toolName, result)
 					});
 					openActivities.delete(part.toolCallId);
+					if(ok&&session.mode==='founder'&&session.founder.reportGeneration)await rememberFounderEvidence(session,runStore,{toolName:part.toolName,activityId:id,result,currentUrl:liveBrowserUrl(record)});
 					snapshots.maybePersist();
 					const automaticSqaCloseout = session.mode === 'sqa' && !sqaAutomaticCloseoutAttempted
 						? sqaAutomaticBudgetCloseoutInput(result, session)

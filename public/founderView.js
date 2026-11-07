@@ -1,4 +1,5 @@
 import { renderModeReasoning } from './modeReasoningView.js';
+import { createFounderProgressView } from './founderProgressView.js';
 import {
 	collectFounderAssumptions,
 	describeFounderLifecycle,
@@ -26,6 +27,10 @@ export function createFounderView({
 	onClearSelection,
 	onSendToStudio,
 	onExportHandoff,
+	onContinue,
+	onReviewActivity,
+	onAnswer,
+	onOpenSettings,
 	elements,
 	apiText,
 	downloadReportPdf,
@@ -35,6 +40,7 @@ export function createFounderView({
 	humanizeId
 }) {
 		const doc = documentRef;
+		const progressView=createFounderProgressView({root:elements.founderProgress,documentRef:doc,onContinue,onReviewActivity,onAnswer,onOpenSettings});
 		let handoff;
 
 		function setHandoff(next) {
@@ -707,6 +713,7 @@ export function createFounderView({
 
 	function render() {
 		const session = getSession();
+		progressView.render(session?.mode==='founder'?session.founderProgress:undefined,session?.id);
 		elements.founderView.replaceChildren();
 		if (session?.mode !== 'founder') {
 			elements.countFounder.textContent = '';
@@ -715,7 +722,7 @@ export function createFounderView({
 		const founder = session.founder ?? {};
 		const scope = founder.scope ?? {};
 		const report = founder.report;
-		const lifecycle = describeFounderLifecycle(founder, session.status, session.activities?.length ?? 0);
+		const lifecycle = describeFounderLifecycle(founder, session.status, session.activities?.length ?? 0,session.founderProgress);
 		elements.countFounder.textContent = lifecycle.badge;
 		elements.founderView.append(renderFounderHero(scope, lifecycle), renderFounderScope(scope));
 		const executionNotice=renderModeReasoning(session,doc);
@@ -754,11 +761,11 @@ export function createFounderView({
 		const session = getSession();
 		const founder = session?.founder ?? {};
 		const report = founder.report;
-		const lifecycle = describeFounderLifecycle(founder, session?.status, session?.activities?.length ?? 0);
+		const lifecycle = describeFounderLifecycle(founder, session?.status, session?.activities?.length ?? 0,session?.founderProgress);
 		if (!founder.finalizedAt || !report) {
 			const pending = doc.createElement('div');
 			pending.className = 'feed-empty';
-			pending.textContent = lifecycle.message || 'The Founder report is available after the review is finalized.';
+			pending.textContent = session?.founderProgress?[lifecycle.label,lifecycle.detail,lifecycle.message].filter(Boolean).join('. '):lifecycle.message || 'The Founder report is available after the review is finalized.';
 			elements.reportView.append(pending);
 			return;
 		}

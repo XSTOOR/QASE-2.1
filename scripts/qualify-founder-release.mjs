@@ -44,7 +44,7 @@ const target=`http://127.0.0.1:${fixture.address().port}/`;
 const runtime=await createSqaTestServer(path.join(directory,'runtime'),{authRequired:true,envFile});
 const account={email:`founder-release-${Date.now()}@local.example`,password:`Controlled qualification ${randomUUID()}`,displayName:'Founder live qualification'};
 let api,csrf,sessionId,finalSession;
-const result={status:'running',startedAt:new Date().toISOString(),source:'local controlled Founder release fixture',fixture:values['compact-fixture']?'compact two-route':'four-route',target,modelBacked:true};
+const result={status:'running',startedAt:new Date().toISOString(),source:'local controlled Founder release fixture',fixture:values['compact-fixture']?'compact two-route':'four-route',target,modelBacked:true,limits:{durationMs:timeoutMs,inputTokenEstimates:750_000}};
 async function json(method,route,data){
 	const response=await api.fetch(`/api${route}`,{method,headers:{Origin:runtime.base,...(!['GET','HEAD'].includes(method)&&csrf?{'X-CSRF-Token':csrf}:{})},...(data===undefined?{}:{data})});
 	assert.ok(response.ok(),`${method} ${route} returned HTTP ${response.status()}.`);return response.json();
@@ -100,7 +100,9 @@ try{
 			await runtime.stop();await runtime.start();await signIn();
 			const restored=await json('GET',`/sessions/${sessionId}`);
 			assert.deepEqual(restored.founder.reportDraft,stopped.founder.reportDraft);assert.equal(founderDraftProgress(restored).intact,true);
-			await json('POST',`/sessions/${sessionId}/message`,{text:'Continue this authorized Founder report from its saved draft. Browser investigation and public-only scope are complete. Write only the remaining advertised sections and publish the exact complete revision. Do not repeat saved sections or browser work.'});
+			const recovery=await json('GET',`/sessions/${sessionId}/founder/progress`);
+			assert.equal(recovery.recovery.available,true,recovery.recovery.reason);
+			await json('POST',`/sessions/${sessionId}/founder/continue`,{expectedCheckpoint:recovery.recovery.token});
 			result.midReportRestart={status:'resumed',savedSections:Object.keys(reportCheckpoint.input)};
 		}
 		await new Promise(resolve=>setTimeout(resolve,2000));
@@ -148,8 +150,16 @@ try{
 	result.status='failed';result.error=error.message;result.sessionId=sessionId;process.exitCode=1;
 	if(sessionId&&api){
 		await json('POST',`/sessions/${sessionId}/stop`).catch(()=>undefined);
-		const stopped=await json('GET',`/sessions/${sessionId}`).catch(()=>undefined);
-		if(stopped)await writeFile(path.join(directory,'session.json'),JSON.stringify(stopped,null,2));
+		let stopped;
+		for(let attempt=0;attempt<100;attempt++){
+			stopped=await json('GET',`/sessions/${sessionId}`).catch(()=>undefined);
+			if(!stopped||!stopped.running)break;
+			await new Promise(resolve=>setTimeout(resolve,200));
+		}
+		if(stopped){
+			result.stoppedCheckpoint={status:stopped.status,running:stopped.running,observations:stopped.founder.observations.length,sections:founderDraftProgress(stopped).completed,tokenUsage:stopped.tokenUsage};
+			await writeFile(path.join(directory,'session.json'),JSON.stringify(stopped,null,2));
+		}
 	}
 }finally{
 	await api?.dispose();await runtime.stop();fixture.closeAllConnections();await new Promise(resolve=>fixture.close(resolve));

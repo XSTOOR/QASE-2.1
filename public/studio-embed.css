@@ -670,4 +670,12 @@ html[data-qase-layout="studio-mock"] body.studio-workspace[data-page="results"] 
 	}
 	html body.studio-workspace[data-page="results"][data-workspace-view="results"] .viewer > .tabs { grid-row: 2; }
 	html body.studio-workspace[data-page="results"][data-workspace-view="results"] .viewer > .tab-body { grid-row: 3; }
+	/* Founder adds a visible tab on narrow screens. Reserve every wrapped row
+	   so content and programmatic focus cannot cover the second tab row. */
+	html body.studio-workspace[data-workspace-view="results"] .viewer:has(#tab-founder:not([hidden])) {
+		grid-template-rows: auto auto minmax(0, 1fr);
+	}
+	html body.studio-workspace[data-workspace-view="results"] .viewer:has(#tab-founder:not([hidden])) > .tabs {
+		height: auto;
+	}
 }

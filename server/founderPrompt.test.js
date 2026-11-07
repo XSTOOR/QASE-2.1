@@ -2,6 +2,19 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildFounderContext } from './founderPrompt.js';
 import { createFounderState, recordFounderPublicOnlyDecision } from './founderService.js';
+import { FOUNDER_CATEGORY_IDS } from './founderSchema.js';
+
+test('configured Founder brief preserves every lens, scope and safety rule while preferring bounded native suites',()=>{
+ const session={id:'configured-prompt',mode:'founder',targetUrl:'https://fixture.test/',secretNames:['QA_USERNAME','QA_PASSWORD'],founder:createFounderState({authorizationConfirmed:true,target:{name:'Fixture',url:'https://fixture.test/'},productContext:{stage:'MVP',businessModel:'Hypothesis',targetCustomer:'Small teams',primaryGoal:'Activation'}})};
+ const legacy=buildFounderContext(session,'https://fixture.test/');
+ session.founder.reportGeneration={version:1,protocol:'section-draft-v1',evidenceHashVersion:1};recordFounderPublicOnlyDecision(session);
+ const brief=buildFounderContext(session,'https://fixture.test/');
+ assert.ok(brief.length<legacy.length*.7);assert.ok(brief.length<7000);
+ for(const id of FOUNDER_CATEGORY_IDS)assert.ok(brief.includes(id),`Missing required lens ${id}`);
+ for(const rule of [/Public-only is already approved/,/Do not sign in or request credentials/,/\{\{QA_PASSWORD\}\}/,/untrusted background data/,/declared authorized origin/,/irreversible/,/browser_qa_check with forms, navigation, accessibility and responsive/,/representative outcome/,/actual page facts/,/No shell, files, arbitrary scripts/,/not.*publish a report/,/approved limits/])assert.match(brief,rule);
+ session.founder.scope.publicOnly=undefined;session.founder.scope.access={decision:'authenticated'};
+ assert.match(buildFounderContext(session),/Authenticated surfaces are requested/);
+});
 
 test('Founder prompt requires truthful full-surface workflow coverage and bounded strategy', () => {
 	const session = {

@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-founder-sqa-2026-11-07-report-r1",
-  "uiVersion": "20261107-3",
+  "releaseId": "qase-founder-sqa-2026-11-07-progress-r1",
+  "uiVersion": "20261107-4",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Founder durable report generation on integration dd81cae: bounded typed sections, exact revision publication, configured-provider continuation and saved draft recovery; production qualification remains required"
+  "source": "Founder progress and recovery on integration b1ee59d: host-derived stages, guarded continuation, durable page facts and bounded inference context; production qualification remains required"
 }

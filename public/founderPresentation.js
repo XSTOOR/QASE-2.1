@@ -4,7 +4,7 @@ const PRODUCT_FINDING_CATEGORIES = new Set([
 ]);
 
 /** Convert durable Founder state into a truthful, non-final lifecycle label. */
-export function describeFounderLifecycle(founder = {}, runStatus = 'idle', activityCount = 0) {
+export function describeFounderLifecycle(founder = {}, runStatus = 'idle', activityCount = 0, progress) {
 	const observationCount = Array.isArray(founder?.observations) ? founder.observations.length : 0;
 	const totalCategories = founder?.scope?.categories?.length ?? founder?.report?.coverage?.totalCategories ?? 0;
 	if (founder?.finalizedAt && founder?.report) {
@@ -14,6 +14,7 @@ export function describeFounderLifecycle(founder = {}, runStatus = 'idle', activ
 			detail: `${founder.report.coverage?.categoriesReviewed?.length ?? totalCategories}/${totalCategories} lenses reviewed · ${founder.report.coverage?.evidenceBackedObservations ?? observationCount} evidence-backed observations`
 		};
 	}
+	if(progress?.version===1)return {phase:progress.phase,status:progress.status,finalized:false,label:progress.title,badge:progress.status,detail:progress.report?`${progress.lenses.completed}/${progress.lenses.total} lenses reviewed · ${progress.report.completed}/${progress.report.total} report sections saved`:`${progress.lenses.completed}/${progress.lenses.total} lenses reviewed`,message:progress.detail};
 	if (runStatus === 'running') {
 		return {
 			phase: 'running', status: 'running', finalized: false, label: 'Review running', badge: 'running',

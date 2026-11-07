@@ -59,6 +59,7 @@ import { publicQaTestCatalog } from './qaTestCatalog.js';
 import { validateQaSelectedTests, validateSecurityAuthorization } from './appQaSelection.js';
 import { selectQaExecutionMode, hybridProfile, loadQualification } from './hybridConfig.js';
 import { hybridRecoveryProblem } from './hybridRecoveryGate.js';
+import { buildFounderProgress, founderContinuationTask } from './founderProgress.js';
 import { getConfig } from './config.js';
 import { renderReportPdf } from './reportPdf.js';
 import { buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
@@ -200,6 +201,7 @@ export function createApplication(options = {}) {
 	const isDraining = typeof options.isDraining === 'function' ? options.isDraining : () => false;
 	const mailer = options.mailer ?? createMailer({ environment, logger });
 	const activeTurns = new Set();
+	const founderContinuations = new Map();
 	const founderSetupAnswers = new Set();
 	async function answerFounderSetup(session, response, action) {
 		if (session.pendingQuestion?.kind !== 'founder_launch_credentials' || founderSetupAnswers.has(session.id)) return response.status(409).json({ error: 'The review setup is already being submitted or answered. Refresh the saved run.' });
@@ -2208,6 +2210,7 @@ export function createApplication(options = {}) {
 		);
 		response.json({
 			...session,
+			...(session.mode==='founder'?{founderProgress:buildFounderProgress(session,{running:liveState.running,resuming:founderContinuations.has(session.id),stopping:founderContinuations.get(session.id)?.cancelled})}:{}),
 			durationSeconds,
 			secretNames: await services.secrets.names(session.id),
 			running: liveState.running,
@@ -2216,6 +2219,46 @@ export function createApplication(options = {}) {
 			// timer time from this skew, never from its own render time.
 			serverNow: Date.now()
 		});
+	});
+
+	app.get('/api/sessions/:id/founder/progress', async (request,response)=>{
+		const session=await requireSession(request,response);if(!session)return;
+		if(session.mode!=='founder')return response.status(404).json({error:'No Founder review exists for this run.'});
+		const config=await services.configuration.getPublic();
+		response.set('Cache-Control','no-store');
+		response.json(buildFounderProgress(session,{running:services.agent.getLiveState(session.id).running,resuming:founderContinuations.has(session.id),stopping:founderContinuations.get(session.id)?.cancelled,configReady:config.ready!==false,provider:config.provider}));
+	});
+
+	app.post('/api/sessions/:id/founder/continue', async (request,response)=>{
+		const session=await requireSession(request,response);if(!session)return;
+		if(session.mode!=='founder')return response.status(404).json({error:'No Founder review exists for this run.'});
+		if(founderContinuations.has(session.id))return response.status(409).json({error:'This review is already resuming.',code:'BUSY'});
+		const ticket={cancelled:false};founderContinuations.set(session.id,ticket);
+		try{
+			const config=await services.configuration.getPublic();
+			const progress=buildFounderProgress(session,{running:services.agent.getLiveState(session.id).running,configReady:config.ready!==false,provider:config.provider});
+			if(!progress.recovery.available){founderContinuations.delete(session.id);return response.status(409).json({error:progress.recovery.reason,code:progress.recovery.code||'BUSY',progress});}
+			if(request.body?.expectedCheckpoint!==progress.recovery.token){founderContinuations.delete(session.id);return response.status(409).json({error:'Saved progress changed. Refresh the review before continuing.',code:'STALE_CHECKPOINT',progress});}
+			await services.runs.addMessage(session,{role:'user',text:progress.recovery.label+' from saved progress.'});
+			const work=(async()=>{
+				try{
+					const prepared=!services.agent.isRemote?await services.agent.ensureRuntime(session,services.runs):undefined;
+					if(ticket.deletion)await ticket.deletion;
+					if(ticket.deleted){await prepared?.dispose?.();return;}
+					if(ticket.cancelled){await services.runs.setStatus(session,'interrupted','Stopped by user.');return;}
+					await startTurn(session,{task:founderContinuationTask(progress)});
+				}catch(error){
+					try{
+						if(ticket.deletion)await ticket.deletion;
+						if(ticket.deleted)return;
+						if(ticket.cancelled)await services.runs.setStatus(session,'interrupted','Stopped by user.');
+						else await services.runs.setStatus(session,'error',sanitizeErrorDetail(error));
+					}catch{console.error('[Qase persistence] Could not save the Founder continuation failure.');}
+				}finally{if(founderContinuations.get(session.id)===ticket)founderContinuations.delete(session.id);}
+			})();
+			activeTurns.add(work);void work.finally(()=>activeTurns.delete(work));
+			response.status(202).json({accepted:true,progress:buildFounderProgress(session,{running:services.agent.getLiveState(session.id).running,resuming:true})});
+		}catch(error){founderContinuations.delete(session.id);safeErrorResponse(request,response,error);}
 	});
 
 	const activeSqaReviews = new Set();
@@ -2345,8 +2388,15 @@ export function createApplication(options = {}) {
 			response.json({ deleted: false });
 			return;
 		}
-		if (services.agent.isRemote) await services.agent.stop(session.id);
-		const deleted = await services.runs.delete(session.id);
+		const continuation=founderContinuations.get(session.id);let finishDeletion;
+		if(continuation?.deletion)return response.status(409).json({error:'This review is already being deleted.'});
+		if(continuation){continuation.cancelled=true;continuation.deletion=new Promise(resolve=>{finishDeletion=resolve;});}
+		let deleted;
+		try{
+			if (services.agent.isRemote) await services.agent.stop(session.id);
+			deleted = await services.runs.delete(session.id);
+			if(continuation)continuation.deleted=deleted;
+		}finally{finishDeletion?.();}
 		if (deleted) {
 			const cleanup = await Promise.allSettled([
 				Promise.resolve().then(() => services.secrets.clear(session.id)),
@@ -2385,6 +2435,7 @@ export function createApplication(options = {}) {
 	app.post('/api/sessions/:id/message', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
+		if(founderContinuations.has(session.id))return response.status(409).json({error:'This review is already resuming. Wait for it to start or stop it first.'});
 		if (session.pendingQuestion?.kind === 'founder_launch_credentials') {
 			return response.status(409).json({ error: 'Provide the test account through the secure form, or choose Skip login before starting.' });
 		}
@@ -2599,6 +2650,7 @@ export function createApplication(options = {}) {
 	app.post('/api/sessions/:id/stop', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
+		const continuation=founderContinuations.get(session.id);if(continuation)continuation.cancelled=true;
 		await services.runs.commit(session, 'run.stop_requested');
 		await services.agent.stop(session.id);
 		response.json({ ok: true });

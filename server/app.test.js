@@ -7,6 +7,7 @@ import { hybridProfile } from './hybridConfig.js';
 import { PublicInputError } from './publicErrors.js';
 import { createInstanceAccess } from './instanceAccess.js';
 import { createSqaState, finishSqaAssessment } from './sqaService.js';
+import { createFounderState,createFounderReviewTodos } from './founderService.js';
 import { aggregateSessionFindings, setFindingStatus } from './store.js';
 import { createCoverageService } from './coverageService.js';
 import fs from 'node:fs';
@@ -375,6 +376,95 @@ async function startFixture(options = {}) {
 async function body(response) {
 	return response.json();
 }
+
+async function pausedFounderFixture(t){
+	const f=await startFixture();t.after(()=>f.close());
+	const setStatus=f.services.runs.setStatus;f.services.runs.setStatus=(session,status,detail)=>{session.statusDetail=detail;return setStatus(session,status,detail);};
+	const session=await f.services.runs.create('Paused Founder');
+	Object.assign(session,{mode:'founder',status:'interrupted',targetUrl:'https://fixture.test/',tokenUsage:{inputTokens:40000,outputTokens:1000},todos:createFounderReviewTodos(),founder:createFounderState({authorizationConfirmed:true,target:{name:'Fixture',url:'https://fixture.test/'}})});
+	session.activities.push({id:'observed-browser',toolName:'browser_open',status:'done',ts:Date.now()});
+	return {...f,session};
+}
+
+test('Founder continuation uses fresh owner-scoped progress and preserves the existing run and usage',async t=>{
+	const f=await pausedFounderFixture(t),{session}=f;
+	const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));
+	assert.equal(progress.recovery.available,true);assert.equal(progress.phase,'exploration');
+	const before=structuredClone({founder:session.founder,activities:session.activities,usage:session.tokenUsage,todos:session.todos});
+	const response=await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:progress.recovery.token}});assert.equal(response.status,202);
+	await f.whenIdle();assert.equal(f.state.runCalls.length,1);assert.match(f.state.runCalls[0].options.task,/saved plan/);
+	assert.deepEqual({founder:session.founder,activities:session.activities,usage:session.tokenUsage,todos:session.todos},before);
+	assert.equal(f.state.runCalls[0].sessionId,session.id);
+	assert.equal((await body(await f.request(`/api/sessions/${session.id}`))).founderProgress.version,1);
+	assert.equal((await f.request('/api/sessions/missing/founder/progress')).status,404);
+	const other=await f.services.runs.create('QA');assert.equal((await f.request(`/api/sessions/${other.id}/founder/continue`,{method:'POST',json:{}})).status,404);
+});
+
+test('Founder stale tabs and pending decisions cannot dispatch a model turn',async t=>{
+	const f=await pausedFounderFixture(t),{session}=f;
+	const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));session.todos[0].status='completed';
+	const stale=await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:progress.recovery.token}});
+	assert.equal(stale.status,409);assert.equal((await body(stale)).code,'STALE_CHECKPOINT');
+	session.pendingQuestion={toolCallId:'secure-question',credentialLike:true};
+	const blocked=await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:'ignored'}});
+	assert.equal(blocked.status,409);assert.equal((await body(blocked)).code,'INPUT_REQUIRED');
+	assert.equal(f.state.runCalls.length,0);assert.equal(f.state.ensureCalls.length,0);
+});
+
+test('duplicate Founder continuation and ordinary continue messages cannot race runtime initialization; Stop cancels admission',async t=>{
+	const f=await pausedFounderFixture(t),{session}=f;let release;
+	const gate=new Promise(resolve=>{release=resolve;});const original=f.services.agent.ensureRuntime;
+	f.services.agent.ensureRuntime=async(...args)=>{await gate;return original(...args);};
+	try{
+		const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));
+		const input={method:'POST',json:{expectedCheckpoint:progress.recovery.token}};
+		assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,input)).status,202);
+		assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,input)).status,409);
+		assert.equal((await f.request(`/api/sessions/${session.id}/message`,{method:'POST',json:{text:'continue'}})).status,409);
+		assert.equal((await body(await f.request(`/api/sessions/${session.id}/founder/progress`))).busy,true);
+		assert.equal((await f.request(`/api/sessions/${session.id}/stop`,{method:'POST'})).status,200);
+		assert.equal((await body(await f.request(`/api/sessions/${session.id}/founder/progress`))).title,'Stopping review');
+	}finally{release();await f.whenIdle();}
+	assert.equal(f.state.runCalls.length,0);assert.equal(session.status,'interrupted');assert.equal(session.statusDetail,'Stopped by user.');
+});
+
+test('Founder initialization failure retains progress and permits a fresh explicit retry',async t=>{
+	const f=await pausedFounderFixture(t),{session}=f;const before=structuredClone(session.founder);
+	f.state.ensureError=new Error('Fixture model connection unavailable');
+	const first=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));
+	assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:first.recovery.token}})).status,202);
+	await f.whenIdle();assert.equal(session.status,'error');assert.deepEqual(session.founder,before);assert.equal(f.state.runCalls.length,0);
+	f.state.ensureError=undefined;
+	const retry=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));assert.match(retry.lastError,/connection unavailable/);
+	assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:retry.recovery.token}})).status,202);
+	await f.whenIdle();assert.equal(f.state.runCalls.length,1);assert.deepEqual(session.founder,before);
+});
+
+test('deleting a Founder review while continuation initializes cannot resurrect it or dispatch a model turn',async t=>{
+	const f=await pausedFounderFixture(t),{session}=f;let release,disposed=0;
+	const gate=new Promise(resolve=>{release=resolve;});f.services.agent.ensureRuntime=async()=>{await gate;return {dispose(){disposed++;}};};
+	try{
+		const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));
+		assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:progress.recovery.token}})).status,202);
+		assert.equal((await f.request(`/api/sessions/${session.id}`,{method:'DELETE'})).status,200);
+	}finally{release();await f.whenIdle();}
+	assert.equal(f.state.runCalls.length,0);assert.equal(disposed,1);assert.equal(f.services.runs.get(session.id),undefined);
+});
+
+test('a failed deletion cancels pending Founder admission without losing the saved run or trapping future recovery',async t=>{
+	const f=await pausedFounderFixture(t),{session}=f;let release,disposed=0;
+	const gate=new Promise(resolve=>{release=resolve;});f.services.agent.ensureRuntime=async()=>{await gate;return {dispose(){disposed++;}};};
+	const originalDelete=f.services.runs.delete;f.services.runs.delete=()=>{throw new Error('Fixture deletion unavailable');};
+	try{
+		const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));
+		assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:progress.recovery.token}})).status,202);
+		assert.equal((await f.request(`/api/sessions/${session.id}`,{method:'DELETE'})).status,500);
+	}finally{release();await f.whenIdle();f.services.runs.delete=originalDelete;}
+	assert.equal(f.state.runCalls.length,0);assert.equal(disposed,0);assert.equal(f.services.runs.get(session.id),session);
+	const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));assert.equal(progress.recovery.available,true);
+	assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:progress.recovery.token}})).status,202);
+	await f.whenIdle();assert.equal(f.state.runCalls.length,1);
+});
 
 test('SQA human review API preserves versions, rejects stale writes and enforces reviewer permissions without a model turn', async t => {
 	let role = 'developer';

@@ -321,7 +321,9 @@ export function createLocalApplicationServices(options = {}) {
 			return deleteSession(id, ownerUserId());
 		},
 		async commit(session, type, payload = {}) {
-			emit(session, type, payload, { durable: session.qaExecutionMode === 'hybrid' });
+			// A Founder checkpoint or usage receipt must survive an immediate
+			// restart once acknowledged. Live frames remain ephemeral in emit.
+			emit(session, type, payload, { durable: session.qaExecutionMode === 'hybrid' || session.mode === 'founder' });
 			return session;
 		},
 		async setFindingStatus(session, findingId, patch) {
