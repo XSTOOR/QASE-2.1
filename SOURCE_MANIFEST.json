@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "releaseId": "qase-founder-sqa-2026-11-07-progress-r1",
+  "releaseId": "qase-founder-sqa-2026-11-07-progress-r2",
   "files": [
     {
       "path": ".dockerignore",
@@ -92,11 +92,11 @@
     },
     {
       "path": "DEPLOYMENT_PROMPT.md",
-      "sha256": "7fb9d28b9ccf5428bf5db1bad982cfff5440ce5a15f1749da10cb860a0c4f30b"
+      "sha256": "2af66db14e355373455465f305604081d8d7285c20fa960162af98b17aa95577"
     },
     {
       "path": "Dockerfile",
-      "sha256": "f7fb8d71b0f587e449baba2cd32386e9eef979f84943129ec594225362a56542"
+      "sha256": "1bce2e829cc4eedc3e95890e8537bc58aeb15abba84dbf378c4bda3d84f8ae6f"
     },
     {
       "path": "docs/auth-architecture-2026-09-10.md",
@@ -179,12 +179,16 @@
       "sha256": "f40a00ca25cfcaf5d9a18baaa246c1c45e729d700adb50345511ef86448d991c"
     },
     {
+      "path": "docs/founder-live-qualification-2026-11-07.md",
+      "sha256": "33f0428713949690275aae10b4dcdeb9eaf59d82992e2b1ecbc76ccd21a1c311"
+    },
+    {
       "path": "docs/founder-mode.md",
       "sha256": "81f7667c858becd685b8dcffa0ff1199a4d6cc560c3d99b41cb1b1db9e5a71a8"
     },
     {
       "path": "docs/founder-progress-recovery-2026-11-07.md",
-      "sha256": "df98aec767f03284c2b4414e077b3437d105427a6fbc10f6848c219f9886117d"
+      "sha256": "75b363dbabbe1e0e2108ab9b5deb35aaf3f3e840ee055c98a9fb570930a4d537"
     },
     {
       "path": "docs/founder-report-completion-2026-11-07.md",
@@ -196,7 +200,7 @@
     },
     {
       "path": "docs/founder-sqa-integration-2026-11-07.md",
-      "sha256": "2f2d00eec927c175d00c5a47ccc259bfa9fb147018f3fcddfa7c5514bd03adc5"
+      "sha256": "5b757d5e13a43e9f57a3b14414e7db5fdebd9b2ebcb5bf7cf4643726d26f0cf6"
     },
     {
       "path": "docs/hybrid-qa-implementation-report.md",
@@ -748,7 +752,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "e633184967a40b66d3c48d984923a8b483457ad619ae1743a87db03703041848"
+      "sha256": "8df33d9742bc46d386527db451c075b02838bc90c7694e93b076f00ab43eab95"
     },
     {
       "path": "public/renderHealth.js",
@@ -892,7 +896,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "4e2fe77439a1b176603313252f01777ff0b82fa9f8df580943160e3dccb54f49"
+      "sha256": "399607b16364b2562036b3ea88d072fa49bef6df57e991f6c57347e353f14c2d"
     },
     {
       "path": "RELEASE_NOTES.md",
@@ -1196,11 +1200,11 @@
     },
     {
       "path": "server/agent.js",
-      "sha256": "44709e96cfa90da5679abd5006f1dfb0f76614a946abb1eadfa80b3ad9b0830c"
+      "sha256": "9012a20d590e754391b898d87762a34f9d4a5f7fcf0cb48e62a2bd9f8f82c184"
     },
     {
       "path": "server/agent.test.js",
-      "sha256": "36c62666dec735984eaada8b66e26c60b465286f3aa055754240f03f28e49ff3"
+      "sha256": "814feb81eac5cf0bf1bedf56d3a3df294c4b1a9bcc84fd54a22b47b3ab7f0f7c"
     },
     {
       "path": "server/analytics.js",
@@ -1784,11 +1788,11 @@
     },
     {
       "path": "server/founderInvestigation.js",
-      "sha256": "c98d8ff7d51ef0c24b2d2aeff69d03bbdcb4f5c9290ba2deb8a5cbda54367fc4"
+      "sha256": "d32e25455afb400d3dec248586d8ebb72b5753715af06e637419abaf13e83f10"
     },
     {
       "path": "server/founderInvestigation.test.js",
-      "sha256": "a591bd51e36bcb4d5ffe5c7a47c6a95386071ae95334575ae0a66d5cf4ba274e"
+      "sha256": "70d6d3ed3096bd22fb00f5337d1dd2064017ae1511e52a2ee92f56e9a11899c8"
     },
     {
       "path": "server/founderPresentation.test.js",
@@ -1796,11 +1800,11 @@
     },
     {
       "path": "server/founderProgress.js",
-      "sha256": "17ca43d397ff32b76509a73090370cc0273155fedbeeca50d204491691587646"
+      "sha256": "de684bdd705743452da7af953d555e520dfc78fc3b70062ff335ded1d979d7f6"
     },
     {
       "path": "server/founderProgress.test.js",
-      "sha256": "f63b091bfd1cac420432930c4d87546b6724036b7a064516f1cc76f6c3d50a92"
+      "sha256": "50d544ccf21c57684fcb16f43564dfa1426abe17edb7a825dd40017e3d012eb5"
     },
     {
       "path": "server/founderProjectState.js",
@@ -1812,7 +1816,7 @@
     },
     {
       "path": "server/founderPrompt.js",
-      "sha256": "c3390a5b26d4954561c2b3e8f3bf41b64dccd802f0c24b641571e310f50cf9ea"
+      "sha256": "b753f96955ea1056ffc3c4d10d8fd025300cfb900c4e77a4f7e68947dda072d4"
     },
     {
       "path": "server/founderPrompt.test.js",
@@ -1828,11 +1832,11 @@
     },
     {
       "path": "server/founderReportDraft.js",
-      "sha256": "e663536082951a368872e078fa62ba986114b04e28dc052f8d932d432dc37390"
+      "sha256": "bdfa844f20d58a6f1ff84605565b059ddd7ce4b8ebd95e5282385be395101dcb"
     },
     {
       "path": "server/founderReportDraft.test.js",
-      "sha256": "c73fb6798a15602b2815d122bd55e2944413de282e43df3538d6efac3148cdc4"
+      "sha256": "46eb626f8bad5fcf3c381af8ffa8921d94270983a2df48db5846daae43ba6c3b"
     },
     {
       "path": "server/founderSchema.js",
@@ -1852,11 +1856,11 @@
     },
     {
       "path": "server/founderTools.js",
-      "sha256": "448a62695f5f3b54086a49c24218f00eb38cdf03ceb676a3e19f190ef06f128a"
+      "sha256": "749596db2796c48dba606c40195d736e5e9d8fc05dff3044f8f01c79f744c307"
     },
     {
       "path": "server/founderTools.test.js",
-      "sha256": "f0defb95687df50ae7718a3c21e1e43276f05b8878f423fd95cd9c501bbc4012"
+      "sha256": "2af0ddb34762ee1d1a40570cef5daf9ba8c8745dd6968907af8cd940e0cc6c6f"
     },
     {
       "path": "server/founderUi.test.js",
@@ -2180,11 +2184,11 @@
     },
     {
       "path": "server/localServices.js",
-      "sha256": "75bf5e1e2f82142a40594027f559bb3267a0bf896d3435df1b49d1c78fc604d7"
+      "sha256": "a89144195d39a0a03b07c6480d2bca35701fddee7d970acdf1868360d399fad3"
     },
     {
       "path": "server/localServices.test.js",
-      "sha256": "ff0102dfe682ffae85997954998ced1a1d0948745fde18df3622341036f1c230"
+      "sha256": "bc24436e42ecd7cc9e7146d28333373563490dbde0242972b15ac48fcf5e62eb"
     },
     {
       "path": "server/mailer.js",
@@ -3064,7 +3068,7 @@
     },
     {
       "path": "server/store.js",
-      "sha256": "637d50cff50407a7d5313731003e702dc3768c869611b7e1057f3e0ecb66da95"
+      "sha256": "4ebffe1beda081a8f5a742a35d8408d1c188eccd839f9b2ff697e63293c5af62"
     },
     {
       "path": "server/store.test.js",

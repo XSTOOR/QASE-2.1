@@ -79,3 +79,28 @@ test('repeated snapshots stay bounded while distinct diagnostic outcomes remain 
  for(const [id,console]of [['diag-error',[{level:'error',message:'Fixture failure'}]],['diag-healthy',[]]]){session.activities.push({id,toolName:'browser_diagnostics',status:'done'});await rememberFounderEvidence(session,store,{toolName:'browser_diagnostics',activityId:id,result:{success:true,url:'https://fixture.test/',console,network:[]}});}
  assert.equal(session.founder.investigationCheckpoint.entries.length,3);assert.equal(founderInvestigationIntact(session),true);
 });
+
+test('earlier navigation and form receipts survive later distinct checks, with failure and recovery both retained',async()=>{
+ const session=fixture(),store={async commit(){}};
+ for(const [index,action] of ['navigation','forms','responsive','accessibility','media','anchors','scroll'].entries()){
+  const id=`check-${index}`;session.activities.push({id,toolName:'browser_qa_check',status:'done',input:{action,...(action==='navigation'?{selector:'nav a',expected:'https://fixture.test/docs?private=value'}:{})}});
+  await rememberFounderEvidence(session,store,{toolName:'browser_qa_check',activityId:id,result:{success:true,url:'https://fixture.test/',assertions:[{check:action,outcome:'pass',expected:'Observed result',actual:'Verified in the fixture'}]}});
+ }
+ for(const [id,console]of [['error',[{level:'error'}]],['recovered',[]]]){
+  session.activities.push({id,toolName:'browser_diagnostics',status:'done'});
+  await rememberFounderEvidence(session,store,{toolName:'browser_diagnostics',activityId:id,result:{success:true,url:'https://fixture.test/',console,network:[]}});
+ }
+ const facts=founderInvestigationCheckpoint(JSON.parse(JSON.stringify(session))).observedPageFacts.find(p=>p.url==='https://fixture.test/');
+ assert.ok(facts.checks.some(c=>c.action==='forms'&&c.activityId==='check-1'));
+ assert.ok(facts.checks.some(c=>c.action==='navigation'&&c.selector==='nav a'&&c.expected==='https://fixture.test/docs'));
+ assert.ok(facts.checks.some(c=>c.activityId==='error'&&c.consoleErrors===1));assert.ok(facts.checks.some(c=>c.activityId==='recovered'&&c.consoleErrors===0));
+ assert.equal(facts.checks.length,9);assert.equal(founderInvestigationIntact(session),true);
+});
+
+test('check limitations retain their actual meaning in saved facts and inference',async()=>{
+ const session=fixture(),store={async commit(){}},limitations='Detached native validity only; no actual submission, saved task or server persistence was verified.';
+ session.activities.push({id:'forms-limits',toolName:'browser_qa_check',status:'done',input:{action:'forms'}});
+ await rememberFounderEvidence(session,store,{toolName:'browser_qa_check',activityId:'forms-limits',result:{success:true,url:'https://fixture.test/',assertions:[{check:'forms',outcome:'pass'}],limitations}});
+ assert.equal(session.founder.investigationCheckpoint.entries[0].limitations,limitations);
+ const restored=JSON.parse(JSON.stringify(session));assert.ok(JSON.stringify(founderInvestigationCheckpoint(restored)).includes(limitations));
+});

@@ -20,6 +20,9 @@ for compatibility, local qualification and remaining release checks.
 Founder progress now distinguishes investigation, review areas, report writing
 and publication, and offers guarded continuation from saved work. See
 [Founder progress and recovery](docs/founder-progress-recovery-2026-11-07.md).
+Fresh configured-provider reviews retain distinct check outcomes and draft small
+section groups through individual durable writes. See
+[Founder live qualification](docs/founder-live-qualification-2026-11-07.md).
 SQA now completes
 and records each browser workflow before compacting its model context, reducing
 repeated input while preserving the fixed safety limit. Production activation requires gateway qualification

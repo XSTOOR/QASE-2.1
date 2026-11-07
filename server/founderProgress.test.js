@@ -41,6 +41,7 @@ test('tampered drafts, incompatible connections and approved budgets cannot be b
  const budget=fixture();budget.founder.execution={budgets:{durationMs:100},telemetry:{elapsedMs:100}};
  assert.equal(buildFounderProgress(budget).pause.code,'BUDGET_REACHED');assert.equal(buildFounderProgress(fixture(),{configReady:false}).pause.code,'CONNECTION_REQUIRED');
  const changed=fixture();changed.founder.investigationCheckpoint={version:1,entries:[],revision:'changed'};assert.equal(buildFounderProgress(changed).pause.code,'INVESTIGATION_CHANGED');
+ const unknownBatch=fixture();unknownBatch.founder.reportGeneration={version:1,protocol:'section-draft-v1',evidenceHashVersion:1,sectionBatchSize:99};assert.equal(buildFounderProgress(unknownBatch).pause.code,'PROTOCOL_UNSUPPORTED');
 });
 
 test('checkpoint tokens survive JSON key reordering but change with saved work, and reads never mutate the run',()=>{

@@ -23,10 +23,12 @@ test('acknowledged Founder checkpoints and usage survive immediate process exit'
 			session.mode = 'founder';
 			session.founder = { scope: {}, observations: [], reportDraft: { revision: 'saved', input: { executive_summary: 'Persisted before acknowledgement.' } } };
 			session.tokenUsage = { inputTokens: 521118, outputTokens: 42600, totalTokens: 563718 };
+			await services.runs.setStatus(session, 'running');
 			await services.runs.commit(session, 'founder.report_draft');
 			session.tokenUsage.inputTokens += 100;
 			session.tokenUsage.totalTokens += 100;
 			await services.runs.commit(session, 'usage');
+			await services.runs.setStatus(session, 'interrupted', 'Stopped by user.');
 			process.stdout.write(session.id);
 			process.exit(0); // No debounce delay, lifecycle close or exit flush.
 		`], { cwd: directory, encoding: 'utf8', timeout: 30_000, windowsHide: true });
@@ -34,15 +36,16 @@ test('acknowledged Founder checkpoints and usage survive immediate process exit'
 		const saved = JSON.parse(await fs.readFile(path.join(directory, '.qase', 'sessions.json'), 'utf8')).find(s => s.id === child.stdout);
 		assert.equal(saved.founder.reportDraft.input.executive_summary, 'Persisted before acknowledgement.');
 		assert.deepEqual(saved.tokenUsage, { inputTokens: 521218, outputTokens: 42600, totalTokens: 563818 });
+		assert.equal(saved.status, 'interrupted');assert.equal(saved.statusDetail, 'Stopped by user.');
 		const restored = spawnSync(process.execPath, ['--input-type=module', '-e', `
 			import { createLocalApplicationServices } from ${JSON.stringify(moduleUrl)};
 			const services = createLocalApplicationServices({}); await services.runs.load();
 			const session = await services.runs.getAny(${JSON.stringify(child.stdout)});
-			process.stdout.write(JSON.stringify({ draft: session.founder.reportDraft, usage: session.tokenUsage }));
+			process.stdout.write(JSON.stringify({ draft: session.founder.reportDraft, usage: session.tokenUsage, status: session.status, detail: session.statusDetail, interruptedFromRun: session.interruptedFromRun === true }));
 			process.exit(0);
 		`], { cwd: directory, encoding: 'utf8', timeout: 30_000, windowsHide: true });
 		assert.equal(restored.status, 0, restored.stderr || restored.error?.message);
-		assert.deepEqual(JSON.parse(restored.stdout), { draft: saved.founder.reportDraft, usage: saved.tokenUsage });
+		assert.deepEqual(JSON.parse(restored.stdout), { draft: saved.founder.reportDraft, usage: saved.tokenUsage, status: 'interrupted', detail: 'Stopped by user.', interruptedFromRun: false });
 	} finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
 

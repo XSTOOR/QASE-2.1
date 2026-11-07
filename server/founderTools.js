@@ -1,6 +1,6 @@
 import { guardFinalization } from './finalizationGuard.js';
 import { modeExplorationReadiness } from './modeReasoningRuntime.js';
-import {createFounderDraftTool,resolveFounderDraft} from './founderReportDraft.js';
+import {createFounderDraftTool,createFounderDraftBatchTool,resolveFounderDraft,usesFounderDraftBatch} from './founderReportDraft.js';
 import {
 	FOUNDER_CATEGORY_IDS,
 	FOUNDER_LEVELS,
@@ -16,13 +16,13 @@ const CONTEXT_INFERENCE_DECISION = /\b(infer|make (?:reasonable )?assumptions?|a
 const AUTH_GATE = /(?:\b(blocked|cannot|could not|unable|inaccessible|requires?|required|behind|gated?)\b.{0,80}\b(authentication|authenticated|credentials?|sign[- ]?in|log[- ]?in|login)\b|\b(authentication|authenticated|credentials?|sign[- ]?in|log[- ]?in|login)\b.{0,80}\b(blocked|cannot|unable|required|needed|unavailable|gated?)\b)/i;
 const EXTERNAL_ORIGIN_BOUNDARY = /\b(?:different|external|separate|third[- ]party|cross[- ]origin|out[- ]of[- ]scope)\b.{0,80}\b(?:domain|host|origin|site|destination)\b|\b(?:outside|beyond)\b.{0,80}\b(?:declared|authorized|allowed|target)\b.{0,40}\b(?:origin|scope|site)\b|browser safety blocked top-level navigation/i;
 
-function observationSchema() {
+function observationSchema(compact=false) {
 	return {
 		type: 'object', properties: {
 			category: { type: 'string', enum: FOUNDER_CATEGORY_IDS },
 			type: { type: 'string', enum: FOUNDER_OBSERVATION_TYPES },
-			title: { type: 'string' },
-			summary: { type: 'string', description: 'Factual interpretation of browser evidence. Explicitly state not-observed boundaries.' },
+			title: { type: 'string', ...(compact?{maxLength:120}:{}) },
+			summary: { type: 'string', ...(compact?{maxLength:600}:{}), description: 'Concise factual interpretation of browser evidence. Explicitly state not-observed boundaries; underlying browser receipts retain detail.' },
 			confidence: { type: 'string', enum: FOUNDER_LEVELS },
 			evidence_activity_ids: { type: 'array', minItems: 1, maxItems: 12, items: { type: 'string' }, description: 'Optional exact completed browser activity IDs. Omit to bind the latest bounded browser evidence.' }
 		}, required: ['category', 'type', 'title', 'summary', 'confidence']
@@ -168,16 +168,17 @@ export function founderFinishReadiness(session, now = Date.now()) {
 }
 
 export function createFounderTools(session, runStore, options = {}) {
+	const compact=Boolean(session.founder?.reportGeneration);
 	const record = {
 		name: 'record_founder_observation',
 		description: 'Records one or a bounded batch of evidence-backed Founder Mode product observations. Prefer observations:[...] to capture every lens supported by the same browser evidence in one call. The host validates and binds evidence per item atomically; do not use it for analytics, revenue, customer, or market claims that were not observed.',
 		category: 'founder',
 		parametersSchema: {
 			type: 'object', properties: {
-				...observationSchema().properties,
+				...observationSchema(compact).properties,
 				observations: {
 					type: 'array', minItems: 1, maxItems: FOUNDER_CATEGORY_IDS.length,
-					items: observationSchema(),
+					items: observationSchema(compact),
 					description: 'Preferred form: a bounded batch of independently evidence-bound observations. If supplied, top-level single-observation fields are ignored.'
 				}
 			}
@@ -185,6 +186,7 @@ export function createFounderTools(session, runStore, options = {}) {
 		async run(input) {
 			try {
 				const requested = Array.isArray(input?.observations) ? input.observations : [input];
+				if(compact&&requested.some(item=>typeof item?.title==='string'&&item.title.length>120||typeof item?.summary==='string'&&item.summary.length>600))throw new TypeError('Keep observation titles within 120 characters and summaries within 600 characters. Reference browser receipts for details; use explicit not-observed boundaries.');
 				const observations = await recordFounderObservations(session, requested, runStore);
 				return {
 					success: true,
@@ -240,9 +242,9 @@ export function createFounderTools(session, runStore, options = {}) {
 
 	const draft=options.stagedReport?createFounderDraftTool(session,runStore,reportSchema(),{...options,canDraft:()=>{
 		const readiness=founderFinishReadiness(session);
-		return modeExplorationReadiness(session).ready&&!readiness.missing.length&&!readiness.incompleteTodos.length&&readiness.inventoryComplete&&readiness.representativeWorkflowComplete&&readiness.browserEvidenceComplete&&readiness.contextDecisionRecorded&&!readiness.authenticationDecisionRequired&&!readiness.activeActivities.some(a=>a.toolName!=='draft_founder_report_section');
+		return modeExplorationReadiness(session).ready&&!readiness.missing.length&&!readiness.incompleteTodos.length&&readiness.inventoryComplete&&readiness.representativeWorkflowComplete&&readiness.browserEvidenceComplete&&readiness.contextDecisionRecorded&&!readiness.authenticationDecisionRequired&&!readiness.activeActivities.some(a=>!['draft_founder_report_section','draft_founder_report_batch'].includes(a.toolName));
 	}}):null;
-	return [record,...(draft?[draft]:[]), guardFinalization(finish, session, options)];
+	return [record,...(draft?[draft,...(usesFounderDraftBatch(session)?[createFounderDraftBatchTool(session,draft,reportSchema())]:[])]:[]), guardFinalization(finish, session, options)];
 }
 
 export { reportSchema as founderReportToolSchema };

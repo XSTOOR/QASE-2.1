@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-founder-sqa-2026-11-07-progress-r1",
+  "releaseId": "qase-founder-sqa-2026-11-07-progress-r2",
   "uiVersion": "20261107-4",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Founder progress and recovery on integration b1ee59d: host-derived stages, guarded continuation, durable page facts and bounded inference context; production qualification remains required"
+  "source": "Founder qualification follow-up on b3dbd7f: retained distinct check receipts, bounded observations and small report groups with separate durable section writes; production qualification remains required"
 }

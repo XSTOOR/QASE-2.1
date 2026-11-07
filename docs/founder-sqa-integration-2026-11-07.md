@@ -95,16 +95,20 @@ production activation remain part of Phase 8.
 4. Completed locally for durable report generation and recovery on the
    configured-provider path: eleven sections, exact-revision publication,
    preserved checkpoints and working Markdown/PDF exports verified with the
-   live gateway. Autonomous investigation still reaches the fixture ceiling;
-   that efficiency issue remains open for Phases 5 and 8. See
+   live gateway. At this milestone, autonomous investigation still reached the
+   fixture ceiling; Phase 5's controlled qualification is recorded below. See
    [Phase 4 report completion](founder-report-completion-2026-11-07.md).
-5. Implemented and accepted locally: real stage/section counters, actionable
-   pause reasons, guarded continuation, durable local checkpoints/usage and
-   reduced repeated investigation context. Full regression: 2,354 passed,
-   zero failed, 33 skipped; final durability checks: 39 passed. Live tests found
-   and corrected a restart persistence gap, but complete live execution within
-   the unchanged time/token ceilings remains an open qualification gate.
-   See [Phase 5 progress and recovery](founder-progress-recovery-2026-11-07.md).
+5. Completed and qualified locally: real stage/section counters, actionable
+   pause reasons, guarded continuation, durable checkpoints/usage/Stop status,
+   retained browser facts and bounded report groups. Full regression: 2,367
+   passed, zero failed, 33 optional skips. The four-route live review published
+   all seventeen lenses, eleven sections and three recommendations in 14 minutes
+   18 seconds at 420,423 input estimates, within the original ceilings. Immediate
+   report restart, content/usage preservation, no browser replay, Markdown/PDF,
+   final restart and account isolation passed. Seven recovery, eleven completion
+   and five launcher browser groups passed. See
+   [Phase 5 live qualification](founder-live-qualification-2026-11-07.md) and the
+   historical [progress and recovery milestone](founder-progress-recovery-2026-11-07.md).
 6. Clickable evidence, visible assumptions, section navigation and preserved
    focus, scroll, disclosure and selection state.
 7. Reliable recommendation saving and immediate Studio delivery feedback,

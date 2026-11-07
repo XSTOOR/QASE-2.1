@@ -411,7 +411,7 @@ export function createLocalApplicationServices(options = {}) {
 			return updateActivity(session, id, patch);
 		},
 		async setStatus(session, status, detail) {
-			setStatus(session, status, detail);
+			setStatus(session, status, detail, { durable: session.mode === 'founder' });
 		},
 		markReportPhase,
 		markExecutionStarted,

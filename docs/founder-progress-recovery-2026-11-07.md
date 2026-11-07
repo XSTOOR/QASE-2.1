@@ -106,11 +106,13 @@ completion gate is changed. SDK estimates are not provider billing receipts.
   environment, so this attempt cannot establish active-run performance or
   validate the live restart flow after the correction. Credential scan passed.
 
-The bounded live restart qualification remains open for both fixture sizes.
+At the r1 milestone, bounded live restart qualification remained open for both fixture sizes.
 The final harness now waits briefly for explicit Stop to settle before saving
 failure artifacts and records its fixed limits plus the stopped checkpoint.
-It never turns a failed attempt into a pass. Phase 5 implementation and local
-acceptance are complete; its live completion/performance gate remains pending.
+It never turns a failed attempt into a pass. R1's implementation and local
+acceptance were complete, while its live gate was still pending. The later r2
+four-route qualification passed; see the follow-up linked below. The earlier
+failed compact attempts have not been relabeled as passing tests.
 
 UI checks follow the accessibility, focus, content-overflow and feedback rules
 in the [Web Interface Guidelines](https://raw.githubusercontent.com/vercel-labs/web-interface-guidelines/main/command.md).
@@ -119,3 +121,6 @@ The existing application design tokens are retained.
 The next phase covers report navigation/evidence usability. CI/Linux/Node 22,
 Docker, broader live access scenarios and production topology remain in the
 Phase 8 release matrix. Nothing is promoted or pushed by this local milestone.
+
+The r2 investigation/report follow-up and its current qualification results are
+tracked in [Founder live qualification](founder-live-qualification-2026-11-07.md).

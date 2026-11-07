@@ -21,7 +21,8 @@ export async function rememberFounderEvidence(session,runStore,{toolName,activit
  const text=String(source.bodyText||source.text||(source.elements||[]).map(e=>e.text||e.name||e.label||'').filter(Boolean).join('\n')).slice(0,2200);
  const assertions=Array.isArray(result.assertions)?result.assertions.map(a=>({check:String(a.check||a.name||'').slice(0,160),outcome:a.outcome,expected:String(a.expected||'').slice(0,220),actual:String(a.actual||'').slice(0,220)})).slice(0,12):undefined;
  const entry=redact(session.id,{activityId,tool:toolName,url,title:String(source.title||'').slice(0,200),text,
-  action:activity.input?.action,assertions,limitations:result.limitations?.slice(0,4),
+  action:activity.input?.action,selector:activity.input?.selector?.slice(0,200),expected:publicUrl(activity.input?.expected),assertions,
+  limitations:Array.isArray(result.limitations)?result.limitations.slice(0,4).map(item=>String(item).slice(0,180)):typeof result.limitations==='string'?result.limitations.slice(0,500):undefined,
   ...(Array.isArray(result.console)?{consoleErrors:result.console.filter(e=>/error|assert/i.test(e.level||e.type||'')).length}:{}),
   ...(Array.isArray(result.network)?{networkFailures:result.network.filter(e=>e.statusCode>=400||e.status>=400||e.errorText||e.error).length}:{})});
  entry.signature=canonicalModeHash({...entry,activityId:undefined});
@@ -42,9 +43,17 @@ function observedPageFacts(session){
  const entries=session.founder.investigationCheckpoint?.entries||[],routes=[...new Set(entries.map(e=>e.url))].slice(-8);
  return routes.map(url=>{
   const all=entries.filter(e=>e.url===url),snapshots=all.filter(e=>e.text),latest=snapshots.at(-1),earlier=snapshots[0];
+  // Keep distinct earlier checks, including failures, when later diagnostics
+  // arrive. A recent-only slice hid navigation/forms and provoked replays.
+  const checks=new Map();
+  for(const entry of all.filter(e=>e.assertions?.length||e.consoleErrors!==undefined||e.networkFailures!==undefined)){
+   const failed=entry.assertions?.some(a=>a.outcome==='fail')||entry.consoleErrors>0||entry.networkFailures>0;
+   const key=JSON.stringify([entry.tool,entry.action,entry.selector,entry.expected,Boolean(failed)]);
+   checks.delete(key);checks.set(key,entry);
+  }
   return {url,title:latest?.title,activityId:latest?.activityId,observedText:latest?.text.slice(0,1100),
    ...(earlier&&earlier.text!==latest?.text?{earlierState:{activityId:earlier.activityId,text:earlier.text.slice(0,700)}}:{}),
-   checks:all.filter(e=>e.assertions||e.consoleErrors!==undefined||e.networkFailures!==undefined).slice(-4).map(e=>({activityId:e.activityId,tool:e.tool,action:e.action,assertions:e.assertions?.slice(0,3),consoleErrors:e.consoleErrors,networkFailures:e.networkFailures,limitations:e.limitations}))};
+   checks:[...checks.values()].slice(-12).map(e=>({activityId:e.activityId,tool:e.tool,action:e.action,selector:e.selector,expected:e.expected,assertions:e.assertions?.slice(0,2).map(a=>({check:a.check.slice(0,100),outcome:a.outcome,expected:a.expected.slice(0,120),actual:a.actual.slice(0,160)})),consoleErrors:e.consoleErrors,networkFailures:e.networkFailures,limitations:e.limitations}))};
  });
 }
 

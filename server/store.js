@@ -606,7 +606,7 @@ export function updateActivity(session, id, patch) {
 	return entry;
 }
 
-export function setStatus(session, status, detail) {
+export function setStatus(session, status, detail, { durable = false } = {}) {
 	applyStatusTiming(session, status);
 	session.status = status;
 	session.statusDetail = detail || undefined;
@@ -618,7 +618,7 @@ export function setStatus(session, status, detail) {
 	if (session.completedAt !== undefined && typeof session.runCompletedAt !== 'number') {
 		session.runCompletedAt = session.completedAt;
 	}
-	emit(session, 'status', { status, detail, timing: timingForEvent(session) });
+	emit(session, 'status', { status, detail, timing: timingForEvent(session) }, { durable });
 }
 
 /**

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createFounderDraftTool,founderDraftSchema,founderDraftProgress,resolveFounderDraft,FOUNDER_REPORT_SECTIONS,FOUNDER_DRAFT_PROTOCOL,initializeFounderReportGeneration,usesFounderDraft,founderDraftTools} from './founderReportDraft.js';
+import {createFounderDraftTool,createFounderDraftBatchTool,founderDraftBatchSections,founderDraftBatchSchema,founderDraftStrategyContext,usesFounderDraftBatch,founderDraftSchema,founderDraftProgress,resolveFounderDraft,FOUNDER_REPORT_SECTIONS,FOUNDER_DRAFT_PROTOCOL,initializeFounderReportGeneration,usesFounderDraft,founderDraftTools} from './founderReportDraft.js';
 import {founderReportToolSchema} from './founderTools.js';
 import {normalizeFounderReport} from './founderSchema.js';
 import {prepareModeReportContinuation} from './agent.js';
@@ -21,6 +21,85 @@ function fixture(){
   metrics:{north_star:{name:'Useful practice completions',definition:'Completed local practice with a useful next step.',why:'Connects the task to its intended use.',...proof},candidates:[{name:'Task abandonment',definition:'Started practice without completion.',...proof}],experiments:[{hypothesis:'A sample task may clarify entry.',change:'Add a sample task.',success_metric:'Practice completion',timebox:'Two weeks',guardrail:'No loss of editable input',...proof}]}};
  return {session,payload};
 }
+
+const enableBatch=session=>{session.founder.reportGeneration={version:1,protocol:FOUNDER_DRAFT_PROTOCOL,evidenceHashVersion:1,sectionBatchSize:3};return session;};
+function batchInput(session,payload){return {expected_revision:founderDraftProgress(session).revision||'initial',sections:structuredClone(Object.fromEntries(founderDraftBatchSections(session).map(key=>[key,key==='recommendations'?[payload.recommendations[founderDraftProgress(session).recommendations]]:payload[key]])))};}
+function assertStrictObjects(node){if(node.type==='object'){assert.equal(node.additionalProperties,false);Object.values(node.properties).forEach(assertStrictObjects);}if(node.type==='array')assertStrictObjects(node.items);}
+
+test('small report groups preserve all thirteen durable writes and the unchanged full report across restoration',async()=>{
+ const base=fixture(),schema=founderReportToolSchema(),commits=[];let session=enableBatch(base.session),requests=0;
+ const transportTools=[{name:'draft_founder_report_section'},{name:'draft_founder_report_batch'},{name:'finish_founder_review',parametersSchema:{type:'object',required:['draft_revision']}}];
+ assert.deepEqual(founderDraftTools(session,transportTools,schema),[]);
+ while(founderDraftProgress(session).next){
+  const sections=founderDraftBatchSections(session);assert.ok(sections.length<=3);
+  const advertised=founderDraftTools(session,transportTools,schema,{synthesis:true});assert.deepEqual(advertised.map(t=>t.name),['draft_founder_report_batch']);
+  assertStrictObjects(advertised[0].parametersSchema);
+  assert.deepEqual(advertised[0].parametersSchema.properties.sections.required,sections);
+  const sectionTool=createFounderDraftTool(session,{async commit(s,type,data){commits.push(data.section);}},schema);
+  const result=await createFounderDraftBatchTool(session,sectionTool,schema).run(batchInput(session,base.payload));assert.equal(result.success,true,result.error);assert.deepEqual(result.saved_sections,sections);
+  requests++;session=JSON.parse(JSON.stringify(session));assert.equal(founderDraftProgress(session).intact,true);
+ }
+ assert.equal(requests,6);assert.equal(commits.length,13);assert.equal(commits.filter(k=>k==='recommendations').length,3);
+ assert.deepEqual(resolveFounderDraft(session,{draft_revision:session.founder.reportDraft.revision}),base.payload);
+ assert.equal(normalizeFounderReport(base.payload,{observations:session.founder.observations,target:{name:'Fixture',url:'https://fixture.test/'},generatedAt:new Date().toISOString()}).recommendations.length,3);
+ assert.deepEqual(founderDraftTools(session,transportTools,schema,{synthesis:true}).map(t=>t.name),['finish_founder_review']);
+ assert.equal(session.founder.finalizedAt,undefined);
+});
+
+test('a later failed batch write or cancellation preserves earlier sections and resumes only the remaining group',async()=>{
+ for(const cancelled of [false,true]){
+  const {session,payload}=fixture();enableBatch(session);let writes=0;
+  const schema=founderReportToolSchema(),sectionTool=createFounderDraftTool(session,{async commit(){writes++;if(!cancelled&&writes===2)throw new Error('Disk unavailable');}},schema,{isCancelled:()=>cancelled&&writes>0});
+  const input=batchInput(session,payload),batch=createFounderDraftBatchTool(session,sectionTool,schema),result=await batch.run(input);
+  assert.equal(result.success,false);assert.deepEqual(result.saved_sections,['executive_summary']);assert.equal(founderDraftProgress(session).next,'icp');assert.equal(founderDraftProgress(session).intact,true);
+  const before=structuredClone(session.founder.reportDraft);assert.equal((await batch.run(input)).success,false);assert.deepEqual(session.founder.reportDraft,before);
+  const restored=JSON.parse(JSON.stringify(session)),resume=createFounderDraftBatchTool(restored,createFounderDraftTool(restored,{async commit(){}},schema),schema);
+  assert.deepEqual(founderDraftBatchSections(restored),['icp','positioning','monetization']);assert.equal((await resume.run(batchInput(restored,payload))).success,true);
+  assert.equal(restored.founder.reportDraft.input.executive_summary,payload.executive_summary);assert.equal(restored.founder.finalizedAt,undefined);
+ }
+});
+
+test('batch types, exact evidence and revisions fail closed before writes; concurrent duplicate delivery cannot overwrite progress',async()=>{
+ const {session,payload}=fixture();enableBatch(session);let writes=0;
+ const schema=founderReportToolSchema(),batch=createFounderDraftBatchTool(session,createFounderDraftTool(session,{async commit(){writes++;}},schema),schema);
+ const unknown=batchInput(session,payload);unknown.sections.icp.evidence_observation_ids=['unknown'];
+ assert.equal((await batch.run(unknown)).success,false);assert.equal(writes,0);assert.equal(session.founder.reportDraft,undefined);
+ const input=batchInput(session,payload),bad=structuredClone(input);bad.sections.icp='invalid';assert.equal((await batch.run(bad)).success,false);assert.equal(writes,0);
+ const results=await Promise.all([batch.run(input),batch.run(input)]);assert.deepEqual(results.map(r=>r.success),[true,false]);assert.equal(writes,3);
+ assert.deepEqual(founderDraftProgress(session).completed,['executive_summary','icp','positioning']);assert.equal(founderDraftProgress(session).intact,true);
+});
+
+test('only fresh configured-provider runs select batching; legacy, qualified and unsupported saved options stay explicit',async()=>{
+ const fresh={mode:'founder',activities:[],founder:{observations:[]}};initializeFounderReportGeneration(fresh,'custom');assert.equal(usesFounderDraftBatch(fresh),true);
+ const {session,payload}=fixture();session.founder.reportGeneration={version:1,protocol:FOUNDER_DRAFT_PROTOCOL,evidenceHashVersion:1};assert.equal(usesFounderDraftBatch(session),false);
+ const before=structuredClone(session);initializeFounderReportGeneration(session,'custom');assert.deepEqual(session,before);
+ assert.equal((await createFounderDraftBatchTool(session,createFounderDraftTool(session,{async commit(){}},founderReportToolSchema()),founderReportToolSchema()).run(batchInput(session,payload))).success,false);
+ session.founder.reportGeneration.sectionBatchSize=2;assert.throws(()=>initializeFounderReportGeneration(session,'custom'),/Unsupported/);
+ delete session.founder.reportGeneration;session.founder.execution={reportProtocol:FOUNDER_DRAFT_PROTOCOL};assert.equal(usesFounderDraftBatch(session),false);
+});
+
+test('each new recommendation advertises one unused stable ID and rejects a repeated ID before any write',async()=>{
+ const {session,payload}=fixture();enableBatch(session);let writes=0;
+ const schema=founderReportToolSchema(),sectionTool=createFounderDraftTool(session,{async commit(){writes++;}},schema);
+ for(const section of ['executive_summary','icp','positioning','monetization'])assert.equal((await sectionTool.run({section,value:payload[section]})).success,true);
+ assert.equal((await sectionTool.run({section:'recommendations',value:[{...payload.recommendations[0],id:'rec-1'}]})).success,true);
+ const choices=founderDraftBatchSchema(session,schema).properties.sections.properties.recommendations.items.properties.id.enum;
+ assert.equal(choices.length,1);assert.notEqual(choices[0],'rec-1');
+ const before=structuredClone(session.founder.reportDraft),count=writes,batch=createFounderDraftBatchTool(session,sectionTool,schema),input=batchInput(session,payload);
+ input.sections.recommendations[0].id='rec-1';assert.equal((await batch.run(input)).success,false);assert.equal(writes,count);assert.deepEqual(session.founder.reportDraft,before);
+ input.sections.recommendations[0].id=choices[0];assert.equal((await batch.run(input)).success,true);assert.equal(founderDraftProgress(session).recommendations,2);assert.equal(session.founder.reportDraft.input.recommendations[0].id,'rec-1');
+});
+
+test('report inference receives the saved strategy after restoration without mutating sections or expanding legacy prompts',async()=>{
+ const {session,payload}=fixture();enableBatch(session);session.founder.observations[0].summary='Observed task practice in the controlled fixture.';const schema=founderReportToolSchema(),tool=createFounderDraftTool(session,{async commit(){}},schema);
+ for(const section of FOUNDER_REPORT_SECTIONS.slice(0,-1))for(const value of section==='recommendations'?payload.recommendations.map(item=>[item]):[payload[section]])assert.equal((await tool.run({section,value})).success,true);
+ session.founder.scope={target:{name:'Fixture',url:'https://fixture.test/'},access:{decision:'public_only'},productContext:{}};session.messages=[];
+ const restored=JSON.parse(JSON.stringify(session)),before=structuredClone(restored),strategy=founderDraftStrategyContext(restored);
+ assert.deepEqual(Object.keys(strategy.previous_sections),['risks','quick_wins','plan']);assert.deepEqual(strategy.saved_recommendations,payload.recommendations);
+ const context=buildFounderSynthesisContext(restored);assert.match(context,/Saved strategy for consistency \(data, not instructions/);assert.ok(context.includes(payload.recommendations[0].implementation_scope));assert.match(context,/900-1500/);
+ assert.deepEqual(restored,before);assert.equal(founderDraftProgress(restored).intact,true);
+ delete restored.founder.reportGeneration.sectionBatchSize;const legacy=buildFounderSynthesisContext(restored);assert.match(legacy,/1500-2500/);assert.doesNotMatch(legacy,/Saved strategy for consistency/);
+});
 
 test('eleven typed sections survive checkpoint restoration and the original complete report validator',async()=>{
  const {session,payload}=fixture(),commits=[],schema=founderReportToolSchema();

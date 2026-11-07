@@ -950,6 +950,14 @@ test('configured-provider Founder synthesis keeps durable draft tools and remove
  assert.deepEqual(f.session,before);assert.match(f.record.runtime.getToolDescriptions(),/typed report draft/);
 });
 
+test('new configured report groups retain their native SDK tool across synthesis without changing saved state',()=>{
+ const f=founderSynthesisFixture();f.session.founder.reportGeneration={version:1,protocol:'section-draft-v1',evidenceHashVersion:1,sectionBatchSize:3};
+ for(const name of ['draft_founder_report_section','draft_founder_report_batch']){const tool={name,parametersSchema:{type:'object'}};f.headless.options.tools.push(tool);f.headless.toolsByName.set(name,tool);}
+ const before=structuredClone(f.session);assert.equal(prepareFounderSynthesis(f.session,f.record),true);
+ assert.deepEqual(f.headless.getTools().map(t=>t.name),['finish_founder_review','draft_founder_report_section','draft_founder_report_batch']);
+ assert.deepEqual(f.session,before);assert.equal(f.clearCount(),1);assert.equal(prepareFounderSynthesis(f.session,f.record),false);
+});
+
 test('SQA context continuation clears only redundant model history at bounded evidence checkpoints', () => {
 	const session = {
 		mode: 'sqa',
