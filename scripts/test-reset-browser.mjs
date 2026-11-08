@@ -1,139 +1,120 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { promises as fs } from 'node:fs';
-import os from 'node:os';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { createSqaTestServer } from './sqa-test-runtime.mjs';
 
-// End-to-end browser test for the forgot/reset password flow (#15673).
-// The fixture server runs with the MOCK mailer: the reset link lands in the
-// outbox file (.qase/outbox.json inside the fixture cwd), which the test
-// reads directly — the link is never surfaced in the UI.
-const repo = fileURLToPath(new URL('../', import.meta.url));
-const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'qase-reset-browser-'));
-const base = 'http://127.0.0.1:5191';
-const server = spawn(process.execPath, [path.join(repo, 'server/index.js')], {
-	cwd: directory, windowsHide: true,
-	env: {
-		...process.env, PORT: '5191', QASE_HOST: '127.0.0.1', NODE_ENV: 'test',
-		QASE_RUN_STORE: 'local', QASE_EXECUTION_MODE: 'local', QASE_AUTH_REQUIRED: 'true',
-		QASE_MAIL_MODE: 'mock', QASE_PUBLIC_URL: base
-	},
-	stdio: ['ignore', 'pipe', 'pipe']
-});
-let output = '';
-server.stdout.on('data', chunk => output += chunk);
-server.stderr.on('data', chunk => output += chunk);
-
-async function readOutboxLink() {
-	const outbox = JSON.parse(await fs.readFile(path.join(directory, '.qase/outbox.json'), 'utf8'));
-	const last = outbox.at(-1);
-	const match = last?.text?.match(/https?:\/\/\S+token=([A-Za-z0-9_-]+)/);
-	assert.ok(match, 'reset link found in mock outbox');
-	return { link: match[0].replace(/token=.*/, 'token=' + match[1]), token: match[1] };
-}
-
-let browser;
+// Exercise the recovery-code entry point exposed by the current login form.
+// All accounts and codes belong to this isolated, model-free fixture.
+const output = fileURLToPath(new URL('../test-results/auth-reset/', import.meta.url));
+const runtime = await createSqaTestServer(path.join(output, 'runtime-' + Date.now()), { authRequired: true });
+const email = 'resetflow@example.test';
+const originalPassword = 'a strong original password';
+const errors = [], checks = [];
+let browser, page;
 try {
-	let ready = false;
-	for (let attempt = 0; attempt < 60; attempt++) {
-		if (server.exitCode !== null) throw new Error(output);
-		try { if ((await fetch(`${base}/healthz`)).ok) { ready = true; break; } } catch {}
-		await new Promise(resolve => setTimeout(resolve, 200));
-	}
-	assert.ok(ready, 'fixture server starts');
+	await runtime.start();
+	browser = await chromium.launch();
+	const account = await browser.newContext();
+	assert.equal((await account.request.post(runtime.base + '/api/auth/register', {
+		data: { email, password: originalPassword, displayName: 'Reset fixture' }
+	})).status(), 201);
+	const owner = await account.newPage();
+	owner.on('pageerror', error => errors.push(error.message));
+	await owner.goto(runtime.base + '/#/account');
+	await owner.locator('#profile-dialog').waitFor({ state: 'visible' });
+	await owner.locator('#recovery-current-password').fill('incorrect password');
+	await owner.locator('#recovery-generate').click();
+	await owner.waitForFunction(() => document.querySelector('#profile-message').textContent.includes('incorrect'));
+	assert.ok(await owner.locator('#recovery-codes-result').isHidden());
+	await owner.locator('#recovery-current-password').fill(originalPassword);
+	await owner.locator('#recovery-generate').click();
+	await owner.locator('#recovery-codes-result').waitFor({ state: 'visible' });
+	const codes = await owner.locator('#recovery-codes-list li').allTextContents();
+	assert.equal(codes.length, 10);
+	assert.ok(codes.every(code => /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)));
+	assert.deepEqual(await (await account.request.get(runtime.base + '/api/auth/recovery-codes')).json(), { total: 10, unused: 10 });
+	await owner.reload();
+	await owner.locator('#profile-dialog').waitFor({ state: 'visible' });
+	assert.ok(await owner.locator('#recovery-codes-result').isHidden());
+	checks.push('Code generation requires the current password, returns ten codes once, and exposes only counts afterwards.');
 
-	// Seed a known account through the real API.
-	const register = await fetch(`${base}/api/auth/register`, {
-		method: 'POST', headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ email: 'resetflow@example.com', password: 'a strong original password' })
-	});
-	assert.equal(register.status, 201);
-
-	browser = await chromium.launch({ headless: true });
 	const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-	const page = await context.newPage();
-	const errors = [];
+	page = await context.newPage();
 	page.on('pageerror', error => errors.push(error.message));
-
-	await page.goto(base);
+	await page.goto(runtime.base);
 	await page.locator('#auth-gate').waitFor({ state: 'visible' });
-
-	// "Forgot password?" is visible in login mode and hidden in register mode.
-	const forgotSwitch = page.locator('#auth-forgot-switch');
-	assert.ok(await forgotSwitch.isVisible(), 'forgot link visible in login mode');
+	const recover = page.locator('#auth-forgot-switch');
+	assert.ok(await recover.isVisible());
 	await page.locator('#auth-switch').click();
-	assert.ok(await forgotSwitch.isHidden(), 'forgot link hidden in register mode');
+	assert.ok(await recover.isHidden());
 	await page.locator('#auth-switch').click();
-
-	// Unknown email → identical neutral message.
-	await forgotSwitch.click();
-	assert.ok(await page.locator('#forgot-panel').isVisible());
-	await page.locator('#forgot-email').fill('nobody@example.com');
-	await page.locator('#forgot-submit').click();
-	await page.locator('#forgot-notice').waitFor({ state: 'visible' });
-	const unknownNotice = await page.locator('#forgot-notice').textContent();
-
-	// Known email → same neutral message, link delivered to the outbox.
-	await page.locator('#forgot-email').fill('resetflow@example.com');
-	await page.locator('#forgot-submit').click();
-	await page.waitForFunction(() => document.querySelectorAll('#forgot-notice:not([hidden])').length > 0 && document.querySelector('#forgot-notice').textContent.length > 0);
-	// Wait for the second outbox entry.
-	await page.waitForTimeout(300);
-	const knownNotice = await page.locator('#forgot-notice').textContent();
-	assert.equal(unknownNotice.trim(), knownNotice.trim(), 'identical neutral message for unknown and known email');
-
-	const { token } = await readOutboxLink();
-
-	// Open the reset route directly (as the emailed link would). A full
-	// navigation exercises the boot-time route; the hashchange listener
-	// covers links opened into an already-loaded tab.
-	await page.goto(`${base}/#reset-password?token=${token}`);
-	await page.reload();
+	await recover.click();
+	await page.locator('#recover-panel').waitFor({ state: 'visible' });
+	async function submitCode(accountEmail, code) {
+		await page.locator('#recover-email').fill(accountEmail);
+		await page.locator('#recover-code').fill(code);
+		const received = page.waitForResponse(response => new URL(response.url()).pathname === '/api/auth/recover' && response.request().method() === 'POST');
+		await page.locator('#recover-submit').click();
+		return received;
+	}
+	const invalidCode = '0000-0000-0000';
+	const unknown = await submitCode('unknown@example.test', invalidCode);
+	assert.equal(unknown.status(), 400);
+	await page.locator('#recover-error').waitFor({ state: 'visible' });
+	const wrong = await submitCode(email, invalidCode);
+	assert.equal(wrong.status(), 400);
+	assert.deepEqual(await wrong.json(), await unknown.json());
+	checks.push('The login recovery form rejects wrong codes and gives the same response for unknown accounts.');
+	const verified = await submitCode(email, codes[0]);
+	assert.equal(verified.status(), 200);
+	const authorization = (await verified.json()).authorization;
+	assert.ok(authorization);
 	await page.locator('#reset-panel').waitFor({ state: 'visible' });
+	assert.ok(!page.url().includes(authorization));
+	const reusedCode = await context.request.post(runtime.base + '/api/auth/recover', { data: { email, code: codes[0] } });
+	assert.equal(reusedCode.status(), 400);
+	checks.push('A valid recovery code is consumed once; reset authorization never enters the URL.');
 
-	// 7-char password blocked by native validation.
 	await page.locator('#reset-password').fill('seven7c');
 	await page.locator('#reset-confirm').fill('seven7c');
-	assert.equal(await page.locator('#reset-password').evaluate(node => node.checkValidity()), false, '7-char reset password rejected');
-
-	// Mismatched confirm blocked inline before submit.
+	assert.equal(await page.locator('#reset-password').evaluate(node => node.checkValidity()), false);
 	await page.locator('#reset-password').fill('eight8ch');
 	await page.locator('#reset-confirm').fill('different8');
 	await page.locator('#reset-submit').click();
-	assert.ok(await page.locator('#reset-error').isVisible(), 'mismatched confirm blocked inline');
+	await page.locator('#reset-error').waitFor({ state: 'visible' });
 	assert.match(await page.locator('#reset-error').textContent(), /do not match/i);
-
-	// Matching 8-char passwords succeed.
 	await page.locator('#reset-confirm').fill('eight8ch');
+	const resetResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/auth/reset-password' && response.request().method() === 'POST');
 	await page.locator('#reset-submit').click();
-	await page.locator('#reset-notice').waitFor({ state: 'visible' });
-	assert.match(await page.locator('#reset-notice').textContent(), /Password updated/i);
-
-	// Old password dead, new password works.
-	await page.locator('#reset-back').click();
-	await page.locator('#auth-email').fill('resetflow@example.com');
-	await page.locator('#auth-password').fill('a strong original password');
+	const reset = await resetResponse;
+	assert.equal(reset.status(), 200);
+	assert.match((await reset.json()).message, /Password updated/i);
+	await page.locator('#auth-form').waitFor({ state: 'visible' });
+	assert.equal((await account.request.get(runtime.base + '/api/profile')).status(), 401);
+	checks.push('Password length and confirmation are enforced; reset revokes the existing signed-in session.');
+	await page.locator('#auth-email').fill(email);
+	await page.locator('#auth-password').fill(originalPassword);
 	await page.locator('#auth-submit').click();
 	await page.locator('#auth-error').waitFor({ state: 'visible' });
 	await page.locator('#auth-password').fill('eight8ch');
 	await page.locator('#auth-submit').click();
 	await page.locator('#auth-gate').waitFor({ state: 'hidden' });
-
-	// Token reuse fails with the generic error.
-	const reuse = await fetch(`${base}/api/auth/reset-password`, {
-		method: 'POST', headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ token, password: 'another8pw' })
-	});
-	assert.equal(reuse.status, 400);
-	assert.match((await reuse.json()).error, /invalid or has expired/i);
-
+	const reusedAuthorization = await browser.newContext();
+	assert.equal((await reusedAuthorization.request.post(runtime.base + '/api/auth/reset-password', {
+		data: { authorization, password: 'another8pw' }
+	})).status(), 400);
+	checks.push('Old credentials fail, the new password signs in, and reset authorization cannot be reused.');
 	assert.deepEqual(errors, []);
-	console.log('PASS: forgot/reset password browser flow — neutral responses, outbox link, 8-char minimum, mismatch block, old-password revocation, single-use token.');
+	const result = { status: 'passed', checks, modelCalls: 0, mailSent: 0, pageErrors: errors };
+	await fs.writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2));
+	console.log(JSON.stringify(result, null, 2));
+} catch (error) {
+	await page?.screenshot({ path: path.join(output, 'failure.png'), mask: [page.locator('#recover-code'), page.locator('#reset-panel')] }).catch(() => {});
+	await fs.writeFile(path.join(output, 'result.json'), JSON.stringify({ status: 'failed', checks, error: error.message, pageErrors: errors }, null, 2));
+	throw error;
 } finally {
 	await browser?.close();
-	server.kill();
-	await new Promise(resolve => server.exitCode !== null ? resolve() : server.once('exit', resolve));
-	await fs.rm(directory, { recursive: true, force: true });
+	await runtime.stop();
 }

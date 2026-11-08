@@ -73,6 +73,10 @@ jobs:
           retention-days: 7
       - name: Verify dashboard navigation and secure credential handoff
         run: node scripts/qualify-live-preview.mjs
+      - name: Verify account access and one-use recovery without external services
+        run: |
+          node scripts/test-auth-browser.mjs
+          node scripts/test-reset-browser.mjs
       - name: Verify Founder completion and mode launchers
         run: |
           node scripts/test-founder-completion-browser.mjs
@@ -107,6 +111,10 @@ jobs:
             test-results/founder-actions/*.json
             test-results/phase8/**/*.png
             test-results/phase8/**/result.json
+            test-results/auth/*.png
+            test-results/auth/result.json
+            test-results/auth-reset/*.png
+            test-results/auth-reset/result.json
           if-no-files-found: warn
           retention-days: 7
       - name: Verify release content when using the delivered snapshot

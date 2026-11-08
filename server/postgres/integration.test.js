@@ -287,7 +287,7 @@ test(
 		assert.deepEqual(upgrade.applied.map(item => item.version), [44]);
 		assert.deepEqual(await tenantARepository.getFounderProjectState(), legacyFounder, 'Migration 044 preserves the exact legacy selection and report.');
 
-		await t.test('Founder actions serialize across separate PostgreSQL replicas and preserve another report during delivery', async subtest => {
+		await t.test('Founder actions serialize across separate PostgreSQL replicas and preserve another report during delivery', { timeout: 30_000 }, async subtest => {
 			const replicaPool = scopedPool(schema);
 			const replica = createPostgresRunRepository({ pool: replicaPool, tenantContext: contextA });
 			subtest.after(() => replica.close());

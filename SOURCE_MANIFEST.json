@@ -20,7 +20,7 @@
     },
     {
       "path": ".github/workflows/verify.yml",
-      "sha256": "97bd68f3856be1b3d326bcd63a48f27b1f521ad53af5de99e47649f75da18944"
+      "sha256": "fa160145f0a4665dc36f84c42faff724834e21e2f7406fc4fa248efe8d8fd63b"
     },
     {
       "path": ".gitignore",
@@ -212,7 +212,7 @@
     },
     {
       "path": "docs/founder-sqa-release-2026-11-08.md",
-      "sha256": "561d2e500d74323af7f05f3cc1edfeec3aa0ece4e2102d038d24547ecee8735c"
+      "sha256": "2064b67952d59097cf54d0ad03def91a57ea00a70e67eedf956f0bc13707fdcd"
     },
     {
       "path": "docs/hybrid-qa-implementation-report.md",
@@ -1148,7 +1148,7 @@
     },
     {
       "path": "scripts/test-auth-browser.mjs",
-      "sha256": "15adc4bd98140e6f30c46c4d653e159637ba703136ad119be7c56ae55d40a389"
+      "sha256": "6c42e8510c079d53d655a6ac09037582147083ada3f884412f69cab86d3d8c5f"
     },
     {
       "path": "scripts/test-browser-efficiency.mjs",
@@ -1180,7 +1180,7 @@
     },
     {
       "path": "scripts/test-reset-browser.mjs",
-      "sha256": "a4dcba0858b70a9783e406c7956d1c19837037fec2239070c5669b0fbf865c21"
+      "sha256": "01b3d8f98d283ba06111dc7b4a66cf367fe28b768cdd7aa7e4a06536a69c1116"
     },
     {
       "path": "scripts/test-sqa-evidence.mjs",
@@ -2456,7 +2456,7 @@
     },
     {
       "path": "server/postgres/integration.test.js",
-      "sha256": "20cc3f9270547738f8c1924a872c0bc9c253a5e10b6d1cfcc44fb419c8277502"
+      "sha256": "da944a731a043a6bc6666c1a13e644c1ac59032644855c73dba88637df576734"
     },
     {
       "path": "server/postgres/matrixRunRepository.js",

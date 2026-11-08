@@ -44,6 +44,7 @@ Disposable schemas and databases are used; production services are not targets.
 | Live configured-provider Founder | Four-route fixture, all 17 lenses and 11 sections, unchanged time/token ceilings, mid-report restart, saved-content/usage retention, exports and account isolation. |
 | Linux Node 22 regression | Full suite with isolated PostgreSQL and Redis endpoints; default-deny non-bypass database role. No actual model credentials are present in CI. |
 | Browser acceptance | Founder completion/recovery/reader/actions, both launchers and SQA startup/launch/evidence on Chromium, Firefox and WebKit. |
+| Account access | Desktop/mobile entry, registration, account isolation, CSRF, password rotation and logout; recovery-code generation, one-use reset, old-session revocation and new-password login. Disposable accounts, no live mail or model calls. |
 | Image | Build the root Dockerfile at the exact candidate SHA, then smoke the same image with non-root/read-only hardening, required authentication, closed registration and all three browser engines. No model calls. |
 | Promotion | Match the green CI commit, immutable image identity, source manifest and remote branch ancestry. Preserve private data and do not force-push. |
 

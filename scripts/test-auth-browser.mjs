@@ -1,54 +1,40 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { createSqaTestServer } from './sqa-test-runtime.mjs';
 
 const repo = fileURLToPath(new URL('../', import.meta.url));
-const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'qase-auth-browser-'));
-const base = 'http://127.0.0.1:5189';
-const server = spawn(process.execPath, [path.join(repo, 'server/index.js')], {
-	cwd: directory, windowsHide: true,
-	env: { ...process.env, PORT: '5189', QASE_HOST: '127.0.0.1', NODE_ENV: 'test', QASE_RUN_STORE: 'local', QASE_EXECUTION_MODE: 'local', QASE_AUTH_REQUIRED: 'true' },
-	stdio: ['ignore', 'pipe', 'pipe']
-});
-let output = '';
-server.stdout.on('data', chunk => output += chunk);
-server.stderr.on('data', chunk => output += chunk);
-let browser;
+const output = path.join(repo, 'test-results/auth');
+const server = await createSqaTestServer(path.join(output, 'runtime-' + Date.now()), { authRequired: true });
+const base = server.base;
+let browser, page;
+const errors = [];
 try {
-	let ready = false;
-	for (let attempt = 0; attempt < 60; attempt++) {
-		if (server.exitCode !== null) throw new Error(output);
-		try { if ((await fetch(`${base}/healthz`)).ok) { ready = true; break; } } catch {}
-		await new Promise(resolve => setTimeout(resolve, 200));
-	}
-	assert.ok(ready, 'fixture server starts');
+	await server.start();
 	browser = await chromium.launch({ headless: true });
 	const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-	const page = await context.newPage();
-	const errors = [];
+	page = await context.newPage();
 	page.on('pageerror', error => errors.push(error.message));
 	await page.goto(base);
 	await page.locator('#auth-gate').waitFor({ state: 'visible' });
-	assert.equal(await page.locator('.auth-drytis').textContent(), 'CREATED FOR DRYTIS');
+	await page.getByRole('link', { name: 'QASE home', exact: true }).waitFor();
 	assert.equal(await page.locator('.app').evaluate(node => node.inert), true);
 	await page.locator('#auth-theme-select').selectOption('dark');
-	assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(16, 16, 18)');
+	assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
 	await page.reload();
 	await page.locator('#auth-gate').waitFor({state:'visible'});
 	assert.equal(await page.locator('#auth-theme-select').inputValue(), 'dark');
 	await page.locator('#auth-theme-select').selectOption('light');
-	assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(255, 255, 255)');
-	await fs.mkdir(path.join(repo, 'artifacts/auth'), { recursive: true });
-	await page.screenshot({ path: path.join(repo, 'artifacts/auth/desktop.png'), fullPage: true });
+	assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'light');
+	await fs.mkdir(path.join(repo, 'test-results/auth'), { recursive: true });
+	await page.screenshot({ path: path.join(repo, 'test-results/auth/desktop.png'), fullPage: true });
 	await page.setViewportSize({ width: 390, height: 844 });
 	assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 	assert.ok(await page.locator('#auth-theme-select').isVisible());
 	await page.locator('#auth-theme-select').selectOption('system');
-	await page.screenshot({ path: path.join(repo, 'artifacts/auth/mobile.png'), fullPage: true });
+	await page.screenshot({ path: path.join(repo, 'test-results/auth/mobile.png'), fullPage: true });
 	await page.setViewportSize({ width: 1440, height: 1000 });
 	await page.locator('#auth-switch').click();
 	// Signup-side 8-char boundary (ticket #15672): a 7-character password must
@@ -63,8 +49,7 @@ try {
 	await page.locator('#auth-display').fill('Alice');
 	await page.locator('#auth-submit').click();
 	await page.locator('#auth-gate').waitFor({ state: 'hidden' });
-	await page.locator('#composer-input').waitFor({ state: 'visible' });
-	await page.waitForFunction(() => document.querySelectorAll('#run-list [data-id]').length > 0 || document.querySelector('#chat-title').textContent !== '');
+	await page.locator('#sidebar-open-profile').waitFor({ state: 'visible' });
 	const api = (url, method = 'GET', body) => page.evaluate(async ({ url, method, body }) => {
 		const csrf = document.cookie.match(/(?:^|; )qase_csrf=([^;]+)/)?.[1];
 		const response = await fetch('/api' + url, { method, headers: { 'Content-Type':'application/json', 'X-CSRF-Token':decodeURIComponent(csrf ?? '') }, body: body ? JSON.stringify(body) : undefined });
@@ -76,7 +61,7 @@ try {
 	// Close it only if a previous step happened to open it.
 	if (await page.locator('#qa-start').isVisible()) await page.locator('#qa-close').click();
 	assert.equal((await api('/sessions', 'POST', {})).status, 201);
-	await page.locator('#open-profile').click();
+	await page.locator('#sidebar-open-profile').click();
 	await page.locator('#profile-name').fill('Alice QA');
 	await page.locator('#profile-timezone').fill('Asia/Kolkata');
 	await page.locator('#profile-form button').click();
@@ -108,15 +93,19 @@ try {
 	await page.locator('#auth-submit').click();
 	await page.locator('#auth-gate').waitFor({ state:'hidden' });
 	if (await page.locator('#qa-start').isVisible()) await page.locator('#qa-close').click();
-	await page.locator('#sign-out').click();
+	await page.locator('#sidebar-sign-out').click();
 	await page.locator('#auth-gate').waitFor({ state:'visible' });
 	assert.equal(await page.locator('.app').evaluate(node => node.inert), true);
 	assert.equal((await context.request.get(base + '/api/sessions')).status(), 401);
 	assert.deepEqual(errors, []);
-	console.log('PASS: desktop/mobile entry, registration, profile, memory, encrypted settings, two-user isolation, CSRF, password rotation, login and logout.');
+	const result = { status: 'passed', checks: ['desktop/mobile entry and theme persistence', 'registration and password validation', 'profile and memory', 'per-account settings and run isolation', 'CSRF protection', 'password rotation, login and logout'], modelCalls: 0, pageErrors: errors };
+	await fs.writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2));
+	console.log(JSON.stringify(result, null, 2));
+} catch (error) {
+	await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {});
+	await fs.writeFile(path.join(output, 'result.json'), JSON.stringify({ status: 'failed', error: error.message, pageErrors: errors }, null, 2));
+	throw error;
 } finally {
 	await browser?.close();
-	server.kill();
-	await new Promise(resolve => server.exitCode !== null ? resolve() : server.once('exit', resolve));
-	await fs.rm(directory, { recursive:true, force:true });
+	await server.stop();
 }
