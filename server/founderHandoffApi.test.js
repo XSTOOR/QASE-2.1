@@ -30,7 +30,7 @@ async function startFixture({ deliveries = [], deliveryError } = {}) {
 	let founderState = {
 		schemaVersion: 1,
 		updatedAt: '2026-10-05T10:00:00.000Z',
-		ownerUserId: 'user-test',
+		ownerUserId: TEST_TENANT.actorUserId,
 		targetUrl: 'https://demo.test/',
 		context: { targetUrl: 'https://demo.test/', description: 'Demo' },
 		goals: { primaryGoal: 'Grow signups' },
@@ -41,6 +41,10 @@ async function startFixture({ deliveries = [], deliveryError } = {}) {
 		selections: ['rec-1', 'rec-3'],
 		handoff: undefined
 	};
+	const runId = randomUUID();
+	const session = { id: runId, mode: 'founder', status: 'done', ownerUserId: TEST_TENANT.actorUserId,
+		founder: { finalizedAt: founderState.updatedAt, scope: { target: { url: founderState.targetUrl }, productContext: founderState.goals, projectContext: founderState.context },
+			report: { generatedAt: founderState.updatedAt, recommendationSet: founderState.recommendationSet, recommendations: founderState.recommendationSet.recommendations } } };
 	const deliveryClient = {
 		async deliver(target, payload, opts) {
 			if (deliveryError) throw deliveryError;
@@ -50,8 +54,8 @@ async function startFixture({ deliveries = [], deliveryError } = {}) {
 		}
 	};
 	const memoryRuns = {
-		load() {}, create() {}, get() { return undefined; }, list() { return []; },
-		getAny() { return undefined; }, delete() { return true; },
+		load() {}, create() {}, get(id) { return id === runId ? session : undefined; }, list() { return []; },
+		getAny(id) { return id === runId ? session : undefined; }, delete() { return true; },
 		commit(session) { return session; },
 		addMessage(_session, message) { return message; },
 		addActivity(_session, activity) { return activity; },
@@ -116,8 +120,11 @@ async function startFixture({ deliveries = [], deliveryError } = {}) {
 
 	return {
 		...application, server, request, deliveries,
+		runId,
+		async input(ids) { const state = await (await request(`/api/founder/state?runId=${runId}`)).json(); return { runId, reviewKey: state.state.reviewKey, expectedRevision: state.state.revision, selectedRecommendationIds: ids }; },
+		async select(ids) { const input = await this.input(ids); const response = await request('/api/founder/state/selections', { method: 'PATCH', json: input }); assert.equal(response.status,200); },
 		get state() { return founderState; },
-		async seedHandoff(handoff) { founderState = { ...founderState, handoff }; },
+		async seedHandoff(handoff) { founderState = { ...founderState, handoff, actionRecords: founderState.actionRecords?.map(record => ({ ...record, handoff, handoffs: record.handoffs?.map(old => ({...old,...handoff})) })) }; },
 		close: async () => {
 			await application.whenIdle();
 			await new Promise(resolve => server.close(resolve));
@@ -129,9 +136,10 @@ test('founder handoff route delivers only the selected ids via the signed client
 	const fixture = await startFixture();
 	t.after(() => fixture.close());
 
+	await fixture.select(['rec-2','rec-1']);
 	const response = await fixture.request('/api/founder/handoff', {
 		method: 'POST',
-		json: { selectedRecommendationIds: ['rec-2', 'rec-1'] }
+		json: await fixture.input(['rec-2', 'rec-1'])
 	});
 	assert.equal(response.status, 200);
 	const result = await response.json();
@@ -147,7 +155,7 @@ test('founder handoff route delivers only the selected ids via the signed client
 	assert.equal(fixture.deliveries[0].payload.recommendationSet.setVersion, 3);
 	// state records the handoff; selections untouched
 	assert.equal(fixture.state.handoff.status, 'succeeded');
-	assert.deepEqual(fixture.state.selections, ['rec-1', 'rec-3']);
+	assert.deepEqual(fixture.state.selections, ['rec-1', 'rec-2']);
 });
 
 test('empty, unknown, or malformed selections are rejected with 400', async t => {
@@ -158,7 +166,7 @@ test('empty, unknown, or malformed selections are rejected with 400', async t =>
 		{},
 		{ selectedRecommendationIds: [] },
 		{ selectedRecommendationIds: 'rec-1' },
-		{ selectedRecommendationIds: ['nope'] }
+		await fixture.input(['nope'])
 	]) {
 		const response = await fixture.request('/api/founder/handoff', { method: 'POST', json });
 		assert.equal(response.status, 400, JSON.stringify(json));
@@ -171,15 +179,16 @@ test('a pending handoff blocks duplicate submissions with 409', async t => {
 	t.after(() => fixture.close());
 
 	// Seed the pending record a concurrent request would have written.
+	await fixture.select(['rec-1']);
 	const seeded = await fixture.request('/api/founder/handoff', {
-		method: 'POST', json: { selectedRecommendationIds: ['rec-1'] }
+		method: 'POST', json: await fixture.input(['rec-1'])
 	});
 	assert.equal(seeded.status, 200);
 	// The saved state now records a succeeded handoff; simulate the pending
 	// window by re-sending while the state records pending.
 	await fixture.seedHandoff({ status: 'pending', requestedAt: new Date().toISOString(), selectedRecommendationIds: ['rec-1'] });
 	const second = await fixture.request('/api/founder/handoff', {
-		method: 'POST', json: { selectedRecommendationIds: ['rec-2'] }
+		method: 'POST', json: await fixture.input(['rec-1'])
 	});
 	assert.equal(second.status, 409);
 	const result = await second.json();
@@ -192,11 +201,11 @@ test('failed delivery preserves selections and reports an actionable error', asy
 	t.after(() => fixture.close());
 
 	const response = await fixture.request('/api/founder/handoff', {
-		method: 'POST', json: { selectedRecommendationIds: ['rec-1'] }
+		method: 'POST', json: await fixture.input(['rec-1','rec-3'])
 	});
 	assert.equal(response.status, 502);
 	const result = await response.json();
-	assert.match(result.error, /did not complete/i);
+	assert.match(result.error, /could not be confirmed/i);
 	assert.equal(fixture.state.handoff.status, 'failed');
 	assert.deepEqual(fixture.state.selections, ['rec-1', 'rec-3']); // preserved
 });
@@ -206,7 +215,7 @@ test('export fallback returns the ready payload without delivering', async t => 
 	t.after(() => fixture.close());
 
 	const response = await fixture.request('/api/founder/handoff', {
-		method: 'POST', json: { selectedRecommendationIds: ['rec-3'], export: true }
+		method: 'POST', json: { ...await fixture.input(['rec-3']), export: true }
 	});
 	assert.equal(response.status, 200);
 	const result = await response.json();

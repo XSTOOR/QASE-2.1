@@ -185,3 +185,12 @@ page bytes, a screenshot or commercial conclusions. Missing or changed receipts
 and unverified external references stay explicit. Assumptions remain visible
 beside claims. See [Founder report reader](founder-report-usability-2026-11-08.md)
 for state retention, proof boundaries and qualification.
+
+## Saved selections and Studio delivery
+
+Saving and delivery bind to the owned run's exact report and current action
+revision. Reused IDs cannot carry selections into another report. Writes use
+atomic persistence and return conflicts for stale edits. Sending remains an
+explicit action, with durable pending/accepted/failed state, stable retry keys
+and copy/download fallback. See [Founder actions](founder-actions-2026-11-08.md)
+for the API contract, compatibility and local qualification scope.

@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-founder-sqa-2026-11-08-report-r1",
-  "uiVersion": "20261108-1",
+  "releaseId": "qase-founder-sqa-2026-11-08-actions-r1",
+  "uiVersion": "20261108-2",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Founder report reader on aa79a56: owned read-only receipt inspection, explicit assumptions, accessible section navigation and scoped reading preferences; production qualification remains required"
+  "source": "Founder actions on c81e296: exact-report revisions, atomic selection persistence, guarded signed Studio delivery and export fallback; production qualification remains required"
 }

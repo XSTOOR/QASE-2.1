@@ -9,7 +9,7 @@ import {
 	getSession, dropLive, flushSessions, listSessions, liveEntries, liveFor, loadSessions,
 	markExecutionStarted, markReportPhase, persistSoon, peekLive, setFindingStatus, setStatus,
 	updateActivity, watchRunBus,
-	loadFounderProjectState, writeFounderProjectState
+	loadFounderProjectState, writeFounderProjectState, updateFounderProjectState
 } from './store.js';
 import { createArtifactStore } from './artifactStore.js';
 import { createEnvironmentService, createLocalEnvironmentBackend } from './environmentService.js';
@@ -401,6 +401,7 @@ export function createLocalApplicationServices(options = {}) {
 		async saveFounderProjectState(state) {
 			return writeFounderProjectState(state);
 		},
+		updateFounderProjectState,
 		async addMessage(session, message) {
 			return addMessage(session, message);
 		},

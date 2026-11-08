@@ -46,6 +46,7 @@ jobs:
           node scripts/test-founder-completion-browser.mjs
           node scripts/test-founder-progress-browser.mjs
           node scripts/test-founder-reader-browser.mjs
+          node scripts/test-founder-actions-browser.mjs
           node scripts/qualify-system-ui.mjs --launch-only
       - name: Retain mode browser diagnostics
         if: ${{ always() }}
@@ -61,6 +62,8 @@ jobs:
             test-results/integration/phase5-recovery-browser/*.json
             test-results/founder-reader/*.png
             test-results/founder-reader/*.json
+            test-results/founder-actions/*.png
+            test-results/founder-actions/*.json
           if-no-files-found: warn
           retention-days: 7
       - name: Verify release content when using the delivered snapshot

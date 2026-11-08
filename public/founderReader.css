@@ -17,6 +17,10 @@ body.studio-workspace [data-founder-run] .founder-report-navigation .btn { min-h
 .founder-selection-bar [aria-disabled="true"], .founder-select input[aria-disabled="true"] { opacity: .65; cursor: wait; }
 .founder-select { min-height: 44px; }
 .founder-selection-bar button { min-height: 44px; }
+body.studio-workspace [data-founder-run] .founder-selection-bar .btn, body.studio-workspace [data-founder-run] .founder-action-feedback .btn, body.studio-workspace [data-founder-run] .founder-handoff-status button { min-height: 44px; }
+.founder-action-feedback { font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+.founder-action-feedback [role="alert"] { color: var(--danger); }
+.founder-selection-bar .founder-selection-count { flex-basis: 100%; }
 .founder-priority.founder-selectable { grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
 .founder-priority.founder-selectable > .founder-select { grid-column: 1 / -1; grid-row: 1; align-items: center; }
 .founder-priority.founder-selectable > .founder-rank { grid-column: 1; grid-row: 2; }

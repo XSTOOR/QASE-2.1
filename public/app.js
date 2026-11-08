@@ -11,6 +11,7 @@ import { renderResultsOverview, resultsOverviewModel } from './resultsOverview.j
 import { isCredentialQuestion } from './questionPresentation.js';
 import { buildFindingFixPrompt, buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
 import { createFounderView } from './founderView.js';
+import { createFounderActionController } from './founderActions.js';
 import { followUpSuggestions, buildFollowUpMessage } from './followUp.js';
 import { createBugsView } from './bugsView.js';
 import { QA_SCOPE_OPTIONS, buildQaKickoffMessage } from './qaKickoff.js';
@@ -394,16 +395,32 @@ async function downloadReportPdf(filename) {
 	window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+const founderActions = createFounderActionController({
+	api,
+	getSession: () => state.session?.id === state.sessionId ? state.session : undefined,
+	onChange: () => { state.founderProjectState = founderActions.snapshot().state; founderView.render(); },
+	onExport: async (mode, payload, runId) => {
+		if (!payload) throw new Error('No requirements returned.');
+		const text = JSON.stringify(payload, null, 2);
+		if (mode === 'copy') { await navigator.clipboard.writeText(text); return; }
+		const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+		const save = document.createElement('a'); save.href = url; save.download = `founder-requirements-${runId}.json`;
+		document.body.append(save); save.click(); save.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 0);
+	}
+});
 const founderView = createFounderView({
 	getSession: () => state.session,
 	getCatalog: () => state.founderCatalog,
 	getSessionId: () => state.sessionId,
-	getProjectState: () => state.founderProjectState,
+	getProjectState: () => founderActions.snapshot().state,
+	getActionStatus: founderActions.snapshot,
 	onToggleSelection: founderToggleSelection,
 	onSelectAll: ids => founderSaveSelections(ids),
 	onClearSelection: () => founderSaveSelections([]),
 	onSendToStudio: founderSendToStudio,
 	onExportHandoff: founderExportHandoff,
+	onReloadSelection: () => founderActions.load({ force: true }),
+	onRetrySelection: founderActions.retrySelection,
 	onContinue: founderContinue,
 	onReviewActivity: ()=>{activateDetailTab($('tab-activity'));setWorkspaceView('results');},
 	onAnswer: ()=>{setWorkspaceView('agent');el.questionSlot.scrollIntoView({block:'nearest'});el.questionSlot.querySelector('input, textarea, button')?.focus();},
@@ -423,101 +440,16 @@ const founderView = createFounderView({
 	humanizeId: humanizeSqaId
 });
 
-/** Founder project-state persistence (Phase 3): load once per founder view,
- *  selections are saved immediately and restore on reopen. */
-async function founderLoadProjectState() {
-	try {
-		const result = await api('/founder/state');
-		state.founderProjectState = result?.state ?? null;
-	} catch {
-		state.founderProjectState = null;
-	}
-}
-
+// Action responses stay scoped to their published report across navigation.
+async function founderLoadProjectState() { return founderActions.load({ force: true }); }
 function founderToggleSelection(id, checked) {
-	const saved = state.founderProjectState;
-	if (!saved?.recommendationSet?.recommendations) return;
-	const current = new Set(saved.selections ?? []);
+	const current = new Set(founderActions.snapshot().state?.selections ?? []);
 	if (checked) current.add(id); else current.delete(id);
-	return founderSaveSelections([...current]);
+	return founderActions.select([...current]);
 }
-
-async function founderSaveSelections(ids) {
-	if (!state.founderProjectState?.recommendationSet?.recommendations) return;
-	try {
-		const result = await api('/founder/state/selections', {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ selectedRecommendationIds: ids })
-		});
-		state.founderProjectState = result?.state ?? state.founderProjectState;
-		renderFounder();
-	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error));
-	}
-}
-
-/** Explicit Founder → Studio handoff (Phase 4). Selection alone never
- *  triggers a delivery; only this explicit send does. */
-async function founderSendToStudio(ids) {
-	if (!Array.isArray(ids) || ids.length === 0) return;
-	if (state.founderProjectState?.handoff?.status === 'pending') return; // duplicate-submit guard (server also enforces 409)
-	try {
-		const result = await api('/founder/handoff', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ selectedRecommendationIds: ids })
-		});
-		if (result?.state) state.founderProjectState = result.state;
-		if (result?.unavailable) {
-			state.founderHandoffPayload = result.payload ?? null;
-			toast('Studio delivery is not configured — the handoff payload is ready to copy or export. No build was started.');
-		} else {
-			toast(result?.handoff?.status === 'succeeded'
-				? `Sent to Studio ✓ ${result.handoff.selectedRecommendationIds?.length ?? 0} recommendation(s) delivered.`
-				: 'Handoff recorded.');
-		}
-	} catch (error) {
-		toast(error instanceof Error ? error.message : String(error));
-		// Re-read state: a failed send keeps selections; status may be 'failed'.
-		await founderLoadProjectState();
-	}
-	renderFounder();
-}
-
-/** Copy/export fallback when Studio delivery is not configured. */
-async function founderExportHandoff(mode) {
-	const ids = state.founderProjectState?.handoff?.selectedRecommendationIds
-		?? state.founderProjectState?.selections ?? [];
-	if (!ids.length) return;
-	try {
-		const result = await api('/founder/handoff', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ selectedRecommendationIds: ids, export: true })
-		});
-		const payload = result?.payload;
-		if (!payload) throw new Error('No payload returned.');
-		const text = JSON.stringify(payload, null, 2);
-		if (mode === 'copy') {
-			await navigator.clipboard.writeText(text);
-			toast('Handoff payload copied to clipboard.');
-		} else {
-			const blob = new Blob([text], { type: 'application/json' });
-			const url = URL.createObjectURL(blob);
-			const save = document.createElement('a');
-			save.href = url;
-			save.download = `founder-handoff-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-			document.body.append(save);
-			save.click();
-			save.remove();
-			window.setTimeout(() => URL.revokeObjectURL(url), 0);
-			toast('Handoff payload downloaded. No build was started.');
-		}
-	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error));
-	}
-}
+function founderSaveSelections(ids) { return founderActions.select(ids); }
+function founderSendToStudio() { return founderActions.send(); }
+function founderExportHandoff(mode) { return founderActions.export(mode); }
 const renderFounder = founderView.render;
 const renderFounderReportTab = founderView.renderReportTab;
 
@@ -1132,6 +1064,7 @@ async function selectSession(id, { updateRoute = true } = {}) {
 		void founderLoadProjectState().then(() => renderFounder());
 	} else {
 		state.founderProjectState = null;
+		founderActions.pause();
 	}	await connect(id);
 	await refreshRuns();
 	if (updateRoute && pageRouter.started && state.sessionId === id) {
@@ -5065,6 +4998,7 @@ function handleEvent(event) {
 			session.founder ??= { scope: {}, observations: [] };
 			session.founder.report = event.report;
 			session.founder.finalizedAt = event.report?.generatedAt ?? new Date(event.ts ?? Date.now()).toISOString();
+			void founderActions.load();
 			syncSqaDetailMode();
 			renderHeader();
 			renderFounder();

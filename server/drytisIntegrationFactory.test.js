@@ -5,6 +5,19 @@ import {
 	drytisIntegrationEnabled
 } from './drytisIntegrationFactory.js';
 
+test('a Founder-specific destination enables signed delivery without requiring a QA results destination', () => {
+	const client = { deliver() {} }; let input;
+	const result = createConfiguredDrytisIntegration({
+		environment: { NODE_ENV: 'test', QASE_DRYTIS_INTEGRATION_ENABLED: 'true', QASE_DRYTIS_FOUNDER_HANDOFF_PATH: '/founder' },
+		services: {}, tenantContext: { projectId: 'fixture' }, runStoreMode: 'local',
+		createConfig: () => ({}), createVerifier: () => ({}), createMemoryNonceStore: () => ({}),
+		createDeliveryClient: () => client, createApi: options => { input = options; return {}; }
+	});
+	assert.equal(result.deliveryClient, client); assert.equal(result.founderHandoffTarget, '/founder');
+	assert.equal(result.deliveryTarget, undefined); assert.equal(result.ticketsTarget, undefined);
+	assert.equal(input.deliveryClient, client); assert.equal(input.ticketsTarget, undefined);
+});
+
 const TENANT = Object.freeze({
 	organizationId: '55c15025-8ef4-4ce8-8ad5-4562f33f1852',
 	projectId: 'f2964599-fb3a-4c4e-acec-ee84d74fab55'

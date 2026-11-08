@@ -17,7 +17,8 @@ export function createFounderReadingStore(storage) {
 	const clean = item => {
 		const disclosures = {};
 		for (const [name, open] of Object.entries(item?.disclosures ?? {}).slice(0, 200)) if (name.length <= 256 && !['__proto__','constructor','prototype'].includes(name) && typeof open === 'boolean') disclosures[name] = open;
-		return { scrollTop: Number.isFinite(item?.scrollTop) ? Math.max(0, Math.min(item.scrollTop, 100_000_000)) : 0, disclosures, section: typeof item?.section === 'string' ? item.section.slice(0, 80) : '' };
+		const anchor=item?.anchor&&typeof item.anchor.section==='string'&&item.anchor.section.length<=80&&Number.isFinite(item.anchor.offset)?{section:item.anchor.section,offset:Math.max(-100_000_000,Math.min(item.anchor.offset,100_000_000))}:undefined;
+		return { scrollTop: Number.isFinite(item?.scrollTop) ? Math.max(0, Math.min(item.scrollTop, 100_000_000)) : 0, disclosures, section: typeof item?.section === 'string' ? item.section.slice(0, 80) : '', ...(anchor?{anchor}:{}) };
 	};
 	try {
 		const saved = JSON.parse(storage?.getItem(STORAGE_KEY) ?? 'null');
@@ -45,11 +46,19 @@ export function createFounderReaderState({ documentRef: doc, storage } = {}) {
 	const store = createFounderReadingStore(storage), records = new Map();
 	const frame = callback => win?.requestAnimationFrame ? win.requestAnimationFrame(callback) : setTimeout(callback, 0);
 	function save(record) { if (record?.active) store.put(record.key, record.state); }
+	function measure(record){
+		record.state.scrollTop=record.scroller.scrollTop;
+		const top=record.scroller.getBoundingClientRect().top;
+		const anchor=[...record.root.querySelectorAll('[data-founder-section]')].filter(node=>node.getBoundingClientRect().top<=top+96).at(-1);
+		record.state.anchor=anchor?{section:anchor.dataset.founderSection,offset:anchor.getBoundingClientRect().top-top}:undefined;
+	}
 	function restore(record) {
+		record.restoring = true;
 		frame(() => {
-			if (!record.active || !record.root.isConnected || !record.scroller.getClientRects().length) return;
-			record.restoring = true;
-			record.scroller.scrollTop = record.state.scrollTop;
+			if (!record.active || !record.root.isConnected || !record.scroller.getClientRects().length) {record.restoring=false;return;}
+			const anchor=record.state.anchor,target=anchor&&[...record.root.querySelectorAll('[data-founder-section]')].find(node=>node.dataset.founderSection===anchor.section);
+			record.scroller.scrollTop=target?record.scroller.scrollTop+target.getBoundingClientRect().top-record.scroller.getBoundingClientRect().top-anchor.offset:record.state.scrollTop;
+			record.state.scrollTop=record.scroller.scrollTop;
 			frame(() => { record.restoring = false; });
 		});
 	}
@@ -59,7 +68,7 @@ export function createFounderReaderState({ documentRef: doc, storage } = {}) {
 		records.set(root, record);
 		scroller.addEventListener('scroll', () => {
 			if (!record.active || record.restoring || !scroller.getClientRects().length) return;
-			record.state.scrollTop = scroller.scrollTop;
+			measure(record);
 			clearTimeout(record.timer); record.timer = setTimeout(() => save(record), 150);
 		}, { passive: true });
 		root.addEventListener('toggle', event => {
@@ -93,7 +102,8 @@ export function createFounderReaderState({ documentRef: doc, storage } = {}) {
 			return true;
 		},
 		clear(root) { const record = records.get(root); save(record); if (record) { record.active = false; clearTimeout(record.timer); } root.replaceChildren(); delete root.dataset.founderRun; delete root.dataset.founderSelection; },
-		rememberSection(root, section) { const record = records.get(root); if (!record?.active) return; record.state.section = section; record.state.scrollTop = record.scroller.scrollTop; save(record); },
+		rememberSection(root, section) { const record = records.get(root); if (!record?.active) return; record.state.section = section; measure(record); save(record); },
+		restoreLayout(root){const record=records.get(root);if(record?.active)restore(record);},
 		flush() { for (const record of records.values()) save(record); }
 	};
 }

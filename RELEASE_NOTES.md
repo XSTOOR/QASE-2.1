@@ -1,6 +1,13 @@
 # QASE Founder/SQA integration candidate
 
-Current release: `qase-founder-sqa-2026-11-08-report-r1`. UI: `20261108-1`.
+Current release: `qase-founder-sqa-2026-11-08-actions-r1`. UI: `20261108-2`.
+
+Founder recommendation saves now bind to the exact published run and revision.
+Concurrent changes are detected and older reports keep their own selections.
+Studio handoffs expose immediate pending state, retain receipts and reuse stable
+payloads/keys for explicit retries. Copy/download remains available when Studio
+is unconfigured. See [Founder actions](docs/founder-actions-2026-11-08.md) for
+local qualification and the remaining release checks.
 
 Founder reports now expose supporting observations and authenticated read-only
 browser-receipt checks, with explicit unavailable/unverified states. Strategic

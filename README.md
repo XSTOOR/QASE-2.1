@@ -10,7 +10,7 @@ parent workspace or copy developer `.qase` state into production.
 
 This release adds hybrid QA (Opus reasoning, JEV classification, one CleanSlate
 loop), discovery-gated Founder/SQA workflows, the reviewed SQA evidence workflow
-and UI `20261108-1`. Founder setup records public/signed-in scope and business
+and UI `20261108-2`. Founder setup records public/signed-in scope and business
 context choices before browser work, checks the selected device, and collects
 test-account credentials through the existing vault when supported. See
 [Founder setup](docs/founder-setup-2026-11-07.md) for behavior and qualification.
@@ -26,6 +26,10 @@ section groups through individual durable writes. See
 Founder reports now support owned browser-receipt inspection, visible assumptions,
 section navigation and retained reading position. See
 [Founder report reader](docs/founder-report-usability-2026-11-08.md).
+Recommendation selections now bind to the exact owned report with conflict
+checks and atomic persistence. Studio handoffs show immediate delivery state,
+retain stable retry keys and offer copy/download fallback. See
+[Founder actions](docs/founder-actions-2026-11-08.md).
 SQA now completes
 and records each browser workflow before compacting its model context, reducing
 repeated input while preserving the fixed safety limit. Production activation requires gateway qualification

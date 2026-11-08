@@ -36,6 +36,20 @@ test('local Founder project state writes and reloads from its resolved state dir
 	assert.deepEqual(JSON.parse(await fs.readFile(path.join(directory, '.qase', 'founder-project-state.json'), 'utf8')), state);
 });
 
+test('local Founder updates serialize, roll back failed writes and preserve corrupt data for recovery', async t => {
+	const originalDirectory = process.cwd(), directory = await fs.mkdtemp(path.join(os.tmpdir(), 'qase-founder-atomic-'));
+	t.after(async () => { process.chdir(originalDirectory); await fs.rm(directory, { recursive: true, force: true }); });
+	process.chdir(directory);
+	const store = await import(`./store.js?founder-atomic=${Date.now()}`);
+	await Promise.all(Array.from({ length: 8 }, () => store.updateFounderProjectState(async state => ({ count: (state?.count ?? 0) + 1 }))));
+	assert.equal(store.loadFounderProjectState().count, 8);
+	await assert.rejects(store.updateFounderProjectState(() => { throw new Error('Do not commit'); }), /Do not commit/);
+	assert.equal(store.loadFounderProjectState().count, 8);
+	const file = path.join(directory, '.qase', 'founder-project-state.json'); await fs.writeFile(file, '{corrupt');
+	await assert.rejects(store.updateFounderProjectState(() => ({ count: 0 })), SyntaxError);
+	assert.equal(await fs.readFile(file, 'utf8'), '{corrupt');
+});
+
 test('QA completion message survives a real JSON store reload', async t => {
 	const originalDirectory = process.cwd();
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'qase-chat-store-'));

@@ -5,12 +5,10 @@ import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { chromium, request } from 'playwright';
 import { createSqaTestServer } from './sqa-test-runtime.mjs';
-import { createFounderReportFixture } from '../server/founderReportFixture.js';
-import { createFounderState, createFounderReviewTodos, recordFounderObservations, recordFounderPublicOnlyDecision, finishFounderReview, FOUNDER_CATEGORY_IDS } from '../server/founderService.js';
-import { projectStateFromSession } from '../server/founderProjectState.js';
+import { createFounderBrowserFixture } from './founder-browser-fixture.mjs';
 
-// Real application assets and authenticated evidence API. Only configuration,
-// project selections and SSE are controlled; no model or Studio is called.
+// Real application assets, owned action persistence and evidence API. Only
+// configuration, selection timing and SSE are controlled; no model or Studio.
 const { values } = parseArgs({ options: { 'session-file': { type: 'string' }, 'output-dir': { type: 'string' } } });
 const directory = path.resolve(values['output-dir'] ?? 'test-results/founder-reader');
 await fs.mkdir(directory, { recursive: true });
@@ -20,32 +18,12 @@ const checks = [], errors = [], unexpectedMutations = [], externalRequests = [];
 let browser, page, owner, stranger, anonymous, selectionGate, releaseSelection, evidenceGate, releaseEvidence;
 let selectionRequests = 0, evidenceRequests = 0, failEvidence = false;
 
-async function fixture() {
-  const now = Date.now(), id = randomUUID();
-  const activities = ['browser_open', 'browser_snapshot', 'browser_diagnostics'].map((toolName, i) => ({ id: `reader-activity-${i}`, toolName, status: 'done', ts: now, detail: 'Synthetic browser-reader acceptance fixture.', summary: 'Synthetic receipt for report-reader tests; no live product conclusion.' }));
-  const session = { id, mode: 'founder', status: 'running', title: 'Report reader fixture', targetUrl: 'https://fixture.test/', createdAt: now, updatedAt: now, messages: [], findings: [], secretNames: [], activities, todos: createFounderReviewTodos().map(todo => ({ ...todo, status: 'completed' })),
-    founder: createFounderState({ authorizationConfirmed: true, target: { name: 'Report reader fixture', url: 'https://fixture.test/' }, productContext: { stage: 'Test', targetCustomer: 'Test teams', businessModel: 'Hypothesis', primaryGoal: 'Exercise report reading' } }) };
-  recordFounderPublicOnlyDecision(session);
-  const store = { async commit() {} };
-  await recordFounderObservations(session, FOUNDER_CATEGORY_IDS.map(category => ({ category, type: 'opportunity', title: `Recorded ${category}`, summary: 'Synthetic product observation for interface acceptance, not live qualification.', confidence: 'low', evidence_activity_ids: activities.map(activity => activity.id) })), store);
-  const { payload } = createFounderReportFixture();
-  const bind = value => {
-    if (Array.isArray(value)) return value.map(bind);
-    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, key === 'evidence_observation_ids' && item.length ? [session.founder.observations[0].id] : bind(item)]));
-    return value;
-  };
-  const report = bind(payload);
-  report.recommendations.forEach(item => { item.assumptions = ['The proposed improvement still requires a usability test with target teams.']; });
-  await finishFounderReview(session, report, store);
-  session.status = 'done';
-  return session;
-}
 
-const source = values['session-file'] ? JSON.parse(await fs.readFile(path.resolve(values['session-file']), 'utf8')) : await fixture();
+const source = values['session-file'] ? JSON.parse(await fs.readFile(path.resolve(values['session-file']), 'utf8')) : await createFounderBrowserFixture();
 assert.equal(source.mode, 'founder'); assert.equal(source.status, 'done');
 assert.ok(source.founder?.report && source.founder.finalizedAt && source.founder.observations.length);
 const originalSource = JSON.stringify(source);
-const first = structuredClone(source), second = await fixture(), legacy = await fixture();
+const first = structuredClone(source), second = await createFounderBrowserFixture(), legacy = await createFounderBrowserFixture();
 second.title = second.founder.scope.target.name = 'Alternate report reader fixture';
 legacy.title = legacy.founder.scope.target.name = 'Legacy report reader fixture';
 legacy.founder.report.recommendations[0].evidenceObservationIds = ['missing-observation'];
@@ -55,7 +33,6 @@ oldObservation.evidence[0].reference = 'javascript:window.readerInjected=true';
 delete oldObservation.evidence[0].digest;
 legacy.activities = legacy.activities.filter(activity => activity.id !== 'reader-activity-1');
 legacy.activities.find(activity => activity.id === 'reader-activity-2').summary = 'Changed after the recorded digest; deliberate mismatch fixture.';
-let projectState;
 
 const emit = (event, session = first) => page.evaluate(data => window.fixtureStream.onmessage({ data: JSON.stringify(data) }), { sessionId: session.id, ts: Date.now(), ...event });
 const root = () => page.locator('#report-view');
@@ -72,7 +49,7 @@ async function navigate(section, surface = root()) {
   await settled();
 }
 async function readingState() {
-  return page.evaluate(() => ({ top: document.querySelector('#pane-report').scrollTop, section: document.querySelector('#report-view [data-founder-section-choice]').value, open: [...document.querySelectorAll('#report-view [data-founder-disclosure]')].map(node => [node.dataset.founderDisclosure, node.open]) }));
+  return page.evaluate(() => {const pane=document.querySelector('#pane-report'),section=document.querySelector('#report-view [data-founder-section-choice]').value,target=[...document.querySelectorAll('#report-view [data-founder-section]')].find(node=>node.dataset.founderSection===section);return {top:pane.scrollTop,section,sectionTop:target.getBoundingClientRect().top-pane.getBoundingClientRect().top,open:[...document.querySelectorAll('#report-view [data-founder-disclosure]')].map(node=>[node.dataset.founderDisclosure,node.open])};});
 }
 
 try {
@@ -85,7 +62,6 @@ try {
   await runtime.stop();
   for (const session of [first, second, legacy]) session.ownerUserId = user.id;
   await fs.writeFile(path.join(runtimeDirectory, '.qase', 'sessions.json'), JSON.stringify([first, second, legacy]));
-  projectState = { ...projectStateFromSession(first), selections: [] };
   await runtime.start();
   // Cookie authentication remains real across the process restart.
   const evidencePath = `/api/sessions/${first.id}/founder/evidence/${encodeURIComponent(first.founder.observations[0].id)}/1`;
@@ -111,10 +87,9 @@ try {
   await page.route('**/api/**', async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname;
     if (request.method() === 'PATCH' && pathname === '/api/founder/state/selections') {
-      selectionRequests++; const ids = request.postDataJSON().selectedRecommendationIds;
+      selectionRequests++;
       if (selectionGate) await selectionGate;
-      projectState = { ...projectState, selections: ids };
-      return route.fulfill({ json: { state: projectState } });
+      return route.continue();
     }
     if (request.method() !== 'GET') { unexpectedMutations.push(`${request.method()} ${pathname}`); return route.fulfill({ status: 405, json: { error: 'Only selection fixture writes are allowed.' } }); }
     if (pathname.includes('/founder/evidence/')) {
@@ -123,7 +98,6 @@ try {
       if (evidenceGate) await evidenceGate;
     }
     if (pathname === '/api/config') return route.fulfill({ json: { provider: 'custom', model: 'reader-fixture', ready: true, hasApiKey: true, providers: ['custom'] } });
-    if (pathname === '/api/founder/state') return route.fulfill({ json: { state: projectState } });
     return route.continue();
   });
   await open(first);
@@ -173,7 +147,7 @@ try {
   assert.ok(Math.abs((await readingState()).top - savedPosition.top) <= 2);
   await page.reload(); await root().locator('.founder-report-navigation').waitFor(); await page.waitForFunction(() => document.body.dataset.pageLoading !== 'true'); await settled();
   const reloaded = await readingState();
-  assert.equal(reloaded.section, savedPosition.section); assert.ok(Math.abs(reloaded.top - savedPosition.top) <= 2, `Reload scroll ${reloaded.top} / ${savedPosition.top}`);
+  assert.equal(reloaded.section, savedPosition.section); assert.ok(Math.abs(reloaded.sectionTop - savedPosition.sectionTop) <= 2, `Reload reading anchor ${reloaded.sectionTop} / ${savedPosition.sectionTop}`);
   for (const [key, isOpen] of savedPosition.open) assert.equal(reloaded.open.find(([name]) => name === key)?.[1], isOpen);
   checks.push('Founder and Report keep independent positions; reload restores report section, scroll and disclosures while canonical selections remain checked.');
 

@@ -1538,6 +1538,19 @@ export function createPostgresRunRepository({
 		});
 	}
 
+	async function updateFounderProjectState(work) {
+		return transaction(async client => {
+			// Also protects the first insert, when there is no row to lock yet.
+			await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`founder:${tenant.organizationId}:${tenant.projectId}`]);
+			const current = await client.query('SELECT state FROM founder_project_state WHERE organization_id = $1 AND project_id = $2 FOR UPDATE', [tenant.organizationId, tenant.projectId]);
+			const state = await work(current.rows?.[0]?.state);
+			await client.query(`INSERT INTO founder_project_state (organization_id, project_id, state, updated_at)
+				VALUES ($1, $2, $3::jsonb, $4) ON CONFLICT (organization_id, project_id) DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at`,
+				[tenant.organizationId, tenant.projectId, JSON.stringify(state), asDate(now(), Date.now())]);
+			return state;
+		});
+	}
+
 	return {
 		bootstrapTenant,
 		loadAll,
@@ -1554,6 +1567,7 @@ export function createPostgresRunRepository({
 		close,
 		getFounderProjectState,
 		saveFounderProjectState,
+		updateFounderProjectState,
 		get pool() {
 			return pool;
 		}

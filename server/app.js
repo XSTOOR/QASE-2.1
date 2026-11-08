@@ -34,8 +34,8 @@ import {
 	recordFounderPublicOnlyDecision
 } from './founderService.js';
 import { detectFounderProjectContext } from './founderContext.js';
-import { projectStateFromSession, reconcileSelections } from './founderProjectState.js';
-import { createFounderHandoffService, FounderHandoffError } from './founderHandoff.js';
+import { createFounderActions } from './founderActions.js';
+import { FounderHandoffError } from './founderHandoff.js';
 import { buildSqaReportMarkdown } from './sqaAssessment.js';
 import { computeMatrixCoverage } from './matrixCoverage.js';
 import { createCatalogRoutes } from './catalogApi.js';
@@ -228,8 +228,9 @@ export function createApplication(options = {}) {
 	}
 	const drytisDelivery = options.drytisDelivery;
 	if (drytisDelivery !== undefined) {
-		if ((drytisDelivery.deliveryClient === undefined) !== (drytisDelivery.ticketsTarget === undefined)) {
-			throw new TypeError('Drytis delivery client and tickets target must be configured together.');
+		const hasTarget = drytisDelivery.ticketsTarget !== undefined || drytisDelivery.founderHandoffTarget !== undefined;
+		if ((drytisDelivery.deliveryClient !== undefined) !== hasTarget) {
+			throw new TypeError('Drytis delivery client and an explicit tickets or Founder target must be configured together.');
 		}
 		if (drytisDelivery.deliveryClient !== undefined
 			&& typeof drytisDelivery.deliveryClient?.deliver !== 'function') {
@@ -247,23 +248,23 @@ export function createApplication(options = {}) {
 	const founderProjectState = typeof services.runs.getFounderProjectState === 'function'
 		? {
 			get: services.runs.getFounderProjectState.bind(services.runs),
-			save: services.runs.saveFounderProjectState.bind(services.runs)
+			save: services.runs.saveFounderProjectState.bind(services.runs),
+			update: services.runs.updateFounderProjectState?.bind(services.runs)
 		}
 		: undefined;
+	const founderActions = founderProjectState ? createFounderActions({
+		backend: founderProjectState,
+		deliveryClient: drytisDelivery?.founderHandoffTarget ? drytisDelivery.deliveryClient : undefined,
+		target: drytisDelivery?.founderHandoffTarget,
+		projectId: services.tenantContext?.projectId
+	}) : undefined;
+	app.locals.qaseFounderHandoff = founderActions;
 	if (typeof services.events.subscribeGlobal === 'function' && founderProjectState) {
 		services.events.subscribeGlobal(async (sessionId, event) => {
 			if (event?.type !== 'founder.finalized') return;
 			try {
 				const session = await services.runs.getAny?.(sessionId);
-				const state = projectStateFromSession(session);
-				if (!state) return;
-				// Regeneration replaces the set; selections that still name a
-				// live recommendation id survive into the new state.
-				const previous = await founderProjectState.get();
-				const previousSelections = previous?.recommendationSet?.recommendations && Array.isArray(previous.selections)
-					? previous.selections
-					: [];
-				await founderProjectState.save(reconcileSelections({ ...state, selections: previousSelections }));
+				if (session) await founderActions.publish(session);
 			} catch (error) {
 				logger?.error?.('founder.project-state.persist-failed', { errorName: error?.name, reason: sanitizeErrorDetail(error, 200) });
 			}
@@ -814,121 +815,56 @@ export function createApplication(options = {}) {
 		}
 	});
 
-	// Saved Founder Mode project state (Phase 3): last successful
-	// recommendation set, selections and handoff status. The state is shared
-	// at the trusted tenant-project scope; writes additionally require a
-	// non-pilot actor (pilots may read, never mutate).
+	// Modern writes bind to an owned published run, its content key and action
+	// revision. Unbound legacy clients must reload instead of targeting a new set.
+	async function founderActionRun(request, response, runId) {
+		if (!founderActions) { response.status(501).json({ error: 'Founder persistence is unavailable.' }); return; }
+		if (typeof runId !== 'string' || !/^[a-f0-9-]{36}$/i.test(runId)) { response.status(409).json({ error: 'Open the completed Founder report and reload its saved selection.', code: 'report_binding_required' }); return; }
+		const session = await services.runs.get(runId);
+		if (!session || (request.auth?.userId && session.ownerUserId !== request.auth.userId)) { response.status(404).json({ error: 'No such session.' }); return; }
+		return session;
+	}
+	function founderActionError(request, response, error) {
+		if (error instanceof FounderHandoffError) response.status(error.status).json({ error: error.message, code: error.code });
+		else safeErrorResponse(request, response, error, 500);
+	}
 	app.get('/api/founder/state', async (request, response) => {
-		if (!founderProjectState) {
-			response.status(501).json({ error: 'Founder project state persistence is not available in this mode.' });
-			return;
-		}
+		response.set('Cache-Control', 'no-store');
 		try {
-			const state = reconcileSelections(await founderProjectState.get());
-			response.set('Cache-Control', 'no-store');
-			response.json({ state: state ?? null });
-		} catch (error) {
-			safeErrorResponse(request, response, error, 500);
-		}
+			if (request.query.runId !== undefined) {
+				const session = await founderActionRun(request, response, request.query.runId); if (!session) return;
+				response.json({ state: await founderActions.read(session) }); return;
+			}
+			if (!founderProjectState) { response.status(501).json({ error: 'Founder persistence is unavailable.' }); return; }
+			const raw = await founderProjectState.get();
+			// Legacy summaries are read-only and never expose other owners' records.
+			const owner = request.auth?.userId ?? services.tenantContext?.actorUserId;
+			if (!raw || (owner && raw.ownerUserId !== owner)) { response.json({ state: null }); return; }
+			const { actionRecords, legacyAction, ...summary } = raw;
+			response.json({ state: { ...summary, readOnly: true } });
+		} catch (error) { founderActionError(request, response, error); }
 	});
 
-	// Persist user selections (and only selections — the recommendation set
-	// itself is only written at finalization time from a validated report).
 	app.patch('/api/founder/state/selections', async (request, response) => {
-		if (!founderProjectState) {
-			response.status(501).json({ error: 'Founder project state persistence is not available in this mode.' });
-			return;
-		}
-		if (request.auth?.role === 'pilot') {
-			response.status(403).json({ error: 'Pilot accounts cannot modify Founder Mode selections.' });
-			return;
-		}
+		if (request.auth?.role === 'pilot') { response.status(403).json({ error: 'Pilot accounts cannot modify Founder Mode selections.' }); return; }
 		try {
-			const raw = request.body?.selectedRecommendationIds;
-			if (!Array.isArray(raw) || raw.length > 50 || !raw.every(id => typeof id === 'string' && id.length <= 128)) {
-				response.status(400).json({ error: 'selectedRecommendationIds must be an array of up to 50 recommendation ids.' });
-				return;
-			}
-			const current = await founderProjectState.get();
-			if (!current?.recommendationSet?.recommendations) {
-				response.status(409).json({ error: 'No saved recommendation set exists yet. Finalize a Founder review first.' });
-				return;
-			}
-			const known = new Set(current.recommendationSet.recommendations.map(item => item.id));
-			const unknown = raw.filter(id => !known.has(id));
-			if (unknown.length > 0) {
-				response.status(400).json({ error: `Unknown recommendation ids: ${unknown.join(', ')}.` });
-				return;
-			}
-			const next = reconcileSelections({ ...current, selections: [...new Set(raw)] });
-			await founderProjectState.save(next);
-			response.json({ state: next });
-		} catch (error) {
-			safeErrorResponse(request, response, error, 500);
-		}
+			const input = request.body ?? {}, ids = input.selectedRecommendationIds;
+			if (!Array.isArray(ids) || ids.length > 50 || !ids.every(id => typeof id === 'string' && id.length > 0 && id.length <= 128)) { response.status(400).json({ error: 'selectedRecommendationIds must contain up to 50 recommendation ids.' }); return; }
+			const session = await founderActionRun(request, response, input.runId); if (!session) return;
+			response.json({ state: await founderActions.select(session, input) });
+		} catch (error) { founderActionError(request, response, error); }
 	});
 
-	// The signed delivery client is reused only when a founder-specific target
-	// is configured; otherwise the handoff stays export-only rather than
-	// silently delivering founder payloads to the QA tickets endpoint.
-	const founderDeliveryTarget = drytisDelivery?.founderHandoffTarget;
-	const founderHandoff = founderProjectState
-		? createFounderHandoffService({
-			deliveryClient: founderDeliveryTarget ? drytisDelivery.deliveryClient : undefined,
-			target: founderDeliveryTarget,
-			get: async () => reconcileSelections(await founderProjectState.get()),
-			save: state => founderProjectState.save(state),
-			tenantProjectId: services.tenantContext?.projectId
-		})
-		: undefined;
-	app.locals.qaseFounderHandoff = founderHandoff;
-
-	// Explicit Founder → Studio handoff (Phase 4): selection alone never
-	// triggers a delivery; the client must POST the selected ids here.
 	app.post('/api/founder/handoff', async (request, response) => {
-		if (!founderProjectState) {
-			response.status(501).json({ error: 'Founder project state persistence is not available in this mode.' });
-			return;
-		}
-		if (request.auth?.role === 'pilot') {
-			response.status(403).json({ error: 'Pilot accounts cannot send Founder recommendations to Studio.' });
-			return;
-		}
-		let payloadOnly = false;
+		if (request.auth?.role === 'pilot') { response.status(403).json({ error: 'Pilot accounts cannot send Founder recommendations to Studio.' }); return; }
 		try {
-			const raw = request.body?.selectedRecommendationIds;
-			if (!Array.isArray(raw) || raw.length === 0 || raw.length > 50
-				|| !raw.every(id => typeof id === 'string' && id.length > 0 && id.length <= 128)) {
-				response.status(400).json({ error: 'selectedRecommendationIds must be a non-empty array of up to 50 recommendation ids.' });
-				return;
-			}
-			// Fallback path: export requests NEVER deliver — the payload is
-			// returned ready for copy/download without claiming a build started.
-			payloadOnly = request.body?.export === true;
-			const handoffService = request.app.locals.qaseFounderHandoff;
-			if (!handoffService) {
-				response.status(501).json({ error: 'Founder handoff is not configured on this instance.' });
-				return;
-			}
-			if (payloadOnly) {
-				const payload = await handoffService.build(raw);
-				response.json({ ok: false, unavailable: true, payload });
-				return;
-			}
-			const result = await handoffService.send(raw);
-			response.json({
-				ok: result.ok,
-				...(result.unavailable ? { unavailable: true, payload: result.payload } : {}),
-				handoff: result.handoff,
-				state: await founderProjectState.get()
-			});
-		} catch (error) {
-			if (error instanceof FounderHandoffError) {
-				response.status(error.status).json({ error: error.message, code: error.code });
-				return;
-			}
-			safeErrorResponse(request, response, error, 500);
-		}
+			const input = request.body ?? {}, ids = input.selectedRecommendationIds;
+			if (!Array.isArray(ids) || !ids.length || ids.length > 50 || !ids.every(id => typeof id === 'string' && id.length > 0 && id.length <= 128)) { response.status(400).json({ error: 'selectedRecommendationIds must contain between 1 and 50 recommendation ids.' }); return; }
+			const session = await founderActionRun(request, response, input.runId); if (!session) return;
+			if (input.export === true) { response.json({ ok: false, unavailable: true, payload: await founderActions.build(session, input) }); return; }
+			const result = await founderActions.send(session, input);
+			response.json({ ...result, handoff: result.handoff ?? result.state?.handoff });
+		} catch (error) { founderActionError(request, response, error); }
 	});
 
 	app.put('/api/config', async (request, response) => {
@@ -2782,7 +2718,7 @@ export function createApplication(options = {}) {
 	app.post('/api/sessions/:id/drytis/push', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
-		if (!drytisDelivery?.deliveryClient) {
+		if (!drytisDelivery?.deliveryClient || !drytisDelivery.ticketsTarget) {
 			response.status(409).json({ error: 'Drytis ticket push is not configured on this instance.' });
 			return;
 		}

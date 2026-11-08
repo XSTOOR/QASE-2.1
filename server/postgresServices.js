@@ -419,6 +419,10 @@ export function createPostgresApplicationServices({
 			}
 			return repository.saveFounderProjectState(state);
 		},
+		async updateFounderProjectState(work) {
+			if (!repository.updateFounderProjectState) throw new TypeError('Atomic Founder persistence is unavailable.');
+			return repository.updateFounderProjectState(work);
+		},
 		commit,
 		async addMessage(session, message) {
 			const entry = { id: randomUUID(), ts: now(), ...message };

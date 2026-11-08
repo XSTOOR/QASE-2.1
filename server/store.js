@@ -752,18 +752,45 @@ export function activeDurationSeconds(session, now = Date.now()) {
  * single-tenant project context of this instance.
  */
 export function loadFounderProjectState() {
+	return readFounderProjectState(founderProjectStatePaths().founderProjectStateFile);
+}
+
+function readFounderProjectState(file) {
 	try {
-		const { founderProjectStateFile } = founderProjectStatePaths();
-		const raw = JSON.parse(fs.readFileSync(founderProjectStateFile, 'utf8'));
-		return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : undefined;
-	} catch {
-		return undefined;
+		const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+		if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('Invalid saved Founder state.');
+		return raw;
+	} catch (error) {
+		if (error.code === 'ENOENT') return undefined;
+		throw error;
 	}
 }
 
 export function writeFounderProjectState(state) {
-	const { stateDir, founderProjectStateFile } = founderProjectStatePaths();
-	fs.mkdirSync(stateDir, { recursive: true });
-	fs.writeFileSync(founderProjectStateFile, JSON.stringify(state));
+	return replaceFounderProjectState(founderProjectStatePaths().founderProjectStateFile, state);
+}
+
+function replaceFounderProjectState(file, state) {
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	const temporary = `${file}.${randomUUID()}.tmp`;
+	try {
+		fs.writeFileSync(temporary, JSON.stringify(state), { mode: 0o600, flag: 'wx' });
+		fs.renameSync(temporary, file);
+	} catch (error) {
+		try { fs.unlinkSync(temporary); } catch { /* The committed state remains intact. */ }
+		throw error;
+	}
 	return state;
+}
+
+const founderStateWrites = new Map();
+export function updateFounderProjectState(work) {
+	const file = founderProjectStatePaths().founderProjectStateFile;
+	const next = (founderStateWrites.get(file) ?? Promise.resolve()).then(async () => {
+		const state = await work(readFounderProjectState(file));
+		return replaceFounderProjectState(file, state);
+	});
+	const tail = next.catch(() => {}); founderStateWrites.set(file, tail);
+	void tail.finally(() => { if (founderStateWrites.get(file) === tail) founderStateWrites.delete(file); });
+	return next;
 }

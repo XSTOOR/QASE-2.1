@@ -117,8 +117,14 @@ production activation remain part of Phase 8.
    live reports; existing Founder completion/recovery/launch and SQA evidence
    browser regressions passed with zero page errors. See
    [Phase 6 report reader](founder-report-usability-2026-11-08.md).
-7. Reliable recommendation saving and immediate Studio delivery feedback,
-   duplicate prevention, retry and export fallback.
+7. Completed locally: exact-report selection revisions, atomic local/PostgreSQL
+   update contracts, immediate Studio feedback, durable pending/accepted/failed
+   state, stable retry payloads and keys, retained receipts and copy/download
+   fallback. Full regression: 2,398 passed, zero failed, 33 optional skips.
+   The authenticated action browser, reader/completion/recovery/launch flows and
+   SQA evidence regressions passed. Studio transport used a controlled receiver;
+   no live Studio delivery or AI run occurred. See
+   [Phase 7 Founder actions](founder-actions-2026-11-08.md).
 8. Live qualification of representative modes, access/recovery cases, required
    CI/container checks, and release promotion to Push-SQA.
 

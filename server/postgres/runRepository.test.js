@@ -96,6 +96,27 @@ function scriptedPool(handler = () => ({ rows: [], rowCount: 0 })) {
 	return { pool, calls, state };
 }
 
+test('Founder action updates lock the trusted project before reading and roll back conflicts without writing', async () => {
+	let stored = { schemaVersion: 2, actionRecords: [], revision: 2 };
+	const fake = scriptedPool(call => {
+		if (call.text.startsWith('SELECT state FROM founder_project_state')) return { rows: [{ state: structuredClone(stored) }] };
+		if (call.text.startsWith('INSERT INTO founder_project_state')) stored = JSON.parse(call.params[2]);
+	});
+	const repository = createPostgresRunRepository({ pool: fake.pool, tenantContext: TENANT, now: () => NOW });
+	const updated = await repository.updateFounderProjectState(state => ({ ...state, revision: state.revision + 1 }));
+	assert.equal(updated.revision, 3);
+	const lock = fake.calls.findIndex(call => call.text.includes('pg_advisory_xact_lock'));
+	assert.deepEqual(fake.calls[lock].params, [`founder:${TENANT.organizationId}:${TENANT.projectId}`]);
+	assert.match(fake.calls[lock + 1].text, /FOR UPDATE$/);
+	assert.deepEqual(fake.calls[lock + 1].params, [TENANT.organizationId, TENANT.projectId]);
+	assert.equal(fake.calls.at(-1).text, 'COMMIT');
+	const writes = fake.calls.filter(call => call.text.startsWith('INSERT INTO founder_project_state')).length;
+	await assert.rejects(repository.updateFounderProjectState(() => { throw new Error('Revision conflict'); }), /Revision conflict/);
+	assert.equal(fake.calls.at(-1).text, 'ROLLBACK');
+	assert.equal(fake.calls.filter(call => call.text.startsWith('INSERT INTO founder_project_state')).length, writes);
+	assert.equal(stored.revision, 3); assert.equal(fake.state.releases, 2);
+});
+
 function session(overrides = {}) {
 	return {
 		id: RUN_ID,
