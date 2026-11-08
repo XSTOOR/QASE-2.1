@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import pg from 'pg';
-import { runPostgresMigrations } from './migrations.js';
+import { loadMigrations, MIGRATIONS_DIRECTORY, runPostgresMigrations } from './migrations.js';
 import { createPostgresExecutionQueue } from './executionQueue.js';
 import {
 	RunVersionConflictError,
@@ -15,6 +18,7 @@ import {
 	createPostgresRetentionRepository
 } from './retentionRepository.js';
 import { createSqaState } from '../sqaService.js';
+import { createFounderActions } from '../founderActions.js';
 
 const { Pool } = pg;
 const DATABASE_URL = String(process.env.QASE_TEST_DATABASE_URL ?? '').trim();
@@ -249,7 +253,14 @@ test(
 
 		await administrationPool.query(`CREATE SCHEMA ${identifier}`);
 		migrationPool = scopedPool(schema);
-		await runPostgresMigrations(migrationPool);
+		const legacyDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'qase-founder-upgrade-'));
+		t.after(async () => {
+			assert.equal(path.dirname(path.resolve(legacyDirectory)), path.resolve(os.tmpdir()));
+			assert.ok(path.basename(legacyDirectory).startsWith('qase-founder-upgrade-'));
+			await fs.rm(legacyDirectory, { recursive: true, force: true });
+		});
+		for (const migration of await loadMigrations()) if (migration.version < 44) await fs.copyFile(path.join(MIGRATIONS_DIRECTORY, migration.filename), path.join(legacyDirectory, migration.filename));
+		assert.equal((await runPostgresMigrations(migrationPool, { directory: legacyDirectory })).currentVersion, 43);
 
 		tenantAPool = scopedPool(schema);
 		tenantBPool = scopedPool(schema);
@@ -270,6 +281,47 @@ test(
 		});
 		await tenantARepository.bootstrapTenant();
 		await tenantBRepository.bootstrapTenant();
+		const legacyFounder = { schemaVersion: 1, ownerUserId: contextA.actorUserId, targetUrl: 'https://fixture.invalid/', recommendationSet: { setVersion: 1, generatedAt: '2026-11-07T00:00:00.000Z', recommendations: [{ id: 'legacy-rec', title: 'Preserve legacy work' }] }, selections: ['legacy-rec'] };
+		await tenantARepository.saveFounderProjectState(legacyFounder);
+		const upgrade = await runPostgresMigrations(migrationPool);
+		assert.deepEqual(upgrade.applied.map(item => item.version), [44]);
+		assert.deepEqual(await tenantARepository.getFounderProjectState(), legacyFounder, 'Migration 044 preserves the exact legacy selection and report.');
+
+		await t.test('Founder actions serialize across separate PostgreSQL replicas and preserve another report during delivery', async subtest => {
+			const replicaPool = scopedPool(schema);
+			const replica = createPostgresRunRepository({ pool: replicaPool, tenantContext: contextA });
+			subtest.after(() => replica.close());
+			let enter, release, deliveries = 0;
+			const entered = new Promise(resolve => { enter = resolve; });
+			const gate = new Promise(resolve => { release = resolve; });
+			subtest.after(() => release());
+			const deliveryClient = { async deliver() { deliveries++; enter(); await gate; return { status: 202, body: { jobId: 'postgres-fixture-job' } }; } };
+			const makeActions = repository => createFounderActions({ projectId: contextA.projectId, deliveryClient, backend: {
+				get: repository.getFounderProjectState, save: repository.saveFounderProjectState, update: repository.updateFounderProjectState
+			} });
+			const first = makeActions(tenantARepository), second = makeActions(replica);
+			const source = name => ({ id: randomUUID(), mode: 'founder', ownerUserId: contextA.actorUserId, founder: {
+				finalizedAt: '2026-11-08T00:00:00.000Z', scope: { target: { url: 'https://fixture.invalid/' }, productContext: { primaryGoal: name } },
+				report: { generatedAt: '2026-11-08T00:00:00.000Z', recommendationSet: { setVersion: 1, generatedAt: '2026-11-08T00:00:00.000Z' }, recommendations: [{ id: 'rec-1', title: name }, { id: 'rec-2', title: `${name} second` }] }
+			} });
+			const a = source('First report'), b = source('Other report');
+			const request = (state, ids = state.selections) => ({ reviewKey: state.reviewKey, expectedRevision: state.revision, selectedRecommendationIds: ids });
+			const start = await first.read(a);
+			const raced = await Promise.allSettled([first.select(a, request(start, ['rec-1'])), second.select(a, request(start, ['rec-2']))]);
+			assert.equal(raced.filter(item => item.status === 'fulfilled').length, 1);
+			assert.equal(raced.find(item => item.status === 'rejected').reason.status, 409);
+			const saved = await second.read(a), sending = first.send(a, request(saved));
+			await entered;
+			await assert.rejects(second.send(a, request(saved)), error => error.status === 409);
+			await second.publish(b);
+			await second.select(b, request(await second.read(b), ['rec-2']));
+			release(); const delivered = await sending;
+			assert.equal(delivered.state.handoff.reference, 'postgres-fixture-job');
+			assert.equal(deliveries, 1); assert.deepEqual((await second.read(b)).selections, ['rec-2']);
+			assert.equal((await second.send(a, request(saved))).deduplicated, true); assert.equal(deliveries, 1);
+			assert.equal(await tenantBRepository.getFounderProjectState(), undefined, 'Another project cannot read Founder actions.');
+			assert.equal((await tenantAPool.query('SELECT COUNT(*)::int AS count FROM founder_project_state')).rows[0].count, 0, 'Founder state defaults to deny without a transaction tenant.');
+		});
 
 		const value = runAggregate();
 		const created = await tenantARepository.create(value, {

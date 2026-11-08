@@ -1,6 +1,11 @@
 # QASE Founder/SQA integration candidate
 
-Current release: `qase-founder-sqa-2026-11-08-actions-r1`. UI: `20261108-2`.
+Current release: `qase-founder-sqa-2026-11-08-release-r1`. UI: `20261108-2`.
+
+This candidate qualifies configured-provider Founder/SQA with export-only Studio
+handoff. PostgreSQL requires migration **044** for version 2 Founder actions and
+forced tenant isolation. Existing legacy state is preserved. Production
+activation and real Studio delivery remain separate operator gates.
 
 Founder recommendation saves now bind to the exact published run and revision.
 Concurrent changes are detected and older reports keep their own selections.

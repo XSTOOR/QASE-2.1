@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "releaseId": "qase-founder-sqa-2026-11-08-actions-r1",
+  "releaseId": "qase-founder-sqa-2026-11-08-release-r1",
   "files": [
     {
       "path": ".dockerignore",
@@ -20,7 +20,7 @@
     },
     {
       "path": ".github/workflows/verify.yml",
-      "sha256": "b338c8d80cd7422e9deea4266e5c0c8401e8aec0af49d3910eedc65766a386c2"
+      "sha256": "97bd68f3856be1b3d326bcd63a48f27b1f521ad53af5de99e47649f75da18944"
     },
     {
       "path": ".gitignore",
@@ -92,11 +92,11 @@
     },
     {
       "path": "DEPLOYMENT_PROMPT.md",
-      "sha256": "46037377a21e1f95db159d42dee7256b4a871b328102e0f25d1a1f1fb3129993"
+      "sha256": "c839989d4f6f50145a7090d426aaa8343b89b83fe8d071202291d3c31c78d566"
     },
     {
       "path": "Dockerfile",
-      "sha256": "706a2baaad34604a5d641c58e45bcaeab8e8adb5ff6d2ec5e0cec056aeaae4f6"
+      "sha256": "4a456cec36334a5d38fc8cca759fbf7bfbe496e1ced0b43ca0f791147d37db3b"
     },
     {
       "path": "docs/auth-architecture-2026-09-10.md",
@@ -180,7 +180,7 @@
     },
     {
       "path": "docs/founder-actions-2026-11-08.md",
-      "sha256": "dbee0af12373fe97c97fa315a2daf801779d6fc7989768f464dd103683b47fe5"
+      "sha256": "a84fae8f8f068bc1d10fe197e0a73a8b9f9d91fbbdd061e3ca09269cf44f5ef0"
     },
     {
       "path": "docs/founder-live-qualification-2026-11-07.md",
@@ -208,7 +208,11 @@
     },
     {
       "path": "docs/founder-sqa-integration-2026-11-07.md",
-      "sha256": "dbcebe52cee4e05b4a9fc23440c63c73bc4d9516a84e174f4efd032b2c87b697"
+      "sha256": "d79e51c75981e062ca3b5672d9561d6b26e7ef12bd951783833d23af4dca67d4"
+    },
+    {
+      "path": "docs/founder-sqa-release-2026-11-08.md",
+      "sha256": "561d2e500d74323af7f05f3cc1edfeec3aa0ece4e2102d038d24547ecee8735c"
     },
     {
       "path": "docs/hybrid-qa-implementation-report.md",
@@ -780,7 +784,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "1551dd08efb9cda723802a49d912c9a10d1b2fef12a26dcb3e823753fb958c4f"
+      "sha256": "914d3719988f78e3d43bd317a57869359ef2eeb2e68133280cea00b89eeb7f05"
     },
     {
       "path": "public/renderHealth.js",
@@ -924,11 +928,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "6b04f4be31b84e267edae9798d89c7c98fd875486bde35cf245fb312e0ac5774"
+      "sha256": "73f6662cc24e47a3d10be713cfe905aa4fa0fd32732e550a51ccbb980232e7ac"
     },
     {
       "path": "RELEASE_NOTES.md",
-      "sha256": "168f50a7cb705d0b842f25c7f4d40cfd518d4c7f631f6f1946353227138a71be"
+      "sha256": "645b014bc04c8d5cd1ac49c290c64095731051cab09b6dbc8ef493bf42207a29"
     },
     {
       "path": "run-jev.command",
@@ -2452,7 +2456,7 @@
     },
     {
       "path": "server/postgres/integration.test.js",
-      "sha256": "9072aea402c19e91051cd5f7fcdd2ad3357d0cdefdc7d8f526169198b271498c"
+      "sha256": "20cc3f9270547738f8c1924a872c0bc9c253a5e10b6d1cfcc44fb419c8277502"
     },
     {
       "path": "server/postgres/matrixRunRepository.js",
@@ -2468,7 +2472,7 @@
     },
     {
       "path": "server/postgres/migrations.test.js",
-      "sha256": "603720c35b1bd7d084dd7821fec23e97dc8c2a393ea7031b84784ea16e11f31c"
+      "sha256": "270f258f4014ef39bbcad0a45ff9a599c7fec08d1bae1b90002edb46574ba8e8"
     },
     {
       "path": "server/postgres/migrations/001_identity_tenancy.sql",
@@ -2641,6 +2645,10 @@
     {
       "path": "server/postgres/migrations/043_actor_bootstrap_visibility.sql",
       "sha256": "534ff2d4ef7a479be5022fd097b5b4e4c3ee5002ea71ffec397e6b5d77d155a2"
+    },
+    {
+      "path": "server/postgres/migrations/044_founder_action_state.sql",
+      "sha256": "fda74b71665ea16084f5a0d4c45faebdc7b890493fad1b7c6b224dd245520b47"
     },
     {
       "path": "server/postgres/pool.js",

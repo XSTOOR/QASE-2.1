@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-founder-sqa-2026-11-08-actions-r1",
+  "releaseId": "qase-founder-sqa-2026-11-08-release-r1",
   "uiVersion": "20261108-2",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Founder actions on c81e296: exact-report revisions, atomic selection persistence, guarded signed Studio delivery and export fallback; production qualification remains required"
+  "source": "Export-only Founder/SQA release candidate on 694b32c: migration 044 for versioned actions and tenant RLS, real service CI and three-engine SQA acceptance; production activation remains separate"
 }

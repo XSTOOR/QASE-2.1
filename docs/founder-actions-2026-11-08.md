@@ -46,7 +46,12 @@ database.
 PostgreSQL updates take a transaction-scoped advisory lock for the trusted
 organization/project, then read the row with `FOR UPDATE` and commit its new
 JSONB state. The advisory lock also protects the first insert. Network delivery
-runs outside the transaction. No database migration is required.
+runs outside the transaction. PostgreSQL deployments require migration **044**
+before these version 2 actions can be saved. Phase 8's database review found
+that migration 040 still allowed only version 1. Migration 044 preserves legacy
+rows, accepts version 2 and adds forced tenant row-level security. The initial
+Phase 7 statement that no migration was needed was incorrect; local/mock
+repository checks had not established compatibility with the real constraint.
 
 The existing 1 MB project-state bound remains. There are at most 500 report
 action records and 100 distinct delivery intents per report. Capacity failures

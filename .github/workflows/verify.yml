@@ -10,6 +10,28 @@ jobs:
     timeout-minutes: 90
     env:
       QASE_IMAGE: qase:sha-${{ github.sha }}
+      # Disposable CI services only; production secrets are never supplied here.
+      QASE_TEST_DATABASE_URL: postgresql://qase_test:qase_test_only@127.0.0.1:15432/qase_test
+      QASE_TEST_CONTROL_DATABASE_URL: postgresql://qase_test:qase_test_only@127.0.0.1:15432/qase_test
+      QASE_TEST_REDIS_URL: redis://127.0.0.1:16379
+      QASE_TEST_REDIS_SERVER: /usr/bin/redis-server
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: qase_ci_admin_only
+        ports:
+          - 15432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,6 +39,16 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Provision the non-bypass disposable database role and Redis restart binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i "${{ job.services.postgres.id }}" psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE qase_test LOGIN PASSWORD 'qase_test_only' NOSUPERUSER NOBYPASSRLS;
+          CREATE DATABASE qase_test OWNER qase_test;
+          SQL
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends redis-server
       - name: Check runtime dependency security
         run: npm run audit:dependencies
       - name: Install native browser dependencies
@@ -48,6 +80,15 @@ jobs:
           node scripts/test-founder-reader-browser.mjs
           node scripts/test-founder-actions-browser.mjs
           node scripts/qualify-system-ui.mjs --launch-only
+      - name: Verify SQA startup, launch and evidence across all installed engines
+        shell: bash
+        run: |
+          set -euo pipefail
+          for browser in chromium firefox webkit; do
+            node scripts/test-sqa-startup.mjs --browser "$browser" --isolated --output-dir "test-results/phase8/sqa-${browser}-startup"
+            node scripts/test-sqa-launch.mjs --browser "$browser" --output-dir "test-results/phase8/sqa-${browser}-launch"
+            node scripts/test-sqa-evidence.mjs --browser "$browser" --output-dir "test-results/phase8/sqa-${browser}-evidence"
+          done
       - name: Retain mode browser diagnostics
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -64,6 +105,8 @@ jobs:
             test-results/founder-reader/*.json
             test-results/founder-actions/*.png
             test-results/founder-actions/*.json
+            test-results/phase8/**/*.png
+            test-results/phase8/**/result.json
           if-no-files-found: warn
           retention-days: 7
       - name: Verify release content when using the delivered snapshot

@@ -30,6 +30,9 @@ Recommendation selections now bind to the exact owned report with conflict
 checks and atomic persistence. Studio handoffs show immediate delivery state,
 retain stable retry keys and offer copy/download fallback. See
 [Founder actions](docs/founder-actions-2026-11-08.md).
+The export-only release requires PostgreSQL migration 044 and exact-commit
+Linux/container qualification before promotion. See
+[Founder/SQA release gates](docs/founder-sqa-release-2026-11-08.md).
 SQA now completes
 and records each browser workflow before compacting its model context, reducing
 repeated input while preserving the fixed safety limit. Production activation requires gateway qualification

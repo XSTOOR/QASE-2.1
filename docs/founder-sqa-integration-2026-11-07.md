@@ -126,7 +126,10 @@ production activation remain part of Phase 8.
    no live Studio delivery or AI run occurred. See
    [Phase 7 Founder actions](founder-actions-2026-11-08.md).
 8. Live qualification of representative modes, access/recovery cases, required
-   CI/container checks, and release promotion to Push-SQA.
+   CI/container checks, and release promotion to Push-SQA. The selected scope is
+   configured-provider Founder/SQA with export-only Studio handoff. Migration
+   044 and real service CI address the database gap found after Phase 7. See
+   [Phase 8 release gates and evidence](founder-sqa-release-2026-11-08.md).
 
 The incoming report's unresolved JEV usage receipt, authenticated/realtime paths,
 distributed failover and production-topology checks remain separate release
