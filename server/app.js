@@ -60,6 +60,7 @@ import { validateQaSelectedTests, validateSecurityAuthorization } from './appQaS
 import { selectQaExecutionMode, hybridProfile, loadQualification } from './hybridConfig.js';
 import { hybridRecoveryProblem } from './hybridRecoveryGate.js';
 import { buildFounderProgress, founderContinuationTask } from './founderProgress.js';
+import { inspectFounderEvidence } from './founderEvidence.js';
 import { getConfig } from './config.js';
 import { renderReportPdf } from './reportPdf.js';
 import { buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
@@ -2322,6 +2323,14 @@ export function createApplication(options = {}) {
 		if (!session) return;
 		if (session.mode !== 'sqa') return response.status(409).json({ error: 'This run is not an SQA assessment.' });
 		response.json({ versions: sqaPublishedVersions(session.sqa).map(({ assessment, observations, scope, ...meta }) => ({ ...meta, assessmentId: assessment.assessmentId, verdict: assessment.verdict })) });
+	});
+
+	app.get('/api/sessions/:id/founder/evidence/:observationId/:index', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		response.set('Cache-Control', 'no-store');
+		try { response.json(inspectFounderEvidence(session, request.params.observationId, request.params.index)); }
+		catch (error) { safeErrorResponse(request, response, error); }
 	});
 
 	app.get('/api/sessions/:id/sqa/evidence/:controlId/:index', async (request, response) => {

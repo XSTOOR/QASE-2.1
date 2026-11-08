@@ -1,0 +1,51 @@
+/* Founder report controls use the existing application theme and typography. */
+.founder-report-navigation { position: sticky; top: 0; z-index: 5; padding: 8px; margin-bottom: 12px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--panel-chat); color: var(--text); }
+.founder-report-navigation form, .founder-report-navigation label { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.founder-report-navigation label { flex: 1; font-size: 12px; }
+.founder-report-navigation label span { flex: 0 0 auto; }
+.founder-report-navigation select { flex: 1; min-width: 0; width: 100%; min-height: 44px; padding: 8px; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--text); background: var(--panel-chat); font: inherit; }
+body.studio-workspace [data-founder-run] .founder-report-navigation .btn { min-height: 44px; white-space: nowrap; }
+[data-founder-section] { scroll-margin-top: 84px; }
+[data-founder-section] h3:focus-visible, [data-founder-focus]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.founder-trace { align-items: start; }
+.founder-evidence-link { display: inline-block; min-height: 44px; max-width: 100%; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--surface-2); color: var(--text); font: inherit; font-size: 12px; text-align: start; overflow-wrap: anywhere; cursor: pointer; touch-action: manipulation; }
+.founder-evidence-link:hover { background: var(--surface-hover); border-color: var(--accent); }
+.founder-inline-assumptions { flex-basis: 100%; min-width: 0; padding: 8px 10px; border-inline-start: 3px solid var(--warning); background: var(--warning-soft); color: var(--text); font-size: 12px; }
+.founder-inline-assumptions summary { min-height: 44px; padding: 12px 0; cursor: pointer; font-weight: 600; }
+.founder-detail > summary, .founder-evidence-dialog details > summary { min-height: 44px; padding-block: 12px; cursor: pointer; }
+.founder-inline-assumptions .founder-list { margin-top: 6px; }
+.founder-selection-bar [aria-disabled="true"], .founder-select input[aria-disabled="true"] { opacity: .65; cursor: wait; }
+.founder-select { min-height: 44px; }
+.founder-selection-bar button { min-height: 44px; }
+.founder-priority.founder-selectable { grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
+.founder-priority.founder-selectable > .founder-select { grid-column: 1 / -1; grid-row: 1; align-items: center; }
+.founder-priority.founder-selectable > .founder-rank { grid-column: 1; grid-row: 2; }
+.founder-priority.founder-selectable > .founder-rank + div { grid-column: 2; grid-row: 2; min-width: 0; overflow-wrap: anywhere; }
+.founder-priority.founder-selectable > .founder-scores { grid-column: 2; grid-row: 3; justify-content: start; max-width: none; }
+[data-founder-run] .founder-section h3 { font-size: 16px; }
+[data-founder-run] .founder-section > header p { font-size: 12px; line-height: 1.6; }
+[data-founder-run] .founder-card strong, [data-founder-run] .founder-priority strong { font-size: 14px; color: var(--text); }
+[data-founder-run] .founder-copy, [data-founder-run] .founder-card p, [data-founder-run] .founder-priority p, [data-founder-run] .founder-list, [data-founder-run] .founder-assumption-list { font-size: 13px; line-height: 1.65; color: var(--text-secondary); }
+[data-founder-run] .founder-card-meta, [data-founder-run] .founder-score, [data-founder-run] .founder-confidence, [data-founder-run] .founder-select-hint { font-size: 11px; line-height: 1.5; color: var(--text-secondary); }
+[data-founder-run] .founder-card, [data-founder-run] .founder-priority, [data-founder-run] .founder-roadmap-item, [data-founder-run] .founder-evidence-grid > div { background: var(--surface-2); border-color: var(--border-strong); }
+[data-founder-execution]:empty, [data-founder-handoff]:empty { display: none; }
+.modal.founder-evidence-dialog { width: min(820px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); box-sizing: border-box; padding: 20px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--panel-chat); color: var(--text); overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere; }
+.founder-evidence-head { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.founder-evidence-head h2 { margin: 0; font-size: 20px; line-height: 1.3; }
+body.studio-workspace .modal.founder-evidence-dialog .btn { min-height: 44px; max-width: 100%; white-space: normal; }
+.founder-evidence-observation { padding: 16px 0; border-top: 1px solid var(--border); }
+.founder-evidence-observation h3 { font-size: 16px; margin: 0 0 10px; }
+.founder-evidence-dialog .founder-card-meta { font-size: 12px; line-height: 1.6; }
+.founder-evidence-entry { padding: 12px 0; border-top: 1px solid var(--border); }
+.founder-evidence-receipt { display: grid; gap: 10px; margin-top: 12px; }
+.founder-evidence-receipt p, .founder-evidence-receipt dl, .founder-evidence-receipt h4 { margin: 0; }
+.founder-evidence-receipt dt { font-weight: 600; margin-top: 10px; }
+.founder-evidence-receipt dd { margin: 4px 0 0; }
+.founder-evidence-receipt pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.founder-evidence-status { font-weight: 600; }
+.founder-evidence-status[data-integrity="verified"] { color: var(--success); }
+.founder-evidence-status:is([data-integrity="mismatch"], [role="alert"]) { color: var(--danger); }
+.founder-evidence-limit { color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
+.founder-receipt { padding: 10px; border: 1px solid var(--border); border-radius: 4px; }
+@media (max-width: 520px) { .founder-report-navigation label span { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } .founder-report-navigation form { gap: 6px; } .modal.founder-evidence-dialog { padding: 14px; } .founder-evidence-head { flex-wrap: wrap; } }
+@media (max-width: 720px) { [data-founder-run] .founder-card-grid, [data-founder-run] .founder-roadmap { grid-template-columns: minmax(0, 1fr); } }

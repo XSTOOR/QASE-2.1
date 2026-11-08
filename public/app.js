@@ -414,6 +414,7 @@ const founderView = createFounderView({
 		countFounder: el.countFounder,
 		reportView: el.reportView
 	},
+	api,
 	apiText,
 	downloadReportPdf,
 	toast,
@@ -438,7 +439,7 @@ function founderToggleSelection(id, checked) {
 	if (!saved?.recommendationSet?.recommendations) return;
 	const current = new Set(saved.selections ?? []);
 	if (checked) current.add(id); else current.delete(id);
-	founderSaveSelections([...current]);
+	return founderSaveSelections([...current]);
 }
 
 async function founderSaveSelections(ids) {
@@ -3645,13 +3646,13 @@ function renderCoverageSelection(session) {
 }
 
 function renderReport() {
-	el.reportView.replaceChildren();
-	if (state.session?.mode === 'sqa') {
-		renderSqaReportTab();
-		return;
-	}
 	if (state.session?.mode === 'founder') {
 		renderFounderReportTab();
+		return;
+	}
+	founderView.clearReport();
+	if (state.session?.mode === 'sqa') {
+		renderSqaReportTab();
 		return;
 	}
 

@@ -123,9 +123,9 @@ test('Phase 4 — selection controls gate an explicit send; selection alone neve
 	assert.match(founderView, /send\.dataset\.role = 'send-to-studio'/);
 	assert.match(founderView, /send\.disabled = selections\.size === 0 \|\| pending/);
 	assert.match(founderView, /const pending = handoff\?\.status === 'pending'/);
-	assert.match(founderView, /send\.onclick = \(\) => onSendToStudio\?\.\(\[\.\.\.selections\]\)/);
+	assert.match(founderView, /send\.onclick = \(\) => \{[^\n]*onSendToStudio\?/);
 	// checkbox toggle only persists selections — no send on change
-	assert.match(founderView, /box\.onchange = \(\) => onToggleSelection\?\.\(item\.id, box\.checked\)/);
+	assert.match(founderView, /box\.onchange\s*=\s*\(\)\s*=>\s*selectionAction\(\(\)=>onToggleSelection\?\.\(item\.id,box\.checked\)\)/);
 	assert.match(app, /onToggleSelection: founderToggleSelection/);
 	assert.match(app, /onSendToStudio: founderSendToStudio/);
 	assert.match(app, /body: JSON\.stringify\(\{ selectedRecommendationIds: ids \}\)/);

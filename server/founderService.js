@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
+import { founderEvidenceDigest } from './founderEvidence.js';
 import {
 	assertPlainObject,
 	boundedStrings,
@@ -43,14 +44,6 @@ function assertFounderStateSize(founder) {
 	if (Buffer.byteLength(JSON.stringify(founder), 'utf8') >= MAX_FOUNDER_STATE_BYTES) {
 		throw new TypeError('Founder state must be smaller than 1,000,000 serialized bytes. Reduce observations or report detail.');
 	}
-}
-
-function canonical(value) {
-	if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-	if (value && typeof value === 'object') {
-		return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
-	}
-	return JSON.stringify(value);
 }
 
 function normalizeTarget(input) {
@@ -297,7 +290,7 @@ function evidenceBundle(session, requestedIds, now) {
 		summary: activity.summary
 	})));
 	return safe.map(activity => {
-		const digest = createHash('sha256').update(canonical({ runId: session.id, collectedAt, activity })).digest('hex');
+		const digest = founderEvidenceDigest({ runId: session.id, collectedAt, activity }).slice(7);
 		return {
 			activityId: activity.activityId,
 			reference: `qase://runs/${session.id}/activities/${encodeURIComponent(activity.activityId)}/founder-evidence/${digest.slice(0, 24)}`,

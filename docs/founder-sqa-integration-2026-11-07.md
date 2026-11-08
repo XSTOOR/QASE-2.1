@@ -109,8 +109,14 @@ production activation remain part of Phase 8.
    and five launcher browser groups passed. See
    [Phase 5 live qualification](founder-live-qualification-2026-11-07.md) and the
    historical [progress and recovery milestone](founder-progress-recovery-2026-11-07.md).
-6. Clickable evidence, visible assumptions, section navigation and preserved
-   focus, scroll, disclosure and selection state.
+6. Completed locally: owned read-only evidence inspection, visible assumptions,
+   accessible section navigation and preserved focus, text selection, scroll,
+   disclosure and pending checkbox state. Mobile recommendation columns and
+   readable report text are corrected. Full regression: 2,379 passed, zero
+   failed, 33 optional skips. Nine reader groups passed with synthetic and saved
+   live reports; existing Founder completion/recovery/launch and SQA evidence
+   browser regressions passed with zero page errors. See
+   [Phase 6 report reader](founder-report-usability-2026-11-08.md).
 7. Reliable recommendation saving and immediate Studio delivery feedback,
    duplicate prevention, retry and export fallback.
 8. Live qualification of representative modes, access/recovery cases, required

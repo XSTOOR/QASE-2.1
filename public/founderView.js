@@ -1,5 +1,7 @@
 import { renderModeReasoning } from './modeReasoningView.js';
 import { createFounderProgressView } from './founderProgressView.js';
+import { createFounderReaderState, founderViewSignature } from './founderReaderState.js';
+import { createFounderEvidenceView } from './founderEvidenceView.js';
 import {
 	collectFounderAssumptions,
 	describeFounderLifecycle,
@@ -32,6 +34,7 @@ export function createFounderView({
 	onAnswer,
 	onOpenSettings,
 	elements,
+	api,
 	apiText,
 	downloadReportPdf,
 	toast,
@@ -41,10 +44,19 @@ export function createFounderView({
 }) {
 		const doc = documentRef;
 		const progressView=createFounderProgressView({root:elements.founderProgress,documentRef:doc,onContinue,onReviewActivity,onAnswer,onOpenSettings});
-		let handoff;
+		const reader=createFounderReaderState({documentRef:doc});
+		const evidenceView=createFounderEvidenceView({documentRef:doc,getSession,api,categoryLabel:founderCategoryLabel});
+		const sections = new Map([
+			['Evidence confidence','evidence'],['Executive thesis','summary'],['What to improve','observations'],['What to build next','recommendations'],['What to do first','quick-wins'],['ICP & positioning','positioning'],['Sales & GTM','sales'],['Marketing & growth','marketing'],['Monetization & pricing','pricing'],['30 / 60 / 90 roadmap','roadmap'],['Risks & assumptions','risks'],['Metrics & experiments','metrics']
+		]);
+		let surface, traceIndex=0;
+		const selectionWork=new Set();
+		let handoff, handoffOverride;
+		const scopeKey=()=>`${getSession()?.ownerUserId??'local'}:${getSession()?.id}`;
+		const viewKey=prefix=>`${prefix}-${traceIndex++}`;
 
 		function setHandoff(next) {
-			handoff = next;
+			handoffOverride = next;
 			render();
 		}
 
@@ -63,6 +75,7 @@ export function createFounderView({
 		const head = doc.createElement('header');
 		const title = doc.createElement('h3');
 		title.textContent = titleText;
+		if(sections.has(titleText)){node.dataset.founderSection=sections.get(titleText);title.tabIndex=-1;title.dataset.founderFocus=`section-${sections.get(titleText)}`;}
 		head.append(title);
 		if (subtitleText) {
 			const subtitle = doc.createElement('p');
@@ -122,21 +135,23 @@ export function createFounderView({
 		const evidenceIds = founderValues(item.evidenceObservationIds);
 		const assumptions = founderValues(item.assumptions);
 		if (evidenceIds.length) {
-			const evidence = doc.createElement('span');
-			evidence.textContent = `${evidenceIds.length} evidence link${evidenceIds.length === 1 ? '' : 's'}`;
-			evidence.title = evidenceIds.join(', ');
+			const evidence = doc.createElement('button');
+			evidence.type='button';evidence.className='founder-evidence-link';evidence.dataset.founderFocus=viewKey('evidence');
+			evidence.textContent = `View ${new Set(evidenceIds).size} supporting observation${new Set(evidenceIds).size===1?'':'s'}`;
+			evidence.onclick=()=>evidenceView.open(evidenceIds,evidence);
 			trace.append(evidence);
 		}
 		if (assumptions.length) {
-			const hypothesis = doc.createElement('span');
+			const hypothesis = doc.createElement('details');
 			hypothesis.dataset.kind = 'assumption';
-			hypothesis.textContent = `${assumptions.length} assumption${assumptions.length === 1 ? '' : 's'}`;
-			hypothesis.title = assumptions.join(' · ');
+			hypothesis.className='founder-inline-assumptions';hypothesis.open=true;hypothesis.dataset.founderDisclosure=viewKey('assumptions');
+			const summary=doc.createElement('summary');summary.textContent=`Assumptions to validate (${assumptions.length})`;summary.dataset.founderFocus=`toggle-${hypothesis.dataset.founderDisclosure}`;
+			hypothesis.append(summary,founderList(assumptions));
 			trace.append(hypothesis);
 		}
 		if (!trace.childElementCount) {
 			const boundary = doc.createElement('span');
-			boundary.textContent = 'No trace supplied';
+			boundary.textContent = 'No supporting observations or explicit assumptions recorded.';
 			trace.append(boundary);
 		}
 		return trace;
@@ -195,10 +210,11 @@ export function createFounderView({
 		const meta = [
 			founderCategoryLabel(observation.category),
 			humanizeId(observation.type),
-			`${humanizeId(observation.confidence)} confidence`,
+			`${humanizeId(observation.confidence)} observation confidence`,
 			`${observation.evidence?.length ?? 0} evidence artifact${observation.evidence?.length === 1 ? '' : 's'}`
 		].join(' · ');
-		return founderCard(observation.title ?? 'Untitled observation', observation.summary ?? '', { meta });
+		const card=founderCard(observation.title ?? 'Untitled observation', observation.summary ?? '', { meta });
+		const inspect=doc.createElement('button');inspect.type='button';inspect.className='founder-evidence-link';inspect.dataset.founderFocus=`observation-${observation.id}`;inspect.textContent='View browser records';inspect.onclick=()=>evidenceView.open([observation.id],inspect,'Recorded observation');card.append(inspect);return card;
 	}
 
 	function renderFounderObservations(observations, titleText, subtitleText) {
@@ -245,6 +261,7 @@ export function createFounderView({
 		note.textContent = declared?.limitation
 			?? 'Confidence describes the evidence behind this brief; strategic recommendations remain hypotheses to validate with customers and market data.';
 		section.body.append(note);
+		const browse=doc.createElement('button');browse.type='button';browse.className='founder-evidence-link';browse.textContent=`Browse all ${founder.observations?.length??0} recorded observations`;browse.dataset.founderFocus='browse-observations';browse.onclick=()=>evidenceView.open(founderValues(founder.observations).map(item=>item.id),browse,'Recorded observations');section.body.append(browse);
 		return section.node;
 	}
 
@@ -361,7 +378,7 @@ export function createFounderView({
 				box.type = 'checkbox';
 				box.checked = selections.has(item.id);
 				box.dataset.recommendationId = item.id;
-				box.onchange = () => onToggleSelection?.(item.id, box.checked);
+				wireSelection(box,item);
 				const hint = doc.createElement('span');
 				hint.textContent = 'Select to send';
 				hint.className = 'founder-select-hint';
@@ -393,8 +410,10 @@ export function createFounderView({
 			if (Array.isArray(item.acceptanceCriteria) && item.acceptanceCriteria.length > 0) {
 				const criteria = doc.createElement('details');
 				criteria.className = 'founder-detail';
+				criteria.dataset.founderDisclosure=`criteria-${item.id??index}`;
 				const summary = doc.createElement('summary');
 				summary.textContent = `Acceptance criteria (${item.acceptanceCriteria.length})`;
+				summary.dataset.founderFocus=`toggle-${criteria.dataset.founderDisclosure}`;
 				criteria.append(summary);
 				criteria.append(founderList(item.acceptanceCriteria, 'No criteria supplied.'));
 				content.append(criteria);
@@ -428,8 +447,7 @@ export function createFounderView({
 			// Select-and-send surface (Phase 4) on the live report itself.
 			if (recommendations.some(item => item.id !== undefined)) {
 				section.body.append(renderSelectionControls(recommendations.filter(item => item.id !== undefined), selections));
-				const status = renderHandoffStatus();
-				if (status) section.body.append(status);
+				section.body.append(handoffSlot());
 			}
 		}
 		return section.node;
@@ -585,9 +603,19 @@ export function createFounderView({
 		return actions;
 	}
 
+	function renderReportNavigation(container) {
+		const nav=doc.createElement('nav');nav.className='founder-report-navigation';nav.setAttribute('aria-label','Founder report navigation');
+		const form=doc.createElement('form'),label=doc.createElement('label'),text=doc.createElement('span'),select=doc.createElement('select'),go=doc.createElement('button');
+		text.textContent='Report section';select.dataset.founderSectionChoice='true';select.dataset.founderFocus='section-choice';
+		for(const [title,value]of sections){const option=doc.createElement('option');option.value=value;option.textContent=title;select.append(option);}
+		label.append(text,select);go.type='submit';go.className='btn btn-ghost';go.textContent='Go to section';go.dataset.founderFocus='section-go';form.append(label,go);nav.append(form);
+		form.onsubmit=event=>{event.preventDefault();const target=[...container.querySelectorAll('[data-founder-section]')].find(node=>node.dataset.founderSection===select.value);if(!target)return;const heading=target.querySelector('h3');heading?.focus({preventScroll:true});target.scrollIntoView({block:'start',inline:'nearest',behavior:'instant'});reader.rememberSection(container,select.value);};
+		return nav;
+	}
+
 	function appendFounderCompletedReport(container, founder, report) {
 		const observations = groupFounderObservations(founder.observations);
-		container.append(renderFounderReportActions(), renderFounderEvidence(founder, report));
+		container.append(renderReportNavigation(container),renderFounderReportActions(), renderFounderEvidence(founder, report));
 		const thesis = founderSection('Executive thesis', 'The concise product, market, and execution diagnosis.');
 		const thesisCopy = doc.createElement('p');
 		thesisCopy.className = 'founder-copy founder-copy--lead';
@@ -595,7 +623,7 @@ export function createFounderView({
 		thesis.body.append(thesisCopy);
 		container.append(
 			thesis.node,
-			renderFounderObservations(observations.productFindings, 'What to improve', 'Product and experience issues observed directly on the reviewed surface.'),
+			renderFounderObservations(observations.productFindings, 'What to improve', 'Recorded product observations and coverage boundaries. Strategic opportunities still require validation.'),
 			renderFounderPriorities(report),
 			renderFounderQuickWins(report),
 			renderFounderIcpPositioning(report),
@@ -625,7 +653,7 @@ export function createFounderView({
 			box.type = 'checkbox';
 			box.checked = selections.has(item.id);
 			box.dataset.recommendationId = item.id;
-			box.onchange = () => onToggleSelection?.(item.id, box.checked);
+			wireSelection(box,item);
 			const title = doc.createElement('span');
 			title.textContent = `${index + 1}. ${item.title ?? item.id}`;
 			label.append(box, title);
@@ -634,8 +662,7 @@ export function createFounderView({
 		}
 		section.body.append(listNode);
 		section.body.append(renderSelectionControls(saved.recommendationSet.recommendations, selections));
-		const status = renderHandoffStatus();
-		if (status) section.body.append(status);
+		section.body.append(handoffSlot());
 		return section.node;
 	}
 
@@ -643,20 +670,22 @@ export function createFounderView({
 	function renderSelectionControls(recommendations, selections) {
 		const bar = doc.createElement('div');
 		bar.className = 'founder-selection-bar';
+		bar.dataset.founderRecommendationIds=JSON.stringify(recommendations.map(item=>item.id));
 		const all = doc.createElement('button');
 		all.type = 'button';
 		all.className = 'btn-secondary';
 		all.textContent = 'Select all';
-		all.onclick = () => onSelectAll?.(recommendations.map(item => item.id));
+		all.dataset.founderSelectionAction='true';all.dataset.founderFocus='select-all';all.onclick = () => selectionAction(()=>onSelectAll?.(recommendations.map(item => item.id)));
 		const clear = doc.createElement('button');
 		clear.type = 'button';
 		clear.className = 'btn-secondary';
 		clear.textContent = 'Clear selection';
-		clear.onclick = () => onClearSelection?.();
+		clear.dataset.founderSelectionAction='true';clear.dataset.founderFocus='clear-selection';clear.onclick = () => selectionAction(()=>onClearSelection?.());
 		const count = doc.createElement('span');
 		count.className = 'founder-selection-count';
 		count.textContent = `${selections.size} of ${recommendations.length} selected`;
 		count.dataset.role = 'selection-count';
+		count.setAttribute('role','status');count.setAttribute('aria-live','polite');count.tabIndex=-1;count.dataset.founderFocus='selection-status';
 		const send = doc.createElement('button');
 		send.type = 'button';
 		send.className = 'btn-primary';
@@ -669,9 +698,41 @@ export function createFounderView({
 		send.title = pending ? 'A handoff is already in progress.'
 			: selections.size === 0 ? 'Select at least one recommendation.'
 				: 'Send the selected recommendations to Studio.';
-		send.onclick = () => onSendToStudio?.([...selections]);
+		send.onclick = () => {if(selectionWork.has(scopeKey()))return;const allowed=new Set(JSON.parse(bar.dataset.founderRecommendationIds));onSendToStudio?.((getProjectState?.()?.selections??[]).filter(id=>allowed.has(id)));};
 		bar.append(all, clear, count, send);
 		return bar;
+	}
+
+	function wireSelection(box,item){
+		box.setAttribute('aria-label',`Select recommendation: ${item.title??item.id}`);box.dataset.founderFocus=`recommendation-${item.id}`;
+		box.onclick=event=>{if(selectionWork.has(scopeKey()))event.preventDefault();};
+		box.onchange=()=>selectionAction(()=>onToggleSelection?.(item.id,box.checked));
+	}
+	async function selectionAction(work){
+		const key=scopeKey();if(selectionWork.has(key))return;selectionWork.add(key);syncSelections();
+		try{await work();}catch(error){fail?.(error);}finally{selectionWork.delete(key);if(scopeKey()===key)syncSelections(true);}
+	}
+	function handoffSlot(){const slot=doc.createElement('div');slot.dataset.founderHandoff='true';slot.dataset.founderFocus='handoff-status';slot.tabIndex=-1;slot.setAttribute('aria-live','polite');return slot;}
+	function syncSelections(force=false){
+		const saved=getProjectState?.(),selected=new Set(saved?.selections??[]),pending=selectionWork.has(scopeKey());
+		for(const root of [elements.founderView,elements.reportView]){
+			if(root.dataset.founderRun!==getSession()?.id)continue;
+			const signature=JSON.stringify([...selected].sort());
+			for(const box of root.querySelectorAll('input[data-recommendation-id]')){
+				if(force||root.dataset.founderSelection!==signature)box.checked=selected.has(box.dataset.recommendationId);
+				box.setAttribute('aria-disabled',String(pending));
+			}
+			root.dataset.founderSelection=signature;
+			for(const bar of root.querySelectorAll('[data-founder-recommendation-ids]')){
+				const ids=JSON.parse(bar.dataset.founderRecommendationIds),count=ids.filter(id=>selected.has(id)).length;
+				bar.querySelector('[data-role="selection-count"]').textContent=pending?'Saving selection…':`${count} of ${ids.length} selected`;
+				for(const action of bar.querySelectorAll('[data-founder-selection-action]'))action.setAttribute('aria-disabled',String(pending));
+				const send=bar.querySelector('[data-role="send-to-studio"]');send.disabled=pending||count===0||handoff?.status==='pending';send.title=pending?'Saving selection…':handoff?.status==='pending'?'A handoff is already in progress.':count?'Send the selected recommendations to Studio.':'Select at least one recommendation.';
+			}
+			for(const slot of root.querySelectorAll('[data-founder-handoff]')){
+				const signature=JSON.stringify(handoff??null);if(slot.dataset.signature===signature)continue;slot.dataset.signature=signature;const focused=slot.contains(doc.activeElement),status=renderHandoffStatus();slot.replaceChildren(...(status?[status]:[]));if(focused&&status)slot.focus({preventScroll:true});
+			}
+		}
 	}
 
 	/** Handoff status line: honest pending / succeeded / failed / unavailable. */
@@ -714,8 +775,9 @@ export function createFounderView({
 	function render() {
 		const session = getSession();
 		progressView.render(session?.mode==='founder'?session.founderProgress:undefined,session?.id);
-		elements.founderView.replaceChildren();
+		evidenceView.sync(session);
 		if (session?.mode !== 'founder') {
+			reader.clear(elements.founderView);
 			elements.countFounder.textContent = '';
 			return;
 		}
@@ -724,16 +786,18 @@ export function createFounderView({
 		const report = founder.report;
 		const lifecycle = describeFounderLifecycle(founder, session.status, session.activities?.length ?? 0,session.founderProgress);
 		elements.countFounder.textContent = lifecycle.badge;
+		handoff=handoffOverride??getProjectState?.()?.handoff;
+		const signature=founderViewSignature({scope,observations:founder.observations,report,finalizedAt:founder.finalizedAt,lifecycle,categories:getCatalog()?.categories,projectSet:report?undefined:getProjectState?.()?.recommendationSet});
+		reader.update(elements.founderView,session,signature,()=>{
+		surface=elements.founderView;traceIndex=0;surface.dataset.founderRun=session.id;delete surface.dataset.founderSelection;
 		elements.founderView.append(renderFounderHero(scope, lifecycle), renderFounderScope(scope));
-		const executionNotice=renderModeReasoning(session,doc);
-		if(executionNotice)elements.founderView.append(executionNotice);
+		const executionSlot=doc.createElement('div');executionSlot.dataset.founderExecution='true';elements.founderView.append(executionSlot);
 
 		if (!report) {
 			// Project-level restore (Phase 3): a previously saved recommendation
 			// set for this project is shown even when THIS run has not finalized,
 			// so reopening Founder Mode restores the last good state.
 			const saved = getProjectState?.();
-			handoff = saved?.handoff;
 			if (saved?.recommendationSet?.recommendations?.length) {
 				elements.founderView.append(renderSavedProjectState(saved));
 			}
@@ -752,16 +816,23 @@ export function createFounderView({
 		}
 
 		appendFounderCompletedReport(elements.founderView, founder, report);
-		// Phase 4: the completed report carries its own selection controls;
-		// sync handoff state from the saved project state each render.
-		handoff = getProjectState?.()?.handoff;
+		});
+		const executionSlot=elements.founderView.querySelector('[data-founder-execution]'),executionSignature=founderViewSignature(founder.execution??null);
+		if(executionSlot&&executionSlot.dataset.signature!==executionSignature){executionSlot.dataset.signature=executionSignature;const notice=renderModeReasoning(session,doc);executionSlot.replaceChildren(...(notice?[notice]:[]));}
+		syncSelections();
+		renderReportTab();
 	}
 
 	function renderReportTab() {
 		const session = getSession();
+		if(session?.mode!=='founder')return;
+		evidenceView.sync(session);handoff=handoffOverride??getProjectState?.()?.handoff;
 		const founder = session?.founder ?? {};
 		const report = founder.report;
 		const lifecycle = describeFounderLifecycle(founder, session?.status, session?.activities?.length ?? 0,session?.founderProgress);
+		const signature=founderViewSignature({scope:founder.scope,observations:founder.observations,report,finalizedAt:founder.finalizedAt,lifecycle,categories:getCatalog()?.categories});
+		reader.update(elements.reportView,session,signature,()=>{
+		surface=elements.reportView;traceIndex=0;surface.dataset.founderRun=session.id;delete surface.dataset.founderSelection;
 		if (!founder.finalizedAt || !report) {
 			const pending = doc.createElement('div');
 			pending.className = 'feed-empty';
@@ -772,8 +843,9 @@ export function createFounderView({
 
 		elements.reportView.append(renderFounderHero(founder.scope ?? {}, lifecycle), renderFounderScope(founder.scope ?? {}));
 		appendFounderCompletedReport(elements.reportView, founder, report);
-		handoff = getProjectState?.()?.handoff;
+		});
+		syncSelections();
 	}
 
-	return Object.freeze({ render, renderReportTab, setHandoff });
+	return Object.freeze({ render, renderReportTab, setHandoff, clearReport(){reader.clear(elements.reportView);} });
 }

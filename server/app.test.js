@@ -7,7 +7,7 @@ import { hybridProfile } from './hybridConfig.js';
 import { PublicInputError } from './publicErrors.js';
 import { createInstanceAccess } from './instanceAccess.js';
 import { createSqaState, finishSqaAssessment } from './sqaService.js';
-import { createFounderState,createFounderReviewTodos } from './founderService.js';
+import { createFounderState,createFounderReviewTodos,recordFounderObservations } from './founderService.js';
 import { aggregateSessionFindings, setFindingStatus } from './store.js';
 import { createCoverageService } from './coverageService.js';
 import fs from 'node:fs';
@@ -385,6 +385,19 @@ async function pausedFounderFixture(t){
 	session.activities.push({id:'observed-browser',toolName:'browser_open',status:'done',ts:Date.now()});
 	return {...f,session};
 }
+
+test('Founder evidence API resolves only attached receipts without starting a model or changing run data',async t=>{
+	const f=await pausedFounderFixture(t),{session}=f;
+	session.activities[0].toolName='browser_snapshot';session.activities[0].summary='A task heading was visible.';
+	await recordFounderObservations(session,[{category:'product_clarity',type:'opportunity',title:'Observed task',summary:'A task heading was visible.',confidence:'medium'}],f.services.runs);
+	const before=structuredClone(session),id=session.founder.observations[0].id;
+	const response=await f.request(`/api/sessions/${session.id}/founder/evidence/${id}/1`);
+	assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');assert.equal((await body(response)).integrity,'verified');
+	assert.equal((await f.request(`/api/sessions/${session.id}/founder/evidence/missing/1`)).status,404);
+	assert.equal((await f.request(`/api/sessions/${session.id}/founder/evidence/${id}/0`)).status,400);
+	assert.equal((await f.request(`/api/sessions/${randomUUID()}/founder/evidence/${id}/1`)).status,404);
+	assert.deepEqual(session,before);assert.equal(f.state.ensureCalls.length,0);assert.equal(f.state.runCalls.length,0);
+});
 
 test('Founder continuation uses fresh owner-scoped progress and preserves the existing run and usage',async t=>{
 	const f=await pausedFounderFixture(t),{session}=f;

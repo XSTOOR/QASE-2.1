@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-founder-sqa-2026-11-07-progress-r2",
-  "uiVersion": "20261107-4",
+  "releaseId": "qase-founder-sqa-2026-11-08-report-r1",
+  "uiVersion": "20261108-1",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Founder qualification follow-up on b3dbd7f: retained distinct check receipts, bounded observations and small report groups with separate durable section writes; production qualification remains required"
+  "source": "Founder report reader on aa79a56: owned read-only receipt inspection, explicit assumptions, accessible section navigation and scoped reading preferences; production qualification remains required"
 }

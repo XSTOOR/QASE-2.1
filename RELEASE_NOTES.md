@@ -1,4 +1,15 @@
-# QASE SQA release candidate
+# QASE Founder/SQA integration candidate
+
+Current release: `qase-founder-sqa-2026-11-08-report-r1`. UI: `20261108-1`.
+
+Founder reports now expose supporting observations and authenticated read-only
+browser-receipt checks, with explicit unavailable/unverified states. Strategic
+assumptions are visible beside their claims. Section navigation, keyboard focus,
+disclosures and scroll position survive ordinary updates and reloads. See
+[Founder report reader](docs/founder-report-usability-2026-11-08.md) for qualification
+scope and remaining phases. Promotion and production activation remain gated.
+
+## Previous SQA qualification
 
 Release: `qase-sqa-2026-11-06-efficiency-r1`. UI: `20261106-1`.
 

@@ -174,3 +174,14 @@ Creation is attributed to the trusted per-instance actor; agent observations
 and publication retain the existing trusted request/agent attribution rules.
 Organization and project identity always come from trusted instance and tenant
 context, never from the request body.
+
+## Inspecting report evidence
+
+The Founder reader links report claims to their supporting observations. An
+explicit browser-record lookup uses the owned, read-only
+`GET /api/sessions/:id/founder/evidence/:observationId/:index` endpoint. A matching
+SHA-256 verifies the retained activity receipt binding; it does not establish
+page bytes, a screenshot or commercial conclusions. Missing or changed receipts
+and unverified external references stay explicit. Assumptions remain visible
+beside claims. See [Founder report reader](founder-report-usability-2026-11-08.md)
+for state retention, proof boundaries and qualification.
