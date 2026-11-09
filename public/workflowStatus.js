@@ -12,7 +12,10 @@ export function workflowStatus(session, connection) {
 		if(progress.recovery.available)return {tone:'attention',title:progress.title,description:progress.detail,action:'View review progress',destination:'founder'};
 	}
 	if (session?.pendingQuestion || status === 'awaiting_input') return { tone: 'attention', title: 'Qase needs your input', description: 'Answer the question below so testing can continue.', action: 'Answer question', destination: 'question' };
-	if (status === 'blocked') return { tone: 'attention', title: 'Testing needs a prerequisite', description: 'Open the report to see what prevented testing and what to provide next.', action: 'Review blocker', destination: 'results' };
+	if (status === 'failed') return { tone: 'attention', title: 'Quality review found failed controls', description: 'Review the failed controls, their supporting evidence and any remaining coverage gaps in the quality report.', action: 'Review quality report', destination: 'results' };
+	if (status === 'blocked') return session?.mode === 'sqa'
+		? { tone: 'attention', title: 'Quality review has unresolved controls', description: 'Review the quality report for missing evidence and any recorded execution limits. Completed technical checks remain available.', action: 'Review quality report', destination: 'results' }
+		: { tone: 'attention', title: 'Testing needs a prerequisite', description: 'Open the report to see what prevented testing and what to provide next.', action: 'Review blocker', destination: 'results' };
 	if (status === 'partial') return { tone: 'attention', title: 'Testing completed with coverage gaps', description: session?.qaExecutionMode === 'hybrid' && session.hybrid?.budgetFinalizing
 		? 'This run finished with its approved budget. Review the saved evidence and untested areas. Start a new test for remaining scope; continuing this closed run cannot reopen exploration.'
 		: 'The browser sample finished. Review what was exercised and what remains untested; this is not a full-workflow pass.', action: 'Review coverage', destination: 'results' };

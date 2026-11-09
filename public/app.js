@@ -190,6 +190,7 @@ const el = {
 	authSubmit: $('auth-submit'),
 	authSwitch: $('auth-switch'),
 	authError: $('auth-error'),
+	authNotice: $('auth-notice'),
 	authForgotSwitch: $('auth-forgot-switch'),
 	forgotPanel: $('forgot-panel'),
 	forgotForm: $('forgot-form'),
@@ -1801,6 +1802,7 @@ function setStatus(status) {
 		? 'waiting for you'
 		: status === 'running' ? (['reconnecting', 'syncing'].includes(state.streamConnection) ? 'Reconnecting…' : 'Running')
 			: displayStatus === 'blocked' ? 'Blocked'
+				: displayStatus === 'failed' ? 'Failed'
 				: displayStatus === 'partial' ? 'Completed with gaps'
 				: status === 'done' ? 'Complete'
 				: stoppedByUser ? 'Stopped'
@@ -6961,6 +6963,19 @@ function renderResultsPageHeader() {
 		: displayStatus === 'partial' ? 'Completed with gaps' : session.status === 'done' ? 'Complete' : 'Results available';
 	$('results-page-status').dataset.status = displayStatus;
 	$('results-page-findings').textContent = `${findings} finding${findings === 1 ? '' : 's'}`;
+	const assessment = session.mode === 'sqa' ? session.sqa?.assessment : null;
+	if (assessment) {
+		const verdict = String(assessment.verdict ?? '').toLowerCase();
+		$('results-page-status').textContent = ({ pass: 'Passed', fail: 'Failed', blocked: 'Blocked' })[verdict] ?? 'Assessment complete';
+		$('results-page-status').dataset.status = verdict === 'fail' ? 'failed' : verdict === 'pass' ? 'done' : displayStatus;
+		const summary = assessment.summary ?? {};
+		const unresolved = [
+			summary.fail > 0 ? `${summary.fail} failed` : '',
+			summary.blocked > 0 ? `${summary.blocked} blocked` : '',
+			summary.not_assessed > 0 ? `${summary.not_assessed} not assessed` : ''
+		].filter(Boolean);
+		$('results-page-findings').textContent = `${summary.applicableControls ?? 0} controls · ${unresolved.join(' · ') || `${summary.pass ?? 0} passed`}`;
+	}
 	let target = '';
 	try { target = session.targetUrl ? new URL(session.targetUrl).host : ''; } catch { target = session.targetUrl ?? ''; }
 	$('results-page-target').textContent = target;
@@ -7079,6 +7094,7 @@ document.addEventListener('click', event => {
 
 function renderAuthMode() {
 	if (!el.authGate) return;
+	if (el.authNotice) el.authNotice.hidden = true;
 	const register = authRegisterMode;
 	if (el.authTitle) el.authTitle.textContent = register ? 'Create your account.' : 'Welcome back.';
 	if (el.authCopy) el.authCopy.textContent = register
@@ -7364,6 +7380,10 @@ el.resetForm?.addEventListener('submit', async event => {
 		// The authorization is single-use; drop it and return to sign-in.
 		resetAuthorization = undefined;
 		showAuthCard('signin');
+		if (el.authNotice) {
+			el.authNotice.textContent = result?.message ?? 'Password updated. Sign in with your new password.';
+			el.authNotice.hidden = false;
+		}
 		el.authEmail?.focus();
 	} catch (error) {
 		if (el.resetError) {
@@ -7583,6 +7603,8 @@ const deviceMatrix = $('device-matrix') ? createDeviceMatrixView({
 		facetSummary: $('dm-facet-summary')
 	}
 }) : null;
+
+openDeviceMatrixButton?.addEventListener('click', () => deviceMatrix?.open());
 
 /* ── Test cases (Phase 4) ───────────────────────────────────────── */
 function startRunForTestCase(testCase) {

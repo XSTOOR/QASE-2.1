@@ -10,7 +10,7 @@ parent workspace or copy developer `.qase` state into production.
 
 This release adds hybrid QA (Opus reasoning, JEV classification, one CleanSlate
 loop), discovery-gated Founder/SQA workflows, the reviewed SQA evidence workflow
-and UI `20261108-2`. Founder setup records public/signed-in scope and business
+and UI `20261109-1`. Founder setup records public/signed-in scope and business
 context choices before browser work, checks the selected device, and collects
 test-account credentials through the existing vault when supported. See
 [Founder setup](docs/founder-setup-2026-11-07.md) for behavior and qualification.

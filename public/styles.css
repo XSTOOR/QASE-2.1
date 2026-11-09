@@ -4104,11 +4104,11 @@ body.studio-workspace #founder-start .founder-modal-foot { flex-wrap: wrap; gap:
 .founder-detected-context {
   margin: 0 0 12px;
   padding: 9px 12px;
-  border: 1px solid #1f4a3a;
+  border: 1px solid var(--border-strong);
   border-radius: 3px;
-  background: rgba(46, 160, 103, 0.08);
-  color: #9ecfaf;
-  font-size: 12.5px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 14px;
   line-height: 1.45;
 }
 

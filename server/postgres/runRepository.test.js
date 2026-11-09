@@ -39,6 +39,19 @@ const CORRELATION_ID = '08ddf3b0-4499-4101-a20f-d87d3eebcd52';
 const SOURCE_HASH = 'a'.repeat(64);
 const NOW = Date.parse('2026-08-06T10:00:00.000Z');
 
+test('SQA list summaries preserve the assurance verdict without loading report evidence', async () => {
+	const fake = scriptedPool(call => call.text.startsWith('SELECT id, title, status')
+		? { rows: [{ id: RUN_ID, run_mode: 'sqa', status: 'done', title: 'Completed quality review', sqa_verdict: 'blocked', created_at: NOW, updated_at: NOW }] }
+		: { rows: [] });
+	const repository = createPostgresRunRepository({ pool: fake.pool, tenantContext: TENANT, now: () => NOW });
+	const [item] = await repository.list();
+	assert.equal(item.mode, 'sqa');
+	assert.equal(item.status, 'done');
+	assert.equal(item.sqaVerdict, 'blocked');
+	assert.equal(item.sqa, undefined);
+	assert.match(fake.calls.find(call => call.text.startsWith('SELECT id, title, status')).text, /sqa_assessment #>> '\{assessment,verdict\}'/);
+});
+
 test('hybrid state uses optional additive storage and survives authoritative reads without affecting legacy writes', async () => {
   let stored;
   const fake = scriptedPool(call => {

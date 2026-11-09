@@ -92,8 +92,9 @@ try {
 	assert.equal(reset.status(), 200);
 	assert.match((await reset.json()).message, /Password updated/i);
 	await page.locator('#auth-form').waitFor({ state: 'visible' });
+	await page.getByRole('status').filter({ hasText: /Password updated/i }).waitFor({ state: 'visible' });
 	assert.equal((await account.request.get(runtime.base + '/api/profile')).status(), 401);
-	checks.push('Password length and confirmation are enforced; reset revokes the existing signed-in session.');
+	checks.push('Password length and confirmation are enforced; reset revokes the existing signed-in session and visibly confirms success on sign-in.');
 	await page.locator('#auth-email').fill(email);
 	await page.locator('#auth-password').fill(originalPassword);
 	await page.locator('#auth-submit').click();

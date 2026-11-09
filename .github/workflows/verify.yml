@@ -77,6 +77,13 @@ jobs:
         run: |
           node scripts/test-auth-browser.mjs
           node scripts/test-reset-browser.mjs
+      - name: Verify quality verdict, device management and report accessibility in all engines
+        shell: bash
+        run: |
+          set -euo pipefail
+          for browser in chromium firefox webkit; do
+            node scripts/test-ui-followup-browser.mjs --browser "$browser"
+          done
       - name: Verify Founder completion and mode launchers
         run: |
           node scripts/test-founder-completion-browser.mjs
@@ -115,6 +122,8 @@ jobs:
             test-results/auth/result.json
             test-results/auth-reset/*.png
             test-results/auth-reset/result.json
+            test-results/ui-followup/*/*.png
+            test-results/ui-followup/*/result.json
           if-no-files-found: warn
           retention-days: 7
       - name: Verify release content when using the delivered snapshot

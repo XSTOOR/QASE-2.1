@@ -912,6 +912,7 @@ export function createPostgresRunRepository({
 			const result = await client.query(
 				`SELECT id, title, status, run_mode, target_url, engine, device, device_landscape, cohort, scope_selection, created_at, updated_at,
 					message_count, finding_count, token_usage, environment_id, environment_snapshot, test_case_id, execution_level_actual, execution_provider_actual, runtime_facts, matrix_run_id, ${TIMING_COLUMNS}, ${timingSelect()},
+					CASE WHEN run_mode = 'sqa' THEN sqa_assessment #>> '{assessment,verdict}' END AS sqa_verdict,
 					(SELECT verdict FROM qa_reports
 						WHERE organization_id = $1 AND project_id = $2 AND run_id = qa_runs.id AND is_current = true
 						LIMIT 1) AS report_verdict,
@@ -947,6 +948,7 @@ export function createPostgresRunRepository({
 				findingCount: Number(row.finding_count ?? 0),
 				messageCount: Number(row.message_count ?? 0),
 				...(row.report_verdict ? { reportVerdict: row.report_verdict } : {}),
+				...(row.run_mode === 'sqa' && row.sqa_verdict ? { sqaVerdict: row.sqa_verdict } : {}),
 				...(row.coverage_incomplete === true ? { coverageIncomplete: true } : {}),
 				// Plan progress for the sidebar card — derived from the child table.
 				todoTotal: Number(row.todo_total ?? 0),

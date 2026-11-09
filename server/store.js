@@ -383,6 +383,7 @@ export function listSessions({ limit = 100, ownerUserId, unbounded = false } = {
 				scenarioExecuted: session.hybrid.scenarios?.filter(item => ['passed', 'failed'].includes(item.status)).length || 0 } : {}),
 			messageCount: session.messages.length,
 			...(session.report?.verdict ? { reportVerdict: session.report.verdict } : {}),
+			...(session.mode === 'sqa' && session.sqa?.assessment?.verdict ? { sqaVerdict: session.sqa.assessment.verdict } : {}),
 			...(session.qaExecutionMode === 'hybrid' && session.report?.notCovered?.length ? { coverageIncomplete: true } : {}),
 			// Plan progress for the sidebar card — derived, never stored.
 			todoTotal: Array.isArray(session.todos) ? session.todos.length : 0,

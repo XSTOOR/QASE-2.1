@@ -9,7 +9,7 @@
 <title>QASE — Autonomous quality assurance</title>
 <script src="theme.js?v=20261015-11"></script>
 <script src="studioMode.js?v=20261014-6"></script>
-<link rel="stylesheet" href="styles.css?v=20261108-2">
+<link rel="stylesheet" href="styles.css?v=20261109-1">
 <link rel="stylesheet" href="bugsView.css?v=20261014-6">
 <link rel="stylesheet" href="studio-workspace.css?v=20261015-6">
 <link rel="stylesheet" href="studio-embed.css?v=20261108-2">
@@ -18,8 +18,9 @@
 <link rel="stylesheet" href="resultsPage.css?v=20261015-8">
 <link rel="stylesheet" href="brand.css?v=20261027-1">
 <link rel="stylesheet" href="runCard.css?v=20261015-17">
-<link rel="stylesheet" href="auth.css?v=20261015-14">
+<link rel="stylesheet" href="auth.css?v=20261109-1">
 <link rel="stylesheet" href="founderReader.css?v=20261108-2">
+<link rel="stylesheet" href="reportReadability.css?v=20261109-1">
 <link rel="icon" type="image/svg+xml" href="qase-mark.svg">
 </head>
 <body class="cli-theme studio-workspace" data-has-run="false">
@@ -59,6 +60,7 @@
       <div class="auth-password-actions"><label class="auth-show"><input id="auth-show-password" type="checkbox"> Show password</label><button class="auth-recovery-link" id="auth-forgot-switch" type="button">Recover account</button></div>
       <p class="auth-hint" id="auth-password-hint" hidden>Use at least 8 characters.</p>
       <p class="auth-error" id="auth-error" role="alert" hidden></p>
+      <p class="auth-notice" id="auth-notice" role="status" aria-live="polite" aria-atomic="true" hidden></p>
       <button class="btn btn-primary auth-submit" id="auth-submit" type="submit">Sign in</button>
     </form>
     <div class="auth-account-switch"><span id="auth-switch-context">New to QASE?</span><button class="auth-switch" id="auth-switch" type="button">Create an account</button></div>
@@ -838,7 +840,7 @@
         <select id="cfg-model" aria-describedby="cfg-model-note">
           <option value="">Loading available models…</option>
         </select>
-        <input id="cfg-model-custom" autocomplete="off" spellcheck="false" placeholder="Enter the exact model ID" hidden>
+        <input id="cfg-model-custom" name="customModel" aria-label="Custom model ID" aria-describedby="cfg-model-note" autocomplete="off" spellcheck="false" placeholder="Enter the exact model ID" hidden>
         <small id="cfg-model-note">Models are provided and managed by Qase.</small>
       </label>
 
@@ -1301,7 +1303,7 @@
         </div>
       </aside>
 
-      <div class="founder-detected-context" id="founder-detected-context" hidden></div>
+      <div class="founder-detected-context" id="founder-detected-context" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
       <fieldset class="founder-fieldset founder-target-primary">
         <legend>Product to review</legend>
@@ -1758,6 +1760,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261108-2" type="module"></script>
+<script src="app.js?v=20261109-1" type="module"></script>
 </body>
 </html>

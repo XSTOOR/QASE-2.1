@@ -1,6 +1,14 @@
 # QASE Founder/SQA integration candidate
 
-Current release: `qase-founder-sqa-2026-11-08-release-r1`. UI: `20261108-2`.
+Current release: `qase-founder-sqa-2026-11-09-ui-r1`. UI: `20261109-1`.
+
+The UI audit follow-up presents SQA assurance verdicts in results and list
+summaries, shows unresolved control counts, restores Device Management from
+Settings, raises report text sizes, fixes the Founder context notice contrast
+and custom-model field label, and keeps password-reset confirmation visible on
+sign-in. The selected release remains export-only. No execution budgets or
+Hybrid qualification gates are changed. See
+[UI audit fixes](docs/ui-audit-fixes-2026-11-09.md) for the scope and verification.
 
 This candidate qualifies configured-provider Founder/SQA with export-only Studio
 handoff. PostgreSQL requires migration **044** for version 2 Founder actions and

@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-founder-sqa-2026-11-08-release-r1",
-  "uiVersion": "20261108-2",
+  "releaseId": "qase-founder-sqa-2026-11-09-ui-r1",
+  "uiVersion": "20261109-1",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Export-only Founder/SQA release candidate on 694b32c: migration 044 for versioned actions and tenant RLS, real service CI and three-engine SQA acceptance; production activation remains separate"
+  "source": "Founder/SQA UI audit fixes on 1b0d075: accurate quality verdicts, working device management, readable reports, accessible model field and visible reset confirmation; export-only scope"
 }

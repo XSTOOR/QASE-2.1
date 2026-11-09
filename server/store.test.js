@@ -140,6 +140,10 @@ test('listSessions summaries carry plan progress alongside usage totals', async 
 	const empty = store.createSession('Idle run');
 	const partialHybrid = store.createSession('Hybrid with finding and gaps', { qaExecutionMode: 'hybrid' });
 	partialHybrid.report = { verdict: 'fail', notCovered: ['Unexecuted workflow'] };
+	const quality = store.createSession('Blocked quality assessment');
+	quality.mode = 'sqa';
+	quality.status = 'done';
+	quality.sqa = { assessment: { verdict: 'blocked' } };
 
 	const summary = Object.fromEntries(store.listSessions().map(entry => [entry.title, entry]));
 	assert.equal(summary['Partially planned run'].todoTotal, 4);
@@ -148,6 +152,8 @@ test('listSessions summaries carry plan progress alongside usage totals', async 
 	assert.equal(summary['Idle run'].todoTotal, 0);
 	assert.equal(summary['Idle run'].todoCompleted, 0);
 	assert.equal(summary['Hybrid with finding and gaps'].coverageIncomplete, true);
+	assert.equal(summary['Blocked quality assessment'].sqaVerdict, 'blocked');
+	assert.equal(summary['Blocked quality assessment'].sqa, undefined, 'List summaries must not include full assessment/evidence data.');
 	store.flushSessions();
 });
 

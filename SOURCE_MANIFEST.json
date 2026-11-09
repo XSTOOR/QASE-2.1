@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "releaseId": "qase-founder-sqa-2026-11-08-release-r1",
+  "releaseId": "qase-founder-sqa-2026-11-09-ui-r1",
   "files": [
     {
       "path": ".dockerignore",
@@ -20,7 +20,7 @@
     },
     {
       "path": ".github/workflows/verify.yml",
-      "sha256": "fa160145f0a4665dc36f84c42faff724834e21e2f7406fc4fa248efe8d8fd63b"
+      "sha256": "514ec30c88e9c0739a5eabb27fab103563d4f67cea74527e14066be920128a0a"
     },
     {
       "path": ".gitignore",
@@ -92,11 +92,11 @@
     },
     {
       "path": "DEPLOYMENT_PROMPT.md",
-      "sha256": "c839989d4f6f50145a7090d426aaa8343b89b83fe8d071202291d3c31c78d566"
+      "sha256": "3e930506cfcae5252a0cca1b82a443989dc41b7f9c30dffd8db42ed5184df799"
     },
     {
       "path": "Dockerfile",
-      "sha256": "4a456cec36334a5d38fc8cca759fbf7bfbe496e1ced0b43ca0f791147d37db3b"
+      "sha256": "2c14d0a9fcca977d763f79eaf5270aee83be0839be5637c806d45fb09732c2bb"
     },
     {
       "path": "docs/auth-architecture-2026-09-10.md",
@@ -311,6 +311,10 @@
       "sha256": "133e53e807a1646b9c2c2b274597b04cccb31b8e4eaefb5e855e1b428eba3204"
     },
     {
+      "path": "docs/ui-audit-fixes-2026-11-09.md",
+      "sha256": "6df3d20fd29a24b088bc4905948d6db04637f448f5be69b31f4d8f640d62bd65"
+    },
+    {
       "path": "docs/ui-improvement-plan.md",
       "sha256": "48ea7e73677d5c46428533a72380df0f2ddcde9627ac155c9fa9295c0f51e5f3"
     },
@@ -372,11 +376,11 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "89debe38d42db413ec3bba84032dda6b8d2a8d193197b536ee52879e8b3c2ccc"
+      "sha256": "a6f2ab876367ac554a1dacb47da9d1854ca447b4f9609ce5f8eafa7b222a0873"
     },
     {
       "path": "public/auth.css",
-      "sha256": "3aa6cd4ce2df2e596f107ca53c9ff392cda754d6cda2bdf586a9f5ad3945e33d"
+      "sha256": "d942f67c25285367e37a70bb4984ee99e49769aa0ffb62b70cdf15220f6e8b83"
     },
     {
       "path": "public/authUi.test.js",
@@ -608,7 +612,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "f82260e4138cae294483a452dc846bf65888dfa447c559e44b342a0fb81d5253"
+      "sha256": "af461ed731034127577be38d581558bff6c6691bcb0bba062a6af2fca0035f78"
     },
     {
       "path": "public/jevExecutionView.js",
@@ -784,7 +788,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "914d3719988f78e3d43bd317a57869359ef2eeb2e68133280cea00b89eeb7f05"
+      "sha256": "10a2d76da96d9b361d54b4ceb9bce34f247f3387db93f32c85f6d7fbb6c834ce"
     },
     {
       "path": "public/renderHealth.js",
@@ -793,6 +797,10 @@
     {
       "path": "public/renderHealth.test.js",
       "sha256": "67fa1bd870892a7aaa69f6addcfc1129a891a9d2d559d225af416cfd58cdb2a8"
+    },
+    {
+      "path": "public/reportReadability.css",
+      "sha256": "75872de9cb1bdf58f349a85d357e09e0690c8addf497a9f6e850539460f62cc2"
     },
     {
       "path": "public/resultsOverview.js",
@@ -824,11 +832,11 @@
     },
     {
       "path": "public/runPresentation.js",
-      "sha256": "0480c3d1e6e2d0feead5de14ffceb0a6da360a642ee5f6a36865a4ed2988c839"
+      "sha256": "5e94acabb7210d291784c124200b1c7bf8a536497edd6ce5b29cfee9b4321d7b"
     },
     {
       "path": "public/runPresentation.test.js",
-      "sha256": "9797bdd2e3f5861ffdcb6e6052c47b2c74b7bf011882c4514bf0892c0e748f05"
+      "sha256": "f8fbf5f67db5d2c027256e67c5f127d6f89d29e74761e183f0bbe08a48ca7bce"
     },
     {
       "path": "public/runtimeStatusVocabulary.test.js",
@@ -884,7 +892,7 @@
     },
     {
       "path": "public/styles.css",
-      "sha256": "05131d6609f1e32fd904d5cebb275ac92292872c0ccfc61d379ba22973938710"
+      "sha256": "c60e1a63fa4cb32f6196028a7aa2dee1587b899acaf153d0105aa79820473f93"
     },
     {
       "path": "public/tabWorkspace.test.js",
@@ -924,15 +932,15 @@
     },
     {
       "path": "public/workflowStatus.js",
-      "sha256": "22be3a8da133fb7c6e047214927bf027b99df802c008d889a60da57b2f96ff64"
+      "sha256": "bad964ff3ee0f0ba5fb16d2ad9b3a0e6a8af9b8213b22c2f82934170136b5335"
     },
     {
       "path": "README.md",
-      "sha256": "73f6662cc24e47a3d10be713cfe905aa4fa0fd32732e550a51ccbb980232e7ac"
+      "sha256": "fcf1a2150cf7b5b2584cb28e80c4cec7684bdefd1b51c89185e8e1b07a109e3b"
     },
     {
       "path": "RELEASE_NOTES.md",
-      "sha256": "645b014bc04c8d5cd1ac49c290c64095731051cab09b6dbc8ef493bf42207a29"
+      "sha256": "e464c64ad6e87a23039361414a60a98490f81f133882114f2505ecffac367e54"
     },
     {
       "path": "run-jev.command",
@@ -1180,7 +1188,7 @@
     },
     {
       "path": "scripts/test-reset-browser.mjs",
-      "sha256": "01b3d8f98d283ba06111dc7b4a66cf367fe28b768cdd7aa7e4a06536a69c1116"
+      "sha256": "3f2a7a1e576d03e92b706baabfd82cdb8fbf55f39200294e30d2225cfd0d7aca"
     },
     {
       "path": "scripts/test-sqa-evidence.mjs",
@@ -1201,6 +1209,10 @@
     {
       "path": "scripts/test-sqa-startup.mjs",
       "sha256": "18807be0c13208624e8bf81868293ac1b83b719d3a4daf9db93f4f3d15f90241"
+    },
+    {
+      "path": "scripts/test-ui-followup-browser.mjs",
+      "sha256": "c8cc77765b6fae1fec8ae4b4b57b7889700868229fc05ca3be5c07ccc613fe92"
     },
     {
       "path": "scripts/test-ui-responsive.mjs",
@@ -2672,11 +2684,11 @@
     },
     {
       "path": "server/postgres/runRepository.js",
-      "sha256": "6bbdbe5566103f0c7c1c0fc2a374d61773a67c23ff3fe64795fc7b33a6b6a04a"
+      "sha256": "36b7bce29a5711673ec5980d4e3f3cdd3d6641a4b478c4170225c376fb40c516"
     },
     {
       "path": "server/postgres/runRepository.test.js",
-      "sha256": "3bd11b086247fae6de0fd810e9e151b134aa7a91f4f29959941373b2813c4f99"
+      "sha256": "1d88dcd65defa06b31791256d08b0f55441e3556f1a08052870611db857e7434"
     },
     {
       "path": "server/postgres/scopeSelectionRepository.test.js",
@@ -2692,7 +2704,7 @@
     },
     {
       "path": "server/postgresServices.js",
-      "sha256": "647663190013bdc125fd2d3c8978d5b9e87d9128f52c0d3d3d223064916e688b"
+      "sha256": "cad3a46fade899552dc6739522f9cd83b24e5cf1676fdd9660e046fa2cf956ae"
     },
     {
       "path": "server/postgresServices.test.js",
@@ -3140,11 +3152,11 @@
     },
     {
       "path": "server/store.js",
-      "sha256": "78b897825c432320626e2aa5dc936d8948af788bc46fc50a5ba49755887fa4cd"
+      "sha256": "f8f89883bb410a5de1e78e8f1b92c447980f6fdb782477334b18e87b0b921755"
     },
     {
       "path": "server/store.test.js",
-      "sha256": "7551443d6ec08fff20ed4951e0b85ad975f314984053866aecf359722cd2cb93"
+      "sha256": "8d55627df78b061ba1111b488de41f5890a13466cd8faa17413e2ba76ee7b25f"
     },
     {
       "path": "server/storeListSessions.test.js",
