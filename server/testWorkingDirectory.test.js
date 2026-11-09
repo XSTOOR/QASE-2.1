@@ -17,7 +17,9 @@ const fixtureTests = [
 	'agent.test.js', 'attestation.test.js', 'founderEvidence.test.js', 'founderService.test.js',
 	'hybridArchitecture.test.js', 'hybridAuth.browser.test.js', 'hybridAuth.integration.test.js',
 	'hybridAuth.test.js', 'jevReportEvidence.test.js', 'qaTools.test.js', 'sqaEvidence.test.js',
-	'sqaReview.test.js', 'sqaService.test.js', 'serviceFactory.test.js', 'testCaseAutogen.integration.test.js'
+	'sqaReview.test.js', 'sqaService.test.js', 'serviceFactory.test.js', 'testCaseAutogen.integration.test.js',
+	'hybridAuthenticatedDiscovery.integration.test.js', 'hybridLifecycle.integration.test.js',
+	'hybridSdk.integration.test.js'
 ].map(name => fileURLToPath(new URL(name, import.meta.url)));
 
 function checksums(directory) {
@@ -32,7 +34,7 @@ function checksums(directory) {
 	return result;
 }
 
-test('application fixtures preserve caller data and create no credentials, snapshots or artifacts', { timeout: 120_000 }, t => {
+test('application fixtures preserve caller data and create no credentials, snapshots or artifacts', { timeout: 210_000 }, t => {
 	const temporaryRoot = fs.realpathSync(os.tmpdir());
 	const caller = fs.mkdtempSync(path.join(temporaryRoot, 'qase-isolation-sentinel-'));
 	t.after(() => {
@@ -51,7 +53,7 @@ test('application fixtures preserve caller data and create no credentials, snaps
 		fs.writeFileSync(path.join(caller, relative), content);
 	}
 	const before = checksums(caller);
-	const options = { cwd: caller, env: isolatedSqaEnvironment(), encoding: 'utf8', timeout: 100_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true };
+	const options = { cwd: caller, env: isolatedSqaEnvironment(), encoding: 'utf8', timeout: 180_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true };
 
 	// Reproduce the old writes only inside disposable sentinel data. This
 	// negative control proves that the data-preservation check detects them.

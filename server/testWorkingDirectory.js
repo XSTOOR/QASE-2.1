@@ -10,10 +10,12 @@ const temporaryRoot = fs.realpathSync(os.tmpdir());
 const directory = fs.mkdtempSync(path.join(temporaryRoot, 'qase-unit-'));
 process.chdir(directory);
 
-after(() => {
+after(async () => {
 	process.chdir(originalDirectory);
 	if (path.dirname(directory) !== temporaryRoot || !path.basename(directory).startsWith('qase-unit-')) {
 		throw new Error('Refusing to clean an unexpected test directory.');
 	}
-	fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+	// Runtime disposal can still be releasing Windows directory handles. An
+	// asynchronous retry lets that I/O settle while keeping cleanup bounded.
+	await fs.promises.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });

@@ -312,7 +312,7 @@
     },
     {
       "path": "docs/test-isolation-2026-11-09.md",
-      "sha256": "62fe06b1ff664ca831f4b1544b563c9b2b6706fb34faff081ca015d2e5fb31ea"
+      "sha256": "807b2e3a72d0e39605da048770fcd0420ecf20e4908ce669ba33687bbb6da1e9"
     },
     {
       "path": "docs/ui-audit-fixes-2026-11-09.md",
@@ -3244,11 +3244,11 @@
     },
     {
       "path": "server/testWorkingDirectory.js",
-      "sha256": "984d8648b71fbcc12479bbe09148f03a201e552f01828de35f467875a5f84f43"
+      "sha256": "88c59a1aaaceb456d686b44c99e1c414b70a77e1eb2dd24ceebf20804ef7947f"
     },
     {
       "path": "server/testWorkingDirectory.test.js",
-      "sha256": "d060ecca43145a39d5c804f6def1fe98713e53042aa269cc18e8550bf5e65ad9"
+      "sha256": "2c8fb00951f87502cb11a09f06d4c21a26e2630139ae824a3f758f0e0df22029"
     },
     {
       "path": "server/uiPrimitives.test.js",
