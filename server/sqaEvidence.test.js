@@ -1,3 +1,4 @@
+import './testWorkingDirectory.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createSqaState, recordAgentSqaObservation, recordAgentSqaObservations, finishSqaAssessment, recordReviewerSqaObservation } from './sqaService.js';

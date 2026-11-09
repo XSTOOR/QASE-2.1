@@ -20,7 +20,7 @@ jobs:
       - name: Check runtime dependency security
         run: npm run audit:dependencies
       - run: npx playwright install --with-deps chromium firefox webkit
-      - name: Verify API fixtures preserve caller data
+      - name: Verify application fixtures preserve caller data
         run: node --test server/testWorkingDirectory.test.js
       - name: Verify SQA contracts and three-engine desktop/mobile workflows
         run: npm run test:sqa-release

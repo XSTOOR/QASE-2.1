@@ -8,12 +8,16 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { isolatedSqaEnvironment } from '../scripts/sqa-test-runtime.mjs';
 
-const apiTests = [
+const fixtureTests = [
 	'app.test.js', 'catalogApi.test.js', 'drytisTickets.test.js',
 	'environmentApi.test.js', 'feedbackAnalytics.test.js', 'feedbackNotifyApi.test.js',
 	'founderHandoffApi.test.js', 'localServices.test.js', 'matrixApi.test.js',
 	'pilotFlow.test.js', 'runTimingApi.test.js', 'securityRegression.test.js',
-	'telegramNotificationApi.test.js', 'telegramWebhook.test.js', 'testCaseApi.test.js'
+	'telegramNotificationApi.test.js', 'telegramWebhook.test.js', 'testCaseApi.test.js',
+	'agent.test.js', 'attestation.test.js', 'founderEvidence.test.js', 'founderService.test.js',
+	'hybridArchitecture.test.js', 'hybridAuth.browser.test.js', 'hybridAuth.integration.test.js',
+	'hybridAuth.test.js', 'jevReportEvidence.test.js', 'qaTools.test.js', 'sqaEvidence.test.js',
+	'sqaReview.test.js', 'sqaService.test.js', 'serviceFactory.test.js', 'testCaseAutogen.integration.test.js'
 ].map(name => fileURLToPath(new URL(name, import.meta.url)));
 
 function checksums(directory) {
@@ -28,7 +32,7 @@ function checksums(directory) {
 	return result;
 }
 
-test('API fixtures preserve caller feedback, analytics, sessions and environment files', { timeout: 120_000 }, t => {
+test('application fixtures preserve caller data and create no credentials, snapshots or artifacts', { timeout: 120_000 }, t => {
 	const temporaryRoot = fs.realpathSync(os.tmpdir());
 	const caller = fs.mkdtempSync(path.join(temporaryRoot, 'qase-isolation-sentinel-'));
 	t.after(() => {
@@ -65,7 +69,7 @@ test('API fixtures preserve caller feedback, analytics, sessions and environment
 	for (const [relative, content] of Object.entries(fixtures)) fs.writeFileSync(path.join(caller, relative), content);
 	assert.deepEqual(checksums(caller), before);
 
-	const run = spawnSync(process.execPath, ['--test', '--test-concurrency=2', ...apiTests], options);
+	const run = spawnSync(process.execPath, ['--test', '--test-concurrency=2', ...fixtureTests], options);
 	assert.equal(run.status, 0, `${run.error?.message ?? ''}\n${run.stderr}\n${run.stdout}`);
-	assert.deepEqual(checksums(caller), before, 'API fixtures must not change or add files in the caller directory.');
+	assert.deepEqual(checksums(caller), before, 'Application fixtures must not change or add files in the caller directory.');
 });
