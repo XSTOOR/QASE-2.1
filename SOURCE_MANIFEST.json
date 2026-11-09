@@ -16,7 +16,7 @@
     },
     {
       "path": ".github/workflows/sqa-release.yml",
-      "sha256": "d3734cdb386a3f685011e0568d3f7445adc6f7b453c4fd7c34e092b68244638a"
+      "sha256": "201a26c7fb02a07af448bad17f654519dd4e1eb814629d83fd9c503e913d139d"
     },
     {
       "path": ".github/workflows/verify.yml",
@@ -309,6 +309,10 @@
     {
       "path": "docs/system-stabilization-2026-11-03.md",
       "sha256": "133e53e807a1646b9c2c2b274597b04cccb31b8e4eaefb5e855e1b428eba3204"
+    },
+    {
+      "path": "docs/test-isolation-2026-11-09.md",
+      "sha256": "9fe7bc763816bd7ab358def719af7458c76a55e327eb69734ac8d38766c381fc"
     },
     {
       "path": "docs/ui-audit-fixes-2026-11-09.md",
@@ -940,7 +944,7 @@
     },
     {
       "path": "RELEASE_NOTES.md",
-      "sha256": "e464c64ad6e87a23039361414a60a98490f81f133882114f2505ecffac367e54"
+      "sha256": "fb68c9afa6de39c8a74acc88e40c1fdcbed6e99423fd1845b4504fc7a9132b39"
     },
     {
       "path": "run-jev.command",
@@ -1272,7 +1276,7 @@
     },
     {
       "path": "server/app.test.js",
-      "sha256": "bf40300675d9b0109c0e297c41ee2e845edc6123ccb071fd82e8fc5c216c7392"
+      "sha256": "f6710bf3254c31662b61b0aceaf7a23dcaf08b66388e5c7e3666e773585eded8"
     },
     {
       "path": "server/appQaSelection.js",
@@ -1452,7 +1456,7 @@
     },
     {
       "path": "server/catalogApi.test.js",
-      "sha256": "716b0ec3c2027f42a55b3e4263a36d5195e9120a2b0ad2ae3c46d9baf63ecf27"
+      "sha256": "c23dc9a293b8555b126897be21e6c1ece6fc73ec58fdf771d5b8cbb14c05fd13"
     },
     {
       "path": "server/catalogProviderRegistry.js",
@@ -1708,7 +1712,7 @@
     },
     {
       "path": "server/drytisTickets.test.js",
-      "sha256": "95a01755d375aece25812c5914f83a87be44f4129870595f9a07f3e677c724f4"
+      "sha256": "69b705641cc2e1333547547b14411d54af574e28e9634f147f7e0f831da2b661"
     },
     {
       "path": "server/drytisTransport.js",
@@ -1732,7 +1736,7 @@
     },
     {
       "path": "server/environmentApi.test.js",
-      "sha256": "322c600d6d1e305b572833da1a58d1a7b1ade348cc85c65fe1c9b9a8c6cb2b9b"
+      "sha256": "40b9f5056c72ab601ec3e41f7962383f54d75099ff9f430d59b0fcc5ec277693"
     },
     {
       "path": "server/environmentCatalog.js",
@@ -1788,7 +1792,7 @@
     },
     {
       "path": "server/feedbackAnalytics.test.js",
-      "sha256": "622bc37b284e6264d2f57022bb8b8d148dc09e8e770e67e77daff2d7d4d34ff5"
+      "sha256": "2b6cd23787d91106715f3a69dc4bec2ca9312f6abdf66fef03c3e66921ab9a18"
     },
     {
       "path": "server/feedbackApi.test.js",
@@ -1800,7 +1804,7 @@
     },
     {
       "path": "server/feedbackNotifyApi.test.js",
-      "sha256": "35e4f8f31c02f61c6db414743b9e3be65b1129fd67361094fa4f2bc7fc7ce543"
+      "sha256": "2aeb533bd63620a3236fd1e0937a82a991b2e2c3f7b5490f97e57e62ba2c383b"
     },
     {
       "path": "server/feedbackStore.js",
@@ -1856,7 +1860,7 @@
     },
     {
       "path": "server/founderHandoffApi.test.js",
-      "sha256": "b2630b12d1b426f5d5b7f81521dfb216b68c59d2e23aa09f6600952ece2dc762"
+      "sha256": "998dbef4f50235a1e8cd7ac0b6113db99aeb6992f077bda113007e5245aceae5"
     },
     {
       "path": "server/founderInvestigation.js",
@@ -2268,7 +2272,7 @@
     },
     {
       "path": "server/localServices.test.js",
-      "sha256": "bc24436e42ecd7cc9e7146d28333373563490dbde0242972b15ac48fcf5e62eb"
+      "sha256": "2589a13611bc028f63812b3eca7c35c86db64c62adfd76da460cad4eb9eb9957"
     },
     {
       "path": "server/mailer.js",
@@ -2284,7 +2288,7 @@
     },
     {
       "path": "server/matrixApi.test.js",
-      "sha256": "01af277e09bad06e30a0d11d8a7067afcc00557bf85933f263bd0b9da3f91bed"
+      "sha256": "fc7860eb716201ff806aa5b2902a7c95411ea37630bc8c4d5dc50d6fb5405168"
     },
     {
       "path": "server/matrixCoverage.js",
@@ -2416,7 +2420,7 @@
     },
     {
       "path": "server/pilotFlow.test.js",
-      "sha256": "014b04b7d4c5546e6576bc05030b21bf0cffcd96089a855446c1db25705fbe91"
+      "sha256": "314d0f70a6082bed8d2b470e4ee10bb186ecbf837f7b167f7aec6e0fdce6dd19"
     },
     {
       "path": "server/platformEnvironment.js",
@@ -2972,7 +2976,7 @@
     },
     {
       "path": "server/runTimingApi.test.js",
-      "sha256": "b29897d4df974f36531d7358f7d3321a58db222cc25ad2bfb77e215e24304b9c"
+      "sha256": "612f76b18ca5f0c1a736dfd1fb9061e898122d3050fc512a5ba359bfa855f688"
     },
     {
       "path": "server/scopeSelection.test.js",
@@ -3012,7 +3016,7 @@
     },
     {
       "path": "server/securityRegression.test.js",
-      "sha256": "8e45cff19aa99ebaf1291fc745ee5cf9f889b92d86b179cb964fcc9feb029362"
+      "sha256": "d01ab940e847fa8941b28f2bd44672ef18b69bd5fb8dc8bf7242acdd5b14bf66"
     },
     {
       "path": "server/securityRunControls.test.js",
@@ -3188,7 +3192,7 @@
     },
     {
       "path": "server/telegramNotificationApi.test.js",
-      "sha256": "c6fca5aa7c7bb09c3f1bc37c82353c5f59cc156e67b243bdd7c930b2267f1980"
+      "sha256": "e895caf792da0c6d0a71dcbde648408c0d4e9ee47a6f75a96278dec8ace70197"
     },
     {
       "path": "server/telegramNotifier.js",
@@ -3200,7 +3204,7 @@
     },
     {
       "path": "server/telegramWebhook.test.js",
-      "sha256": "923c0abb604c2260ae06299a2de5de0f8a2968daaa43f0271f68d505c0473f88"
+      "sha256": "8561438758e9ed5212d19a01071bad25e004b4e2c9367d9071e5b30eae3af42a"
     },
     {
       "path": "server/tenancy.js",
@@ -3216,7 +3220,7 @@
     },
     {
       "path": "server/testCaseApi.test.js",
-      "sha256": "1c3cf9f21844cd3a77b9ae7f0fba97afdc032b256cd4f5dbf52811dcccc88dc8"
+      "sha256": "396c75eef2fcb5c2440dae160f6bd5737a16298daf45917af9ab01a6d93fad9f"
     },
     {
       "path": "server/testCaseAutogen.integration.test.js",
@@ -3237,6 +3241,14 @@
     {
       "path": "server/testCaseService.test.js",
       "sha256": "b735f65b7f2363433d1b229124d0325768b09362ebbe5ca95a8b9fbda29459c8"
+    },
+    {
+      "path": "server/testWorkingDirectory.js",
+      "sha256": "984d8648b71fbcc12479bbe09148f03a201e552f01828de35f467875a5f84f43"
+    },
+    {
+      "path": "server/testWorkingDirectory.test.js",
+      "sha256": "77c03100fb39ee304edb3908a794180b46423b5f04848c2859aca37789b6a273"
     },
     {
       "path": "server/uiPrimitives.test.js",

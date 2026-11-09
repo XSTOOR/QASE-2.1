@@ -1,3 +1,4 @@
+import './testWorkingDirectory.js';
 /**
  * Matrix run API tests (#14649 NI02 Phase 1) — end-to-end over HTTP with the
  * REAL application composition (local services), not inert fakes.

@@ -10,6 +10,12 @@ sign-in. The selected release remains export-only. No execution budgets or
 Hybrid qualification gates are changed. See
 [UI audit fixes](docs/ui-audit-fixes-2026-11-09.md) for the scope and verification.
 
+API regression fixtures now select isolated temporary working directories before
+loading local application stores. A caller-data regression detects the former
+feedback/analytics writes and verifies that the affected suites preserve all
+caller files. Linux and Windows CI run the check. See
+[test isolation](docs/test-isolation-2026-11-09.md).
+
 This candidate qualifies configured-provider Founder/SQA with export-only Studio
 handoff. PostgreSQL requires migration **044** for version 2 Founder actions and
 forced tenant isolation. Existing legacy state is preserved. Production
