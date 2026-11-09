@@ -197,7 +197,7 @@ export function allowedToolNames(mode = 'qa') {
 		...(mode === 'founder'
 			? ['record_founder_observation', 'finish_founder_review']
 			: mode === 'sqa'
-				? ['browser_sqa_smoke', 'report_finding', 'record_sqa_control', 'record_sqa_blockers', 'finish_sqa_assessment']
+				? ['browser_sqa_smoke', 'report_finding', 'read_sqa_work_plan', 'record_sqa_control', 'record_sqa_blockers', 'finish_sqa_assessment']
 				: ['report_finding', 'finish_qa_report'])]);
 }
 
@@ -483,6 +483,7 @@ const ACTIVITY_LABELS = {
 	report_finding: 'Filed a finding',
 	finish_qa_report: 'Published the report',
 	record_sqa_control: 'Recorded SQA control',
+	read_sqa_work_plan: 'Read SQA evidence requirements',
 	record_sqa_blockers: 'Recorded SQA blockers',
 	finish_sqa_assessment: 'Published SQA assessment',
 	record_founder_observation: 'Recorded founder observation',

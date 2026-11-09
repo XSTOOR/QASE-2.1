@@ -1,7 +1,7 @@
 import { describeDeviceForPrompt } from './deviceProfiles.js';
-import { BROWSER_WORKFLOW_GUIDANCE } from './browserWorkflowPrompt.js';
 import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { AGENT_EVIDENCE_TYPES } from './sqaService.js';
+import { buildSqaWorkPlan } from './sqaWorkPlan.js';
 import { countSqaBrowserActivities, countSqaBrowserActivitiesSinceControlCheckpoint, SQA_BROWSER_EVIDENCE_LIMIT, SQA_BROWSER_TOOL_BUDGET, SQA_BROWSER_WORKFLOW_CHECKPOINT, SQA_INPUT_TOKEN_BUDGET, SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD } from './sqaBrowserBudget.js';
 
 /** Evidence collection has ended; retain the actual control decisions and plan,
@@ -22,6 +22,7 @@ Recorded controls: ${JSON.stringify(controls)}`;
 export function buildSqaContext(session, liveUrl) {
 	const scope = session.sqa?.scope;
 	if (!scope) throw new TypeError('SQA context requires a resolved assessment scope.');
+	const workPlan = buildSqaWorkPlan(session.sqa);
 	const targetUrl = session.targetUrl
 		? `Authorized target URL: ${session.targetUrl}`
 		: 'No target URL has been supplied. Call ask_question for the exact authorized URL, then stop.';
@@ -62,7 +63,7 @@ export function buildSqaContext(session, liveUrl) {
 	// encourages premature assurance work.
 	const pendingBrowserFirstIds = pendingTechnicalIds.length > 0
 		? pendingTechnicalIds
-		: pendingOtherBrowserFirstIds;
+		: workPlan.activeControls.map(control => control.id);
 	const pendingAssuranceIds = assuranceIds.filter(id => pendingIds.includes(id));
 	const activeAssuranceIds = pendingTechnicalIds.length === 0 && pendingOtherBrowserFirstIds.length === 0
 		? pendingAssuranceIds
@@ -138,7 +139,7 @@ ${scope.scopeNotes ? `Scope notes: ${scope.scopeNotes}` : ''}
    most 10 items covering the browser-first technical controls below before
    reviewer-only assurance controls, grouped by workflow to avoid repetition.
    Do not spend separate turns updating the plan between technical workflows.
-3. Immediately after the initial snapshot and diagnostics, call
+${pendingTechnicalIds.length ? `3. Immediately after the initial snapshot and diagnostics, call
    browser_sqa_smoke once with action=accessibility, then call
    browser_sqa_smoke once with action=responsive. Then call record_sqa_control
    exactly once with a controls batch for SQA-WEB-001, SQA-WEB-004,
@@ -158,7 +159,8 @@ ${scope.scopeNotes ? `Scope notes: ${scope.scopeNotes}` : ''}
    SQA-WEB-003 as blocked in that same batch with the exact reason; never bypass
    the safety refusal with ordinary submit clicks. A stale success signal after
    an invalid case is a confirmed recovery defect only after the bounded tool
-   reproduces it.
+   reproduces it.` : '3–4. The six technical-control dispositions are already recorded. Continue with the next browser controls below, using matching saved evidence where valid. Do not repeat the completed smoke workflows.'}
+
 5. Prefer roles, labels, text, placeholders, and test ids. Re-snapshot after
    state changes. Confirm apparent defects twice and rule out overlays. Try at
    most two verified locator strategies for one target; if neither works,
@@ -199,7 +201,15 @@ ${scope.scopeNotes ? `Scope notes: ${scope.scopeNotes}` : ''}
    visible plan, and publishes deterministically in that one call. Do not spend
    separate model turns manually batching those safety blockers.
 
-${BROWSER_WORKFLOW_GUIDANCE}
+# Meeting and media evidence
+
+When meeting, call, recording or microphone surfaces are present or requested,
+read read_sqa_work_plan with sqa_view=media before testing them. Use
+browser_test_meeting_link for observed anchors and ordinary clicks for buttons.
+Never invent links, broaden allowed origins or bypass a host refusal. Inspect
+tracked new tabs before calling navigation broken. browser_media must verify
+actual input activity; permission configuration, prejoin pages and synthetic
+devices cannot prove physical input, remote participants or a joined call.
 
 Bind meeting navigation and microphone checks to the relevant scoped functional,
 interaction, recovery, or browser technical controls with record_sqa_control.
@@ -209,6 +219,9 @@ the evidence summary. Permission configuration by itself is not pass evidence.
 # Progress
 
 ${progress}
+Work priority: ${workPlan.phase}. Pending browser controls: ${workPlan.pendingBrowserCount}.
+Remaining browser control IDs: ${workPlan.planningIndex.map(control => control.id).join(', ') || 'none'}
+Read read_sqa_work_plan with sqa_view=browser for exact objectives and evidence contracts, or sqa_view=reviewer for reviewer artifact requests. Follow next_offset to read further pages. This is read-only guidance and never reopens a closed run or expands scope. All pending control IDs remain in Progress; the detail window does not reduce the assessment scope.
 
 # Browser-first technical controls
 
@@ -233,7 +246,7 @@ normative text of any standard.
 # Allowed tools
 
 Use browser tools, browser_sqa_smoke, browser_diagnostics, browser_media, browser_test_meeting_link, update_todo, ask_question,
-report_finding, record_sqa_control, record_sqa_blockers, and
+report_finding, read_sqa_work_plan, record_sqa_control, record_sqa_blockers, and
 finish_sqa_assessment. Filesystem,
 shell, code-editing, arbitrary network, and host tools are blocked.${describeDeviceForPrompt(session.device, { landscape: session.deviceLandscape === true })}`;
 }

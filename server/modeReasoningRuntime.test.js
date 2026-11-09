@@ -3,12 +3,21 @@ import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { selectsModeReasoning, createModeReasoningRuntime, modeExplorationReadiness, MODE_REASONING_STRATEGY } from './modeReasoningRuntime.js';
 import { hybridProfile } from './hybridConfig.js';
+import { createSqaState } from './sqaService.js';
 
 function fixture(mode='sqa', store={async commit(){}}) {
  const session={id:randomUUID(),mode,[mode]:{observations:[]},activities:[],todos:[]};
  const record={};const runtime=createModeReasoningRuntime({session,runStore:store,profile:hybridProfile({apiKey:'fixture'}),record});
  return {session,runtime,record,state:session[mode].execution};
 }
+test('native SQA progress exposes paged contracts without model calls or state changes', async () => {
+ const f=fixture();f.session.sqa.scope=createSqaState({authorizationConfirmed:true,target:{name:'Fixture',release:'1',environment:'test'}}).scope;
+ const read=f.runtime.tools.find(t=>t.name==='mode_execution_progress'),before=structuredClone(f.session);
+ const page=await read.run({sqa_view:'reviewer'});
+ assert.equal(page.success,true);assert.ok(page.items.length<=4);assert.equal(page.items[0].owner,'reviewer');assert.deepEqual(f.session,before);
+ assert.equal((await read.run({sqa_view:'browser',offset:-1})).success,false);
+ const founder=fixture('founder');assert.equal((await founder.runtime.tools.find(t=>t.name==='mode_execution_progress').run({sqa_view:'reviewer'})).success,false);
+});
 for(const mode of ['sqa','founder']) test(`${mode} reasoning is opt-in and saved selection survives flag rollback`,()=>{
  const session={mode,[mode]:{observations:[]},activities:[]};
  assert.equal(selectsModeReasoning(session,{}),false);

@@ -10,6 +10,7 @@ import {
 	pendingAgentSqaControlIds
 } from './sqaService.js';
 import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
+import { readSqaWorkPage } from './sqaWorkPlan.js';
 import {
 	countSqaBrowserActivities,
 	SQA_BROWSER_EVIDENCE_LIMIT,
@@ -381,7 +382,19 @@ export function createSqaTools(session, runStore, options = {}) {
 		}
 	};
 
-	return [recordControl, recordBlockers, guardFinalization(finish, session, options)];
+	const readWork = {
+		name: 'read_sqa_work_plan', category: 'sqa',
+		description: 'Read four scoped browser objectives or reviewer artifact requirements at a time, or read meeting/media operating guidance. Read-only; never changes results, permissions, plan or execution budgets.',
+		parametersSchema: { type: 'object', additionalProperties: false, properties: {
+			sqa_view: { type: 'string', enum: ['browser', 'reviewer', 'media'] },
+			offset: { type: 'integer', minimum: 0, maximum: 1000 }
+		}, required: ['sqa_view'] },
+		async run(input) {
+			try { return { success: true, ...readSqaWorkPage(session.sqa, input) }; }
+			catch (error) { return { success: false, error: error.message }; }
+		}
+	};
+	return [readWork, recordControl, recordBlockers, guardFinalization(finish, session, options)];
 }
 
 export { finishReadiness };

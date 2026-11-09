@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-founder-sqa-2026-11-09-ui-r1",
+  "releaseId": "qase-founder-sqa-2026-11-10-coverage-r1",
   "uiVersion": "20261109-1",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Founder/SQA UI audit fixes on 1b0d075: accurate quality verdicts, working device management, readable reports, accessible model field and visible reset confirmation; export-only scope"
+  "source": "SQA risk-prioritized evidence queue, paged requirements and explicit reviewer artifact requests on 5c4b0db; existing budgets and export-only scope preserved"
 }

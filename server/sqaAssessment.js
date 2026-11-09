@@ -551,11 +551,10 @@ export function buildSqaReportMarkdown(assessment) {
 			lines.push('');
 		}
 
-		const evidenceRequests = [...blocked, ...notAssessed].filter(result => result.evidenceCoverage?.missing?.length);
-		if (evidenceRequests.length > 0) {
-			lines.push('## Reviewer evidence request register', '', '| Control | Priority | State | Required evidence not yet satisfied |', '|---|---|---|---|');
-			for (const result of evidenceRequests) {
-				lines.push(`| ${markdown(result.controlId)} — ${markdown(result.title)} | ${markdown(result.severity)}${result.mandatory ? ' · mandatory' : ''} | ${markdown(result.status)} | ${result.evidenceCoverage.missing.map(markdown).join(', ')} |`);
+		if (reportModel.evidenceRequests.length > 0) {
+			lines.push('## Reviewer evidence request register', '', 'Browser rows need further verified testing. Reviewer rows need release-specific artifacts supplied through human evidence review; browser samples cannot replace those documents.', '', '| Control | Evidence owner | Requirement | Type / minimum | What to provide |', '|---|---|---|---|---|');
+			for (const request of reportModel.evidenceRequests) {
+				lines.push(`| ${markdown(request.controlId)} | ${markdown(request.owner)} | ${markdown(request.id)} | ${markdown(request.type)} / ${markdown(request.minimum)} | ${markdown(request.description)} |`);
 			}
 			lines.push('');
 		}
