@@ -2,6 +2,7 @@ import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { AGENT_EVIDENCE_TYPES } from './sqaService.js';
 import { sqaReportModel } from '../public/sqaReportModel.js';
 import { BROWSER_WORKFLOW_GUIDANCE } from './browserWorkflowPrompt.js';
+import { createHash } from 'node:crypto';
 
 const severity = { critical: 0, high: 1, medium: 2, low: 3 };
 const priority = (a, b) => Number(b.mandatory) - Number(a.mandatory)
@@ -40,7 +41,7 @@ export function buildSqaWorkPlan(sqa) {
 		severity: control.severity, mandatory: control.mandatory,
 		evidenceCoverage: { requirements: control.evidenceRequirements.map(item => ({ ...item, actual: 0, satisfied: false })) }
 	}));
-	return {
+	const plan = {
 		phase,
 		pendingControlIds: pending.map(control => control.id),
 		pendingBrowserCount: pendingBrowser.length,
@@ -56,6 +57,7 @@ export function buildSqaWorkPlan(sqa) {
 		})),
 		reviewerRequests: sqaReportModel({ results }).evidenceRequests.filter(item => item.owner === 'reviewer')
 	};
+	return { ...plan, revision: createHash('sha256').update(JSON.stringify(plan)).digest('hex') };
 }
 
 export function sqaWorkBrief(sqa) {
@@ -66,20 +68,21 @@ export function sqaWorkBrief(sqa) {
 	return `SQA work priority: ${plan.phase}. Pending browser controls: ${plan.pendingBrowserCount}; pending reviewer-only controls: ${plan.pendingReviewerOnlyCount}.
 Detailed active controls: ${JSON.stringify(active)}
 Remaining browser planning index: ${JSON.stringify(plan.planningIndex)}
-Reviewer artifact requests: ${plan.reviewerRequests.length}. Read mode_execution_progress with sqa_view=reviewer for exact requirement IDs, types, minimum counts and descriptions; use next_offset for further pages.
-The active window prioritizes detail, not authorized scope. Plan all relevant observed workflows; read mode_execution_progress with sqa_view=browser for further objectives. Reuse completed workflow evidence only when its control-specific host receipts match. Never replay completed work merely to refresh context. Closed or finalized runs cannot resume exploration through this queue.`;
+Reviewer artifact requests: ${plan.reviewerRequests.length}. Read mode_execution_progress only when the next workflow lacks needed contract detail. Do not prefetch the entire catalog or reviewer register before testing. Act on the active group and record supported results first. Further pages require the returned revision; restart at offset 0 after recording controls.
+The active window prioritizes detail, not authorized scope. Plan all relevant observed workflows. Reuse completed workflow evidence only when its control-specific host receipts match. Never replay completed work merely to refresh context. Closed or finalized runs cannot resume exploration through this queue.`;
 }
 
 /** Four catalog entries per read keeps detailed requirements out of every turn. */
-export function readSqaWorkPage(sqa, { sqa_view, offset = 0 } = {}) {
+export function readSqaWorkPage(sqa, { sqa_view, offset = 0, revision } = {}) {
 	if (!['browser', 'reviewer', 'media'].includes(sqa_view) || !Number.isSafeInteger(offset) || offset < 0 || offset > 1000) {
 		throw new TypeError('Choose browser, reviewer or media guidance and an integer offset from 0 to 1000.');
 	}
 	const plan = buildSqaWorkPlan(sqa);
 	if (!plan) throw new TypeError('SQA work planning requires a resolved scope.');
+	if (offset > 0 && revision !== plan.revision) throw new TypeError('The queue changed or its revision is missing. Restart at offset 0; never skip newly pending controls.');
 	const entries = sqa_view === 'media' ? [{ guidance: BROWSER_WORKFLOW_GUIDANCE }] : sqa_view === 'browser' ? plan.pendingBrowserControls : plan.reviewerRequests;
 	const next = offset + 4;
-	return { phase: plan.phase, view: sqa_view, total: entries.length, items: entries.slice(offset, next),
+	return { phase: plan.phase, revision: plan.revision, view: sqa_view, total: entries.length, items: entries.slice(offset, next),
 		next_offset: next < entries.length ? next : null,
 		closed: ['budget_closed', 'finalized'].includes(plan.phase),
 		authority: 'Guidance only; existing evidence, workflow, recovery and budget gates remain authoritative.' };

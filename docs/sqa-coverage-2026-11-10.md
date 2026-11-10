@@ -17,7 +17,10 @@ also supports the same pages through `mode_execution_progress`. Use
 `sqa_view=browser` for objectives/contracts, `sqa_view=reviewer` for artifact
 requests, or `sqa_view=media` for the complete meeting/media operating guide.
 Browser and reviewer pages contain at most four entries, with `next_offset`
-for subsequent reads. Media restrictions remain summarized in the operating
+and the returned revision for subsequent reads. A disposition or requirement
+change invalidates that revision: restart at offset zero to avoid skipping
+newly pending work. Read only what the next workflow needs; do not prefetch
+the complete catalog before testing. Media restrictions remain summarized in the operating
 brief; full instructions are requested before exercising those workflows.
 
 After technical controls have dispositions, the legacy operating brief stops
@@ -35,8 +38,8 @@ tests or other reviewer-only contracts. The evaluator and assessment hashes
 are unchanged.
 
 On the fixed core-scope context fixture, the qualified operating brief changed
-from 13,878 to 9,086 characters; the configured-provider brief changed from
-15,039 to 12,499 characters before technical work. These are character counts,
+from 13,878 to 9,167 characters; the configured-provider brief changed from
+15,039 to 12,660 characters before technical work. These are character counts,
 not token or end-to-end coverage guarantees. Live-provider verification and
 final release checks are recorded in the local handoff and exact-commit CI.
 

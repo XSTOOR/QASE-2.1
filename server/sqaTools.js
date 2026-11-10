@@ -387,7 +387,8 @@ export function createSqaTools(session, runStore, options = {}) {
 		description: 'Read four scoped browser objectives or reviewer artifact requirements at a time, or read meeting/media operating guidance. Read-only; never changes results, permissions, plan or execution budgets.',
 		parametersSchema: { type: 'object', additionalProperties: false, properties: {
 			sqa_view: { type: 'string', enum: ['browser', 'reviewer', 'media'] },
-			offset: { type: 'integer', minimum: 0, maximum: 1000 }
+			offset: { type: 'integer', minimum: 0, maximum: 1000 },
+			revision: { type: 'string', pattern: '^[a-f0-9]{64}$', description: 'Required for offset above zero. Restart at offset zero after recording controls.' }
 		}, required: ['sqa_view'] },
 		async run(input) {
 			try { return { success: true, ...readSqaWorkPage(session.sqa, input) }; }

@@ -31,10 +31,10 @@ test('technical checks precede a bounded risk-prioritized browser queue without 
 
 test('all browser objectives and exact reviewer contracts remain readable in bounded pages', () => {
 	const sqa = state(), plan = buildSqaWorkPlan(sqa), ids = [];
-	let offset = 0;
-	do { const page = readSqaWorkPage(sqa, { sqa_view: 'browser', offset });
+	let offset = 0, revision;
+	do { const page = readSqaWorkPage(sqa, { sqa_view: 'browser', offset, revision });
 		assert.ok(page.items.length <= 4); assert.ok(JSON.stringify(page).length < 10000);
-		ids.push(...page.items.map(c => c.id)); offset = page.next_offset;
+		ids.push(...page.items.map(c => c.id)); offset = page.next_offset; revision = page.revision;
 	} while (offset !== null);
 	assert.equal(new Set(ids).size, plan.pendingBrowserCount);
 	const change = plan.reviewerRequests.find(r => r.controlId === 'SQA-CHG-001');
@@ -44,6 +44,15 @@ test('all browser objectives and exact reviewer contracts remain readable in bou
 	assert.throws(() => readSqaWorkPage(sqa, { sqa_view: 'reviewer', offset: -1 }));
 	assert.throws(() => readSqaWorkPage(sqa, { sqa_view: 'reviewer', offset: 0.5 }));
 	assert.match(sqaWorkBrief(sqa), /not authorized scope/);
+});
+
+test('a stale page cannot skip the next controls after a durable disposition changes the queue', () => {
+	const sqa = state(), page = readSqaWorkPage(sqa, { sqa_view: 'browser' });
+	sqa.observations.push({ controlId: page.items[0].id, status: 'blocked' });
+	assert.throws(() => readSqaWorkPage(sqa, { sqa_view: 'browser', offset: page.next_offset, revision: page.revision }), /Restart at offset 0/);
+	const fresh = readSqaWorkPage(sqa, { sqa_view: 'browser' });
+	assert.notEqual(fresh.revision, page.revision);
+	assert.equal(fresh.items[0].id, page.items[1].id);
 });
 
 test('published and budget-closed work plans cannot reopen exploration or mutate saved evidence', () => {

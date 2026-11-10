@@ -280,7 +280,7 @@
     },
     {
       "path": "docs/sqa-coverage-2026-11-10.md",
-      "sha256": "847afe4b56e00486b2eafe64319c0a475137a71829106c38b1716850657e1885"
+      "sha256": "fa8ac311cfd88ad48d83b45277d7b6e0f2bdf0cbbd89cc3878d3422fd93f372e"
     },
     {
       "path": "docs/sqa-execution-efficiency-2026-11-06.md",
@@ -2384,7 +2384,7 @@
     },
     {
       "path": "server/modeReasoningRuntime.js",
-      "sha256": "9053c0d3e06927e78ced19c2d785e00d66ebc7262e4737db2717e756be80c083"
+      "sha256": "35979c0cfb04b6365b3bb477b3100054e609933840abd2b2eebf53655a60dd82"
     },
     {
       "path": "server/modeReasoningRuntime.test.js",
@@ -3096,7 +3096,7 @@
     },
     {
       "path": "server/sqaPrompt.js",
-      "sha256": "c9aa74505deec5802857d42203fac1a0cc422533cca08e1824eb1b8033ea90eb"
+      "sha256": "11b360329d97541e8e2a521a7ac14bcb6df67da6a34d46875f5040a6a9b22a1e"
     },
     {
       "path": "server/sqaPrompt.test.js",
@@ -3136,7 +3136,7 @@
     },
     {
       "path": "server/sqaTools.js",
-      "sha256": "5b71404ea04ffcf96f16423ba4a680b349b9ac8241a7a7821e2411888ca68012"
+      "sha256": "2d9db29648694ec86c39001dc6704b08a53c70445cf5effa5c6138d8dd34de76"
     },
     {
       "path": "server/sqaTools.test.js",
@@ -3148,11 +3148,11 @@
     },
     {
       "path": "server/sqaWorkPlan.js",
-      "sha256": "0c87376861425fef9d05330c511dab1b80d0a55c385f49c5129b3f61bd1a1a95"
+      "sha256": "f8387cfa3bcda908650d6b197361f6b89001559cd28a2d844535adee726cc834"
     },
     {
       "path": "server/sqaWorkPlan.test.js",
-      "sha256": "8174cf54ea7541ae0e1d65e559e3b4d5c983afd8241ad878ace888a4adaa0edb"
+      "sha256": "966518609509bdde5b45bc127eb6d6dc2aeb535de0adb8e5c21fa18b7acf28da"
     },
     {
       "path": "server/stageCollapseUi.test.js",

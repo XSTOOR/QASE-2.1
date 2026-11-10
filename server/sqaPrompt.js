@@ -36,7 +36,7 @@ export function buildSqaContext(session, liveUrl) {
 		const reviewerOnly = control.evidenceRequirements.filter(item => !AGENT_EVIDENCE_TYPES.has(item.type)).map(item => item.type);
 		const observation = observations.get(id);
 		const progress = observation ? `recorded=${observation.status}` : 'PENDING';
-		return `- ${control.id} [${progress}; ${control.severity}; ${control.automationLevel}; ${control.mandatory ? 'mandatory' : 'optional'}] ${control.title}. Browser-eligible evidence: ${eligible.join(', ') || 'none'}. Reviewer-only evidence: ${reviewerOnly.join(', ') || 'none'}.`;
+		return `- ${control.id} [${progress}; ${control.severity}; ${control.automationLevel}; ${control.mandatory ? 'mandatory' : 'optional'}] ${control.title}. Browser-eligible evidence: ${eligible.join(', ') || 'none'}. Reviewer-only evidence: ${reviewerOnly.join(', ') || 'none'}.${SQA_TECHNICAL_CONTROL_IDS.includes(id) ? '' : ` Objective: ${control.objective}. Required counts: ${control.evidenceRequirements.map(r => `${r.type} >= ${r.minimum}`).join(', ')}.`}`;
 	};
 	const controls = scope.applicableControlIds.map(id => getSqaControl(id));
 	const technicalIds = SQA_TECHNICAL_CONTROL_IDS.filter(id => scope.applicableControlIds.includes(id));
@@ -221,7 +221,7 @@ the evidence summary. Permission configuration by itself is not pass evidence.
 ${progress}
 Work priority: ${workPlan.phase}. Pending browser controls: ${workPlan.pendingBrowserCount}.
 Remaining browser control IDs: ${workPlan.planningIndex.map(control => control.id).join(', ') || 'none'}
-Read read_sqa_work_plan with sqa_view=browser for exact objectives and evidence contracts, or sqa_view=reviewer for reviewer artifact requests. Follow next_offset to read further pages. This is read-only guidance and never reopens a closed run or expands scope. All pending control IDs remain in Progress; the detail window does not reduce the assessment scope.
+Act on the current group shown below before reading more catalog pages. Use read_sqa_work_plan only if a needed contract description is missing; do not prefetch all browser pages or reviewer documents before testing. Record supported results immediately, then restart any requirement read at offset 0. Further pages require the returned revision. This is read-only guidance and never reopens a closed run or expands scope. All pending control IDs remain in Progress; the detail window does not reduce the assessment scope.
 
 # Browser-first technical controls
 
