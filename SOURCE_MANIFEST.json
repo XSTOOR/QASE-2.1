@@ -1164,7 +1164,7 @@
     },
     {
       "path": "scripts/test-auth-browser.mjs",
-      "sha256": "6c42e8510c079d53d655a6ac09037582147083ada3f884412f69cab86d3d8c5f"
+      "sha256": "79223a5de3d37814eeb01f1431f39fb845e3e7e7e71bebd55a2b6af203e211f3"
     },
     {
       "path": "scripts/test-browser-efficiency.mjs",
