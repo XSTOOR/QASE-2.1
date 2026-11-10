@@ -1,3 +1,4 @@
+import './testWorkingDirectory.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,10 +15,10 @@ import { validateHybridFinding } from './qaCompletionGate.js';
 
 test('one installed SDK loop discovers hidden/lazy routes and confirms nine defect groups with seven category suites', { timeout: 120000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-sdk-depth-'));
-  const names = ['NODE_ENV', 'QASE_ALLOW_PRIVATE_NETWORK', 'QASE_HYBRID_QA_ENABLED', 'QASE_HYBRID_QUALIFICATION_FILE', 'JEV_API_KEY', 'QASE_LOCK_MODEL'];
+  const names = ['QASE_HYBRID_AUTONOMOUS_COMPLETION', 'NODE_ENV', 'QASE_ALLOW_PRIVATE_NETWORK', 'QASE_HYBRID_QA_ENABLED', 'QASE_HYBRID_QUALIFICATION_FILE', 'JEV_API_KEY', 'QASE_LOCK_MODEL'];
   const saved = Object.fromEntries(names.map(name => [name, process.env[name]]));
   t.after(() => { for (const [name, value] of Object.entries(saved)) if (value === undefined) delete process.env[name]; else process.env[name] = value; });
-  Object.assign(process.env, { NODE_ENV: 'development', QASE_ALLOW_PRIVATE_NETWORK: 'true', QASE_HYBRID_QA_ENABLED: 'true', QASE_LOCK_MODEL: 'false', JEV_API_KEY: 'isolated-depth-fixture', QASE_HYBRID_QUALIFICATION_FILE: path.join(root, 'qualification.json') });
+  Object.assign(process.env, { QASE_HYBRID_AUTONOMOUS_COMPLETION: 'false', NODE_ENV: 'development', QASE_ALLOW_PRIVATE_NETWORK: 'true', QASE_HYBRID_QA_ENABLED: 'true', QASE_LOCK_MODEL: 'false', JEV_API_KEY: 'isolated-depth-fixture', QASE_HYBRID_QUALIFICATION_FILE: path.join(root, 'qualification.json') });
   const settings = { provider: 'jev', model: 'jev-1.13', baseUrl: JEV_ENDPOINT, apiKey: process.env.JEV_API_KEY, headless: true, maxTurns: 20 };
   const profile = hybridProfile(settings);
   fs.writeFileSync(process.env.QASE_HYBRID_QUALIFICATION_FILE, JSON.stringify({ sdkVersion: HYBRID_SDK_VERSION, profileIdentity: profileIdentity(profile), checkedAt: Date.now(), capabilities: Object.fromEntries(REQUIRED_CAPABILITIES.map(name => [name, { passed: true }])) }));
@@ -42,7 +43,7 @@ test('one installed SDK loop discovers hidden/lazy routes and confirms nine defe
     record.hybrid.router.classifier = async (_state, questions) => { ranks++; return Object.fromEntries(Object.entries(questions).map(([id, question]) => [id, { choice: Object.keys(question.criteria)[0] }])); };
     record.runtime.cleanSlateService.chat = async (_messages, options) => (async function* () {
       record.hybrid.usage({ reservationId: options.qaseBudgetReservationId, callId: randomUUID(), inputTokens: 100, outputTokens: 30, estimated: false });
-      assert.ok(options.tools.length <= 10);
+      assert.ok(options.tools.length <= 13, 'The bounded catalog includes schedule and investigation tools.');
       let calls;
       if (turn === 0) calls = [['browser_open', { url: session.targetUrl }]];
       else if (turn === 1) calls = [['browser_qa_check', { action: 'inspect' }]];

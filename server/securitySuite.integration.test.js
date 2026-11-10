@@ -32,7 +32,7 @@ async function setup(t) {
 		// relaxed exactly for this fixture, the way local development does it.
 		environment: { NODE_ENV: 'development', QASE_ALLOW_PRIVATE_NETWORK: 'true' }
 	});
-	const bridge = attachBrowserBridge(session, service, store, { policy });
+	const bridge = await attachBrowserBridge(session, service, store, { policy });
 	t.after(async () => {
 		bridge.dispose?.();
 		await service.dispose().catch(() => undefined);

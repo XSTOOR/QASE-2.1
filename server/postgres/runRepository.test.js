@@ -39,6 +39,19 @@ const CORRELATION_ID = '08ddf3b0-4499-4101-a20f-d87d3eebcd52';
 const SOURCE_HASH = 'a'.repeat(64);
 const NOW = Date.parse('2026-08-06T10:00:00.000Z');
 
+test('SQA list summaries preserve the assurance verdict without loading report evidence', async () => {
+	const fake = scriptedPool(call => call.text.startsWith('SELECT id, title, status')
+		? { rows: [{ id: RUN_ID, run_mode: 'sqa', status: 'done', title: 'Completed quality review', sqa_verdict: 'blocked', created_at: NOW, updated_at: NOW }] }
+		: { rows: [] });
+	const repository = createPostgresRunRepository({ pool: fake.pool, tenantContext: TENANT, now: () => NOW });
+	const [item] = await repository.list();
+	assert.equal(item.mode, 'sqa');
+	assert.equal(item.status, 'done');
+	assert.equal(item.sqaVerdict, 'blocked');
+	assert.equal(item.sqa, undefined);
+	assert.match(fake.calls.find(call => call.text.startsWith('SELECT id, title, status')).text, /sqa_assessment #>> '\{assessment,verdict\}'/);
+});
+
 test('hybrid state uses optional additive storage and survives authoritative reads without affecting legacy writes', async () => {
   let stored;
   const fake = scriptedPool(call => {
@@ -95,6 +108,27 @@ function scriptedPool(handler = () => ({ rows: [], rowCount: 0 })) {
 	};
 	return { pool, calls, state };
 }
+
+test('Founder action updates lock the trusted project before reading and roll back conflicts without writing', async () => {
+	let stored = { schemaVersion: 2, actionRecords: [], revision: 2 };
+	const fake = scriptedPool(call => {
+		if (call.text.startsWith('SELECT state FROM founder_project_state')) return { rows: [{ state: structuredClone(stored) }] };
+		if (call.text.startsWith('INSERT INTO founder_project_state')) stored = JSON.parse(call.params[2]);
+	});
+	const repository = createPostgresRunRepository({ pool: fake.pool, tenantContext: TENANT, now: () => NOW });
+	const updated = await repository.updateFounderProjectState(state => ({ ...state, revision: state.revision + 1 }));
+	assert.equal(updated.revision, 3);
+	const lock = fake.calls.findIndex(call => call.text.includes('pg_advisory_xact_lock'));
+	assert.deepEqual(fake.calls[lock].params, [`founder:${TENANT.organizationId}:${TENANT.projectId}`]);
+	assert.match(fake.calls[lock + 1].text, /FOR UPDATE$/);
+	assert.deepEqual(fake.calls[lock + 1].params, [TENANT.organizationId, TENANT.projectId]);
+	assert.equal(fake.calls.at(-1).text, 'COMMIT');
+	const writes = fake.calls.filter(call => call.text.startsWith('INSERT INTO founder_project_state')).length;
+	await assert.rejects(repository.updateFounderProjectState(() => { throw new Error('Revision conflict'); }), /Revision conflict/);
+	assert.equal(fake.calls.at(-1).text, 'ROLLBACK');
+	assert.equal(fake.calls.filter(call => call.text.startsWith('INSERT INTO founder_project_state')).length, writes);
+	assert.equal(stored.revision, 3); assert.equal(fake.state.releases, 2);
+});
 
 function session(overrides = {}) {
 	return {
@@ -172,7 +206,7 @@ test('repository requires a frozen trusted tenant context', () => {
 });
 
 test('bootstrap uses transaction-local scope and creates owner tenancy in one transaction', async () => {
-	const fake = scriptedPool(call => /INSERT INTO (organizations|users|organization_memberships|projects)/.test(call.text)
+	const fake = scriptedPool(call => /INSERT INTO (organizations|users|organization_memberships|projects)|UPDATE users/.test(call.text)
 		? { rows: [{ status: 'active' }], rowCount: 1 }
 		: { rows: [], rowCount: 0 });
 	const repository = createPostgresRunRepository({ pool: fake.pool, tenantContext: TENANT, now: () => NOW });
@@ -186,11 +220,12 @@ test('bootstrap uses transaction-local scope and creates owner tenancy in one tr
 	});
 	assert.equal(fake.calls[0].text, 'BEGIN');
 	assert.match(fake.calls[1].text, /set_config\('qase\.organization_id'/);
-	assert.deepEqual(fake.calls[1].params, [TENANT.organizationId, TENANT.projectId]);
+	assert.deepEqual(fake.calls[1].params, [TENANT.organizationId, TENANT.projectId, TENANT.actorUserId]);
 	assert.match(fake.calls[2].text, /INSERT INTO organizations/);
 	assert.match(fake.calls[3].text, /INSERT INTO users/);
 	assert.match(fake.calls[4].text, /INSERT INTO organization_memberships/);
-	assert.match(fake.calls[5].text, /INSERT INTO projects/);
+	assert.match(fake.calls[5].text, /UPDATE users/);
+	assert.match(fake.calls[6].text, /INSERT INTO projects/);
 	assert.equal(fake.calls.at(-1).text, 'COMMIT');
 	assert.equal(fake.state.releases, 1);
 });
@@ -684,6 +719,7 @@ test('token usage round-trips on the run row and surfaces in list summaries', as
 			context_usage: null,
 			token_usage: usage,
 			report_verdict: 'blocked',
+			coverage_incomplete: true,
 			secret_names: [],
 			created_at: new Date(NOW - 1_000),
 			updated_at: new Date(NOW),
@@ -758,6 +794,7 @@ test('token usage round-trips on the run row and surfaces in list summaries', as
 	const summaries = await repository.list();
 	assert.deepEqual(summaries[0].tokenUsage, usage);
 	assert.equal(summaries[0].reportVerdict, 'blocked');
+	assert.equal(summaries[0].coverageIncomplete, true);
 	const verdictQuery = fake.calls.find(call => call.text.includes('FROM qa_runs') && call.text.includes('AS report_verdict'));
 	assert.ok(verdictQuery, 'list SELECT carries the current report verdict for blocked-run presentation');
 

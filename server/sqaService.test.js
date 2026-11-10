@@ -1,16 +1,21 @@
+import './testWorkingDirectory.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+	closePendingSqaControlsAsBlocked,
+	closePendingReviewerSqaControlsAsBlocked,
 	createSqaState,
 	createSqaTodoPlan,
 	finishSqaAssessment,
 	normalizePendingSqaState,
+	pendingAgentSqaControlIds,
 	recordAgentSqaBlockers,
 	recordAgentSqaObservation,
 	recordAgentSqaObservations,
-	recordReviewerSqaObservation
+	recordReviewerSqaObservation,
+	SQA_BROWSER_REVIEW_ATTRIBUTES
 } from './sqaService.js';
-import { SQA_CATALOG_VERSION } from './sqaCatalog.js';
+import { SQA_CATALOG_VERSION, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { clearSecrets, storeSecrets } from './secrets.js';
 
 const fixedNow = () => Date.parse('2026-08-15T00:00:00.000Z');
@@ -43,6 +48,25 @@ function store() {
 	};
 }
 
+test('single and batch observations preserve the live qualified ledger without mutating prior observations', async () => {
+	const candidate = session(), previous = candidate.sqa;
+	const execution = { strategy: 'qualified-opus-jev-v1', segments: 0, actions: [], evidence: [] };
+	previous.execution = execution;
+	const blocked = control_id => ({ control_id, status: 'blocked', rationale: 'Control-specific fixture evidence is unavailable.' });
+	await recordAgentSqaObservation(candidate, blocked('SQA-WEB-001'), store(), fixedNow);
+	assert.equal(candidate.sqa.execution, execution);
+	assert.equal(previous.observations.length, 0);
+	execution.segments++;
+	await recordAgentSqaObservations(candidate, [blocked('SQA-WEB-002'), blocked('SQA-WEB-003')], store(), fixedNow);
+	assert.equal(candidate.sqa.execution, execution);
+	execution.segments++;
+	assert.equal(candidate.sqa.execution.segments, 2);
+	const saved = candidate.sqa;
+	await assert.rejects(recordAgentSqaObservation(candidate, blocked('SQA-WEB-004'), { async commit() { throw new Error('Fixture persistence failure'); } }, fixedNow), /persistence failure/);
+	assert.equal(candidate.sqa, saved);
+	assert.equal(candidate.sqa.execution, execution);
+});
+
 test('SQA state requires explicit authorization and resolves the universal core', () => {
 	assert.throws(() => createSqaState({
 		profiles: ['core'],
@@ -52,6 +76,52 @@ test('SQA state requires explicit authorization and resolves the universal core'
 	assert.equal(state.scope.authorization.confirmed, true);
 	assert.ok(state.scope.profiles.includes('core'));
 	assert.equal(state.assessment, undefined);
+});
+
+test('URL-based SQA state always includes browser review attributes and all six web controls', () => {
+	const state = createSqaState({
+		authorizationConfirmed: true,
+		profiles: ['core'],
+		attributes: [],
+		target: { name: 'Example', release: 'build-123', environment: 'staging' }
+	}, fixedNow);
+	assert.deepEqual(state.scope.attributes, SQA_BROWSER_REVIEW_ATTRIBUTES);
+	assert.deepEqual(
+		state.scope.applicableControlIds.filter(controlId => SQA_TECHNICAL_CONTROL_IDS.includes(controlId)),
+		SQA_TECHNICAL_CONTROL_IDS
+	);
+});
+
+test('URL-based SQA state preserves additional attributes without duplicating browser defaults', () => {
+	const state = createSqaState({
+		authorizationConfirmed: true,
+		expandedScopeConfirmed: true,
+		attributes: ['handles_personal_data', 'web_application'],
+		scopeNotes: 'The reviewed release processes customer contact details.',
+		target: { name: 'Example', release: 'build-123', environment: 'staging' }
+	}, fixedNow);
+	assert.deepEqual(state.scope.attributes, ['web_application', 'user_interface', 'handles_personal_data']);
+	assert.equal(state.scope.selectionReview.expanded, true);
+	assert.ok(state.scope.selectionReview.additionalControlCount > 0);
+	assert.equal(state.scope.selectionReview.confirmedAt, '2026-08-15T00:00:00.000Z');
+});
+
+test('expanded SQA scopes require an explicit confirmation and written rationale', () => {
+	const expanded = {
+		authorizationConfirmed: true,
+		profiles: ['core', 'medical'],
+		target: { name: 'Example', release: 'build-123', environment: 'staging' }
+	};
+	assert.throws(() => createSqaState(expanded, fixedNow), /Confirm.*expanded SQA scope/);
+	assert.throws(() => createSqaState({ ...expanded, expandedScopeConfirmed: true }, fixedNow), /scope notes are required/);
+	const state = createSqaState({
+		...expanded,
+		expandedScopeConfirmed: true,
+		scopeNotes: 'The product is regulated as software in a medical-device context.'
+	}, fixedNow);
+	assert.deepEqual(state.scope.profiles, ['core', 'medical']);
+	assert.equal(state.scope.selectionReview.expanded, true);
+	assert.equal(state.scope.selectionReview.additionalControlCount, 3);
 });
 
 test('SQA finalization storage failure preserves the pending assessment and permits a durable retry', async () => {
@@ -69,11 +139,33 @@ test('SQA finalization storage failure preserves the pending assessment and perm
 
 test('SQA sessions receive a canonical non-empty host plan before the model starts', () => {
 	const plan = createSqaTodoPlan(session().sqa);
-	assert.equal(plan.length, 6);
+	assert.equal(plan.length, 8);
 	assert.ok(plan.every(item => item.status === 'pending'));
-	assert.match(plan[1].text, /browser evidence for \d+ technically observable controls/);
-	assert.match(plan[4].text, /reviewer-only evidence prerequisites for \d+ controls/);
+	assert.match(plan[1].text, /accessibility and responsive-layout smoke checks/);
+	assert.match(plan[2].text, /navigation and safe form-validation/);
+	assert.match(plan[3].text, /browser evidence for \d+ technically observable controls/);
+	assert.match(plan[6].text, /reviewer-only evidence prerequisites for \d+ controls/);
 	assert.match(plan.at(-1).text, /publish the professional SQA report/);
+});
+
+test('host safety closeout blocks only pending controls in one durable batch', async () => {
+	const candidate = session();
+	candidate.sqa.observations = [{
+		controlId: 'SQA-WEB-001', status: 'blocked', rationale: 'Existing truthful result.', evidence: []
+	}];
+	const runStore = store();
+	const results = await closePendingSqaControlsAsBlocked(
+		candidate,
+		'The host input-token safety limit was exhausted before control-specific evidence was collected.',
+		runStore,
+		fixedNow
+	);
+	assert.equal(results.length, candidate.sqa.scope.applicableControlIds.length - 1);
+	assert.equal(candidate.sqa.observations.find(item => item.controlId === 'SQA-WEB-001').rationale, 'Existing truthful result.');
+	assert.equal(candidate.sqa.observations.every(item => item.status === 'blocked'), true);
+	assert.match(candidate.sqa.observations.find(item => item.controlId !== 'SQA-WEB-001').rationale, /safety limit was exhausted/);
+	assert.equal(runStore.commits.length, 1);
+	assert.equal(runStore.commits[0].payload.safetyCloseout, true);
 });
 
 test('legacy evidence-empty provisional assessments migrate back to pending without changing real results', async () => {
@@ -175,6 +267,37 @@ test('reviewer-only blockers can be recorded in one bounded batch', async () => 
 	assert.equal(runStore.commits[0].payload.batch, true);
 });
 
+test('host reviewer closeout derives precise catalog blockers and commits atomically', async () => {
+	const candidate = session();
+	candidate.sqa.scope.applicableControlIds = ['SQA-WEB-001', 'SQA-GOV-001', 'SQA-GOV-004'];
+	assert.deepEqual(pendingAgentSqaControlIds(candidate), ['SQA-WEB-001']);
+	await assert.rejects(
+		closePendingReviewerSqaControlsAsBlocked(candidate, store(), fixedNow),
+		/Finish browser-eligible SQA controls.*SQA-WEB-001/
+	);
+	candidate.sqa.observations.push({
+		controlId: 'SQA-WEB-001', status: 'blocked', rationale: 'Controlled browser sample unavailable.', evidence: []
+	});
+	const runStore = store();
+	const results = await closePendingReviewerSqaControlsAsBlocked(candidate, runStore, fixedNow);
+	assert.deepEqual(results.map(item => item.controlId), ['SQA-GOV-001', 'SQA-GOV-004']);
+	assert.match(candidate.sqa.observations.find(item => item.controlId === 'SQA-GOV-001').rationale,
+		/risk_register \(product-risk-baseline\).*qualified human review/);
+	assert.match(candidate.sqa.observations.find(item => item.controlId === 'SQA-GOV-004').rationale,
+		/approval_record \(assurance-roles\).*no pass or fail is claimed/);
+	assert.equal(runStore.commits.length, 1);
+	assert.equal(runStore.commits[0].payload.reviewerCloseout, true);
+
+	const beforeFailure = structuredClone(candidate.sqa);
+	candidate.sqa.observations = candidate.sqa.observations.filter(item => item.controlId !== 'SQA-GOV-004');
+	const beforeRetry = structuredClone(candidate.sqa);
+	await assert.rejects(closePendingReviewerSqaControlsAsBlocked(candidate, {
+		async commit() { throw new Error('reviewer closeout persistence failed'); }
+	}, fixedNow), /persistence failed/);
+	assert.deepEqual(candidate.sqa, beforeRetry);
+	assert.notDeepEqual(candidate.sqa, beforeFailure);
+});
+
 test('blocker batches cannot skip browser-eligible checks', async () => {
 	const candidate = session();
 	await assert.rejects(recordAgentSqaBlockers(candidate, [{
@@ -203,6 +326,18 @@ test('unfinished sessions migrate to the current catalog while finalized session
 	await assert.rejects(recordAgentSqaObservation(candidate, {
 		control_id: 'SQA-WEB-001', status: 'blocked', rationale: 'Must not mutate.'
 	}, runStore, fixedNow), /finalized/);
+});
+
+test('unfinished legacy sessions on the current catalog gain the required browser scope', () => {
+	const candidate = session().sqa;
+	candidate.scope.attributes = [];
+	candidate.scope.applicableControlIds = candidate.scope.applicableControlIds.filter(controlId => !controlId.startsWith('SQA-WEB-'));
+	const migrated = normalizePendingSqaState(candidate);
+	assert.deepEqual(migrated.scope.attributes, SQA_BROWSER_REVIEW_ATTRIBUTES);
+	assert.deepEqual(
+		migrated.scope.applicableControlIds.filter(controlId => SQA_TECHNICAL_CONTROL_IDS.includes(controlId)),
+		SQA_TECHNICAL_CONTROL_IDS
+	);
 });
 
 test('agent cannot manufacture documentary evidence and finalization remains conservative', async () => {

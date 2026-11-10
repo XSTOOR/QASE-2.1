@@ -315,6 +315,8 @@ export function createSession(title = 'New test run', options = {}) {
 		/** Selected standard QA test ids; undefined = full coverage. */
 		selectedTests: options.selectedTests ? [...options.selectedTests] : undefined,
 		qaExecutionMode: options.qaExecutionMode === 'hybrid' ? 'hybrid' : undefined,
+		// Execution contracts are pinned at creation; saved runs keep theirs.
+		qaDiscoveryVersion: options.qaExecutionMode === 'hybrid' ? 1 : undefined,
 		/** Security testing authorization for runs with security checks. */
 		securityAuthorization: options.securityAuthorization
 			? structuredClone(options.securityAuthorization)
@@ -382,6 +384,8 @@ export function listSessions({ limit = 100, ownerUserId, unbounded = false } = {
 				scenarioExecuted: session.hybrid.scenarios?.filter(item => ['passed', 'failed'].includes(item.status)).length || 0 } : {}),
 			messageCount: session.messages.length,
 			...(session.report?.verdict ? { reportVerdict: session.report.verdict } : {}),
+			...(session.mode === 'sqa' && session.sqa?.assessment?.verdict ? { sqaVerdict: session.sqa.assessment.verdict } : {}),
+			...(session.qaExecutionMode === 'hybrid' && session.report?.notCovered?.length ? { coverageIncomplete: true } : {}),
 			// Plan progress for the sidebar card — derived, never stored.
 			todoTotal: Array.isArray(session.todos) ? session.todos.length : 0,
 			todoCompleted: Array.isArray(session.todos)
@@ -412,6 +416,7 @@ export function deleteSession(id, ownerUserId) {
 	const session = sessions.get(id);
 	if (!session || (ownerUserId && session.ownerUserId !== ownerUserId)) return false;
 	const record = live.get(id);
+	if (record) record.userStopRequested = true;
 	record?.controller?.abort();
 	record?.dispose?.();
 	live.delete(id);
@@ -603,7 +608,7 @@ export function updateActivity(session, id, patch) {
 	return entry;
 }
 
-export function setStatus(session, status, detail) {
+export function setStatus(session, status, detail, { durable = false } = {}) {
 	// #17932: server-authoritative lifecycle. Invalid transitions (notably
 	// any move out of a terminal state except an explicit resume) are
 	// rejected and logged instead of silently overwriting the run's history.
@@ -628,7 +633,7 @@ export function setStatus(session, status, detail) {
 	if (session.completedAt !== undefined && typeof session.runCompletedAt !== 'number') {
 		session.runCompletedAt = session.completedAt;
 	}
-	emit(session, 'status', { status, detail, timing: timingForEvent(session) });
+	emit(session, 'status', { status, detail, timing: timingForEvent(session) }, { durable });
 }
 
 /**
@@ -762,18 +767,45 @@ export function activeDurationSeconds(session, now = Date.now()) {
  * single-tenant project context of this instance.
  */
 export function loadFounderProjectState() {
+	return readFounderProjectState(founderProjectStatePaths().founderProjectStateFile);
+}
+
+function readFounderProjectState(file) {
 	try {
-		const { founderProjectStateFile } = founderProjectStatePaths();
-		const raw = JSON.parse(fs.readFileSync(founderProjectStateFile, 'utf8'));
-		return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : undefined;
-	} catch {
-		return undefined;
+		const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+		if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('Invalid saved Founder state.');
+		return raw;
+	} catch (error) {
+		if (error.code === 'ENOENT') return undefined;
+		throw error;
 	}
 }
 
 export function writeFounderProjectState(state) {
-	const { stateDir, founderProjectStateFile } = founderProjectStatePaths();
-	fs.mkdirSync(stateDir, { recursive: true });
-	fs.writeFileSync(founderProjectStateFile, JSON.stringify(state));
+	return replaceFounderProjectState(founderProjectStatePaths().founderProjectStateFile, state);
+}
+
+function replaceFounderProjectState(file, state) {
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	const temporary = `${file}.${randomUUID()}.tmp`;
+	try {
+		fs.writeFileSync(temporary, JSON.stringify(state), { mode: 0o600, flag: 'wx' });
+		fs.renameSync(temporary, file);
+	} catch (error) {
+		try { fs.unlinkSync(temporary); } catch { /* The committed state remains intact. */ }
+		throw error;
+	}
 	return state;
+}
+
+const founderStateWrites = new Map();
+export function updateFounderProjectState(work) {
+	const file = founderProjectStatePaths().founderProjectStateFile;
+	const next = (founderStateWrites.get(file) ?? Promise.resolve()).then(async () => {
+		const state = await work(readFounderProjectState(file));
+		return replaceFounderProjectState(file, state);
+	});
+	const tail = next.catch(() => {}); founderStateWrites.set(file, tail);
+	void tail.finally(() => { if (founderStateWrites.get(file) === tail) founderStateWrites.delete(file); });
+	return next;
 }

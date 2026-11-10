@@ -37,11 +37,12 @@ const SECRET_KEY_PATTERN = /pass(word)?|secret|token|credential|api[-_]?key|priv
  *  fields, but the handoff boundary scrubs any key that even looks like a
  *  secret so nothing sensitive can cross into the delivery payload. */
 function scrubSecrets(value) {
+	if (Array.isArray(value)) return value.map(scrubSecrets);
 	if (!plainObject(value)) return value;
 	const cleaned = {};
 	for (const [key, entry] of Object.entries(value)) {
 		if (SECRET_KEY_PATTERN.test(key)) continue;
-		cleaned[key] = plainObject(entry) ? scrubSecrets(entry) : entry;
+		cleaned[key] = scrubSecrets(entry);
 	}
 	return cleaned;
 }

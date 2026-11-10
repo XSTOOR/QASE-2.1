@@ -7,6 +7,15 @@ const chrome = { envId: 'desktop-chrome', browser: 'Chrome', browserVersion: '15
 const config = { hybridQa: { available: true } };
 const input = () => ({ fetchState: 'ready', mode: 'hybrid', config, configurations: [chrome], envIds: [chrome.envId] });
 
+test('expired qualification offers renewal and running checks block launch without losing the browser selection',()=>{
+ const selection=input();
+ const expired=qaBrowserStatus({...selection,config:{hybridQa:{status:'qualification_expired',available:false}}});
+ assert.equal(expired.action,'config');assert.equal(expired.actionLabel,'Check model compatibility');assert.doesNotMatch(expired.detail,/Existing QA/);
+ const checking=qaBrowserStatus({...selection,qualificationChecking:true,config:{hybridQa:{status:'qualification_running',available:false}}});
+ assert.equal(checking.state,'loading');assert.match(checking.detail,/selected checks are kept/);assert.deepEqual(selection.envIds,[chrome.envId]);
+ assert.equal(qaBrowserStatus({...selection,config:{hybridQa:{status:'qualification_running',available:false}}}).actionLabel,'Check progress');
+});
+
 test('compact engine metadata validates the selected browser and gives an honest visible summary', () => {
   const model = qaBrowserStatus(input());
   assert.equal(model.state, 'ready'); assert.equal(model.title, 'Chrome 151');

@@ -6,6 +6,7 @@ const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf
 const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const serverApp = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
 const founderView = readFileSync(new URL('../public/founderView.js', import.meta.url), 'utf8');
+const founderActions = readFileSync(new URL('../public/founderActions.js', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
 
 test('feature dock exposes one accessible launcher per mode outside the working panels', () => {
@@ -31,12 +32,17 @@ test('Founder launcher matches the authenticated API input contract and limits',
 		['founder-target-environment', 100],
 		['founder-target-url', 8192],
 		['founder-primary-goal', 1000],
+		['founder-stage', 200],
+		['founder-business-model', 500],
+		['founder-target-customer', 1000],
 		['founder-constraints', 2000]
 	]) assert.match(html, new RegExp(`id="${id}"[^>]+maxlength="${maximum}"`));
 	assert.match(html, /id="founder-target-url"[^>]+type="url"[^>]+required/);
 	assert.match(html, /id="founder-authorization"[^>]+type="checkbox"[^>]+required/);
-	// Business context the model can infer from the URL is no longer asked for.
-	assert.doesNotMatch(html, /id="founder-(?:stage|business-model|target-customer|competitors)"/);
+	assert.match(html, /id="founder-access"[^>]+aria-describedby="founder-access-help"/);
+	assert.match(html, /id="founder-context-mode"[^>]+aria-describedby="founder-context-help"/);
+	assert.match(html, /id="founder-business-fields" hidden/);
+	assert.match(html, /id="founder-launch-status"[^>]+role="status"[^>]+aria-live="polite"/);
 	assert.match(html, /id="founder-catalog-meta"[^>]+aria-live="polite"/);
 	assert.match(html, /id="tab-founder"[^>]+role="tab"[^>]+aria-controls="pane-founder"[^>]+hidden/);
 	assert.match(html, /id="pane-founder"[^>]+role="tabpanel"[^>]+aria-labelledby="tab-founder"/);
@@ -118,13 +124,13 @@ test('Phase 4 — selection controls gate an explicit send; selection alone neve
 	assert.match(founderView, /send\.dataset\.role = 'send-to-studio'/);
 	assert.match(founderView, /send\.disabled = selections\.size === 0 \|\| pending/);
 	assert.match(founderView, /const pending = handoff\?\.status === 'pending'/);
-	assert.match(founderView, /send\.onclick = \(\) => onSendToStudio\?\.\(\[\.\.\.selections\]\)/);
+	assert.match(founderView, /send\.onclick = \(\) => \{[^\n]*onSendToStudio\?/);
 	// checkbox toggle only persists selections — no send on change
-	assert.match(founderView, /box\.onchange = \(\) => onToggleSelection\?\.\(item\.id, box\.checked\)/);
+	assert.match(founderView, /box\.onchange\s*=\s*\(\)\s*=>\s*selectionAction\(\(\)=>onToggleSelection\?\.\(item\.id,box\.checked\)\)/);
 	assert.match(app, /onToggleSelection: founderToggleSelection/);
 	assert.match(app, /onSendToStudio: founderSendToStudio/);
-	assert.match(app, /body: JSON\.stringify\(\{ selectedRecommendationIds: ids \}\)/);
-	assert.match(app, /if \(state\.founderProjectState\?\.handoff\?\.status === 'pending'\) return;/);
+	assert.match(founderActions, /reviewKey: entry\.state\.reviewKey, expectedRevision: entry\.state\.revision/);
+	assert.match(founderActions, /entry\.sending/);
 });
 
 test('Phase 4 — honest handoff states: pending, succeeded with reference, failed keeps selections, unavailable fallback', () => {
@@ -135,10 +141,10 @@ test('Phase 4 — honest handoff states: pending, succeeded with reference, fail
 	assert.match(founderView, /handoff\.status === 'failed'/);
 	assert.match(founderView, /handoff\.status === 'unavailable'/);
 	assert.match(founderView, /Reference: \$\{handoff\.reference\}/);
-	assert.match(founderView, /'Copy handoff payload'/);
-	assert.match(founderView, /'Download payload'/);
+	assert.match(founderView, /'Copy requirements'/);
+	assert.match(founderView, /'Download requirements'/);
 	assert.match(app, /onExportHandoff: founderExportHandoff/);
-	assert.match(app, /No build was started/);
+	assert.match(founderActions, /No build was started/);
 });
 
 test('Phase 5 — no supported recommendations renders a distinct actionable empty state', () => {

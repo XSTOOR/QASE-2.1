@@ -9,15 +9,51 @@ Production deployment targets `https://qase.drytis.com`. Never deploy the
 parent workspace or copy developer `.qase` state into production.
 
 This release adds hybrid QA (Opus reasoning, JEV classification, one CleanSlate
-loop) and UI `20261027-6`. Production activation requires gateway qualification
+loop), discovery-gated Founder/SQA workflows, the reviewed SQA evidence workflow
+and UI `20261110-1`. The SQA device picker returns directly to the review
+form with the selected device and browser. Founder setup records public/signed-in scope and business
+context choices before browser work, checks the selected device, and collects
+test-account credentials through the existing vault when supported. See
+[Founder setup](docs/founder-setup-2026-11-07.md) for behavior and qualification.
+New configured-provider Founder reviews save bounded report sections and publish
+only their complete validated revision. See [Founder report completion](docs/founder-report-completion-2026-11-07.md)
+for compatibility, local qualification and remaining release checks.
+Founder progress now distinguishes investigation, review areas, report writing
+and publication, and offers guarded continuation from saved work. See
+[Founder progress and recovery](docs/founder-progress-recovery-2026-11-07.md).
+Fresh configured-provider reviews retain distinct check outcomes and draft small
+section groups through individual durable writes. See
+[Founder live qualification](docs/founder-live-qualification-2026-11-07.md).
+Founder reports now support owned browser-receipt inspection, visible assumptions,
+section navigation and retained reading position. See
+[Founder report reader](docs/founder-report-usability-2026-11-08.md).
+Recommendation selections now bind to the exact owned report with conflict
+checks and atomic persistence. Studio handoffs show immediate delivery state,
+retain stable retry keys and offer copy/download fallback. See
+[Founder actions](docs/founder-actions-2026-11-08.md).
+The export-only release requires PostgreSQL migration 044 and exact-commit
+Linux/container qualification before promotion. See
+[Founder/SQA release gates](docs/founder-sqa-release-2026-11-08.md).
+SQA now completes
+and records each browser workflow before compacting its model context, reducing
+repeated input while preserving the fixed safety limit. Production activation requires gateway qualification
 on the execution host and an explicit opt-in; see [DEPLOYMENT_PROMPT.md](DEPLOYMENT_PROMPT.md).
-New hybrid runs retain progress when access, requirements or more budget are
-needed. Answer the on-screen question to continue; an additional budget requires
-approval of its displayed limits. Publishing incomplete coverage also requires
-an explicit choice. Existing saved reports are not reopened or relabeled.
+New hybrid runs test automatically using the supplied context. Budget and generic
+coverage questions do not interrupt new runs. Secure access may still need your
+input; unsupported requirements remain honest report limitations. The operator's
+fixed lifetime limits and exact usage accounting stay in force. Existing saved
+runs retain their selected policy and reports.
 
-Existing PostgreSQL installations need migrations 041/042 before using hybrid
-state and partial QA reports.
+SQA and Founder also have opt-in qualified Opus/JEV execution through the same
+installed SDK, with discovery, evidence-linked workflows and independent mode
+completion gates. `QASE_SQA_REASONING_ENABLED` and
+`QASE_FOUNDER_REASONING_ENABLED` remain false by default; existing runs retain
+their selected strategy. These paths are not automatically approved for
+production. Read the [current integration and qualification report](docs/sqa-founder-hybrid-integration-2026-11-05.md)
+for actual live results, public-only boundaries and remaining release gates.
+
+Existing PostgreSQL installations need the reviewed migrations through 043
+before using the current actor visibility, hybrid state and partial QA reports.
 
 After reviewed source edits, regenerate `SOURCE_MANIFEST.json` with
 `npm run release:manifest`, then run `npm run release:verify`. Docker verifies
@@ -138,6 +174,10 @@ The cursor and the highlight box are drawn over the video feed, not injected
 into the page under test, so watching a run never changes what is being tested.
 
 ## SQA assessments
+
+Run `npm run test:sqa-release` for isolated SQA contracts and Chromium/Firefox/
+WebKit browser acceptance without model calls. Setup, CI and deployment checks
+are documented in [SQA release readiness](docs/sqa-release-readiness.md).
 
 Choose **SQA assessment** to create a separately scoped software-quality run.
 Qase resolves a versioned, standards-informed control set, drives the existing
@@ -317,6 +357,8 @@ Everything below has a sensible default; set them in `.env` only if you need to.
 | `QASE_FRAME_INTERVAL_MS` | `320` | Live view frame interval |
 | `QASE_FRAME_QUALITY` | `55` | Live view JPEG quality |
 | `QASE_BROWSER_IDLE_MS` | `0` | Close a session's browser after this long idle. `0` keeps it open for the whole session. Cookies and the current page are restored either way. |
+| `QASE_MODEL_ACTIVITY_TIMEOUT_MS` | `180000` | Abort and retry a model stream that produces no text, reasoning, usage, or tool activity within this bounded interval. |
+| `QASE_MODEL_TIMEOUT_RETRIES` | `2` | Automatic retries after a model inactivity timeout or eligible SQA/Founder transport interruption. |
 | `QASE_BROWSER_ALLOWED_ORIGINS` | unset | Comma-separated trusted HTTP(S) origins (or `https://*.example.com`) that may receive top-level navigation outside the declared target origin |
 | `QASE_BROWSER_ALLOWED_PRIVATE_HOSTS` | unset | Explicit private-network host exceptions for reviewed internal production targets; exact hosts or `*.example.com` only |
 | `QASE_ALLOW_PRIVATE_NETWORK` | unset | Development-only explicit opt-out from private-network guards for local browser targets and model probes; ignored outside `NODE_ENV=development` |

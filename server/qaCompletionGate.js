@@ -1,5 +1,9 @@
 import { digestEvidence, diagnosticFailures } from './qaScenarioLedger.js';
 import { hybridRoutePolicy } from './hybridRoutePolicy.js';
+import { remainingHybridWork } from './qaExecutionState.js';
+import {scenarioExecutionAccount} from './qaExecutionState.js';
+import {qaScenarioSchedule,explicitQaCloseout} from './qaScenarioScheduler.js';
+import { requireApplicationDiscovery } from './qaApplicationDiscovery.js';
 
 export function validateHybridFinding(session, input) {
   const state = session.hybrid;
@@ -20,9 +24,30 @@ export function validateHybridFinding(session, input) {
     if (!first?.success || first.runId !== session.id || first.digest !== digestEvidence(first.result) || first.id === evidence.id || first.actionId === evidence.actionId) throw new Error('Distinct intact reproduction evidence is required.');
     if (assertion.authority === 'host_diagnostic' && (first.toolName !== 'browser_diagnostics' || evidence.toolName !== 'browser_diagnostics' || JSON.stringify(diagnosticFailures(first.result, first.url || session.targetUrl)) !== assertion.actual || JSON.stringify(diagnosticFailures(evidence.result, evidence.url || session.targetUrl)) !== assertion.actual)) throw new Error('Diagnostic reproduction does not match recorded exceptions.');
   }
-  return { scenarioId: scenario.id, assertionId: assertion.id, failureKey: digestEvidence([scenario.id, assertion.name, assertion.expected, assertion.actual]), evidenceRefs: [...new Set([evidence.id, assertion.reproduction.firstEvidenceRef].filter(Boolean))],
-    expected: assertion.expected, actual: String(assertion.actual), url: assertion.check === 'broken_links' && evidence.result.destination ? evidence.result.destination : evidence.url || session.targetUrl,
+  const url=assertion.check === 'broken_links' && evidence.result.destination ? evidence.result.destination : evidence.url || session.targetUrl;
+  return { scenarioId: scenario.id, assertionId: assertion.id, failureKey: digestEvidence([scenario.id, url, assertion.name, assertion.expected, assertion.actual]), evidenceRefs: [...new Set([evidence.id, assertion.reproduction.firstEvidenceRef].filter(Boolean))],
+    expected: assertion.expected, actual: String(assertion.actual), url,
     evidence: `Host assertion ${assertion.id}; scenario ${scenario.id}; action ${action.id}; evidence ${evidence.id}; reproduction ${JSON.stringify(assertion.reproduction)}` };
+}
+
+/** Reproduced fixed-oracle failures cannot disappear merely because Opus
+ * forgot report_finding. Group by category/surface so one consolidated finding
+ * can cite multiple viewport/control failures without inflating the bug count. */
+export function hybridUnreportedFindings(session) {
+  const groups=new Map(),reported=new Set();
+  const key=(scenarioId,url)=>JSON.stringify([session.hybrid.scenarios.find(s=>s.id===scenarioId)?.category,url]);
+  for(const finding of session.findings||[])if(finding.hybridEvidence){
+    try{const value=validateHybridFinding(session,{scenario_id:finding.hybridEvidence.scenarioId,assertion_id:finding.hybridEvidence.assertionId});reported.add(key(value.scenarioId,value.url));}catch{/* Invalid/stale findings cannot cover current evidence. */}
+  }
+  for(const scenario of session.hybrid.scenarios)for(const assertion of scenario.assertions){
+    if(assertion.outcome!=='fail'||!assertion.reproduction?.confirmed)continue;
+    let value;try{value=validateHybridFinding(session,{scenario_id:scenario.id,assertion_id:assertion.id});}catch{continue;}
+    const groupKey=key(scenario.id,value.url);if(reported.has(groupKey))continue;
+    const group=groups.get(groupKey);
+    if(group){group.failedAssertions++;continue;}
+    groups.set(groupKey,{scenarioId:scenario.id,category:scenario.category,assertionId:assertion.id,name:assertion.name,url:value.url,evidenceRefs:value.evidenceRefs,failedAssertions:1});
+  }
+  return [...groups.values()];
 }
 
 export function hybridCompletion(session) {
@@ -50,6 +75,10 @@ export function hybridCompletion(session) {
   const unresolved = state.observations.filter(item => item.status !== 'confirmed');
   if (unresolved.length) gaps.push(`${unresolved.length} observations remain unresolved.`);
   if (state.degradedClassification) gaps.push('Classification degraded: JEV could not classify all eligible observations.');
+  if (state.authentication?.status === 'access_observed') gaps.push('Platform access was observed after an authorized sign-in; this permits continued testing but is not an independently verified authentication assertion.');
+  const writeTrials = state.writeAuthorization?.trials || [];
+  if (writeTrials.some(trial => trial.status === 'uncertain' || trial.status === 'dispatched')) gaps.push('A test-write outcome remains uncertain. It was not replayed and is not a passing workflow.');
+  if (writeTrials.some(trial => trial.status === 'responded')) gaps.push('Namespaced test records were submitted with owner authorization. Verify business outcomes and remove retained test records; HTTP acknowledgment is not proof of a completed workflow.');
   const routes = state.exploration?.routes || [];
   const depth = hybridRoutePolicy(state);
   if (depth.stopReason === 'budget_closeout' && depth.depthPending) gaps.push(`Budget closeout ended route exploration at ${depth.attempted}/${depth.target} attempted pages; ${depth.pending} observed routes remain pending. The depth target is unmet, not a publication prerequisite during closeout.`);
@@ -68,6 +97,7 @@ export function hybridCompletion(session) {
     if (item.category === 'authentication' || item.category.startsWith('security_')) gaps.push(`${item.category}: an authorized positive/negative workflow is not established by public browser observations.`);
   }
   if (state.pauseReason) gaps.push(state.pauseReason);
+  if(state.recovery?.verificationRequired)gaps.push('The browser checkpoint still requires state verification; no further execution was inferred.');
   if (state.actions.some(item => item.status === 'running' || item.status === 'uncertain')) gaps.push('Interrupted action requires state verification and a new scenario decision.');
   const findings = (session.findings || []).filter(item => item.hybridEvidence);
   const executed = counts.passed + counts.failed;
@@ -75,21 +105,31 @@ export function hybridCompletion(session) {
   const observedAssertions = state.scenarios.some(item => item.assertions.length && item.executedActionIds.length);
   const verdict = !executed && !observedAssertions ? 'blocked' : findings.some(item => ['critical', 'high'].includes(item.severity)) ? 'fail' : gaps.length ? 'partial' : findings.length ? 'pass_with_issues' : 'pass';
   const assertions = state.scenarios.flatMap(item => item.assertions);
-  return { version: 1, counts, verdict, confirmedDefects: findings.length, unresolved: unresolved.length,
+  const schedule=qaScenarioSchedule(session,scenarioExecutionAccount);
+  return { version: 1, counts, verdict, accountability:{total:schedule.total,accounted:schedule.accounted,attempted:schedule.attempted,pending:schedule.unresolved.length}, confirmedDefects: findings.length, unresolved: unresolved.length,
     unresolvedObservations: unresolved.slice(0, 20).map(({ id, kind, title, detail, evidenceRefs }) => ({ id, kind, title, detail, evidenceRefs })),
     passedAssertions: assertions.filter(item => item.outcome === 'pass').length, failedAssertions: assertions.filter(item => item.outcome === 'fail').length,
     covered: state.scenarios.filter(item => item.assertions.length && item.executedActionIds.length).map(item => `${item.category}: ${item.status}. Executed assertions: ${[...new Set(item.assertions.map(assertion => assertion.name))].join('; ')}`),
     gaps: [...new Set(gaps)], coverage: state.scenarios.length ? completeCoverage / state.scenarios.length : 0,
-    summary: `Hybrid QA executed ${executed}/${state.scenarios.length} scenarios; ${counts.passed} passed, ${counts.failed} failed, ${counts.blocked} blocked, ${counts.inconclusive} inconclusive. ${findings.length} confirmed defects and ${unresolved.length} unresolved observations. Coverage is limited to the recorded scenarios.` };
+    summary: `Hybrid QA attempted ${schedule.attempted}/${state.scenarios.length} scenarios; ${schedule.accounted}/${state.scenarios.length} have accountable dispositions and ${completeCoverage}/${state.scenarios.length} have conclusive category coverage. ${counts.passed} passed, ${counts.failed} failed, ${counts.blocked} blocked, ${counts.inconclusive} inconclusive, ${counts.not_executed} not executed. ${findings.length} confirmed defects and ${unresolved.length} unresolved observations. Coverage is limited to the recorded scenarios.` };
 }
 
 export function validateHybridReport(session, input) {
+  if (session.hybrid.discovery && !session.hybrid.budgetFinalizing && !explicitQaCloseout(session)) requireApplicationDiscovery(session);
+  if(session.hybrid.actions.some(a=>['running','uncertain'].includes(a.status))||session.hybrid.recovery?.verificationRequired&&!explicitQaCloseout(session))throw Object.assign(new Error('Browser/action recovery must be verified before publication. No uncertain operation may be replayed or reported as resolved.'),{code:'HYBRID_RECOVERY_PENDING'});
+  if(Object.values(session.hybrid.modelBudget?.roles||{}).some(role=>role.legacyCalls>0||role.reservations?.some(r=>['pending','uncertain'].includes(r.status))))throw Object.assign(new Error('Exact model usage must be reconciled before publication.'),{code:'HYBRID_USAGE_UNRESOLVED'});
   if (!session.hybrid.budgetFinalizing && needsHybridAuthQuestion(session)) throw Object.assign(new Error('Ask the user for secure test-account access or a public-only decision before finalizing requested authenticated scope.'), { code: 'HYBRID_AUTH_QUESTION_REQUIRED' });
   const result = hybridCompletion(session);
   if (['pass', 'pass_with_issues'].includes(input.verdict) && !['pass', 'pass_with_issues'].includes(result.verdict)) throw new Error('Unsupported pass: the host ledger contains gaps or unresolved evidence.');
   if (result.counts.running || result.counts.planned) throw new Error('Required scenarios still need executed assertions or explicit blocked/inconclusive/not-executed dispositions before publication.');
+  const work = remainingHybridWork(session);
+  const schedule=qaScenarioSchedule(session,scenarioExecutionAccount);
+  if(session.hybrid.exploration?.version===2&&!session.hybrid.budgetFinalizing&&!explicitQaCloseout(session)&&schedule.unresolved.length)throw Object.assign(new Error(`Scenario execution is not accounted for: ${schedule.unresolved.map(s=>s.category+(s.needsInvestigation?' (investigation required)':'')).join(', ')}. Continue the next eligible scenario or checkpoint a verified blocker.`),{code:'HYBRID_EXECUTION_PENDING',schedule});
+  if (session.hybrid.exploration?.version === 2 && !session.hybrid.budgetFinalizing && work.scenarios.length) throw Object.assign(new Error(`Executable checks remain without host execution or absence evidence: ${work.scenarios.map(item => item.category).join(', ')}. Activate and execute the matching scenario before publication.`), { code: 'HYBRID_EXECUTION_PENDING' });
+  const unreported=hybridUnreportedFindings(session);
+  if(session.hybrid.scheduler&&!explicitQaCloseout(session)&&unreported.length)throw Object.assign(new Error(`File the reproduced host failure groups before publication: ${JSON.stringify(unreported)}. Use report_finding with the listed scenario_id/assertion_id (scenarioId/assertionId). Model text is not a finding record.`),{code:'HYBRID_UNREPORTED_FINDINGS'});
   const depth = hybridRoutePolicy(session.hybrid);
-  if (!session.testCaseSnapshot && depth.target > 1 && !depth.publicationAllowed) throw Object.assign(new Error(`The observed-route depth contract requires ${depth.target} attempted pages before publication (${depth.attempted} attempted; ${depth.remainingSlots} slots remain). Use qa_test_routes with up to ${depth.nextBatchSize} pending route IDs. During host budget closeout the depth shortfall becomes a coverage gap, not a publication blocker.`), { code: 'HYBRID_DEPTH_PENDING', coverage: depth });
+  if (!session.testCaseSnapshot && !depth.publicationAllowed) throw Object.assign(new Error(`The observed-route depth contract requires ${depth.target} attempted pages before publication (${depth.attempted} attempted; ${depth.remainingSlots} slots remain). Use qa_test_routes with up to ${depth.nextBatchSize} pending route IDs. During host budget closeout the depth shortfall becomes a coverage gap, not a publication blocker.`), { code: 'HYBRID_DEPTH_PENDING', coverage: depth });
   if (session.hybrid.continuationPolicyVersion === 1 && result.gaps.length && !session.hybrid.partialReportApproved) throw Object.assign(new Error('Testing has coverage gaps. A host user decision is required before publishing an incomplete report.'), { code: 'HYBRID_COMPLETION_DECISION_REQUIRED' });
   return { ...input, verdict: result.verdict, summary: result.summary, covered: result.covered, not_covered: result.gaps,
     hybridEvidence: result };

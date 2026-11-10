@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { guardFinalization } from './finalizationGuard.js';
 import { redact } from './secrets.js';
 import { isEngineId } from './browserEngines.js';
 import { verifyRuntimeIdentity } from './runtimeIdentity.js';
 import { validateHybridFinding, validateHybridReport } from './qaCompletionGate.js';
 import { publicHybridState } from './hybridQaRuntime.js';
+import {modeDiscoveryRequired,validateModeFinding} from './modeDiscovery.js';
 
 /**
  * The two tools the SDK's registry does not ship, because they are specific to
@@ -123,6 +125,7 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 		parametersSchema: {
 			type: 'object',
 			properties: {
+				...(modeDiscoveryRequired(session)?{mode_evidence_id:{type:'string',description:'Intact receipt ID containing the actual failed host assertion.'},assertion_name:{type:'string',description:'Exact failed assertion name in that receipt.'}}:{}),
 				...(session.qaExecutionMode === 'hybrid' ? { scenario_id: { type: 'string' }, assertion_id: { type: 'string' } } : {}),
 				title: { type: 'string', description: 'One line naming the defect, written from the user\'s point of view.' },
 				severity: { type: 'string', enum: SEVERITIES, description: 'User impact: critical blocks the core flow, high breaks an important flow, medium is a real but survivable defect, low is polish, info is an observation.' },
@@ -132,16 +135,30 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 				steps: { type: 'array', items: { type: 'string' }, description: 'The exact steps to reproduce, in order.' },
 				expected: { type: 'string', description: 'What should have happened.' },
 				actual: { type: 'string', description: 'What actually happened.' },
-				evidence: { type: 'string', description: 'Supporting detail: a console error, a status code, the text of an error message.' }
+				evidence: { type: 'string', description: 'Supporting detail: a console error, a status code, the text of an error message.' },
+				control_ids: {
+					type: 'array', maxItems: 12, items: { type: 'string' },
+					description: 'SQA mode only: every scoped control whose objective this confirmed defect disproves. Required for SQA findings; each linked control must be recorded as fail.'
+				}
 			},
 			required: ['title', 'severity', 'expected', 'actual']
 		},
 		async run(input) {
 			let hybridEvidence;
+			if(modeDiscoveryRequired(session)){
+				try{const binding=validateModeFinding(session,input||{});const existing=session.findings.find(f=>f.evidence===binding.evidence);if(existing)return {success:true,finding_id:existing.id,total_findings:session.findings.length};input={...input,...binding};}
+				catch(error){return {success:false,error:error.message};}
+			}
 			if (session.qaExecutionMode === 'hybrid') {
 				try { hybridEvidence = validateHybridFinding(session, input || {}); }
 				catch (error) { return { success: false, error: error.message }; }
-				const existing = session.findings.find(item => item.hybridEvidence?.assertionId === hybridEvidence.assertionId || item.hybridEvidence?.failureKey === hybridEvidence.failureKey);
+				const existing = session.findings.find(item => {
+					if(item.hybridEvidence?.assertionId === hybridEvidence.assertionId || item.hybridEvidence?.failureKey === hybridEvidence.failureKey)return true;
+					// Old checkpoints used a key without the surface URL. Recompute
+					// from intact evidence rather than discarding or duplicating them.
+					if(!item.hybridEvidence)return false;
+					try{return validateHybridFinding(session,{scenario_id:item.hybridEvidence.scenarioId,assertion_id:item.hybridEvidence.assertionId}).failureKey===hybridEvidence.failureKey;}catch{return false;}
+				});
 				if (existing) return { success: true, finding_id: existing.id, total_findings: session.findings.length };
 				input = { ...input, expected: hybridEvidence.expected, actual: hybridEvidence.actual, url: hybridEvidence.url, evidence: hybridEvidence.evidence };
 			}
@@ -150,6 +167,18 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 			}
 			if (!SEVERITIES.includes(input.severity)) {
 				return { success: false, error: 'report_finding requires a valid severity: critical, high, medium, low, or info.' };
+			}
+			let controlIds;
+			if (session.mode === 'sqa') {
+				if (!Array.isArray(input.control_ids) || input.control_ids.length === 0 || input.control_ids.length > 12) {
+					return { success: false, error: 'SQA report_finding requires 1-12 scoped control_ids whose objective the defect disproves.' };
+				}
+				controlIds = [...new Set(input.control_ids)];
+				if (controlIds.length !== input.control_ids.length || controlIds.some(controlId => (
+					typeof controlId !== 'string' || !session.sqa?.scope?.applicableControlIds?.includes(controlId)
+				))) {
+					return { success: false, error: 'SQA finding control_ids must be unique control IDs in this assessment scope.' };
+				}
 			}
 			const severity = input.severity;
 			const findingTs = Date.now();
@@ -164,6 +193,7 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 				expected: boundedText(input.expected, 20_000),
 				actual: boundedText(input.actual, 20_000),
 				evidence: input.evidence ? boundedText(input.evidence, 20_000) : undefined,
+				...(controlIds ? { controlIds } : {}),
 				engine: isEngineId(input.engine) ? input.engine : (isEngineId(session.engine) ? session.engine : undefined),
 				// Every tracked bug starts open; the user moves it through the
 				// lifecycle from the Bugs view.
@@ -196,6 +226,7 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 				success: true,
 				finding_id: finding.id,
 				recorded: `${severity.toUpperCase()}: ${finding.title}`,
+				...(controlIds ? { control_ids: controlIds } : {}),
 				total_findings: session.findings.length
 			};
 		}
@@ -248,7 +279,7 @@ const finishReport = {
 			}
 			if (session.qaExecutionMode === 'hybrid') {
 				try { input = validateHybridReport(session, input); }
-				catch (error) { return { success: false, error: error.message, ...(error.code === 'HYBRID_DEPTH_PENDING' ? { code: error.code, coverage: error.coverage } : {}) }; }
+				catch (error) { return { success: false, error: error.message, ...(String(error.code||'').startsWith('HYBRID_')?{code:error.code}:{}), ...(error.code === 'HYBRID_DEPTH_PENDING' ? { coverage: error.coverage } : {}) }; }
 			}
 			for (const field of ['covered', 'not_covered', 'recommendations']) {
 				if (input[field] !== undefined && (!Array.isArray(input[field]) || !input[field].every(hasText))) {
@@ -427,5 +458,5 @@ const finishReport = {
 		}
 	};
 
-	return [reportFinding, finishReport];
+	return [reportFinding, guardFinalization(finishReport, session, { isCancelled })];
 }

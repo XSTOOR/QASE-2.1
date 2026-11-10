@@ -125,12 +125,15 @@ const publicTests = filesUnder(path.join(root, 'public'), new Set(['.js']))
 	.filter(filePath => filePath.endsWith('.test.js'))
 	.sort();
 
-const testRun = spawnSync(process.execPath, ['--test', '--test-concurrency=2', ...tests, ...publicTests], {
+// Relative paths keep the complete test inventory below Windows' command-line
+// length limit, including when verifying an extracted candidate in a deep path.
+const testRun = spawnSync(process.execPath, ['--test', '--test-concurrency=2', ...tests.map(relative), ...publicTests.map(relative)], {
 	cwd: root,
 	stdio: 'inherit'
 });
 
 if (testRun.status !== 0) {
+	if (testRun.error) console.error(`Test runner could not start: ${testRun.error.code ?? testRun.error.message}`);
 	process.exit(testRun.status ?? 1);
 }
 

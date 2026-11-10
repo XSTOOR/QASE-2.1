@@ -1,5 +1,27 @@
 /* Qase — Drytis Studio design language (light-first) */
 
+.modal.sqa-evidence-dialog, .cli-theme .modal.sqa-evidence-dialog { width: min(760px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; padding: 20px; box-sizing: border-box; color: var(--text); background: var(--panel-chat); }
+.sqa-evidence-inspector { display: grid; gap: 12px; padding-top: 12px; overflow-wrap: anywhere; }
+.sqa-evidence-inspector h2, .sqa-evidence-inspector h3, .sqa-evidence-inspector h4, .sqa-evidence-inspector p { margin: 0; }
+.sqa-evidence-inspector dd { margin: 0 0 12px; white-space: pre-wrap; }
+.sqa-evidence-inspector dt { font-weight: 600; }
+.sqa-evidence-inspector pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sqa-evidence-inspector article, .sqa-traceability article { border-top: 1px solid var(--border); padding: 12px 0; }
+.sqa-traceability article { overflow-wrap: anywhere; }
+.sqa-traceability summary { cursor: pointer; }
+
+.sqa-review-panel { display: grid; gap: 12px; }
+.sqa-review-panel h3, .sqa-review-panel h4, .sqa-review-panel p { margin: 0; }
+.sqa-review-form, .sqa-review-evidence { display: grid; gap: 12px; }
+.sqa-review-form { border-top: 1px solid var(--border); padding-top: 16px; }
+.sqa-review-field { display: grid; gap: 6px; min-width: 0; font-size: 12px; }
+.sqa-review-field input, .sqa-review-field select, .sqa-review-field textarea { width: 100%; min-width: 0; box-sizing: border-box; padding: 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel-chat); font: inherit; }
+.sqa-review-field textarea { min-height: 76px; resize: vertical; }
+.sqa-review-evidence fieldset { min-width: 0; display: grid; gap: 10px; border: 1px solid var(--border); padding: 12px; }
+.sqa-review-panel details > div { display: grid; gap: 10px; padding-top: 10px; }
+.sqa-review-version { display: flex; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--border); padding: 10px 0; overflow-wrap: anywhere; }
+.sqa-review-version p { flex-basis: 100%; }
+
 :root {
   color-scheme: light dark;
   --bg: #07090d;
@@ -4013,6 +4035,31 @@ padding: 8px 11px;
   gap: 12px;
 }
 
+.founder-modal .field select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  background: var(--panel-chat);
+  font: inherit;
+}
+
+.founder-launch-status {
+  flex: 1 0 100%;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+body.studio-workspace #founder-start .founder-modal-foot { flex-wrap: wrap; gap: 8px; }
+
+#founder-business-fields[hidden] { display: none; }
+
 .founder-intro {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr);
@@ -4057,11 +4104,11 @@ padding: 8px 11px;
 .founder-detected-context {
   margin: 0 0 12px;
   padding: 9px 12px;
-  border: 1px solid #1f4a3a;
+  border: 1px solid var(--border-strong);
   border-radius: 3px;
-  background: rgba(46, 160, 103, 0.08);
-  color: #9ecfaf;
-  font-size: 12.5px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 14px;
   line-height: 1.45;
 }
 
@@ -4207,6 +4254,22 @@ padding: 8px 11px;
 .founder-hero,
 .founder-section,
 .founder-scope,
+.founder-progress { margin: 0 0 12px; padding: 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-chat); color: var(--text); overflow-wrap: anywhere; }
+.founder-progress[hidden] { display: none; }
+.founder-progress h3, .founder-progress p { margin: 0 0 10px; }
+.founder-progress h3 { font-size: 14px; }
+.founder-progress-state { font-size: 13px; font-weight: 600; }
+.founder-progress-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 10px; margin: 14px 0; padding: 0; list-style: none; }
+.founder-progress-steps li { min-width: 0; padding: 0 0 8px; border-bottom: 2px solid var(--border); font-size: 12px; }
+.founder-progress-steps small { display: block; margin-top: 3px; color: var(--text-secondary); font-size: 11px; }
+.founder-progress-steps [aria-current="step"] { border-color: var(--accent); font-weight: 600; }
+.founder-progress-steps [data-status="complete"] { border-color: var(--success); }
+.founder-progress-counts { font-size: 12px; font-variant-numeric: tabular-nums; }
+.founder-progress-detail { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.founder-progress-error { color: var(--danger); font-size: 12px; line-height: 1.5; }
+.founder-progress button { min-height: 44px; max-width: 100%; white-space: normal; touch-action: manipulation; }
+.founder-progress :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
 .founder-pending {
   overflow: hidden;
   border: 1px solid #3f3f46;
@@ -8097,6 +8160,20 @@ background: rgba(47, 91, 234, 0.075);  box-shadow: none;
   gap: 12px;
 }
 
+.sqa-launch-status {
+  flex: 1 1 240px;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 600px) {
+  #sqa-start .modal-foot { flex-wrap: wrap; }
+  .sqa-launch-status { flex-basis: 100%; }
+}
+
 .sqa-intro {
   padding: 14px;
   border: 1px solid rgba(105, 184, 235, 0.2);
@@ -8134,13 +8211,56 @@ background: rgba(47, 91, 234, 0.075);  box-shadow: none;
   font-size: 8.5px;
 }
 
+.sqa-selection-summary {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 680;
+}
+
+.sqa-scope-warning {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(232, 181, 95, 0.3);
+  border-radius: 7px;
+  background: rgba(232, 181, 95, 0.07);
+  color: var(--warning);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.sqa-selection-reasons {
+  display: grid;
+  gap: 3px;
+  margin: 7px 0 0;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1.45;
+  list-style: none;
+}
+
+.sqa-selection-reasons li::before {
+  margin-right: 6px;
+  color: var(--info);
+  content: "✓";
+}
+
 .sqa-catalog-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 11px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface-1);
   color: var(--text-muted);
   font-size: 10px;
+}
+
+.sqa-build-fields {
+  margin-top: 10px;
 }
 
 .sqa-fieldset {
@@ -8392,6 +8512,11 @@ background: rgba(47, 91, 234, 0.075);  box-shadow: none;
   background: rgba(232, 181, 95, 0.045);
 }
 
+.sqa-expanded-confirmation {
+  border-color: rgba(232, 181, 95, 0.3);
+  background: rgba(232, 181, 95, 0.06);
+}
+
 .sqa-scope-guidance {
   padding: 11px 12px;
   border: 1px solid rgba(232, 181, 95, 0.24);
@@ -8525,12 +8650,7 @@ background:var(--panel-chat);  font-family: var(--font-mono);
   font-size: 11px;
 }
 
-.cli-theme .sqa-modal .field textarea:focus {  border-color: rgba(47, 91, 234, 0.5);
-.sqa-modal .field textarea:focus {
-  border-color: rgba(47, 91, 234, 0.5);
-  box-shadow: 0 0 0 2px rgba(47, 91, 234, 0.08);
-}
-
+.sqa-modal .field textarea:focus,
 .cli-theme .sqa-modal .field textarea:focus {
   border-color: rgba(47, 91, 234, 0.5);
   box-shadow: 0 0 0 2px rgba(47, 91, 234, 0.08);

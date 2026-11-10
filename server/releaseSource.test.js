@@ -26,7 +26,10 @@ test('source manifests are deterministic, exclude private root state and detect 
 test('manifest generation refuses nested secrets, symbolic links and noncanonical source instead of rewriting files', t => {
   const f = fixture(t), secret = path.join(f.root, 'public/.env.production');
   fs.writeFileSync(secret, 'PRIVATE=not-for-release'); assert.throws(f.generate, /Private\/generated/); fs.unlinkSync(secret);
-  const link = path.join(f.root, 'public/linked.js'); fs.symlinkSync('../Dockerfile', link);
+  // Directory junctions exercise the same lstat boundary on Windows without
+  // requiring the machine's optional file-symlink privilege.
+  const link = path.join(f.root, 'public/linked.js');
+  fs.symlinkSync(process.platform === 'win32' ? f.root : '../Dockerfile', link, process.platform === 'win32' ? 'junction' : 'file');
   assert.throws(f.generate, /symbolic link/); fs.unlinkSync(link);
   const crlf = path.join(f.root, 'public/crlf.js'); fs.writeFileSync(crlf, 'export const fixture=true;\r\n');
   assert.throws(f.generate, /LF line endings/);

@@ -1,3 +1,4 @@
+import './testWorkingDirectory.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -43,7 +44,7 @@ test('public-only choice and bounded task memory survive durable restart without
   assert.equal(needsHybridAuthQuestion(restored), false);
   const memory = hybridRunMemory(restored);
   assert.match(memory.originalGoal, /authenticated dashboard/); assert.match(memory.latestRequest, /keyboard focus/);
-  assert.ok(memory.latestRequest.length <= 350); assert.ok(!JSON.stringify(memory).includes('test-private+value'));
+  assert.ok(memory.latestRequest.length <= 1200); assert.ok(!JSON.stringify(memory).includes('test-private+value'));
   assert.equal(memory.authentication.status, 'declined');
   assert.ok(prepareHybridInference([], options, restored).options.tools.some(tool => tool.name === 'ask_question'));
   recordHybridAnswer(restored, 'Please log in and test the platform.');

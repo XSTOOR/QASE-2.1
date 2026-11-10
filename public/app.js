@@ -1,4 +1,7 @@
 import { describeSqaLifecycle, groupSqaUnresolvedResults } from './sqaPresentation.js';
+import { renderSqaReviewPanel } from './sqaReviewView.js';
+import { sqaReportModel } from './sqaReportModel.js';
+import { evidenceInspectButton, renderSqaTraceability } from './sqaEvidenceView.js';
 import { previewCollapsed } from './previewLayout.js';
 import { renderProbeIds, hasInteractiveSurface } from './renderHealth.js';
 import { renderMatrixPicker } from './matrixPicker.js';
@@ -9,6 +12,7 @@ import { renderResultsOverview, resultsOverviewModel } from './resultsOverview.j
 import { isCredentialQuestion } from './questionPresentation.js';
 import { buildFindingFixPrompt, buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
 import { createFounderView } from './founderView.js';
+import { createFounderActionController } from './founderActions.js';
 import { followUpSuggestions, buildFollowUpMessage } from './followUp.js';
 import { createBugsView } from './bugsView.js';
 import { QA_SCOPE_OPTIONS, buildQaKickoffMessage } from './qaKickoff.js';
@@ -42,6 +46,8 @@ import { channelFor as channelForClient } from './browserChannels.js';
 import { fallbackOptionsFor, availabilityMeta, describeQueue } from './deviceRuntimeUi.js';
 import { resolveActiveRuntimeEnvironment, viewForSelection } from './activeRuntimeEnvironment.js';
 import { chromeViewModel } from './browserChrome.js';
+import { SQA_REQUIRED_BROWSER_ATTRIBUTES, describeSqaScopeSelection } from './sqaScopeSelection.js';
+import { founderLaunchProblems } from './founderLaunch.js';
 import {
 	lastRunByCase, caseStatus, platformsOf, caseEnvLines,
 	filterCasesForWizard, resolveRunPairs
@@ -59,7 +65,9 @@ import { renderJevExecution } from './jevExecutionView.js';
 import { planPresentation } from './planPresentation.js';
 import { qaPlanProgress, qaExecutionModeLabel, qaLauncherModeLabel, qaLauncherSelectionProblem } from './qaExecutionView.js';
 import { renderHybridQa, hybridLaunchOptions, hybridScenarioProgress, hybridScenarioPlan, hybridAvailabilityMessage, holdPrimaryPreview, viewportStatusText } from './hybridQaView.js';
+import { renderModeReasoning } from './modeReasoningView.js';
 import { focusedBrowserConfiguration, qaBrowserStatus, renderQaBrowserStatus } from './qaBrowserStatus.js';
+import { renewHybridQualification } from './hybridQualification.js';
 
 /**
  * Qase dashboard.
@@ -164,6 +172,7 @@ const el = {
 	sqaView: $('sqa-view'),
 	founderTab: $('tab-founder'),
 	founderView: $('founder-view'),
+	founderProgress: $('founder-progress'),
 	countPlan: $('count-plan'),
 	countFindings: $('count-findings'),
 	countSqa: $('count-sqa'),
@@ -180,6 +189,7 @@ const el = {
 	authSubmit: $('auth-submit'),
 	authSwitch: $('auth-switch'),
 	authError: $('auth-error'),
+	authNotice: $('auth-notice'),
 	authForgotSwitch: $('auth-forgot-switch'),
 	forgotPanel: $('forgot-panel'),
 	forgotForm: $('forgot-form'),
@@ -220,6 +230,8 @@ const state = {
 	session: undefined,
 	config: undefined,
 	stream: undefined,
+	streamConnection: undefined,
+	connectionLostAt: undefined,
 	/** Run IDs with a cancellation request in flight. */
 	stopRequests: new Set(),
 	openFindings: new Set(),
@@ -384,11 +396,25 @@ async function downloadReportPdf(filename) {
 	window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+const founderActions = createFounderActionController({
+	api,
+	getSession: () => state.session?.id === state.sessionId ? state.session : undefined,
+	onChange: () => { state.founderProjectState = founderActions.snapshot().state; founderView.render(); },
+	onExport: async (mode, payload, runId) => {
+		if (!payload) throw new Error('No requirements returned.');
+		const text = JSON.stringify(payload, null, 2);
+		if (mode === 'copy') { await navigator.clipboard.writeText(text); return; }
+		const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+		const save = document.createElement('a'); save.href = url; save.download = `founder-requirements-${runId}.json`;
+		document.body.append(save); save.click(); save.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 0);
+	}
+});
 const founderView = createFounderView({
 	getSession: () => state.session,
 	getCatalog: () => state.founderCatalog,
 	getSessionId: () => state.sessionId,
-	getProjectState: () => state.founderProjectState,
+	getProjectState: () => founderActions.snapshot().state,
+	getActionStatus: founderActions.snapshot,
 	onToggleSelection: founderToggleSelection,
 	onSelectAll: ids => founderSaveSelections(ids),
 	onClearSelection: () => founderSaveSelections([]),
@@ -398,11 +424,19 @@ const founderView = createFounderView({
 	getFeedbackRating: () => state.runRatings.get(state.sessionId)
 		?? (state.feedback.existingLoadedFor === state.sessionId ? state.feedback.existing : undefined),
 	renderReportFeedbackSection,
+	onReloadSelection: () => founderActions.load({ force: true }),
+	onRetrySelection: founderActions.retrySelection,
+	onContinue: founderContinue,
+	onReviewActivity: ()=>{activateDetailTab($('tab-activity'));setWorkspaceView('results');},
+	onAnswer: ()=>{setWorkspaceView('agent');el.questionSlot.scrollIntoView({block:'nearest'});el.questionSlot.querySelector('input, textarea, button')?.focus();},
+	onOpenSettings: ()=>{void openSettings().catch(fail);},
 	elements: {
 		founderView: el.founderView,
+		founderProgress: el.founderProgress,
 		countFounder: el.countFounder,
 		reportView: el.reportView
 	},
+	api,
 	apiText,
 	downloadReportPdf,
 	toast,
@@ -411,103 +445,53 @@ const founderView = createFounderView({
 	humanizeId: humanizeSqaId
 });
 
-/** Founder project-state persistence (Phase 3): load once per founder view,
- *  selections are saved immediately and restore on reopen. */
-async function founderLoadProjectState() {
-	try {
-		const result = await api('/founder/state');
-		state.founderProjectState = result?.state ?? null;
-	} catch {
-		state.founderProjectState = null;
-	}
-}
-
+// Action responses stay scoped to their published report across navigation.
+async function founderLoadProjectState() { return founderActions.load({ force: true }); }
 function founderToggleSelection(id, checked) {
-	const saved = state.founderProjectState;
-	if (!saved?.recommendationSet?.recommendations) return;
-	const current = new Set(saved.selections ?? []);
+	const current = new Set(founderActions.snapshot().state?.selections ?? []);
 	if (checked) current.add(id); else current.delete(id);
-	founderSaveSelections([...current]);
+	return founderActions.select([...current]);
 }
-
-async function founderSaveSelections(ids) {
-	if (!state.founderProjectState?.recommendationSet?.recommendations) return;
-	try {
-		const result = await api('/founder/state/selections', {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ selectedRecommendationIds: ids })
-		});
-		state.founderProjectState = result?.state ?? state.founderProjectState;
-		renderFounder();
-	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error));
-	}
-}
-
-/** Explicit Founder → Studio handoff (Phase 4). Selection alone never
- *  triggers a delivery; only this explicit send does. */
-async function founderSendToStudio(ids) {
-	if (!Array.isArray(ids) || ids.length === 0) return;
-	if (state.founderProjectState?.handoff?.status === 'pending') return; // duplicate-submit guard (server also enforces 409)
-	try {
-		const result = await api('/founder/handoff', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ selectedRecommendationIds: ids })
-		});
-		if (result?.state) state.founderProjectState = result.state;
-		if (result?.unavailable) {
-			state.founderHandoffPayload = result.payload ?? null;
-			toast('Studio delivery is not configured — the handoff payload is ready to copy or export. No build was started.');
-		} else {
-			toast(result?.handoff?.status === 'succeeded'
-				? `Sent to Studio ✓ ${result.handoff.selectedRecommendationIds?.length ?? 0} recommendation(s) delivered.`
-				: 'Handoff recorded.');
-		}
-	} catch (error) {
-		toast(error instanceof Error ? error.message : String(error));
-		// Re-read state: a failed send keeps selections; status may be 'failed'.
-		await founderLoadProjectState();
-	}
-	renderFounder();
-}
-
-/** Copy/export fallback when Studio delivery is not configured. */
-async function founderExportHandoff(mode) {
-	const ids = state.founderProjectState?.handoff?.selectedRecommendationIds
-		?? state.founderProjectState?.selections ?? [];
-	if (!ids.length) return;
-	try {
-		const result = await api('/founder/handoff', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ selectedRecommendationIds: ids, export: true })
-		});
-		const payload = result?.payload;
-		if (!payload) throw new Error('No payload returned.');
-		const text = JSON.stringify(payload, null, 2);
-		if (mode === 'copy') {
-			await navigator.clipboard.writeText(text);
-			toast('Handoff payload copied to clipboard.');
-		} else {
-			const blob = new Blob([text], { type: 'application/json' });
-			const url = URL.createObjectURL(blob);
-			const save = document.createElement('a');
-			save.href = url;
-			save.download = `founder-handoff-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-			document.body.append(save);
-			save.click();
-			save.remove();
-			window.setTimeout(() => URL.revokeObjectURL(url), 0);
-			toast('Handoff payload downloaded. No build was started.');
-		}
-	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error));
-	}
-}
+function founderSaveSelections(ids) { return founderActions.select(ids); }
+function founderSendToStudio() { return founderActions.send(); }
+function founderExportHandoff(mode) { return founderActions.export(mode); }
 const renderFounder = founderView.render;
 const renderFounderReportTab = founderView.renderReportTab;
+
+const founderProgressRequests=new Map(),founderContinueRequests=new Map();
+let founderProgressTimer;
+function scheduleFounderProgress(){
+	if(state.session?.mode!=='founder')return;
+	clearTimeout(founderProgressTimer);
+	founderProgressTimer=setTimeout(()=>{void refreshFounderProgress(state.sessionId);},150);
+}
+async function refreshFounderProgress(id){
+	if(!id||state.session?.mode!=='founder'||state.sessionId!==id)return;
+	const existing=founderProgressRequests.get(id);if(existing){existing.dirty=true;return existing.promise;}
+	const session=state.session,request={dirty:false};founderProgressRequests.set(id,request);
+	request.promise=(async()=>{
+		try{
+			const progress=await api(`/sessions/${id}/founder/progress`);
+			if(state.session===session){session.founderProgress=progress;renderFounder();renderHeader();}
+		}catch{/* SSE reconnect retains the last saved progress; continuation fetches fresh state. */}
+		finally{founderProgressRequests.delete(id);if(request.dirty&&state.session===session)scheduleFounderProgress();}
+	})();
+	return request.promise;
+}
+async function founderContinue(id=state.sessionId){
+	if(founderContinueRequests.has(id))return founderContinueRequests.get(id);
+	const session=state.session;
+	const work=(async()=>{
+		const progress=await api(`/sessions/${id}/founder/progress`);
+		if(state.session===session){session.founderProgress=progress;renderFounder();}
+		if(!progress.recovery?.available)throw new Error(progress.recovery?.reason||'Review saved progress before continuing.');
+		const result=await api(`/sessions/${id}/founder/continue`,{method:'POST',body:JSON.stringify({expectedCheckpoint:progress.recovery.token})});
+		if(state.session===session&&!session.founder?.finalizedAt){session.founderProgress=result.progress;renderFounder();renderHeader();}
+		scheduleFounderProgress();return result;
+	})();
+	founderContinueRequests.set(id,work);
+	try{return await work;}finally{if(founderContinueRequests.get(id)===work)founderContinueRequests.delete(id);}
+}
 
 /* ── Bug tracker (standalone view) ───────────────────────────────── */
 
@@ -1101,14 +1085,21 @@ async function selectSession(id, { updateRoute = true } = {}) {
 
 	const session = await api(`/sessions/${id}`);
 	if (state.sessionId !== id) return;
+	// Commit the selected run's URL before rendering it. SSE subscription can
+	// take time; a refresh in that interval must reload this run, not the old
+	// workspace or launcher. Route rendering still finishes after connection.
+	if (updateRoute && pageRouter.started) {
+		await pageRouter.navigate({ name: 'run', runId: id }, { applyRoute: false });
+	}
 	applySessionSnapshot(session);
 	if (session.mode === 'founder') {
 		void founderLoadProjectState().then(() => renderFounder());
 	} else {
 		state.founderProjectState = null;
+		founderActions.pause();
 	}	await connect(id);
 	await refreshRuns();
-	if (updateRoute && pageRouter.started) {
+	if (updateRoute && pageRouter.started && state.sessionId === id) {
 		await pageRouter.navigate({ name: 'run', runId: id });
 	}
 }
@@ -1379,7 +1370,7 @@ async function startRun() { openQaStart(); }
 
 async function createQaRun({
 	targetUrl, device, deviceLandscape, selectedTests, securityAuthorization,
-	kickoffText, engine = 'chromium', coreFlowsOnly = false, environmentId, scopeSelection, qaExecutionMode, testCaseId
+	kickoffText, engine = 'chromium', coreFlowsOnly = false, environmentId, scopeSelection, qaExecutionMode, testCaseId, allowTestWrites = false
 }) {
 	void markOnboarded();
 	const session = await api('/sessions', {
@@ -1390,6 +1381,7 @@ async function createQaRun({
 			engine,
 			selectedTests,
 			...(qaExecutionMode ? { qaExecutionMode } : {}),
+			...(allowTestWrites ? { allowTestWrites: true } : {}),
 			...(testCaseId ? { testCaseId } : {}),
 			...(securityAuthorization ? { securityAuthorization } : {}),
 			...(environmentId ? { environmentId } : {}),
@@ -1684,16 +1676,28 @@ function renderHeader() {
 	const executionLabel = $('qa-agent-mode');
 	if (executionLabel) { executionLabel.textContent = qaExecutionModeLabel(session); executionLabel.hidden = !executionLabel.textContent; }
 	const guide = $('journey-run-guide');
-	guide.hidden = !state.sessionId || Boolean(workflowStatus(session).hidden);
+	guide.hidden = !state.sessionId || Boolean(workflowStatus(session, state.streamConnection).hidden);
 	if (state.sessionId) {
-		const guidance = workflowStatus(session);
+		const guidance = workflowStatus(session, state.streamConnection);
 		guide.dataset.tone = guidance.tone;
 		$('journey-run-title').textContent = guidance.title;
 		$('journey-run-description').textContent = guidance.description;
 		const action = $('journey-run-action');
 		action.textContent = guidance.action;
+		const freshTest = $('journey-run-fresh-test');
+		freshTest.hidden = guidance.freshTest !== true;
+		freshTest.onclick = () => { void (async () => {
+			// Setup only: no POST, runtime replay, inherited credentials, or old
+			// results. Review & Launch remains the sole run creation boundary.
+			const target = session.targetUrl;
+			await openQaStart();
+			qaUi.targetUrl.value = isValidTargetUrl(target) ? target : '';
+			$('qa-goal').value = '';
+			syncQaSubmitState();
+		})().catch(fail); };
 		action.onclick = () => {
 			if (guidance.destination === 'results') void pageRouter.navigate({ name: 'results', runId: state.sessionId });
+			else if(guidance.destination==='founder'){activateDetailTab($('tab-founder'));setWorkspaceView('results');}
 			else if (guidance.destination === 'progress') { activateDetailTab($('tab-plan')); setWorkspaceView('results'); }
 			else if (guidance.destination === 'question') { setWorkspaceView('agent'); el.questionSlot.scrollIntoView({ block: 'nearest' }); el.questionSlot.querySelector('input, textarea, button')?.focus(); }
 			else if (guidance.destination === 'conversation') { setWorkspaceView('agent'); el.transcript.scrollTop = el.transcript.scrollHeight; el.composerInput.focus(); }
@@ -1738,6 +1742,11 @@ function renderHeader() {
 			.join('\n');
 		el.tokenText.title = `${el.tokenText.title}\n${modelLines}`;
 	}
+=======
+	el.tokenText.classList.remove('is-pending');
+	el.tokenText.textContent = session.mode==='founder'?'Review plan':'Run progress';
+	el.tokenText.title = '';
+>>>>>>> 77c58cc4d5c1a7e572b2b69db30767dd734eec67
 	// LIVE pill: only while the run is actively working.
 	el.livePill.hidden = session.status !== 'running';
 	renderMiniSummary();
@@ -1802,7 +1811,8 @@ function renderProgressCard() {
 	const session = state.session;
 	const { total, done, percent } = runProgress();
 	el.progressSteps.textContent = total > 0 ? `${done}/${total}` : '';
-	el.progressPct.textContent = percent !== undefined ? `${percent}%` : '';
+	el.progressPct.textContent = session.mode==='founder'&&total>0?'plan steps':percent !== undefined ? `${percent}%` : '';
+	el.progressBar.setAttribute('aria-label',session.mode==='founder'?'Review plan steps':'Run progress');
 	if (percent !== undefined) {
 		el.progressBar.setAttribute('aria-valuenow', String(percent));
 		el.progressBar.firstElementChild.style.width = `${percent}%`;
@@ -1860,8 +1870,9 @@ function setStatus(status) {
 	el.statusChip.dataset.stopped = stoppedByUser ? 'true' : 'false';
 	el.statusChip.textContent = stopping ? 'Stopping…' : status === 'awaiting_input'
 		? 'waiting for you'
-		: status === 'running' ? 'Running'
+		: status === 'running' ? (['reconnecting', 'syncing'].includes(state.streamConnection) ? 'Reconnecting…' : 'Running')
 			: displayStatus === 'blocked' ? 'Blocked'
+				: displayStatus === 'failed' ? 'Failed'
 				: displayStatus === 'partial' ? 'Completed with gaps'
 				: status === 'done' ? 'Complete'
 				: stoppedByUser ? 'Stopped'
@@ -1914,7 +1925,8 @@ function runElapsedMs() {
 		if (timer.measuredMs !== measured || timer.measuredStatus !== state.session.status) {
 			timer.measuredMs = measured; timer.measuredStatus = state.session.status; timer.measuredAt = Date.now();
 		}
-		return measured + (state.session.status === 'running' ? Math.max(0, Date.now() - timer.measuredAt) : 0);
+		const now = state.connectionLostAt || Date.now();
+		return measured + (state.session.status === 'running' ? Math.max(0, now - timer.measuredAt) : 0);
 	}
 	if (typeof timer.startedAt !== 'number') return undefined;
 	return (typeof timer.endedAt === 'number' ? timer.endedAt : Date.now()) - timer.startedAt;
@@ -2679,6 +2691,12 @@ function updateThinkingStrip() {
 	}
 
 	el.thinkingStrip.hidden = false;
+	if (['reconnecting', 'syncing'].includes(state.streamConnection)) {
+		el.thinkingLabel.textContent = 'Reconnecting'; el.thinkingPeek.textContent = 'Checking the server connection; showing last saved progress.';
+		el.thinkingStrip.classList.remove('has-detail', 'is-open'); el.thinkingCaret.hidden = true; el.thinkingHead.setAttribute('aria-expanded', 'false');
+		const badge = $('ldv-live'); if (badge) { badge.textContent = 'Reconnecting'; badge.dataset.live = 'false'; }
+		return;
+	}
 	el.thinkingLabel.textContent = text ? 'Thinking' : 'Working';
 	el.thinkingPeek.textContent = text ? tailOf(text) : action;
 
@@ -2746,6 +2764,11 @@ function scrollTranscript() {
 
 function renderQuestion() {
 	const question = state.session?.pendingQuestion;
+	const questionKey = question ? JSON.stringify([state.sessionId, question.toolCallId, question.kind, question.question]) : '';
+	// A reconnect or duplicate question must not erase an in-progress vault form.
+	// Values remain only in its DOM inputs; a different question/run replaces it.
+	if (question && isCredentialQuestion(question) && el.questionSlot.querySelector('.cred-form')
+		&& el.questionSlot.firstElementChild?.dataset.questionKey === questionKey) return;
 	el.questionSlot.replaceChildren();
 	if (!question) {
 		return;
@@ -2753,6 +2776,7 @@ function renderQuestion() {
 
 	const card = document.createElement('div');
 	card.className = 'question';
+	card.dataset.questionKey = questionKey;
 
 	const tag = document.createElement('span');
 	tag.className = 'question-tag';
@@ -2829,6 +2853,7 @@ function credentialForm() {
 	const form = document.createElement('form');
 	form.className = 'cred-form';
 	const hybrid = state.session?.qaExecutionMode === 'hybrid';
+	const founderLaunch = state.session?.mode === 'founder' && state.session?.pendingQuestion?.kind === 'founder_launch_credentials';
 
 	const row = document.createElement('div');
 	row.className = 'cred-row';
@@ -2856,8 +2881,10 @@ function credentialForm() {
 	consent.className = 'cred-note';
 	const authorize = document.createElement('input');
 	authorize.type = 'checkbox';
-	authorize.required = hybrid;
-	consent.append(authorize, ' I am authorized to use this test account and approve one sign-in attempt on this website. Continue with read-only testing afterward.');
+	authorize.required = hybrid || founderLaunch;
+	consent.append(authorize, founderLaunch
+		? ' I am authorized to use this test account for sign-in on this website. Continue with read-only testing afterward.'
+		: ' I am authorized to use this test account and approve one sign-in attempt on this website. Continue with read-only testing afterward.');
 	const expectedUrl = document.createElement('input');
 	expectedUrl.type = 'url';
 	expectedUrl.placeholder = 'Expected signed-in page URL (optional)';
@@ -2868,6 +2895,7 @@ function credentialForm() {
 	loginEndpoint.setAttribute('aria-label', 'Approved sign-in API URL');
 	if (hybrid) consent.append(' If a sign-in API URL is supplied below, I also approve sending this test account to that exact endpoint once.');
 	if (hybrid) note.textContent = 'Use a test account. Credentials are encrypted in this run’s vault; the model receives placeholders only. One sign-in is allowed on this website or the exact API URL you approve. Account creation and SSO/MFA are not automated. You can skip login and continue public-only.';
+	if (founderLaunch) note.textContent = 'Use a test account for this website. Credentials are encrypted for this run; only placeholders reach the model. The review begins after you store the account or choose Skip login. Other websites remain outside the review scope.';
 
 	const actions = document.createElement('div');
 	actions.className = 'cred-actions';
@@ -2882,14 +2910,14 @@ function credentialForm() {
 	submit.textContent = 'Store and continue';
 	actions.append(skip, submit);
 
-	form.append(row, ...(hybrid ? [expectedUrl, loginEndpoint, consent] : [extra]), note, actions);
+	form.append(row, ...(hybrid ? [expectedUrl, loginEndpoint, consent] : founderLaunch ? [consent] : [extra]), note, actions);
 	form.onsubmit = async event => {
 		event.preventDefault();
 		const fields = {};
 		if (username.value) fields.QA_USERNAME = username.value;
 		if (password.value) fields.QA_PASSWORD = password.value;
-		if (!hybrid && extra.value) fields.QA_OTP = extra.value;
-		if (hybrid && (!username.value || !password.value || !authorize.checked)) {
+		if (!hybrid && !founderLaunch && extra.value) fields.QA_OTP = extra.value;
+		if ((hybrid || founderLaunch) && (!username.value || !password.value || !authorize.checked)) {
 			toast('Enter both test-account fields and approve one sign-in, or choose Skip login.', 'bad');
 			return;
 		}
@@ -2899,7 +2927,7 @@ function credentialForm() {
 		}
 		submit.disabled = true;
 		try {
-			await api(`/sessions/${state.sessionId}/credentials`, { method: 'POST', body: JSON.stringify({ fields, ...(hybrid ? { authorizeLogin: authorize.checked, expectedUrl: expectedUrl.value.trim(), loginEndpoint: loginEndpoint.value.trim() } : {}) }) });
+			await api(`/sessions/${state.sessionId}/credentials`, { method: 'POST', body: JSON.stringify({ fields, ...((hybrid || founderLaunch) ? { authorizeLogin: authorize.checked } : {}), ...(hybrid ? { expectedUrl: expectedUrl.value.trim(), loginEndpoint: loginEndpoint.value.trim() } : {}) }) });
 			el.questionSlot.replaceChildren();
 			state.session.pendingQuestion = undefined;
 			password.value = ''; username.value = ''; extra.value = '';
@@ -3713,13 +3741,13 @@ function renderCoverageSelection(session) {
 }
 
 function renderReport() {
-	el.reportView.replaceChildren();
-	if (state.session?.mode === 'sqa') {
-		renderSqaReportTab();
-		return;
-	}
 	if (state.session?.mode === 'founder') {
 		renderFounderReportTab();
+		return;
+	}
+	founderView.clearReport();
+	if (state.session?.mode === 'sqa') {
+		renderSqaReportTab();
 		return;
 	}
 
@@ -4206,14 +4234,17 @@ function renderSqaReportTab() {
 		?? 'This scoped engineering assessment is not legal advice, regulatory approval, accreditation, an audit opinion, or certification.';
 	notice.append(noticeTitle, noticeText);
 
-	el.reportView.append(notice, renderSqaVerdict(assessment, lifecycle), renderSqaReportActions());
+	el.reportView.append(notice);
+	if (assessment.technicalSummary) el.reportView.append(renderSqaTechnicalSummary(assessment.technicalSummary));
+	if (assessment.executionBudget) el.reportView.append(renderSqaExecutionBudget(assessment.executionBudget));
+	el.reportView.append(renderSqaFailures(assessment), renderSqaVerdict(assessment, lifecycle), renderSqaReportActions());
 	el.reportView.append(
 		renderSqaUnresolved(assessment),
 		renderSqaCoverage(assessment)
 	);
-	if (assessment.technicalSummary) el.reportView.append(renderSqaTechnicalSummary(assessment.technicalSummary));
 	el.reportView.append(
 		renderSqaControls(assessment.results ?? []),
+		renderSqaTraceability(sqaReportModel(assessment), { runId: state.session.id, api }),
 		renderSqaSources(assessment.frameworkCoverage ?? []),
 		renderSqaScope(sqa.scope ?? {}, assessment)
 	);
@@ -4294,8 +4325,11 @@ function renderSqa() {
 	}
 
 	const sqa = state.session.sqa ?? {};
+	const sqaReviewRunId = state.session.id;
 	const scope = sqa.scope ?? {};
 	const assessment = sqa.assessment;
+	const executionNotice=renderModeReasoning(state.session);
+	if(executionNotice)el.sqaView.append(executionNotice);
 	const lifecycle = describeSqaLifecycle(sqa, state.session.status, state.session.activities?.length ?? 0);
 	el.countSqa.textContent = lifecycle.badge;
 
@@ -4337,7 +4371,30 @@ function renderSqa() {
 	notice.append(noticeTitle, noticeText);
 	el.sqaView.append(notice);
 
+	if (assessment?.technicalSummary) el.sqaView.append(renderSqaTechnicalSummary(assessment.technicalSummary));
+	if (assessment?.executionBudget) el.sqaView.append(renderSqaExecutionBudget(assessment.executionBudget));
+	if (assessment) el.sqaView.append(renderSqaFailures(assessment));
 	el.sqaView.append(renderSqaVerdict(assessment, lifecycle));
+	el.sqaView.append(renderSqaReviewPanel({
+		session: state.session,
+		role: state.user?.role,
+		api,
+		selectRun: id => selectSession(id),
+		refresh: async sqa => {
+			if (state.session?.id !== sqaReviewRunId) return;
+			if (sqa.reviewRevision !== undefined && sqa.reviewRevision <= (state.session.sqa?.reviewRevision ?? 0)) return;
+			state.session.sqa = sqa;
+			renderSqa(); renderReport(); renderHeader();
+			void refreshRuns();
+		},
+		downloadMarkdown: async (url, filename) => {
+			const text = await apiText(url);
+			const blobUrl = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+			const link = document.createElement('a'); link.href = blobUrl; link.download = filename;
+			document.body.append(link); link.click(); link.remove();
+			setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
+		}
+	}));
 
 	if (!lifecycle.finalized && lifecycle.phase === 'ready') {
 		const pending = document.createElement('div');
@@ -4355,8 +4412,8 @@ function renderSqa() {
 	if (lifecycle.finalized) el.sqaView.append(renderSqaReportActions());
 	el.sqaView.append(renderSqaUnresolved(assessment));
 	el.sqaView.append(renderSqaCoverage(assessment));
-	if (assessment.technicalSummary) el.sqaView.append(renderSqaTechnicalSummary(assessment.technicalSummary));
 	el.sqaView.append(renderSqaControls(assessment.results ?? []));
+	el.sqaView.append(renderSqaTraceability(sqaReportModel(assessment), { runId: state.session.id, api }));
 	el.sqaView.append(renderSqaSources(assessment.frameworkCoverage ?? []));
 	el.sqaView.append(renderSqaScope(scope, assessment));
 }
@@ -4470,6 +4527,14 @@ function renderSqaReportActions() {
 	return actionGroup;
 }
 
+function renderSqaFailures(assessment) {
+	const failures = sqaReportModel(assessment).failures;
+	const section = sqaSection('Evidence-backed control failures', 'Recorded failures are separate from missing reviewer evidence.');
+	if (!failures.length) section.append(sqaLabeledText('Result', 'No evidence-backed control failures were recorded.'));
+	for (const failure of failures) section.append(sqaLabeledText(`${failure.controlId} — ${failure.title}`, failure.rationale ?? 'Remediate and retest this control.'));
+	return section;
+}
+
 function renderSqaVerdict(assessment, lifecycle) {
 	const node = document.createElement('section');
 	node.className = 'sqa-verdict';
@@ -4551,6 +4616,26 @@ function renderSqaTechnicalSummary(summary) {
 		counts.append(item);
 	}
 	node.append(counts);
+	return node;
+}
+
+function renderSqaExecutionBudget(budget) {
+	const browser = budget?.browserTools ?? {};
+	const tokens = budget?.inputTokens ?? {};
+	const node = sqaSection(
+		'Run budget',
+		'Usage is shown against the reserved closeout threshold; the hard limit remains a safety net.'
+	);
+	const grid = document.createElement('dl');
+	grid.className = 'sqa-scope-grid';
+	appendSqaDefinition(grid, 'Browser actions', `${Number(browser.used) || 0} / ${Number(browser.evidenceLimit) || 0}`);
+	appendSqaDefinition(grid, 'Browser actions remaining', Math.max(0, Number(browser.remainingForEvidence) || 0));
+	appendSqaDefinition(grid, 'Input tokens', `${Number(tokens.used) || 0} / ${Number(tokens.closeoutThreshold) || 0}`);
+	appendSqaDefinition(grid, 'Tokens before closeout', Math.max(0, Number(tokens.remainingBeforeCloseout) || 0));
+	appendSqaDefinition(grid, 'Budget closeout', budget.closeout
+		? `${humanizeSqaId(budget.closeout.mode)} · ${humanizeSqaId(budget.closeout.trigger)}`
+		: 'Not used');
+	node.append(grid);
 	return node;
 }
 
@@ -4647,7 +4732,7 @@ function renderSqaUnresolved(assessment) {
 	const unresolved = (assessment.results ?? []).filter(result => result.status !== 'pass');
 	const groups = groupSqaUnresolvedResults(assessment.results);
 	const evidenceGaps = groups.reviewer.length + groups.mixed.length;
-	const node = sqaSection('Failures and evidence gaps', `${groups.failures.length} failed · ${evidenceGaps} reviewer/mixed evidence gaps · ${groups.automated.length} automated incomplete`);
+	const node = sqaSection('Failures and evidence gaps', `${groups.failures.length} failed · ${groups.budget.length} stopped by budget · ${evidenceGaps} reviewer/mixed evidence gaps · ${groups.automated.length} automated incomplete`);
 
 	if (unresolved.length === 0) {
 		const empty = document.createElement('p');
@@ -4661,6 +4746,7 @@ function renderSqaUnresolved(assessment) {
 	list.className = 'sqa-unresolved-groups';
 	for (const group of [
 		{ title: 'Confirmed failures', description: 'Evidence-backed control failures that affect the product verdict.', results: groups.failures, kind: 'failures' },
+		{ title: 'Stopped early: budget reached', description: 'The safety budget ended this run before these checks completed. Saved results remain valid; rerun after the execution-efficiency fix to complete this coverage.', results: groups.budget, kind: 'budget' },
 		{ title: 'Reviewer evidence required', description: 'Documents, approvals, records, or independent review must be supplied by an authorized reviewer.', results: groups.reviewer, kind: 'reviewer' },
 		{ title: 'Mixed evidence incomplete', description: 'This control combines browser-observable checks with external reviewer artifacts.', results: groups.mixed, kind: 'mixed' },
 		{ title: 'Automated check blocked / not run', description: 'The controlled browser check did not complete or lacks agent-capable technical evidence.', results: groups.automated, kind: 'automated' }
@@ -4753,12 +4839,15 @@ function renderSqaControl(result) {
 	} else {
 		const evidenceList = document.createElement('ul');
 		evidenceList.className = 'sqa-evidence-list';
-		for (const artifact of evidence) {
+		for (const [index, artifact] of evidence.entries()) {
 			const entry = document.createElement('li');
 			const type = document.createElement('strong');
 			type.textContent = humanizeSqaId(artifact.type);
 			const reference = safeSqaLink(artifact.reference, artifact.reference);
-			entry.append(type, reference);
+			entry.append(type, reference, evidenceInspectButton({ runId: state.session.id, controlId: result.controlId, index: index + 1, api }));
+			const provenance = document.createElement('span');
+			provenance.textContent = `Collected at: ${artifact.collectedAt ?? 'not recorded'} · Digest: ${artifact.digest ?? 'not supplied'}`;
+			entry.append(provenance);
 			if (artifact.summary) {
 				const description = document.createElement('span');
 				description.textContent = artifact.summary;
@@ -4867,6 +4956,13 @@ function connect(id) {
 	state.stream?.close();
 	const stream = new EventSource(`/api/sessions/${id}/events`);
 	state.stream = stream;
+	state.streamConnection = 'connecting'; state.connectionLostAt = undefined;
+	const connection = next => {
+		if (state.stream !== stream || state.sessionId !== id) return;
+		state.streamConnection = next;
+		if (next === 'live') state.connectionLostAt = undefined; else state.connectionLostAt ??= Date.now();
+		if (state.session) renderHeader();
+	};
 	let finishReady;
 	const ready = new Promise(resolve => { finishReady = resolve; });
 	// An unavailable stream must not lock the workspace; EventSource will keep
@@ -4887,6 +4983,7 @@ function connect(id) {
 				resyncTimer = setTimeout(resync, 250);
 				return;
 			}
+			connection('live');
 			applySessionSnapshot(snapshot);
 		} catch {
 			if (state.stream === stream) resyncTimer = setTimeout(resync, 1000);
@@ -4898,9 +4995,12 @@ function connect(id) {
 	stream.onopen = () => {
 		if (state.stream !== stream) return;
 		clearTimeout(resyncTimer);
+		if (state.connectionLostAt) connection('syncing');
 		void resync();
 	};
 	stream.onerror = () => {
+		if (state.stream !== stream) return;
+		connection('reconnecting');
 		connected();
 		clearTimeout(resyncTimer);
 	};
@@ -4916,6 +5016,7 @@ function connect(id) {
 }
 
 function handleEvent(event) {
+	if(['activity','todos','question','status','founder.created','founder.observation','founder.report_draft','founder.finalized'].includes(event.type))scheduleFounderProgress();
 	const session = state.session;
 	switch (event.type) {
 		case 'frame':
@@ -5028,7 +5129,18 @@ function handleEvent(event) {
 			break;
 
 		case 'sqa':
+			if (event.reviewRevision !== undefined) {
+				if (event.reviewRevision <= (session.sqa?.reviewRevision ?? 0)) break;
+				const runId = session.id;
+				void api(`/sessions/${runId}`).then(latest => {
+					if (state.session?.id !== runId || latest.sqa?.reviewRevision <= (state.session.sqa?.reviewRevision ?? 0)) return;
+					state.session.sqa = latest.sqa;
+					renderSqa(); renderReport(); renderHeader(); void refreshRuns();
+				}).catch(() => undefined);
+				break;
+			}
 			session.mode = 'sqa';
+			if (Array.isArray(event.todos)) { session.todos = event.todos; renderTodos(); }
 			session.sqa ??= { scope: {} };
 			session.sqa.assessment = event.assessment;
 			if (event.final) session.sqa.finalizedAt = new Date(event.ts ?? Date.now()).toISOString();
@@ -5038,7 +5150,15 @@ function handleEvent(event) {
 			renderSqa();
 			renderReport();
 			void refreshRuns();
-			if (event.final) toast('Quality review published.', 'good');
+			if (event.final && (!event.review || event.review.status === 'published')) toast('Quality review published.', 'good');
+			if (event.final || event.reviewRevision !== undefined) {
+				const runId = session.id;
+				void api(`/sessions/${runId}`).then(latest => {
+					if (state.session?.id !== runId) return;
+					state.session.sqa = latest.sqa;
+					renderSqa(); renderReport();
+				}).catch(() => undefined);
+			}
 			break;
 
 		case 'founder.created':
@@ -5082,9 +5202,11 @@ function handleEvent(event) {
 
 		case 'founder.finalized':
 			session.mode = 'founder';
+			if (Array.isArray(event.todos)) { session.todos = event.todos; renderTodos(); }
 			session.founder ??= { scope: {}, observations: [] };
 			session.founder.report = event.report;
 			session.founder.finalizedAt = event.report?.generatedAt ?? new Date(event.ts ?? Date.now()).toISOString();
+			void founderActions.load();
 			syncSqaDetailMode();
 			renderHeader();
 			renderFounder();
@@ -5534,9 +5656,10 @@ function qaLaunchBlockedReason() {
 }
 
 /** Keep the compact launcher honest when availability or selection changes. */
+let qaQualificationChecking = false;
 function syncQaSelectionSummary() {
 	renderQaBrowserStatus(qaBrowserStatus({ fetchState: qaMatrixState.fetchState, configurations: qaMatrixState.index,
-		envIds: qaMatrixState.selectedEnvIds, mode: qaUi.executionMode?.value, config: state.config }), document);
+		envIds: qaMatrixState.selectedEnvIds, mode: qaUi.executionMode?.value, config: state.config, qualificationChecking: qaQualificationChecking }), document);
 	const summary = $('qa-selection-summary');
 	if (!summary) return;
 	const blockedReason = qaLaunchBlockedReason();
@@ -5951,7 +6074,16 @@ if (qaUi.dialog) {
 			qaUi.matrix.fieldset?.scrollIntoView({ block: 'start' });
 			qaUi.matrix.search?.focus({ preventScroll: true });
 		} else if (action === 'reload') await loadQaMatrixCatalog();
-		else if (action === 'config') { try { paintConfig(await api('/config')); syncQaSubmitState(); } catch (error) { setQaFormError(error.message); } }
+		else if (action === 'config') {
+			if (qaQualificationChecking) return;
+			qaQualificationChecking = true;
+			const button = event.currentTarget;
+			button.disabled = true; button.textContent = 'Checking compatibility…';
+			try {
+				await renewHybridQualification({ api, onConfig: config => { paintConfig(config); syncQaSubmitState(); } });
+			} catch (error) { setQaFormError(error.message); }
+			finally { qaQualificationChecking = false; syncQaSelectionSummary(); syncQaSubmitState(); }
+		}
 	});
 	$('journey-focused')?.addEventListener('click', () => {
 		if (qaJourneySelectionMode !== 'quick') qaJourneyCustomSelection = qaMatrixState.selection;
@@ -6116,7 +6248,7 @@ if (qaUi.dialog) {
 			const hybridOptions = hybridLaunchOptions({ config: state.config, mode: qaUi.executionMode?.value, envIds: selectedEnvIds, configurations: qaMatrixState.index });
 			if (hybridOptions) {
 				await createQaRun({ targetUrl, device, deviceLandscape, selectedTests, securityAuthorization, kickoffText,
-					scopeSelection: scopeValues, testCaseId: qaUi._testCaseId, ...hybridOptions });
+					scopeSelection: scopeValues, testCaseId: qaUi._testCaseId, allowTestWrites: $('qa-allow-test-writes')?.checked === true, ...hybridOptions });
 				qaUi.targetUrl.value = ''; $('qa-goal').value = '';
 				closeQaStart({ updateRoute: false });
 				toast('Hybrid QA started — Opus 4.7 reasoning + JEV 1.13 classification.');
@@ -6172,9 +6304,14 @@ const sqaUi = {
 	close: $('sqa-close'),
 	cancel: $('sqa-cancel'),
 	submit: $('sqa-submit'),
+	launchStatus: $('sqa-launch-status'),
 	catalogState: $('sqa-catalog-state'),
+	catalogMessage: $('sqa-catalog-message'),
+	catalogRetry: $('sqa-catalog-retry'),
 	catalogVersion: $('sqa-catalog-version'),
 	selectionSummary: $('sqa-selection-summary'),
+	selectionReasons: $('sqa-selection-reasons'),
+	scopeWarning: $('sqa-scope-warning'),
 	customize: $('sqa-customize'),
 	disclaimer: $('sqa-catalog-disclaimer'),
 	deviceSelect: null, // legacy select removed (DX Phase 3)
@@ -6189,6 +6326,8 @@ const sqaUi = {
 	targetRelease: $('sqa-target-release'),
 	targetEnvironment: $('sqa-target-environment'),
 	scopeNotes: $('sqa-scope-notes'),
+	expandedConfirmation: $('sqa-expanded-confirmation'),
+	expandedScope: $('sqa-expanded-scope'),
 	authorization: $('sqa-authorization'),
 	error: $('sqa-form-error')
 };
@@ -6241,11 +6380,18 @@ function paintSqaCatalog(catalog) {
 	sqaUi.attributeOptions.replaceChildren(...attributes.map(attribute => {
 		const id = typeof attribute === 'string' ? attribute : attribute.id;
 		const title = typeof attribute === 'string' ? humanizeSqaId(attribute) : (attribute.title ?? humanizeSqaId(id));
-		return sqaCatalogOption({ name: 'sqa-attribute', value: id, title });
+		const requiredForBrowserReview = SQA_REQUIRED_BROWSER_ATTRIBUTES.includes(id);
+		return sqaCatalogOption({
+			name: 'sqa-attribute', value: id, title,
+			checked: requiredForBrowserReview,
+			disabled: requiredForBrowserReview,
+			meta: requiredForBrowserReview ? 'Required for URL-based browser review' : ''
+		});
 	}));
 	sqaUi.profilesFieldset.disabled = false;
 	sqaUi.attributesFieldset.disabled = false;
 	sqaUi.catalogState.hidden = true;
+	sqaUi.catalogRetry.hidden = true;
 	syncSqaSelectionSummary();
 	syncSqaSubmitState();
 }
@@ -6254,17 +6400,37 @@ function syncSqaSelectionSummary() {
 	if (!sqaUi.selectionSummary) return;
 	if (!state.sqaCatalog) {
 		sqaUi.selectionSummary.textContent = 'Loading the recommended scope…';
+		sqaUi.selectionReasons?.replaceChildren();
 		return;
 	}
-	const profiles = [...sqaUi.profileOptions.querySelectorAll('input:checked')]
-		.filter(input => input.value !== 'core').length;
-	const attributes = [...sqaUi.attributeOptions.querySelectorAll('input:checked')].length;
-	const additions = [];
-	if (profiles) additions.push(`${profiles} additional profile${profiles === 1 ? '' : 's'}`);
-	if (attributes) additions.push(`${attributes} product characteristic${attributes === 1 ? '' : 's'}`);
-	sqaUi.selectionSummary.textContent = additions.length
-		? `Universal quality baseline · ${additions.join(' · ')}`
-		: 'Universal quality baseline · Recommended browser evidence';
+	const profiles = [...sqaUi.profileOptions.querySelectorAll('input:checked')].map(input => input.value);
+	const attributes = [...sqaUi.attributeOptions.querySelectorAll('input:checked')].map(input => input.value);
+	const preview = describeSqaScopeSelection(state.sqaCatalog, { profiles, attributes });
+	sqaUi.selectionSummary.textContent = preview.text;
+	if (sqaUi.scopeWarning) {
+		sqaUi.scopeWarning.hidden = !preview.expanded;
+		sqaUi.scopeWarning.textContent = preview.warning;
+	}
+	if (sqaUi.expandedConfirmation) sqaUi.expandedConfirmation.hidden = !preview.requiresConfirmation;
+	if (sqaUi.expandedScope) {
+		sqaUi.expandedScope.required = preview.requiresConfirmation;
+		if (!preview.requiresConfirmation) sqaUi.expandedScope.checked = false;
+	}
+	if (sqaUi.scopeNotes) sqaUi.scopeNotes.required = preview.requiresRationale;
+	sqaUi.selectionReasons?.replaceChildren(...preview.reasons.map(reason => {
+		const item = document.createElement('li');
+		item.textContent = reason;
+		return item;
+	}));
+	syncSqaSubmitState();
+}
+
+function currentSqaScopePreview() {
+	if (!state.sqaCatalog) return undefined;
+	return describeSqaScopeSelection(state.sqaCatalog, {
+		profiles: [...sqaUi.profileOptions.querySelectorAll('input:checked')].map(input => input.value),
+		attributes: [...sqaUi.attributeOptions.querySelectorAll('input:checked')].map(input => input.value)
+	});
 }
 
 function sqaCatalogOption({ name, value, title, description = '', meta = '', checked = false, disabled = false }) {
@@ -6297,10 +6463,59 @@ function sqaCatalogOption({ name, value, title, description = '', meta = '', che
 }
 
 function syncSqaSubmitState() {
-	sqaUi.submit.disabled = !state.sqaCatalog || !sqaUi.authorization.checked || sqaUi.submit.dataset.busy === 'true';
+	const missing = [];
+	if (!state.sqaCatalog) missing.push('load the assessment catalog');
+	try {
+		if (!['http:', 'https:'].includes(new URL(sqaUi.targetUrl.value.trim()).protocol)) throw new TypeError();
+	} catch { missing.push('enter a complete HTTP or HTTPS target URL'); }
+	if (!sqaUi.targetRelease.value.trim()) missing.push('enter a release or build identifier');
+	if (!sqaUi.targetEnvironment.value.trim()) missing.push('name the environment');
+	if (!sqaUi.authorization.checked) missing.push('confirm testing permission');
+	const scopePreview = currentSqaScopePreview();
+	if (scopePreview?.requiresRationale && !sqaUi.scopeNotes.value.trim()) missing.push('explain the expanded scope in Review notes');
+	if (scopePreview?.requiresConfirmation && !sqaUi.expandedScope.checked) missing.push('confirm the expanded scope');
+	if (!selectedEnvironmentForRun()) missing.push('choose a device and browser in TEST ON');
+	const busy = sqaUi.submit.dataset.busy === 'true';
+	sqaUi.submit.disabled = busy || missing.length > 0;
+	const message = busy ? 'Starting quality review…'
+		: missing.length ? `To start: ${missing.join('; ')}.` : 'Ready to start the quality review.';
+	if (sqaUi.launchStatus && sqaUi.launchStatus.textContent !== message) sqaUi.launchStatus.textContent = message;
 }
 
+function showSqaCatalogState(message, { retry = false } = {}) {
+	sqaUi.catalogState.hidden = false;
+	sqaUi.catalogMessage.textContent = message;
+	sqaUi.catalogRetry.hidden = !retry;
+}
+
+async function refreshSqaCatalog({ force = false } = {}) {
+	if (force) {
+		state.sqaCatalog = undefined;
+		state.sqaCatalogPromise = undefined;
+	}
+	showSqaCatalogState('Loading assessment catalog…');
+	sqaUi.catalogRetry.disabled = true;
+	setSqaFormError();
+	try {
+		paintSqaCatalog(await loadSqaCatalog());
+	} catch (error) {
+		showSqaCatalogState('The assessment catalog could not be loaded.', { retry: true });
+		setSqaFormError(error instanceof Error ? error.message : String(error));
+	} finally {
+		sqaUi.catalogRetry.disabled = false;
+		syncSqaSubmitState();
+	}
+}
+
+let sqaStartupRequested = false;
+
 async function openSqaStart() {
+	// Authentication can expose the workspace before its initial route is ready.
+	// An explicit SQA launch must take precedence over the automatic QA setup.
+	if (!pageRouter.started) sqaStartupRequested = true;
+	if (!pageRouter.started || pageRouter.current().name === 'new-run') {
+		await pageRouter.navigate({ name: 'runs' }, { replace: true, applyRoute: pageRouter.started });
+	}
 	setSqaFormError();
 	sqaUi.form.reset();
 	applyStudioTarget(sqaUi.targetUrl);
@@ -6312,21 +6527,14 @@ async function openSqaStart() {
 	if (sqaUi.deviceLandscape) sqaUi.deviceLandscape.checked = pendingLandscape();
 	sqaUi.profilesFieldset.disabled = true;
 	sqaUi.attributesFieldset.disabled = true;
-	sqaUi.catalogState.hidden = false;
-	sqaUi.catalogState.textContent = 'Loading assessment catalog…';
+	showSqaCatalogState('Loading assessment catalog…');
 	syncSqaSelectionSummary();
 	sqaUi.submit.dataset.busy = 'false';
 	syncSqaSubmitState();
 	if (!sqaUi.dialog.open) sqaUi.dialog.showModal();
 	if (matchMedia('(pointer: fine)').matches) setTimeout(() => sqaUi.targetUrl?.focus(), 0);
 
-	try {
-		paintSqaCatalog(await loadSqaCatalog());
-	} catch (error) {
-		sqaUi.catalogState.hidden = false;
-		sqaUi.catalogState.textContent = 'The assessment catalog could not be loaded.';
-		setSqaFormError(error instanceof Error ? error.message : String(error));
-	}
+	await refreshSqaCatalog();
 }
 
 function closeSqaStart() {
@@ -6336,8 +6544,13 @@ function closeSqaStart() {
 sqaUi.close.onclick = closeSqaStart;
 sqaUi.cancel.onclick = closeSqaStart;
 sqaUi.authorization.onchange = syncSqaSubmitState;
+sqaUi.expandedScope.onchange = syncSqaSubmitState;
+sqaUi.catalogRetry.onclick = () => void refreshSqaCatalog({ force: true });
 sqaUi.profileOptions.onchange = syncSqaSelectionSummary;
 sqaUi.attributeOptions.onchange = syncSqaSelectionSummary;
+for (const input of [sqaUi.targetUrl, sqaUi.targetRelease, sqaUi.targetEnvironment, sqaUi.scopeNotes]) {
+	input.addEventListener('input', syncSqaSubmitState);
+}
 
 sqaUi.form.onsubmit = async event => {
 	event.preventDefault();
@@ -6357,8 +6570,8 @@ sqaUi.form.onsubmit = async event => {
 	}
 	const target = {
 		name: sqaUi.targetName.value.trim() || parsedTargetUrl.hostname,
-		release: sqaUi.targetRelease.value.trim() || 'Current',
-		environment: sqaUi.targetEnvironment.value.trim() || 'Preview'
+		release: sqaUi.targetRelease.value.trim(),
+		environment: sqaUi.targetEnvironment.value.trim()
 	};
 	if (!sqaUi.authorization.checked) {
 		setSqaFormError('Confirm testing authorization and the non-destructive boundary first.');
@@ -6369,6 +6582,24 @@ sqaUi.form.onsubmit = async event => {
 	const profiles = [...sqaUi.profileOptions.querySelectorAll('input:checked')].map(input => input.value);
 	if (!profiles.includes('core')) profiles.unshift('core');
 	const attributes = [...sqaUi.attributeOptions.querySelectorAll('input:checked')].map(input => input.value);
+	const scopePreview = describeSqaScopeSelection(state.sqaCatalog, { profiles, attributes });
+	if (scopePreview.requiresRationale && !sqaUi.scopeNotes.value.trim()) {
+		setSqaFormError('Explain why the additional profiles or product characteristics apply in Review notes.');
+		sqaUi.customize.open = true;
+		sqaUi.scopeNotes.focus();
+		return;
+	}
+	if (scopePreview.requiresConfirmation && !sqaUi.expandedScope.checked) {
+		setSqaFormError('Confirm that the expanded scope applies to this product.');
+		sqaUi.expandedScope.focus();
+		return;
+	}
+	const environmentId = selectedEnvironmentForRun();
+	if (!environmentId) {
+		setSqaFormError('Choose an available device and browser before starting the quality review.');
+		sqaUi.testOnChange?.focus();
+		return;
+	}
 	sqaUi.submit.dataset.busy = 'true';
 	sqaUi.submit.textContent = 'Starting review…';
 	syncSqaSubmitState();
@@ -6380,10 +6611,10 @@ sqaUi.form.onsubmit = async event => {
 				attributes,
 				target,
 				scopeNotes: sqaUi.scopeNotes.value.trim(),
+				expandedScopeConfirmed: scopePreview.requiresConfirmation && sqaUi.expandedScope.checked,
 				authorizationConfirmed: true,
-				device: activeTestEnvStore?.get?.()?.device || pendingDeviceId(),
 				deviceLandscape: (sqaUi.deviceLandscape?.checked) === true,
-				environmentId: selectedEnvironmentForRun() || undefined
+				environmentId
 			})
 		});
 		const session = result?.session ?? result;
@@ -6423,6 +6654,14 @@ const founderUi = {
 	targetRelease: $('founder-target-release'),
 	targetEnvironment: $('founder-target-environment'),
 	primaryGoal: $('founder-primary-goal'),
+	stage: $('founder-stage'),
+	businessModel: $('founder-business-model'),
+	targetCustomer: $('founder-target-customer'),
+	access: $('founder-access'),
+	accessHelp: $('founder-access-help'),
+	contextMode: $('founder-context-mode'),
+	businessFields: $('founder-business-fields'),
+	launchStatus: $('founder-launch-status'),
 	constraints: $('founder-constraints'),
 	authorization: $('founder-authorization'),
 	advanced: $('founder-advanced'),
@@ -6460,9 +6699,37 @@ function paintFounderCatalog(catalog) {
 }
 
 function syncFounderSubmitState() {
-	founderUi.submit.disabled = !state.founderCatalog
-		|| !founderUi.authorization.checked
-		|| founderUi.submit.dataset.busy === 'true';
+	const provided = founderUi.contextMode.value === 'provided';
+	founderUi.businessFields.hidden = !provided;
+	for (const field of [founderUi.stage, founderUi.businessModel, founderUi.targetCustomer, founderUi.primaryGoal]) field.required = provided;
+	$('founder-goal-optional').hidden = provided;
+	const authenticatedAvailable = state.founderCatalog?.launch?.authenticatedAvailable !== false;
+	founderUi.access.querySelector('option[value="authenticated"]').disabled = !authenticatedAvailable;
+	founderUi.accessHelp.textContent = founderUi.access.value === 'authenticated'
+		? 'Provide a test account securely in the next step. Browser review waits until you supply it or choose public pages only.'
+		: authenticatedAvailable ? 'Signed-in pages are excluded. Qase will record that boundary and continue without asking for credentials.'
+			: 'Signed-in review is unavailable in the current execution mode. Public pages can still be reviewed.';
+	const missing = founderLaunchProblems({
+		catalogReady: Boolean(state.founderCatalog), targetUrl: founderUi.targetUrl.value,
+		authorizationConfirmed: founderUi.authorization.checked, environmentId: selectedEnvironmentForRun(),
+		accessDecision: founderUi.access.value, authenticatedAvailable,
+		contextMode: founderUi.contextMode.value, productContext: founderProductContext()
+	});
+	const busy = founderUi.submit.dataset.busy === 'true';
+	founderUi.submit.disabled = busy || missing.length > 0;
+	founderUi.submit.textContent = busy ? 'Creating review…' : founderUi.access.value === 'authenticated' ? 'Continue to secure sign-in' : 'Start Product Review';
+	const message = busy ? 'Creating your review…'
+		: missing.length ? `To start: ${missing[0]}.`
+			: founderUi.access.value === 'authenticated' ? 'Ready to continue to secure sign-in. Browser work has not started.' : 'Ready to start the public-page review.';
+	if (founderUi.launchStatus.textContent !== message) founderUi.launchStatus.textContent = message;
+}
+
+function founderProductContext() {
+	const values = { primaryGoal: founderUi.primaryGoal.value, constraints: founderUi.constraints.value };
+	if (founderUi.contextMode.value === 'provided') Object.assign(values, {
+		stage: founderUi.stage.value, businessModel: founderUi.businessModel.value, targetCustomer: founderUi.targetCustomer.value
+	});
+	return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value.trim()]).filter(([, value]) => value));
 }
 
 async function openFounderStart() {
@@ -6508,7 +6775,7 @@ function applyFounderDetectedContext(context) {
 	} else {
 		// Distinct missing-context state: no prior Qase context exists for this
 		// project, so only the essential target fields are needed.
-		founderUi.detectedContext.textContent = 'No prior project context was found for this workspace yet — just enter the target URL and product name below to get started. Everything else is optional.';
+		founderUi.detectedContext.textContent = 'No prior project context was found. Choose a review scope and either supply business context or allow clearly labeled assumptions.';
 	}
 	founderUi.detectedContext.hidden = false;
 	if (context.targetUrl && !founderUi.targetUrl.value.trim()) founderUi.targetUrl.value = context.targetUrl;
@@ -6519,6 +6786,10 @@ function applyFounderDetectedContext(context) {
 	if (context.previousFounder?.productContext?.constraints && !founderUi.constraints.value.trim()) {
 		founderUi.constraints.value = context.previousFounder.productContext.constraints;
 	}
+	for (const key of ['stage', 'businessModel', 'targetCustomer']) {
+		if (context.previousFounder?.productContext?.[key] && !founderUi[key].value.trim()) founderUi[key].value = context.previousFounder.productContext[key];
+	}
+	syncFounderSubmitState();
 }
 
 function closeFounderStart() {
@@ -6533,10 +6804,16 @@ function founderOptional(value) {
 founderUi.close.onclick = closeFounderStart;
 founderUi.cancel.onclick = closeFounderStart;
 founderUi.authorization.onchange = syncFounderSubmitState;
+for (const field of [founderUi.targetUrl, founderUi.primaryGoal, founderUi.stage, founderUi.businessModel, founderUi.targetCustomer, founderUi.contextMode, founderUi.access]) {
+	field.addEventListener('input', syncFounderSubmitState);
+	field.addEventListener('change', syncFounderSubmitState);
+}
 
 founderUi.form.onsubmit = async event => {
 	event.preventDefault();
 	setFounderFormError();
+	syncFounderSubmitState();
+	if (founderUi.submit.disabled) return;
 	if (!founderUi.form.reportValidity()) return;
 	if (!ensureModelConfigured('Founder launcher')) return;
 	let targetUrl;
@@ -6561,10 +6838,7 @@ founderUi.form.onsubmit = async event => {
 		...(founderOptional(founderUi.targetRelease.value) ? { release: founderUi.targetRelease.value.trim() } : {}),
 		...(founderOptional(founderUi.targetEnvironment.value) ? { environment: founderUi.targetEnvironment.value.trim() } : {})
 	};
-	const productContext = {
-		...(founderOptional(founderUi.primaryGoal.value) ? { primaryGoal: founderUi.primaryGoal.value.trim() } : {}),
-		...(founderOptional(founderUi.constraints.value) ? { constraints: founderUi.constraints.value.trim() } : {})
-	};
+	const productContext = founderProductContext();
 
 	founderUi.submit.dataset.busy = 'true';
 	founderUi.submit.textContent = 'Creating review…';
@@ -6575,6 +6849,9 @@ founderUi.form.onsubmit = async event => {
 			method: 'POST',
 			body: JSON.stringify({
 				authorizationConfirmed: true,
+				setupVersion: 1,
+				accessDecision: founderUi.access.value,
+				contextMode: founderUi.contextMode.value,
 				target,
 				device: activeTestEnvStore?.get?.()?.device || pendingDeviceId(),
 				deviceLandscape: (founderUi.deviceLandscape?.checked) === true,
@@ -6586,6 +6863,11 @@ founderUi.form.onsubmit = async event => {
 		if (!session?.id) throw new Error('The server did not return the new Founder review session.');
 		closeFounderStart();
 		await selectSession(session.id);
+		if (session.pendingQuestion?.kind === 'founder_launch_credentials') {
+			setWorkspaceView('agent');
+			el.questionSlot.querySelector('input')?.focus();
+			return;
+		}
 		const startError = await api(`/sessions/${session.id}/message`, {
 			method: 'POST',
 			body: JSON.stringify({ text: `Review ${targetUrl}` })
@@ -6599,7 +6881,6 @@ founderUi.form.onsubmit = async event => {
 		setFounderFormError(error instanceof Error ? error.message : String(error));
 	} finally {
 		founderUi.submit.dataset.busy = 'false';
-		founderUi.submit.textContent = 'Start founder review';
 		founderUi.form.removeAttribute('aria-busy');
 		syncFounderSubmitState();
 	}
@@ -6901,6 +7182,19 @@ function renderResultsPageHeader() {
 		: displayStatus === 'partial' ? 'Completed with gaps' : session.status === 'done' ? 'Complete' : 'Results available';
 	$('results-page-status').dataset.status = displayStatus;
 	$('results-page-findings').textContent = `${findings} finding${findings === 1 ? '' : 's'}`;
+	const assessment = session.mode === 'sqa' ? session.sqa?.assessment : null;
+	if (assessment) {
+		const verdict = String(assessment.verdict ?? '').toLowerCase();
+		$('results-page-status').textContent = ({ pass: 'Passed', fail: 'Failed', blocked: 'Blocked' })[verdict] ?? 'Assessment complete';
+		$('results-page-status').dataset.status = verdict === 'fail' ? 'failed' : verdict === 'pass' ? 'done' : displayStatus;
+		const summary = assessment.summary ?? {};
+		const unresolved = [
+			summary.fail > 0 ? `${summary.fail} failed` : '',
+			summary.blocked > 0 ? `${summary.blocked} blocked` : '',
+			summary.not_assessed > 0 ? `${summary.not_assessed} not assessed` : ''
+		].filter(Boolean);
+		$('results-page-findings').textContent = `${summary.applicableControls ?? 0} controls · ${unresolved.join(' · ') || `${summary.pass ?? 0} passed`}`;
+	}
 	let target = '';
 	try { target = session.targetUrl ? new URL(session.targetUrl).host : ''; } catch { target = session.targetUrl ?? ''; }
 	$('results-page-target').textContent = target;
@@ -7030,6 +7324,7 @@ document.addEventListener('click', event => {
 
 function renderAuthMode() {
 	if (!el.authGate) return;
+	if (el.authNotice) el.authNotice.hidden = true;
 	const register = authRegisterMode;
 	if (el.authTitle) el.authTitle.textContent = register ? 'Create your account.' : 'Welcome back.';
 	if (el.authCopy) el.authCopy.textContent = register
@@ -7315,6 +7610,10 @@ el.resetForm?.addEventListener('submit', async event => {
 		// The authorization is single-use; drop it and return to sign-in.
 		resetAuthorization = undefined;
 		showAuthCard('signin');
+		if (el.authNotice) {
+			el.authNotice.textContent = result?.message ?? 'Password updated. Sign in with your new password.';
+			el.authNotice.hidden = false;
+		}
 		el.authEmail?.focus();
 	} catch (error) {
 		if (el.resetError) {
@@ -7534,6 +7833,8 @@ const deviceMatrix = $('device-matrix') ? createDeviceMatrixView({
 		facetSummary: $('dm-facet-summary')
 	}
 }) : null;
+
+openDeviceMatrixButton?.addEventListener('click', () => deviceMatrix?.open());
 
 /* ── Test cases (Phase 4) ───────────────────────────────────────── */
 function startRunForTestCase(testCase) {
@@ -8033,17 +8334,23 @@ const devicePicker = $('device-picker') ? createDevicePicker({
 		// + device frame reflect the new selection at once, not on next render.
 		renderLiveDeviceViewHeader(state.session ?? null, state.activeRuntimeEnvironment);
 		renderAllTestOnBlocks(); // start dialogs read the same selection (DX Phase 3)
+		syncSqaSubmitState();
+		syncFounderSubmitState();
 		// M3 (#14422): keep the sidebar highlight in sync with card selections.
 		matrixSidebar?.setSelection?.(selection?.device ?? null, selection?.osVersion ?? null);
 	},
 	onClose: () => void refreshDevicePickerData(),
 	onOpen: () => {
+		const forSqa = sqaUi.dialog.open && !devicePicker.state.addPick;
+		$('mx-target-field').hidden = forSqa;
+		$('dp-sqa-actions').hidden = !forSqa;
 		void refreshDevicePickerData();
 		// Re-sync the sidebar highlight to the current selection on every open.
 		const current = activeTestEnvStore.get();
 		if (current) matrixSidebar?.setSelection?.(current.device, current.osVersion);
 	}
 }) : null;
+$('dp-sqa-continue')?.addEventListener('click', () => devicePicker.close());
 
 /* ── Device & Browser Matrix (M3 #14422): sidebar + stores inside the picker.
  * The M2 model layer builds the tree; this wires the renderer, the shared
@@ -8111,19 +8418,18 @@ function renderMatrixColumns() {
 // channelForClient (top-of-file import) mirrors the server ladder client-side
 // (see browserChannels.js).
 
-/* Top bar: target URL bound to the REAL run state — the QA launcher's URL
- * field is the canonical "next run target"; we prefill from the last session
- * target when present. Refresh reloads picker data + re-opens QA prefilled. */
+/* Refresh the shared device catalog. Outside SQA, retain the target for the
+ * next QA setup. */
 if ($('mx-target-url')) {
 	const urlInput = $('mx-target-url');
 	urlInput.value = state.session?.targetUrl ?? '';
 }
 if ($('mx-refresh')) {
 	$('mx-refresh').addEventListener('click', async () => {
+		const forSqa = sqaUi.dialog.open;
 		await refreshDevicePickerData();
 		renderMatrixColumns();
-		// Pre-open the QA launcher with the current target so Refresh is a
-		// one-click "reload catalog + go run this URL".
+		if (forSqa) return;
 		const url = $('mx-target-url')?.value?.trim();
 		if (url) {
 			const qa = $('qa-target-url');
@@ -8198,6 +8504,10 @@ void (async () => {
 	matrixSidebar?.setSelection?.(focus.device, focus.osVersion);
 	renderMatrixColumns();
 	renderAllTestOnBlocks();
+	// A saved device can arrive after the user has completed the SQA form.
+	// Recompute readiness even though restoration does not fire onSelect.
+	syncSqaSubmitState();
+	syncFounderSubmitState();
 })();
 
 /* ── Device Matrix drawer (Phase 10) ─────────────────────────────── */
@@ -8406,8 +8716,11 @@ el.stopRun.onclick = async () => {
 };
 el.resumeRun.onclick = async () => {
 	if (workflowStatus(state.session).resumeBlocked) { toast(workflowStatus(state.session).resumeBlocked, 'bad'); return; }
+	const founderFocus=state.session?.mode==='founder'&&document.activeElement===el.resumeRun;
 	el.resumeRun.disabled = true;
+	if(founderFocus)document.getElementById('founder-progress-title')?.focus({preventScroll:true});
 	try {
+		if(state.session?.mode==='founder'){await founderContinue();return;}
 		await api(`/sessions/${state.sessionId}/message`, {
 			method: 'POST',
 			body: JSON.stringify({ text: 'continue' })
@@ -8569,7 +8882,7 @@ async function bootWorkspace() {
 					await pageRouter.navigate(initialRoute, { replace: true, applyRoute: false });
 				}
 			}
-			if (initialRoute.name === 'runs' && state.sessionId === target.id) {
+			if (initialRoute.name === 'runs' && state.sessionId === target.id && !sqaStartupRequested) {
 				// Restoring a completed run is not a request to open Results.
 				// Keep result navigation behind an explicit user action or URL.
 				initialRoute = { name: 'run', runId: target.id };
@@ -8581,7 +8894,7 @@ async function bootWorkspace() {
 			el.transcript.append(el.chatEmpty);
 			el.chatEmpty.hidden = false;
 			renderRunsEmptyState();
-			if (initialRoute.name === 'runs') {
+			if (initialRoute.name === 'runs' && !sqaStartupRequested) {
 				initialRoute = { name: 'new-run' };
 				await pageRouter.navigate(initialRoute, { replace: true, applyRoute: false });
 			}

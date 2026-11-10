@@ -1,3 +1,4 @@
+import './testWorkingDirectory.js';
 /**
  * Integration: a 'report' commit on the run bus triggers auto-generation of
  * test cases through the wiring in serviceFactory.attachTestCaseAutogen.

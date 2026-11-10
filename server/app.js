@@ -19,6 +19,7 @@ import { authThrottleKey, createAuthThrottle } from './authThrottle.js';
 import { InviteError } from './invites.js';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
 import { prepareHybridAuthGrant, recordHybridAnswer } from './hybridAuth.js';
+import { initializeHybridState } from './hybridQaRuntime.js';
 import { applyHostDecision } from './hybridContinuation.js';
 import {
 	FOUNDER_CATEGORIES,
@@ -35,8 +36,8 @@ import {
 	recordFounderPublicOnlyDecision
 } from './founderService.js';
 import { detectFounderProjectContext } from './founderContext.js';
-import { projectStateFromSession, reconcileSelections } from './founderProjectState.js';
-import { createFounderHandoffService, FounderHandoffError } from './founderHandoff.js';
+import { createFounderActions } from './founderActions.js';
+import { FounderHandoffError } from './founderHandoff.js';
 import { buildSqaReportMarkdown } from './sqaAssessment.js';
 import { computeMatrixCoverage } from './matrixCoverage.js';
 import { createCatalogRoutes } from './catalogApi.js';
@@ -52,11 +53,16 @@ import { normalizeQaScopeSelection } from '../public/qaScopeCatalog.js';
 import { createConfiguredTelegramNotifier } from './telegramNotifier.js';
 import { resolveDisplayTimeZone, formatFeedbackTimestamp } from './displayTime.js';
 import { createSqaState, createSqaTodoPlan, publicSqaCatalog, recordReviewerSqaObservation } from './sqaService.js';
-import { preflightSqaRuntime } from './sqaRuntime.js';
+import { preflightSqaRuntime, preflightFounderRuntime } from './sqaRuntime.js';
+import { changeSqaReview, assertSqaReviewIdle, assertSqaReviewRevision } from './sqaReview.js';
+import { sqaPublishedVersions, sqaVersion } from './sqaHistory.js';
+import { inspectSqaEvidence } from './sqaEvidence.js';
 import { publicQaTestCatalog } from './qaTestCatalog.js';
 import { validateQaSelectedTests, validateSecurityAuthorization } from './appQaSelection.js';
 import { selectQaExecutionMode, hybridProfile, loadQualification } from './hybridConfig.js';
 import { hybridRecoveryProblem, reconcileHybridUsageBeforeResume } from './hybridRecoveryGate.js';
+import { buildFounderProgress, founderContinuationTask } from './founderProgress.js';
+import { inspectFounderEvidence } from './founderEvidence.js';
 import { getConfig } from './config.js';
 import { renderReportPdf } from './reportPdf.js';
 import { buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
@@ -198,6 +204,26 @@ export function createApplication(options = {}) {
 	const isDraining = typeof options.isDraining === 'function' ? options.isDraining : () => false;
 	const mailer = options.mailer ?? createMailer({ environment, logger });
 	const activeTurns = new Set();
+	const founderContinuations = new Map();
+	const founderSetupAnswers = new Set();
+	async function answerFounderSetup(session, response, action) {
+		if (session.pendingQuestion?.kind !== 'founder_launch_credentials' || founderSetupAnswers.has(session.id)) return response.status(409).json({ error: 'The review setup is already being submitted or answered. Refresh the saved run.' });
+		founderSetupAnswers.add(session.id);
+		try {
+			const latest = await services.runs.get(session.id);
+			if (latest?.pendingQuestion?.kind !== 'founder_launch_credentials'
+				|| latest.pendingQuestion.toolCallId !== session.pendingQuestion.toolCallId) {
+				return response.status(409).json({ error: 'The review setup has already been answered. Refresh the saved run.' });
+			}
+			return await action();
+		}
+		finally { founderSetupAnswers.delete(session.id); }
+	}
+	async function founderAuthenticatedAvailable() {
+		if (environment.QASE_FOUNDER_REASONING_ENABLED === 'true') return false;
+		const configuration = await services.configuration.getPublic();
+		return configuration?.provider !== 'jev';
+	}
 	const drytisIntegrationApi = options.drytisIntegrationApi;
 	if (drytisIntegrationApi !== undefined && typeof drytisIntegrationApi?.mount !== 'function') {
 		throw new TypeError('Drytis integration API must provide mount(app).');
@@ -208,8 +234,9 @@ export function createApplication(options = {}) {
 	}
 	const drytisDelivery = options.drytisDelivery;
 	if (drytisDelivery !== undefined) {
-		if ((drytisDelivery.deliveryClient === undefined) !== (drytisDelivery.ticketsTarget === undefined)) {
-			throw new TypeError('Drytis delivery client and tickets target must be configured together.');
+		const hasTarget = drytisDelivery.ticketsTarget !== undefined || drytisDelivery.founderHandoffTarget !== undefined;
+		if ((drytisDelivery.deliveryClient !== undefined) !== hasTarget) {
+			throw new TypeError('Drytis delivery client and an explicit tickets or Founder target must be configured together.');
 		}
 		if (drytisDelivery.deliveryClient !== undefined
 			&& typeof drytisDelivery.deliveryClient?.deliver !== 'function') {
@@ -227,23 +254,23 @@ export function createApplication(options = {}) {
 	const founderProjectState = typeof services.runs.getFounderProjectState === 'function'
 		? {
 			get: services.runs.getFounderProjectState.bind(services.runs),
-			save: services.runs.saveFounderProjectState.bind(services.runs)
+			save: services.runs.saveFounderProjectState.bind(services.runs),
+			update: services.runs.updateFounderProjectState?.bind(services.runs)
 		}
 		: undefined;
+	const founderActions = founderProjectState ? createFounderActions({
+		backend: founderProjectState,
+		deliveryClient: drytisDelivery?.founderHandoffTarget ? drytisDelivery.deliveryClient : undefined,
+		target: drytisDelivery?.founderHandoffTarget,
+		projectId: services.tenantContext?.projectId
+	}) : undefined;
+	app.locals.qaseFounderHandoff = founderActions;
 	if (typeof services.events.subscribeGlobal === 'function' && founderProjectState) {
 		services.events.subscribeGlobal(async (sessionId, event) => {
 			if (event?.type !== 'founder.finalized') return;
 			try {
 				const session = await services.runs.getAny?.(sessionId);
-				const state = projectStateFromSession(session);
-				if (!state) return;
-				// Regeneration replaces the set; selections that still name a
-				// live recommendation id survive into the new state.
-				const previous = await founderProjectState.get();
-				const previousSelections = previous?.recommendationSet?.recommendations && Array.isArray(previous.selections)
-					? previous.selections
-					: [];
-				await founderProjectState.save(reconcileSelections({ ...state, selections: previousSelections }));
+				if (session) await founderActions.publish(session);
 			} catch (error) {
 				logger?.error?.('founder.project-state.persist-failed', { errorName: error?.name, reason: sanitizeErrorDetail(error, 200) });
 			}
@@ -763,14 +790,15 @@ export function createApplication(options = {}) {
 		response.json(publicQaTestCatalog());
 	});
 
-	app.get('/api/founder/catalog', (_request, response) => {
-		response.set('Cache-Control', 'private, max-age=300');
+	app.get('/api/founder/catalog', async (_request, response) => {
+		response.set('Cache-Control', 'no-store');
 		response.json({
 			schemaVersion: FOUNDER_SCHEMA_VERSION,
 			categories: FOUNDER_CATEGORIES,
 			observationTypes: FOUNDER_OBSERVATION_TYPES,
 			confidenceLevels: FOUNDER_LEVELS,
-			caveat: FOUNDER_CAVEAT
+			caveat: FOUNDER_CAVEAT,
+			launch: { setupVersion: 1, authenticatedAvailable: await founderAuthenticatedAvailable() }
 		});
 	});
 
@@ -797,121 +825,56 @@ export function createApplication(options = {}) {
 		}
 	});
 
-	// Saved Founder Mode project state (Phase 3): last successful
-	// recommendation set, selections and handoff status. The state is shared
-	// at the trusted tenant-project scope; writes additionally require a
-	// non-pilot actor (pilots may read, never mutate).
+	// Modern writes bind to an owned published run, its content key and action
+	// revision. Unbound legacy clients must reload instead of targeting a new set.
+	async function founderActionRun(request, response, runId) {
+		if (!founderActions) { response.status(501).json({ error: 'Founder persistence is unavailable.' }); return; }
+		if (typeof runId !== 'string' || !/^[a-f0-9-]{36}$/i.test(runId)) { response.status(409).json({ error: 'Open the completed Founder report and reload its saved selection.', code: 'report_binding_required' }); return; }
+		const session = await services.runs.get(runId);
+		if (!session || (request.auth?.userId && session.ownerUserId !== request.auth.userId)) { response.status(404).json({ error: 'No such session.' }); return; }
+		return session;
+	}
+	function founderActionError(request, response, error) {
+		if (error instanceof FounderHandoffError) response.status(error.status).json({ error: error.message, code: error.code });
+		else safeErrorResponse(request, response, error, 500);
+	}
 	app.get('/api/founder/state', async (request, response) => {
-		if (!founderProjectState) {
-			response.status(501).json({ error: 'Founder project state persistence is not available in this mode.' });
-			return;
-		}
+		response.set('Cache-Control', 'no-store');
 		try {
-			const state = reconcileSelections(await founderProjectState.get());
-			response.set('Cache-Control', 'no-store');
-			response.json({ state: state ?? null });
-		} catch (error) {
-			safeErrorResponse(request, response, error, 500);
-		}
+			if (request.query.runId !== undefined) {
+				const session = await founderActionRun(request, response, request.query.runId); if (!session) return;
+				response.json({ state: await founderActions.read(session) }); return;
+			}
+			if (!founderProjectState) { response.status(501).json({ error: 'Founder persistence is unavailable.' }); return; }
+			const raw = await founderProjectState.get();
+			// Legacy summaries are read-only and never expose other owners' records.
+			const owner = request.auth?.userId ?? services.tenantContext?.actorUserId;
+			if (!raw || (owner && raw.ownerUserId !== owner)) { response.json({ state: null }); return; }
+			const { actionRecords, legacyAction, ...summary } = raw;
+			response.json({ state: { ...summary, readOnly: true } });
+		} catch (error) { founderActionError(request, response, error); }
 	});
 
-	// Persist user selections (and only selections — the recommendation set
-	// itself is only written at finalization time from a validated report).
 	app.patch('/api/founder/state/selections', async (request, response) => {
-		if (!founderProjectState) {
-			response.status(501).json({ error: 'Founder project state persistence is not available in this mode.' });
-			return;
-		}
-		if (request.auth?.role === 'pilot') {
-			response.status(403).json({ error: 'Pilot accounts cannot modify Founder Mode selections.' });
-			return;
-		}
+		if (request.auth?.role === 'pilot') { response.status(403).json({ error: 'Pilot accounts cannot modify Founder Mode selections.' }); return; }
 		try {
-			const raw = request.body?.selectedRecommendationIds;
-			if (!Array.isArray(raw) || raw.length > 50 || !raw.every(id => typeof id === 'string' && id.length <= 128)) {
-				response.status(400).json({ error: 'selectedRecommendationIds must be an array of up to 50 recommendation ids.' });
-				return;
-			}
-			const current = await founderProjectState.get();
-			if (!current?.recommendationSet?.recommendations) {
-				response.status(409).json({ error: 'No saved recommendation set exists yet. Finalize a Founder review first.' });
-				return;
-			}
-			const known = new Set(current.recommendationSet.recommendations.map(item => item.id));
-			const unknown = raw.filter(id => !known.has(id));
-			if (unknown.length > 0) {
-				response.status(400).json({ error: `Unknown recommendation ids: ${unknown.join(', ')}.` });
-				return;
-			}
-			const next = reconcileSelections({ ...current, selections: [...new Set(raw)] });
-			await founderProjectState.save(next);
-			response.json({ state: next });
-		} catch (error) {
-			safeErrorResponse(request, response, error, 500);
-		}
+			const input = request.body ?? {}, ids = input.selectedRecommendationIds;
+			if (!Array.isArray(ids) || ids.length > 50 || !ids.every(id => typeof id === 'string' && id.length > 0 && id.length <= 128)) { response.status(400).json({ error: 'selectedRecommendationIds must contain up to 50 recommendation ids.' }); return; }
+			const session = await founderActionRun(request, response, input.runId); if (!session) return;
+			response.json({ state: await founderActions.select(session, input) });
+		} catch (error) { founderActionError(request, response, error); }
 	});
 
-	// The signed delivery client is reused only when a founder-specific target
-	// is configured; otherwise the handoff stays export-only rather than
-	// silently delivering founder payloads to the QA tickets endpoint.
-	const founderDeliveryTarget = drytisDelivery?.founderHandoffTarget;
-	const founderHandoff = founderProjectState
-		? createFounderHandoffService({
-			deliveryClient: founderDeliveryTarget ? drytisDelivery.deliveryClient : undefined,
-			target: founderDeliveryTarget,
-			get: async () => reconcileSelections(await founderProjectState.get()),
-			save: state => founderProjectState.save(state),
-			tenantProjectId: services.tenantContext?.projectId
-		})
-		: undefined;
-	app.locals.qaseFounderHandoff = founderHandoff;
-
-	// Explicit Founder → Studio handoff (Phase 4): selection alone never
-	// triggers a delivery; the client must POST the selected ids here.
 	app.post('/api/founder/handoff', async (request, response) => {
-		if (!founderProjectState) {
-			response.status(501).json({ error: 'Founder project state persistence is not available in this mode.' });
-			return;
-		}
-		if (request.auth?.role === 'pilot') {
-			response.status(403).json({ error: 'Pilot accounts cannot send Founder recommendations to Studio.' });
-			return;
-		}
-		let payloadOnly = false;
+		if (request.auth?.role === 'pilot') { response.status(403).json({ error: 'Pilot accounts cannot send Founder recommendations to Studio.' }); return; }
 		try {
-			const raw = request.body?.selectedRecommendationIds;
-			if (!Array.isArray(raw) || raw.length === 0 || raw.length > 50
-				|| !raw.every(id => typeof id === 'string' && id.length > 0 && id.length <= 128)) {
-				response.status(400).json({ error: 'selectedRecommendationIds must be a non-empty array of up to 50 recommendation ids.' });
-				return;
-			}
-			// Fallback path: export requests NEVER deliver — the payload is
-			// returned ready for copy/download without claiming a build started.
-			payloadOnly = request.body?.export === true;
-			const handoffService = request.app.locals.qaseFounderHandoff;
-			if (!handoffService) {
-				response.status(501).json({ error: 'Founder handoff is not configured on this instance.' });
-				return;
-			}
-			if (payloadOnly) {
-				const payload = await handoffService.build(raw);
-				response.json({ ok: false, unavailable: true, payload });
-				return;
-			}
-			const result = await handoffService.send(raw);
-			response.json({
-				ok: result.ok,
-				...(result.unavailable ? { unavailable: true, payload: result.payload } : {}),
-				handoff: result.handoff,
-				state: await founderProjectState.get()
-			});
-		} catch (error) {
-			if (error instanceof FounderHandoffError) {
-				response.status(error.status).json({ error: error.message, code: error.code });
-				return;
-			}
-			safeErrorResponse(request, response, error, 500);
-		}
+			const input = request.body ?? {}, ids = input.selectedRecommendationIds;
+			if (!Array.isArray(ids) || !ids.length || ids.length > 50 || !ids.every(id => typeof id === 'string' && id.length > 0 && id.length <= 128)) { response.status(400).json({ error: 'selectedRecommendationIds must contain between 1 and 50 recommendation ids.' }); return; }
+			const session = await founderActionRun(request, response, input.runId); if (!session) return;
+			if (input.export === true) { response.json({ ok: false, unavailable: true, payload: await founderActions.build(session, input) }); return; }
+			const result = await founderActions.send(session, input);
+			response.json({ ...result, handoff: result.handoff ?? result.state?.handoff });
+		} catch (error) { founderActionError(request, response, error); }
 	});
 
 	app.put('/api/config', async (request, response) => {
@@ -926,6 +889,26 @@ export function createApplication(options = {}) {
 
 	app.post('/api/config/test', async (request, response) => {
 		response.json(await services.configuration.testConnection(request.body ?? {}));
+	});
+
+	app.post('/api/config/hybrid/qualification', async (request, response) => {
+		if (!requireOperator(request, response)) return;
+		if (!['owner', 'admin', 'developer'].includes(request.auth?.role)) {
+			response.status(403).json({ error: 'This action is limited to instance operators.' });
+			return;
+		}
+		if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body) || Object.keys(request.body).length) {
+			response.status(400).json({ error: 'This check uses the saved account configuration. Send an empty object.' });
+			return;
+		}
+		if (typeof services.configuration.qualifyHybrid !== 'function') {
+			response.status(503).json({ error: 'Model qualification is unavailable on this server. Ask the operator to run npm run qualify:hybrid-gateway.' });
+			return;
+		}
+		try {
+			const config = await services.configuration.qualifyHybrid();
+			response.status(config.hybridQa?.status === 'qualification_running' ? 202 : 200).json(config);
+		} catch (error) { safeErrorResponse(request, response, error); }
 	});
 
 	app.get('/api/devices', (_request, response) => {
@@ -1996,6 +1979,8 @@ export function createApplication(options = {}) {
 				selectedTests = validateQaSelectedTests(request.body?.selectedTests);
 				securityAuthorization = validateSecurityAuthorization(request.body?.securityAuthorization, selectedTests);
 				qaExecutionMode = selectQaExecutionMode(request.body?.qaExecutionMode);
+				if (request.body?.allowTestWrites !== undefined && typeof request.body.allowTestWrites !== 'boolean') throw new Error('Test-write authorization must be a boolean.');
+				if (request.body?.allowTestWrites === true && qaExecutionMode !== 'hybrid') throw new Error('Test-write authorization is available only for hybrid QA.');
 				if (qaExecutionMode === 'hybrid') loadQualification(hybridProfile(getConfig()));
 			} catch (error) {
 				response.status(400).json({ error: error instanceof Error ? error.message : 'Invalid test selection.' });
@@ -2018,6 +2003,11 @@ export function createApplication(options = {}) {
 					...(scopeSelection ? { scopeSelection } : {})
 				}
 			);
+			if (request.body?.allowTestWrites === true) {
+				const state = initializeHybridState(session, hybridProfile(getConfig()));
+				state.writeAuthorization = { enabled: true, runId: session.id, ownerUserId: session.ownerUserId, grantedAt: Date.now(), maximumSubmissions: 10, trials: [] };
+				await services.runs.commit(session, 'hybrid.state', {});
+			}
 			track('run_created', { mode: session.mode, ...cohortFor(request.auth?.role) });
 			response.status(201).json(session);
 		} catch (error) {
@@ -2029,9 +2019,15 @@ export function createApplication(options = {}) {
 		let session;
 		try {
 			const sqa = publicInput(() => createSqaState(request.body ?? {}));
-			const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
+			if (request.body?.device !== undefined && !isDeviceId(request.body.device)) {
+				throw new PublicInputError(`Unsupported SQA device "${String(request.body.device)}". Choose a device from the available catalog.`, 422);
+			}
+			if (request.body?.engine !== undefined && !isEngineId(request.body.engine)) {
+				throw new PublicInputError(`Unsupported SQA browser engine "${String(request.body.engine)}". Choose chromium, firefox, or webkit.`, 422);
+			}
+			const device = request.body?.device ?? DEFAULT_DEVICE_ID;
 			const deviceLandscape = request.body?.deviceLandscape === true;
-			const engine = isEngineId(request.body?.engine) ? request.body.engine : 'chromium';
+			const engine = request.body?.engine ?? 'chromium';
 			const environment = await resolveEnvironmentForRun(services, request.body?.environmentId);
 			const executionEngine = await preflightSqaRuntime({ environment, engine });
 			session = await services.runs.create(`SQA — ${sqa.scope.target.name}`, {
@@ -2052,7 +2048,8 @@ export function createApplication(options = {}) {
 			await services.runs.commit(session, 'sqa.created', {
 				catalogVersion: sqa.scope.catalogVersion,
 				profiles: sqa.scope.profiles,
-				attributes: sqa.scope.attributes
+				attributes: sqa.scope.attributes,
+				selectionReview: sqa.scope.selectionReview
 			});
 			response.status(201).json(session);
 		} catch (error) {
@@ -2069,28 +2066,46 @@ export function createApplication(options = {}) {
 			// Detected project context is resolved server-side (never from the body)
 			// so the launcher cannot inject untrusted Studio or findings data.
 			const detectedContext = await founderDetectedContext(request);
+			const authenticatedAvailable = await founderAuthenticatedAvailable();
 			const founder = publicInput(() => createFounderState({
 				authorizationConfirmed: request.body?.authorizationConfirmed,
 				target: request.body?.target,
 				productContext: request.body?.productContext,
+				setupVersion: request.body?.setupVersion,
+				environmentId: request.body?.environmentId,
+				accessDecision: request.body?.accessDecision,
+				contextMode: request.body?.contextMode,
+				authenticatedAvailable,
 				projectContext: detectedContext
 			}));
 			const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
 			const deviceLandscape = request.body?.deviceLandscape === true;
 			const engine = isEngineId(request.body?.engine) ? request.body.engine : 'chromium';
-			const environment = await resolveEnvironmentForRun(services, request.body?.environmentId);
+			const reviewEnvironment = await resolveEnvironmentForRun(services, request.body?.environmentId);
+			const executionEngine = founder.scope.setupVersion === 1
+				? await preflightFounderRuntime({ environment: reviewEnvironment, engine }) : engine;
 			session = await services.runs.create(`Founder — ${founder.scope.target.name}`, {
-				device, deviceLandscape, engine, ownerUserId: request.auth?.userId,
+				device, deviceLandscape, engine: executionEngine, ownerUserId: request.auth?.userId,
 				cohort: cohortFor(request.auth?.role).cohort,
-				environmentId: environment?.envId, environmentSnapshot: environment
+				environmentId: reviewEnvironment?.envId, environmentSnapshot: reviewEnvironment
 			});
 			session.mode = 'founder';
 			session.founder = founder;
 			session.todos = createFounderReviewTodos();
 			session.device = device;
 			session.deviceLandscape = deviceLandscape;
-			session.environmentId = environment?.envId;
-			session.environmentSnapshot = environment;
+			session.environmentId = reviewEnvironment?.envId;
+			session.environmentSnapshot = reviewEnvironment;
+			if (founder.scope.setupVersion === 1) {
+				session.targetUrl = founder.scope.target.url;
+				if (founder.scope.access.decision === 'authenticated') {
+					session.pendingQuestion = {
+						toolCallId: randomUUID(), kind: 'founder_launch_credentials', credentialLike: true,
+						question: 'Provide a test account before the Founder review starts, or choose Skip login to review public pages only.'
+					};
+					await services.runs.setStatus(session, 'awaiting_input');
+				}
+			}
 			// `founder.created` intentionally skips relational child rewrites in the
 			// PostgreSQL repository. Persist the host-owned plan explicitly first so
 			// progress is visible before the model's first update_todo call.
@@ -2123,6 +2138,7 @@ export function createApplication(options = {}) {
 		);
 		response.json({
 			...session,
+			...(session.mode==='founder'?{founderProgress:buildFounderProgress(session,{running:liveState.running,resuming:founderContinuations.has(session.id),stopping:founderContinuations.get(session.id)?.cancelled})}:{}),
 			durationSeconds,
 			secretNames: await services.secrets.names(session.id),
 			running: liveState.running,
@@ -2133,28 +2149,132 @@ export function createApplication(options = {}) {
 		});
 	});
 
-	app.post('/api/sessions/:id/sqa/observations', async (request, response) => {
+	app.get('/api/sessions/:id/founder/progress', async (request,response)=>{
+		const session=await requireSession(request,response);if(!session)return;
+		if(session.mode!=='founder')return response.status(404).json({error:'No Founder review exists for this run.'});
+		const config=await services.configuration.getPublic();
+		response.set('Cache-Control','no-store');
+		response.json(buildFounderProgress(session,{running:services.agent.getLiveState(session.id).running,resuming:founderContinuations.has(session.id),stopping:founderContinuations.get(session.id)?.cancelled,configReady:config.ready!==false,provider:config.provider}));
+	});
+
+	app.post('/api/sessions/:id/founder/continue', async (request,response)=>{
+		const session=await requireSession(request,response);if(!session)return;
+		if(session.mode!=='founder')return response.status(404).json({error:'No Founder review exists for this run.'});
+		if(founderContinuations.has(session.id))return response.status(409).json({error:'This review is already resuming.',code:'BUSY'});
+		const ticket={cancelled:false};founderContinuations.set(session.id,ticket);
+		try{
+			const config=await services.configuration.getPublic();
+			const progress=buildFounderProgress(session,{running:services.agent.getLiveState(session.id).running,configReady:config.ready!==false,provider:config.provider});
+			if(!progress.recovery.available){founderContinuations.delete(session.id);return response.status(409).json({error:progress.recovery.reason,code:progress.recovery.code||'BUSY',progress});}
+			if(request.body?.expectedCheckpoint!==progress.recovery.token){founderContinuations.delete(session.id);return response.status(409).json({error:'Saved progress changed. Refresh the review before continuing.',code:'STALE_CHECKPOINT',progress});}
+			await services.runs.addMessage(session,{role:'user',text:progress.recovery.label+' from saved progress.'});
+			const work=(async()=>{
+				try{
+					const prepared=!services.agent.isRemote?await services.agent.ensureRuntime(session,services.runs):undefined;
+					if(ticket.deletion)await ticket.deletion;
+					if(ticket.deleted){await prepared?.dispose?.();return;}
+					if(ticket.cancelled){await services.runs.setStatus(session,'interrupted','Stopped by user.');return;}
+					await startTurn(session,{task:founderContinuationTask(progress)});
+				}catch(error){
+					try{
+						if(ticket.deletion)await ticket.deletion;
+						if(ticket.deleted)return;
+						if(ticket.cancelled)await services.runs.setStatus(session,'interrupted','Stopped by user.');
+						else await services.runs.setStatus(session,'error',sanitizeErrorDetail(error));
+					}catch{console.error('[Qase persistence] Could not save the Founder continuation failure.');}
+				}finally{if(founderContinuations.get(session.id)===ticket)founderContinuations.delete(session.id);}
+			})();
+			activeTurns.add(work);void work.finally(()=>activeTurns.delete(work));
+			response.status(202).json({accepted:true,progress:buildFounderProgress(session,{running:services.agent.getLiveState(session.id).running,resuming:true})});
+		}catch(error){founderContinuations.delete(session.id);safeErrorResponse(request,response,error);}
+	});
+
+	const activeSqaReviews = new Set();
+	async function withSqaReview(request, response, work, reviewerOnly = true) {
 		const session = await requireSession(request, response);
 		if (!session) return;
-		if (session.mode !== 'sqa') {
-			response.status(409).json({ error: 'This run is not an SQA assessment.' });
-			return;
-		}
-		if (request.auth?.role && !['owner', 'admin'].includes(request.auth.role)) {
+		if (reviewerOnly && !['owner', 'admin'].includes(request.auth?.role)) {
 			response.status(403).json({ error: 'SQA evidence review requires an owner or administrator.' });
 			return;
 		}
+		if (activeSqaReviews.has(session.id)) return response.status(409).json({ error: 'Another review update is being saved. Reload and retry.' });
+		activeSqaReviews.add(session.id);
 		try {
+			assertSqaReviewIdle(session);
+			if (services.agent.getLiveState(session.id).running) throw new PublicInputError('Stop the active assessment before human review.', 409);
+			await work(session);
+		} catch (error) {
+			safeErrorResponse(request, response, error);
+		} finally {
+			activeSqaReviews.delete(session.id);
+		}
+	}
+
+	app.post('/api/sessions/:id/sqa/observations', (request, response) => withSqaReview(request, response, async session => {
+			if (request.body?.observation || session.sqa.reviewRevision) assertSqaReviewRevision(session.sqa, request.body?.expectedRevision);
 			const result = await recordReviewerSqaObservation(
 				session,
-				request.body ?? {},
+				request.body?.observation ?? request.body ?? {},
 				request.auth ?? {},
 				services.runs
 			);
-			response.json({ result, assessment: session.sqa.assessment });
-		} catch (error) {
-			safeErrorResponse(request, response, error);
-		}
+			response.json({ result, assessment: session.sqa.assessment, sqa: session.sqa });
+	}));
+
+	for (const action of ['request', 'reopen', 'publish']) {
+		app.post(`/api/sessions/:id/sqa/review/${action}`, (request, response) => withSqaReview(request, response, async session => {
+			const sqa = await changeSqaReview(session, action, request.body, request.auth, services.runs);
+			response.json({ sqa });
+		}, action !== 'request'));
+	}
+
+	app.get('/api/sqa/reviews', async (request, response) => {
+		if (!['owner', 'admin'].includes(request.auth?.role)) return response.status(403).json({ error: 'The review inbox requires an owner or administrator.' });
+		try {
+			// Use the existing account-scoped list/get contract; never read unscoped runs.
+			const recent = await services.runs.list({ limit: 100 });
+			const reviews = [];
+			for (const summary of recent) {
+				if (summary.mode !== 'sqa') continue;
+				const run = await services.runs.get(summary.id);
+				if (run?.mode === 'sqa' && ['requested', 'in_review'].includes(run.sqa?.review?.status)) {
+					reviews.push({ id: run.id, title: run.title, target: run.sqa.scope.target, review: run.sqa.review, reviewRevision: run.sqa.reviewRevision });
+				}
+			}
+			response.json({ reviews, recentRunLimit: 100 });
+		} catch (error) { safeErrorResponse(request, response, error); }
+	});
+
+	app.get('/api/sessions/:id/sqa/versions', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		if (session.mode !== 'sqa') return response.status(409).json({ error: 'This run is not an SQA assessment.' });
+		response.json({ versions: sqaPublishedVersions(session.sqa).map(({ assessment, observations, scope, ...meta }) => ({ ...meta, assessmentId: assessment.assessmentId, verdict: assessment.verdict })) });
+	});
+
+	app.get('/api/sessions/:id/founder/evidence/:observationId/:index', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		response.set('Cache-Control', 'no-store');
+		try { response.json(inspectFounderEvidence(session, request.params.observationId, request.params.index)); }
+		catch (error) { safeErrorResponse(request, response, error); }
+	});
+
+	app.get('/api/sessions/:id/sqa/evidence/:controlId/:index', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		try {
+			response.json(inspectSqaEvidence(session, request.params.controlId, request.params.index, request.query.version));
+		} catch (error) { safeErrorResponse(request, response, error); }
+	});
+
+	app.get('/api/sessions/:id/sqa/versions/:version', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		try {
+			if (session.mode !== 'sqa') throw new PublicInputError('This run is not an SQA assessment.', 409);
+			response.json(sqaVersion(session.sqa, request.params.version));
+		} catch (error) { safeErrorResponse(request, response, error); }
 	});
 
 	app.get('/api/findings', async (request, response) => {
@@ -2204,8 +2324,15 @@ export function createApplication(options = {}) {
 			response.json({ deleted: false });
 			return;
 		}
-		if (services.agent.isRemote) await services.agent.stop(session.id);
-		const deleted = await services.runs.delete(session.id);
+		const continuation=founderContinuations.get(session.id);let finishDeletion;
+		if(continuation?.deletion)return response.status(409).json({error:'This review is already being deleted.'});
+		if(continuation){continuation.cancelled=true;continuation.deletion=new Promise(resolve=>{finishDeletion=resolve;});}
+		let deleted;
+		try{
+			if (services.agent.isRemote) await services.agent.stop(session.id);
+			deleted = await services.runs.delete(session.id);
+			if(continuation)continuation.deleted=deleted;
+		}finally{finishDeletion?.();}
 		if (deleted) {
 			const cleanup = await Promise.allSettled([
 				Promise.resolve().then(() => services.secrets.clear(session.id)),
@@ -2244,6 +2371,11 @@ export function createApplication(options = {}) {
 	app.post('/api/sessions/:id/message', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
+		if(founderContinuations.has(session.id))return response.status(409).json({error:'This review is already resuming. Wait for it to start or stop it first.'});
+		if (session.pendingQuestion?.kind === 'founder_launch_credentials') {
+			return response.status(409).json({ error: 'Provide the test account through the secure form, or choose Skip login before starting.' });
+		}
+		if (session.sqa?.review?.status === 'in_review' || activeSqaReviews.has(session.id)) return response.status(409).json({ error: 'Human review is in progress. Publish the reviewed version before starting another model turn.' });
 		const text = String(request.body?.text ?? '').trim();
 		if (!text) {
 			response.status(400).json({ error: 'Message is empty.' });
@@ -2362,19 +2494,28 @@ export function createApplication(options = {}) {
 			response.status(400).json({ error: 'Answer is empty.' });
 			return;
 		}
-		if (session.mode === 'founder' && session.pendingQuestion.credentialLike === true) {
-			recordFounderPublicOnlyDecision(session);
-			answer = FOUNDER_PUBLIC_ONLY_ANSWER;
-		}
-		try {
-			const applied = applyHostDecision(session, answer);
-			if (session.pendingQuestion.hybridDecision && !applied) { response.status(409).json({ error: 'This host decision has already been answered. Refresh the saved run.' }); return; }
-		}
-		catch (error) { response.status(400).json({ error: error.message }); return; }
-		await services.runs.addMessage(session, { role: 'user', text: answer, kind: 'answer' });
-		recordHybridAnswer(session, answer);
-		startTurn(session, { resumeAnswer: answer });
-		response.json({ ok: true });
+		const founderLaunch = session.mode === 'founder' && session.pendingQuestion.kind === 'founder_launch_credentials';
+		const applyAnswer = async () => {
+			if (session.mode === 'founder' && session.pendingQuestion.credentialLike === true) {
+				recordFounderPublicOnlyDecision(session);
+				answer = FOUNDER_PUBLIC_ONLY_ANSWER;
+			}
+			try {
+				const applied = applyHostDecision(session, answer);
+				if (session.pendingQuestion.hybridDecision && !applied) { response.status(409).json({ error: 'This host decision has already been answered. Refresh the saved run.' }); return; }
+			}
+			catch (error) { response.status(400).json({ error: error.message }); return; }
+			await services.runs.addMessage(session, { role: 'user', text: answer, kind: 'answer' });
+			recordHybridAnswer(session, answer);
+			if (founderLaunch) {
+				session.pendingQuestion = undefined;
+				await services.runs.commit(session, 'question', { question: null });
+			}
+			startTurn(session, founderLaunch ? { task: `Review ${session.targetUrl}. ${answer}` } : { resumeAnswer: answer });
+			response.json({ ok: true });
+		};
+		if (founderLaunch) return answerFounderSetup(session, response, applyAnswer);
+		await applyAnswer();
 	});
 
 	/** Credential answers are stored in the vault; only placeholders reach the agent. */
@@ -2391,42 +2532,66 @@ export function createApplication(options = {}) {
 			response.status(400).json({ error: 'No credentials supplied.' });
 			return;
 		}
-
-		let authGrant;
-		try { authGrant = prepareHybridAuthGrant(session, request.body); }
-		catch (error) { response.status(400).json({ error: error.message }); return; }
-		const names = await services.secrets.store(session.id, fields);
-		if (names.length === 0) {
-			response.status(400).json({ error: 'No usable credentials supplied.' });
-			return;
+		const founderLaunch = session.mode === 'founder' && session.pendingQuestion.kind === 'founder_launch_credentials';
+		if (session.mode === 'founder' && session.founder?.scope?.setupVersion === 1
+			&& session.founder.scope.access?.decision === 'public_only') {
+			return response.status(409).json({ error: 'This review is limited to public pages. Start a separate review to include sign-in.' });
 		}
-		session.secretNames = await services.secrets.names(session.id);
-		if (authGrant) session.hybrid.authentication = authGrant;
-		if (authGrant && session.hybrid.pendingDecision?.kind === 'credentials') session.hybrid.pendingDecision = undefined;
+		if (founderLaunch && (request.body.authorizeLogin !== true
+			|| !['QA_USERNAME', 'QA_PASSWORD'].every(key => typeof fields[key] === 'string' && fields[key].trim() && fields[key].length <= 4096)
+			|| Object.keys(fields).some(key => !['QA_USERNAME', 'QA_PASSWORD'].includes(key)))) {
+			return response.status(400).json({ error: 'Provide both test-account fields and approve sign-in, or choose Skip login.' });
+		}
+		if (founderLaunch && !await founderAuthenticatedAvailable()) {
+			return response.status(409).json({ error: 'Sign-in review is unavailable in the current execution mode. Choose Skip login for a public-only review.' });
+		}
 
-		const note = String(request.body?.note ?? '').trim();
-		const placeholders = names.map(name => `{{${name}}}`).join(', ');
-		const answer = [
-			'The credentials are stored in the host vault. You will not be shown the values.',
-			authGrant?.loginEndpoint && `The owner approved exactly this sign-in API endpoint for one credential POST: ${authGrant.loginEndpoint}. This does not authorize other writes or navigation outside the target origin.`,
-			authGrant ? 'The owner authorized one test-account sign-in on the target origin. Open the observed sign-in page, then use browser_authenticate with no arguments. Continue read-only testing after verified access. Other writes remain forbidden.' : `Fill the sign-in form using these literal placeholders as the browser_fill value: ${placeholders}.`,
-			'The host substitutes the real secret at the keyboard. Never print, repeat or report a credential value.',
-			note && `Note from the user: ${note}`
-		].filter(Boolean).join(' ');
+		const applyCredentials = async () => {
+			let authGrant;
+			try { authGrant = prepareHybridAuthGrant(session, request.body); }
+			catch (error) { response.status(400).json({ error: error.message }); return; }
+			const names = await services.secrets.store(session.id, fields);
+			if (names.length === 0) {
+				response.status(400).json({ error: 'No usable credentials supplied.' });
+				return;
+			}
+			session.secretNames = await services.secrets.names(session.id);
+			if (authGrant) session.hybrid.authentication = authGrant;
+			if (authGrant && session.hybrid.pendingDecision?.kind === 'credentials') session.hybrid.pendingDecision = undefined;
 
-		await services.runs.addMessage(session, {
-			role: 'user',
-			kind: 'credentials',
-			text: `Provided ${names.length} credential${names.length === 1 ? '' : 's'} securely: ${placeholders}`
-		});
-		await services.runs.commit(session, 'secrets', { secretNames: session.secretNames });
-		startTurn(session, { resumeAnswer: answer });
-		response.json({ ok: true, secretNames: names });
+			const note = String(request.body?.note ?? '').trim();
+			const placeholders = names.map(name => `{{${name}}}`).join(', ');
+			const answer = [
+				'The credentials are stored in the host vault. You will not be shown the values.',
+				founderLaunch && 'The owner approved test-account sign-in on the declared target. Continue read-only review after sign-in; other origins remain out of scope.',
+				authGrant?.loginEndpoint && `The owner approved exactly this sign-in API endpoint for one credential POST: ${authGrant.loginEndpoint}. This does not authorize other writes or navigation outside the target origin.`,
+				authGrant ? 'The owner authorized one test-account sign-in on the target origin. Open the observed sign-in page, then use browser_authenticate with no arguments. Continue read-only testing after verified access. Other writes remain forbidden.' : `Fill the sign-in form using these literal placeholders as the browser_fill value: ${placeholders}.`,
+				'The host substitutes the real secret at the keyboard. Never print, repeat or report a credential value.',
+				note && `Note from the user: ${note}`
+			].filter(Boolean).join(' ');
+
+			await services.runs.addMessage(session, {
+				role: 'user',
+				kind: 'credentials',
+				text: `Provided ${names.length} credential${names.length === 1 ? '' : 's'} securely: ${placeholders}`
+			});
+			await services.runs.commit(session, 'secrets', { secretNames: session.secretNames });
+			if (founderLaunch) {
+				session.founder.scope.access.credentialsProvidedAt = new Date().toISOString();
+				session.pendingQuestion = undefined;
+				await services.runs.commit(session, 'question', { question: null });
+			}
+			startTurn(session, founderLaunch ? { task: `Review ${session.targetUrl}. ${answer}` } : { resumeAnswer: answer });
+			response.json({ ok: true, secretNames: names });
+		};
+		if (founderLaunch) return answerFounderSetup(session, response, applyCredentials);
+		await applyCredentials();
 	});
 
 	app.post('/api/sessions/:id/stop', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
+		const continuation=founderContinuations.get(session.id);if(continuation)continuation.cancelled=true;
 		await services.runs.commit(session, 'run.stop_requested');
 		await services.agent.stop(session.id);
 		response.json({ ok: true });
@@ -2453,9 +2618,18 @@ export function createApplication(options = {}) {
 		response.send(found.bytes);
 	});
 
+	function reportVersion(request, session) {
+		if (request.query.version === undefined) return session;
+		if (session.mode !== 'sqa') throw new PublicInputError('Versions are available only for SQA reports.');
+		const version = sqaVersion(session.sqa, request.query.version);
+		return { ...session, sqa: { scope: version.scope, observations: version.observations, assessment: version.assessment, finalizedAt: version.publishedAt } };
+	}
+
 	app.get('/api/sessions/:id/report.md', async (request, response) => {
-		const session = await requireSession(request, response);
+		let session = await requireSession(request, response);
 		if (!session) return;
+		try { session = reportVersion(request, session); }
+		catch (error) { safeErrorResponse(request, response, error); return; }
 		if (session.mode === 'sqa' && (!session.sqa?.assessment || !session.sqa?.finalizedAt)) {
 			response.status(409).json({ error: 'The SQA assessment is pending and has not been finalized yet.' });
 			return;
@@ -2496,8 +2670,10 @@ export function createApplication(options = {}) {
 	});
 
 	app.get('/api/sessions/:id/report.pdf', async (request, response) => {
-		const session = await requireSession(request, response);
+		let session = await requireSession(request, response);
 		if (!session) return;
+		try { session = reportVersion(request, session); }
+		catch (error) { safeErrorResponse(request, response, error); return; }
 		if (session.mode === 'sqa' && (!session.sqa?.assessment || !session.sqa?.finalizedAt)) {
 			response.status(409).json({ error: 'The SQA assessment is pending and has not been finalized yet.' });
 			return;
@@ -2542,7 +2718,7 @@ export function createApplication(options = {}) {
 	app.post('/api/sessions/:id/drytis/push', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
-		if (!drytisDelivery?.deliveryClient) {
+		if (!drytisDelivery?.deliveryClient || !drytisDelivery.ticketsTarget) {
 			response.status(409).json({ error: 'Drytis ticket push is not configured on this instance.' });
 			return;
 		}

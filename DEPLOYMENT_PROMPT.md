@@ -4,8 +4,10 @@ This is the operator runbook for the reviewed release targeting **https://qase.d
 
 ## Required release
 
-- Release ID: `qase-2026-10-27-hybrid-production-r1`.
-- UI version: `20261027-6`, including hybrid-only QA setup, precise coverage/closeout, explicit Results navigation, host continuation decisions and the completed-run startup fix.
+- Release ID: `qase-founder-sqa-2026-11-10-coverage-r3`.
+- UI version: `20261110-1`, with an explicit return from the SQA device picker to the assessment form. The preceding [UI audit fixes](docs/ui-audit-fixes-2026-11-09.md) document the verdict, report, settings and account recovery changes already on the branch.
+- Source branch: `Push-SQA`. This release follows the picker repair at `64e43645ed4371eb8d97be5a4f0995b39fe61e92`. Pin the full SHA of the approved successor as `EXPECTED_SHA` and verify both GitHub workflows and the image against that exact SHA.
+- Release scope: configured-provider Founder/SQA with export-only Studio handoff. Leave the Studio destination and qualified Opus/JEV mode flags disabled until separately qualified. PostgreSQL deployments must apply migration **044** before accepting versioned Founder actions; it preserves legacy rows and enables forced tenant RLS. Local-store deployments do not run SQL migrations.
 - The application root is the extracted folder containing `package.json`, `public/`, and `server/`. It is a Node.js Express application serving static ES modules, NOT a Next.js or Vite build. Do not deploy the parent workspace, an old `apps/` project, or a generated `dist/` directory.
 - Run Node.js 22 or 24. Keep `package-lock.json` and Playwright `1.62.0` unchanged; use `npm ci`, not dependency upgrades.
 - Preserve all current QA, SQA, Founder, authentication, reports, browser/runtime, device matrix, and UI functionality. Do not redesign or replace the application during deployment.
@@ -21,13 +23,48 @@ This is the operator runbook for the reviewed release targeting **https://qase.d
 
 ## Preserve repository and production history
 
-The source is based on main commit `82911f8db54f7eb3efeb9b45e96d12c21805756f`, the October 15 production handoff. Preserve its earlier authentication, tenant, PostgreSQL/distributed execution, deployment resilience and Drytis integration commits. Review this release on `codex/hybrid-production-readiness`; do not force-push, rewrite main, or propagate to other branches without a separate request.
+The source includes the October 15 production handoff at `82911f8db54f7eb3efeb9b45e96d12c21805756f`. Preserve its authentication, tenant, PostgreSQL/distributed execution, deployment resilience and Drytis integration commits. Review this release on `Push-SQA` and preserve other branches.
 
-The public production metadata observed during preparation reports `qase-2026-10-16-single-browser-r4` / UI `20261016-3`, newer than GitHub main. Before promotion, compare the actual deployment checkout and infrastructure with this branch; public health/version checks cannot establish backend source parity. Preserve production-only changes and existing storage/identity settings. Record the currently deployed image digest for rollback.
+Production identity and topology must be observed again at deployment time. Historical reports and the September operations runbook are not a current inventory. Compare the actual deployment checkout and infrastructure with this branch; public health/version checks cannot establish backend source parity. Preserve production-only changes and existing storage/identity settings. Record the currently deployed image digest for rollback.
 
 After intentional source edits, run `npm run release:manifest` and commit the regenerated `SOURCE_MANIFEST.json`. `npm run release:verify` must pass on the exact checkout and package. Create new release identities for subsequent releases; never move historical tags. Do not automatically merge or deploy this review branch.
 
 ## Verify before building
+
+### Repair the failed CI gate first
+
+GitHub run `41924149473` for `ad0afcd` was cancelled during verification at
+the old 30-minute job deadline; image build and image smoke were skipped.
+The browser installation alone ran from 22:19:00 to 22:46:05 UTC on November 4
+(about 27 minutes, with slow Ubuntu package downloads). It is not evidence
+that the regression suite itself necessarily needs more than 30 minutes.
+Run `42003905508` for `524a555` completed the test command in 408,757.683 ms
+but failed with 2,236 passed, one failed, two cancelled and 32 skipped tests.
+The Node 22 gateway mock owned no transport handle, so an unreferenced abort
+timer could not keep its pending promise alive. The browser finalizer fixture
+also implicitly selected the runner's auto-updated branded Chrome instead of
+its controlled bundled engine. These fixture repairs preserve the real abort,
+exact usage, browser identity and mismatch-refusal assertions.
+
+The reviewed repair changes `.github/workflows/verify.yml` to a finite
+90-minute **CI job** deadline, retains failing verification diagnostics and
+exports the exact smoke-tested image under a full-commit tag with a SHA-256
+archive checksum. No agent execution deadline or budget is enlarged. Run CI
+on the new repair commit; re-running an older commit still uses its older
+workflow and fixtures. Never use `continue-on-error`, skip required tests or
+accept a cancelled run as release evidence.
+
+Require a successful workflow whose `head_sha` equals `EXPECTED_SHA`, all
+required steps succeeded, no test was cancelled, and any optional skip has
+been reviewed. The production-image and source artifacts must come from that
+same successful run, not merely from a workflow with a similar name.
+
+The Drytis Studio IDE is a source checkout and handoff environment. When its
+terminal lacks `gh` or `docker`, open the exact successful GitHub Actions run
+in a signed-in browser and download `qase-production-image-<EXPECTED_SHA>`.
+Transfer the archive to the approved Docker-capable deployment host. Verify
+the included SHA-256 file, load the image, confirm its source and release
+labels, and smoke-test it there before using the existing deployment process.
 
 Run on the intended Linux execution host or CI runner with browser process permissions and outbound package access:
 
@@ -70,8 +107,8 @@ For first login to an EMPTY local store, keep the app stopped and supply a NEW a
 
 New QA setup uses hybrid exclusively. Leaving hybrid disabled or unqualified intentionally blocks new QA launches; it does not silently fall back to another agent. Existing JEV-only/legacy runs, SQA and Founder retain their respective paths.
 
-1. Provision the approved account/server gateway key through the secret manager. Hybrid roles are fixed to Opus `drytis/claude-opus-4.7` at `https://llm.drytis.ai/v1/chat/completions` and JEV `jev-1.13` at `https://llm.drytis.ai/typesafe/api/alpha/decisions`. `QASE_PROVIDER=custom`, the `/v1` base URL and the Opus model in the template also supply the generative SQA/Founder path. Preserve reviewed per-account settings; do not import a developer key.
-2. For PostgreSQL, apply reviewed migrations **041 and 042 before enabling hybrid or accepting this release's partial QA reports**, using the normal maintenance job and a tested backup/restore procedure. Migration 041 extends report verdicts with `partial`; 042 adds bounded hybrid JSON state. Legacy reads tolerate the absent optional column, but hybrid writes require it. No production migration was run during release preparation.
+1. Provision the approved account/server gateway key through the secret manager. Hybrid roles are fixed to Opus `drytis/claude-opus-4.7` at `https://llm.drytis.ai/v1/chat/completions` and JEV `jev-1.13` at `https://llm.drytis.ai/typesafe/api/alpha/decisions`. `QASE_PROVIDER=custom`, the `/v1` base URL and the Opus model in the template also supply the generative SQA/Founder path. Preserve reviewed per-account settings; do not import a developer key. Keep `QASE_SQA_REASONING_ENABLED` and `QASE_FOUNDER_REASONING_ENABLED` disabled until their separate production qualification and activation approval. Read `docs/sqa-founder-hybrid-integration-2026-11-05.md`: public SQA had a JEV HTTP 500 with missing usage; successful new probes do not reconcile that old run.
+2. For PostgreSQL, apply reviewed migrations **041–044** using the normal maintenance job and a tested backup/restore procedure. Migration 041 adds partial verdicts, 042 adds bounded hybrid JSON state, 043 repairs bootstrap actor visibility, and 044 enables version 2 Founder actions and tenant RLS. Migration 044 is required for this release's Founder persistence even when hybrid is disabled. No production migration was run during release preparation.
 3. Using the intended image, key and durable state volume, run the harmless gateway/SDK qualification and startup checks. For the single-host Compose baseline:
 
 ```bash
@@ -83,8 +120,56 @@ docker compose -f deploy/production/compose.yaml run --rm \
 
 These use the configured paid gateway for bounded protocol fixtures; they do not test a customer site. All 13 capabilities must pass, including the actual CleanSlate loop, image/tool continuation and exact streaming usage. Never copy `.qase` state or locally generated receipts into production. Receipts are tied to model/key/SDK identity, expire after 24 hours, and default to `/app/.qase/qualifications/hybrid/`. Keep them available to API and execution workers and renew through an approved operator process before expiry; monitor availability. Do not extend expiry or bypass failed qualification.
 
+Before activating QA, establish an operator-owned renewal job (for example,
+every 12 hours) inside the same reviewed runtime, service identity, protected
+environment and writable qualification storage. Serialize renewals, record
+last success/expiry and alert on failure or impending expiry. Confirm an actual
+renewal survives a service restart. Do not merely add a cron line without
+verifying its environment and storage. The current release also permits an
+authorized operator to renew through **Check model compatibility**; it does
+not contain an automatic keeper. Distributed API/worker replicas must share
+the configured qualification directory. Preserve the 24-hour expiry.
+
 4. After qualification and activation approval, set `QASE_HYBRID_QA_ENABLED=true` in the deployment's config system and recreate the drained service. Keep `QASE_HYBRID_ALLOW_WITHOUT_JEV=false` unless degradation is separately approved. Repository defaults remain disabled. Missing usage receipts pause safely; budgets and uncertain browser actions must not be reset to force progress.
 5. On an authorized staging target, verify live actions, negative inputs without submission, selected-device restoration, evidence-linked findings, honest partial coverage, cancellation and refresh. The image canary verifies startup/auth/browser installation; it does not certify SMTP, tenant integration or live model execution.
+
+6. Exercise the real UI composer and launcher with an owned target, not only
+   scripted qualification helpers. The previous deployment report recorded
+   composer runs stopping with `HYBRID_NO_PROGRESS`; passing scripted paths
+   does not waive this blocker. Require real interactions, accountable scenario
+   dispositions and a persisted report. A legitimate blocked/incomplete result
+   must stay labeled accurately. If the real user path still interrupts or
+   abandons executable work, stop promotion and preserve its run evidence.
+
+## Automatic completion policy in r2
+
+New hybrid runs use the automatic policy by default. Do not carry forward a
+fixture-only QASE_HYBRID_AUTONOMOUS_COMPLETION=false override. There are no token
+or generic coverage approval prompts for this policy. Explicit existing
+QASE_HYBRID_* budget values become fixed lifetime ceilings; review these on the
+production host before activation. Without explicit values the automatic
+ceilings are 2M Opus / 500k JEV tokens, 200/100 calls, 1,000 browser tool actions
+and 60 active minutes. QASE_HYBRID_MAX_PAGES defaults to 40, maximum 80. Model
+usage stays exact and counters never reset. These are upper limits, not usage
+estimates or promises of exhaustive testing. Existing saved runs retain their
+original policy and do not receive unapproved budget changes.
+
+Canary the new no-question workflow, context compaction, onboarding dismissal,
+button navigation, source restoration, negative fields, seeded defect reporting,
+configured-limit automatic closeout and user cancellation. Confirm an unknown
+receipt or uncertain restoration still stops safely. Do not claim success from
+a model saying it tested everything.
+
+## r3 stalled-run canary
+
+Before promotion, exercise an onboarding modal that appears after the initial
+inventory, verify pre-dispatch obstruction detection, safe dismissal, fresh
+selector selection and forward progress. Request cancellation/unroute races
+must not crash the API process; unknown request failures must still block.
+Disconnect the dashboard stream and verify Reconnecting/last-received-state
+messaging, followed by snapshot resynchronization. Preserve unknown provider
+receipts from previously interrupted runs; do not clear reservations to resume
+them. New sessions and safely resumable work must remain functional.
 
 ## Deploy using Compose when that topology is appropriate
 
@@ -93,14 +178,26 @@ Use an always-on Linux host with Docker Engine and Compose. Size CPU, memory, di
 The commands below run from the extracted source root. Provision `deploy/production/.env.production` from `deploy/production/.env.example` through the secret manager, replace every placeholder, and restrict its permissions before continuing. The Compose file explicitly enforces closed registration, authentication, local storage, the public URL, and production mode.
 
 ```bash
-export QASE_IMAGE=qase:qase-2026-10-27-hybrid-production-r1
+export EXPECTED_SHA="$(git rev-parse HEAD)"
+export QASE_IMAGE="qase:sha-${EXPECTED_SHA}"
 node scripts/verify-release.mjs
-docker build --pull --build-arg QASE_SOURCE_REVISION="$(git rev-parse HEAD)" --tag "$QASE_IMAGE" .
-node scripts/smoke-production-image.mjs "$QASE_IMAGE"
+docker build --pull --build-arg QASE_SOURCE_REVISION="$EXPECTED_SHA" --tag "$QASE_IMAGE" .
+node scripts/smoke-production-image.mjs "$QASE_IMAGE" "$EXPECTED_SHA"
 docker compose -f deploy/production/compose.yaml config --quiet
 ```
 
 Scan the resulting app image and Caddy image against the organization's current vulnerability policy. Resolve app and base/proxy image digests in the registry and pin the DEPLOYED images by digest. Do not use `latest`, reuse a mutable old application tag, or assume a historical base tag has passed today's scan. A required security update must become a separately identified, reviewed release rather than an invisible replacement of this snapshot.
+
+If the development workspace has no Docker daemon, do not install a privileged
+Docker socket there or weaken the image gate. Download the
+`qase-production-image-<EXPECTED_SHA>` artifact from the successful matching CI
+run to the authorized Docker-capable deployment host. Verify the included
+archive SHA-256 before `docker load`, inspect its non-root user and exact
+`org.opencontainers.image.revision`, and run the same image smoke there.
+Promote that image to the deployment registry and record the resulting registry
+digest. The archive checksum, local image ID and registry manifest digest are
+different values; report each accurately. If neither CI artifacts nor an
+approved Docker-capable builder/host are available, deployment remains blocked.
 
 For a NEW EMPTY local account store ONLY, with the app not running and operator variables already provided privately:
 
@@ -134,7 +231,7 @@ This checks HTTPS health/readiness, the exact release ID, and SHA-256 for six pu
 In a clean browser, verify:
 
 1. TLS and canonical hostname; login, logout, account isolation, closed registration, and SMTP recovery. Unauthenticated `/api/sessions` must not return private runs. Production `/demo` must not expose test fixtures.
-2. Current QASE branding, status lights, readable buttons and responsive layout. Confirm `app.js?v=20261027-6` is served. Test hybrid-only setup, selected browser, pause/recovery, root entry/refresh staying on the run workspace, explicit Results/Back navigation and the stable selected-device preview.
+2. Current QASE branding, status lights, readable buttons and responsive layout. Confirm `app.js?v=20261110-1` is served. Test hybrid-only setup, selected browser, pause/recovery, root entry/refresh staying on the run workspace, explicit Results/Back navigation and the stable selected-device preview.
 3. With an authorized staging test account and an explicitly owned test target, run bounded QA, SQA, and Founder canaries. Confirm actual browser actions, live activity/SSE, questions/credential requests, persistence after refresh, stopping, and recorded evidence/report downloads. In hybrid, test secure-form consent, one approved sign-in, explicitly consented separate authentication API, rejected duplicate/unrelated writes, remembered Skip login, fresh signed-in observations and no replay after uncertain dispatch. Native-form username/password sign-in is supported; SSO/MFA and unapproved cross-origin sign-in are explicit limitations, not compatibility claims. Never use a production target for destructive tests, payments, signup spam, intrusive exploitation, or uncontrolled paid AI generation.
 4. Model requests actually succeed from the execution host. A ready API without gateway connectivity or browser executables is not acceptance.
 5. Agent streams stay live through the ingress/CDN. Disable proxy buffering and inappropriate caching for `/api/*` and SSE; do not impose a short execution/request timeout on live streams. The Caddy baseline uses `flush_interval -1`. Do not cache private API data.

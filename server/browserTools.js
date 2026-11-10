@@ -10,11 +10,74 @@ export function createBrowserTools(getBridge) {
 			async run(input = {}) { if (Object.keys(input).length) return { success: false, error: 'Sign-in takes no model-supplied credentials or permissions.' }; return getBridge().authenticate(); } },
 		{
 			name: 'browser_qa_check', category: 'browser',
-			description: 'Fixed evidence-producing checks, never model scripts. inspect gives settled inventory (zero assertions). navigation requires BOTH selector of an observed unique safe anchor and expected equal to its exact absolute href; it tests click/back/forward. disclosure/dismiss_overlay require selector. responsive/forms/search/media/accessibility/anchors/tabs/scroll need only action. Forms use detached native validation, never submission. Results include assertions and limitations.',
-			parametersSchema: { type: 'object', additionalProperties: false, properties: { action: { type: 'string', enum: JEV_BROWSER_CHECKS }, selector: { type: 'string', description: 'REQUIRED for navigation/disclosure/dismiss_overlay: unique CSS selector from the current observed inventory.' }, expected: { type: 'string', description: 'REQUIRED for navigation: exact observed absolute anchor href, NOT a prose expectation.' }, restore: { type: 'boolean', description: 'Restore a disclosure after observing its revealed links.' } }, required: ['action'] },
+			description: 'Fixed evidence-producing checks, never model scripts. inspect gives settled inventory (zero assertions). navigation requires BOTH selector of an observed unique safe anchor and expected equal to its exact absolute href; it tests click/back/forward. disclosure/dismiss_overlay/navigation_control require selector. navigation_control exercises an observed safe navigation-region button and restores the source. responsive/forms/search/media/accessibility/anchors/tabs/scroll need only action. Forms use detached native validation, never submission. Results include assertions and limitations.',
+			parametersSchema: { type: 'object', additionalProperties: false, properties: { action: { type: 'string', enum: JEV_BROWSER_CHECKS }, selector: { type: 'string', description: 'REQUIRED for navigation/disclosure/dismiss_overlay/navigation_control: unique CSS selector from the current observed inventory.' }, expected: { type: 'string', description: 'REQUIRED for navigation: exact observed absolute anchor href, NOT a prose expectation.' }, restore: { type: 'boolean', description: 'Restore a disclosure after observing its revealed links.' } }, required: ['action'] },
 			async run(input) {
-				if (!JEV_BROWSER_CHECKS.includes(input?.action) || (input.restore !== undefined && typeof input.restore !== 'boolean') || ['selector', 'expected'].some(key => input[key] !== undefined && (typeof input[key] !== 'string' || input[key].length > 4000)) || (['navigation', 'disclosure', 'dismiss_overlay'].includes(input.action) && !input.selector) || (input.action === 'navigation' && !input.expected)) return { success: false, error: 'Provide a supported action and observed selector/expected URL for navigation.' };
+				if (!JEV_BROWSER_CHECKS.includes(input?.action) || (input.restore !== undefined && typeof input.restore !== 'boolean') || ['selector', 'expected'].some(key => input[key] !== undefined && (typeof input[key] !== 'string' || input[key].length > 4000)) || (['navigation', 'navigation_control', 'disclosure', 'dismiss_overlay'].includes(input.action) && !input.selector) || (input.action === 'navigation' && !input.expected)) return { success: false, dispatched: false, error: 'Provide a supported action and observed selector/expected URL for navigation.' };
 				return getBridge().runQaCheck(input);
+			}
+		},
+		{
+			name: 'browser_sqa_smoke',
+			category: 'browser',
+			description: 'Runs one bounded SQA browser smoke workflow with real driver input. accessibility samples up to 12 Tab and 3 Shift+Tab steps. responsive samples up to 3 viewport sizes, measures clipping and restores the original viewport. navigation verifies up to 4 exact accessible same-origin link destinations and restores the source. form_validation tests local validation feedback using generated empty, invalid, corrected and invalid-after-correction email values with HTTP requests blocked. Omit field_label and submit_name to discover an empty labeled email field on a native same-origin GET form without submit overrides. An unavailable or network-dependent form returns a blocker.',
+			parametersSchema: {
+				type: 'object', additionalProperties: false,
+				properties: {
+					action: { type: 'string', enum: ['accessibility', 'responsive', 'navigation', 'form_validation'] },
+					steps: { type: 'integer', minimum: 1, maximum: 12, description: 'Accessibility forward Tab steps; default 8.' },
+					reverse_steps: { type: 'integer', minimum: 0, maximum: 3, description: 'Accessibility Shift+Tab steps; default 2.' },
+					viewports: {
+						type: 'array', minItems: 1, maxItems: 3,
+						items: {
+							type: 'object', additionalProperties: false,
+							properties: {
+								width: { type: 'integer', minimum: 320, maximum: 2560 },
+								height: { type: 'integer', minimum: 480, maximum: 1600 }
+							},
+							required: ['width', 'height']
+						}
+					},
+					links: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string', minLength: 1, maxLength: 120 }, description: 'Navigation action: exact accessible link names from the current snapshot.' },
+					field_label: { type: 'string', minLength: 1, maxLength: 120, description: 'Optional form-validation override: exact accessible label of one empty email field. Omit with submit_name for deterministic discovery.' },
+					submit_name: { type: 'string', minLength: 1, maxLength: 120, description: 'Optional form-validation override: exact accessible name of its submit button. Omit with field_label for deterministic discovery.' }
+				},
+				required: ['action']
+			},
+			async run(input) {
+				if (!input || !['accessibility', 'responsive', 'navigation', 'form_validation'].includes(input.action)) {
+					return { success: false, error: 'action must be accessibility, responsive, navigation, or form_validation.' };
+				}
+				if (input.steps !== undefined && (!Number.isInteger(input.steps) || input.steps < 1 || input.steps > 12)) {
+					return { success: false, error: 'steps must be an integer from 1 to 12.' };
+				}
+				if (input.reverse_steps !== undefined && (!Number.isInteger(input.reverse_steps) || input.reverse_steps < 0 || input.reverse_steps > 3)) {
+					return { success: false, error: 'reverse_steps must be an integer from 0 to 3.' };
+				}
+				if (input.viewports !== undefined && (!Array.isArray(input.viewports) || input.viewports.length < 1 || input.viewports.length > 3
+					|| input.viewports.some(viewport => !Number.isInteger(viewport?.width) || !Number.isInteger(viewport?.height)
+						|| viewport.width < 320 || viewport.width > 2560 || viewport.height < 480 || viewport.height > 1600))) {
+					return { success: false, error: 'viewports must contain 1-3 integer sizes with width 320-2560 and height 480-1600.' };
+				}
+				if (input.links !== undefined && (!Array.isArray(input.links) || input.links.length < 1 || input.links.length > 4
+					|| input.links.some(name => typeof name !== 'string' || !name.trim() || name.length > 120))) {
+					return { success: false, error: 'links must contain 1-4 exact accessible names of at most 120 characters.' };
+				}
+				const allowedFields = {
+					accessibility: new Set(['action', 'steps', 'reverse_steps']),
+					responsive: new Set(['action', 'viewports']),
+					navigation: new Set(['action', 'links']),
+					form_validation: new Set(['action', 'field_label', 'submit_name'])
+				}[input.action];
+				const unexpected = Object.keys(input).filter(key => !allowedFields.has(key));
+				if (unexpected.length > 0) return { success: false, error: `${unexpected.join(', ')} is not valid for ${input.action}.` };
+				if (input.action === 'navigation' && input.links === undefined) return { success: false, error: 'navigation requires links.' };
+				if (input.action === 'form_validation') {
+					const supplied = [input.field_label, input.submit_name]
+						.map(value => typeof value === 'string' && value.trim() && value.length <= 120);
+					if (supplied[0] !== supplied[1]) return { success: false, error: 'form_validation accepts both field_label and submit_name, or neither for deterministic discovery.' };
+				}
+				return getBridge().sqaSmoke(input);
 			}
 		},
 		{

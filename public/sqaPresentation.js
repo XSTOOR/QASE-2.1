@@ -27,6 +27,12 @@ function missingEvidenceTypes(result) {
 		.map(requirement => requirement.type);
 }
 
+export function isSqaBudgetStopResult(result) {
+	const rationale = `${result?.rationale ?? ''} ${(result?.decisionNotes ?? []).join(' ')}`;
+	return /\bstopped early:\s*budget reached\b/i.test(rationale)
+		|| /\b(?:input-token|browser-tool) safety limit was exhausted\b/i.test(rationale);
+}
+
 /**
  * Split unresolved controls by who can supply the missing evidence. Failures
  * stay distinct so missing paperwork is never presented as a failed web test.
@@ -34,6 +40,7 @@ function missingEvidenceTypes(result) {
 export function groupSqaUnresolvedResults(results = []) {
 	const groups = {
 		failures: [],
+		budget: [],
 		reviewer: [],
 		mixed: [],
 		automated: []
@@ -42,6 +49,10 @@ export function groupSqaUnresolvedResults(results = []) {
 		if (!result || result.status === 'pass') continue;
 		if (result.status === 'fail') {
 			groups.failures.push(result);
+			continue;
+		}
+		if (isSqaBudgetStopResult(result)) {
+			groups.budget.push(result);
 			continue;
 		}
 
@@ -67,6 +78,9 @@ export function groupSqaUnresolvedResults(results = []) {
  * "blocked" verdict; only `finalizedAt` makes the result final.
  */
 export function describeSqaLifecycle(sqa = {}, runStatus = 'idle', activityCount = 0) {
+	if (sqa?.review?.status === 'in_review' && !sqa.finalizedAt) {
+		return { phase: 'review', finalized: false, status: 'review', badge: 'review draft', label: 'Human evidence review', mark: '…', eyebrow: 'Assessment lifecycle', detail: 'Reviewer decisions are in a draft. Earlier published versions remain available in Published versions.' };
+	}
 	const assessment = sqa?.assessment;
 	if (sqa?.finalizedAt) {
 		const status = assessment?.verdict ?? 'not_assessed';

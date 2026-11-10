@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { sqaReportModel } from '../public/sqaReportModel.js';
 import { buildFindingFixPrompt } from './fixPromptBuilder.js';
 import { getDeviceProfile } from './deviceProfiles.js';
 import { QA_SCOPE_OPTIONS } from '../public/qaScopeCatalog.js';
@@ -271,7 +272,17 @@ function buildSqaBody(session) {
 	const sqa = session.sqa ?? {};
 	const assessment = sqa.assessment ?? {};
 	const verdict = assessment.verdict ?? sqa.verdict ?? '\u2014';
+	const model = sqaReportModel(assessment);
 	const parts = ['<h1>SQA assessment</h1>', headerBlock(session, 'SQA', String(verdict).toUpperCase())];
+	if (model.technical) {
+		const technical = model.technical;
+		parts.push('<section><h2>Bounded technical smoke sample</h2><div class="outcome-line">' + statusPill(technical.verdict) + '</div>'
+			+ metricGrid([['Applicable controls', technical.applicableControls ?? 0], ['Pass', technical.pass ?? 0], ['Fail', technical.fail ?? 0], ['Blocked', technical.blocked ?? 0], ['Not assessed', technical.not_assessed ?? 0]])
+			+ '<p class="callout">This sampled browser result does not establish whole-product compliance and does not override the broad assurance verdict.</p></section>');
+	}
+	parts.push('<section><h2>Evidence-backed control failures</h2>'
+		+ (model.failures.length ? '<ul>' + model.failures.map(item => '<li><strong>' + escapeHtml(item.controlId) + ' - ' + escapeHtml(item.title) + ':</strong> ' + escapeHtml(item.rationale ?? 'Remediate and retest this control.') + '</li>').join('') + '</ul>' : '<p>No evidence-backed control failures were recorded.</p>') + '</section>');
+	parts.push(findingsSection(session.findings ?? [], session));
 	parts.push('<section class="outcome"><h2>Assessment outcome</h2>'
 		+ '<div class="outcome-line">' + statusPill(verdict)
 		+ '<strong>Residual risk: ' + escapeHtml(statusLabel(assessment.risk?.level)) + '</strong></div>'
@@ -314,19 +325,6 @@ function buildSqaBody(session) {
 			+ '<p class="muted">Evidence artifacts satisfied: '
 			+ escapeHtml(assessment.coverage.satisfiedEvidence ?? 0) + ' / '
 			+ escapeHtml(assessment.coverage.requiredEvidence ?? 0) + ' required.</p></section>');
-	}
-	if (assessment.technicalSummary) {
-		const technical = assessment.technicalSummary;
-		parts.push('<section><h2>Bounded technical smoke sample</h2>'
-			+ '<div class="outcome-line">' + statusPill(technical.verdict) + '</div>'
-			+ metricGrid([
-				['Applicable controls', technical.applicableControls ?? 0],
-				['Pass', technical.pass ?? 0],
-				['Fail', technical.fail ?? 0],
-				['Blocked', technical.blocked ?? 0],
-				['Not assessed', technical.not_assessed ?? 0]
-			])
-			+ '<p class="callout">This sampled browser result does not establish whole-product compliance and does not override the broad assurance verdict.</p></section>');
 	}
 	if (values(assessment.gates).length > 0) {
 		parts.push('<section><h2>Decision gates</h2><div class="card-list">'
@@ -377,6 +375,10 @@ function buildSqaBody(session) {
 				}).join('') + '</div></section>');
 		}
 	}
+	parts.push('<section><h2>Evidence traceability register</h2><p class="muted">References identify saved browser records or external reviewer documents. A listed digest does not prove that external document bytes were checked.</p>'
+		+ (model.evidence.length ? model.evidence.map(item => '<article class="report-card sqa-evidence-card"><h3>' + escapeHtml(item.controlId) + ' - Evidence ' + item.index + '</h3><table class="meta"><tbody>'
+			+ [['Type', item.type], ['Collected at', item.collectedAt], ['Reference', item.reference], ['Digest', item.digest], ['Summary', item.summary], ['Origin', item.origin]].map(([label, value]) => '<tr><th>' + escapeHtml(label) + '</th><td>' + escapeHtml(value) + '</td></tr>').join('')
+			+ '</tbody></table></article>').join('') : '<p>No evidence artifacts were attached to this assessment.</p>') + '</section>');
 	if (values(assessment.frameworkCoverage).length > 0) {
 		parts.push('<section><h2>Framework crosswalk</h2><table class="result-table"><thead><tr>'
 			+ '<th>Reference</th><th>Mapped controls</th><th>Status</th><th>Conclusive</th></tr></thead><tbody>'
@@ -390,7 +392,6 @@ function buildSqaBody(session) {
 			+ assessment.outOfScope.map(item => '<li><strong>' + escapeHtml(item.controlId)
 				+ ':</strong> ' + escapeHtml(item.reason) + '</li>').join('') + '</ul></section>');
 	}
-	parts.push(findingsSection(session.findings ?? [], session));
 	if (assessment.disclaimer) {
 		parts.push('<section class="boundary"><h2>Assessment boundary</h2>' + paragraphs(assessment.disclaimer) + '</section>');
 	}
@@ -617,6 +618,8 @@ function getStylesheet() {
 		'.boundary h2 { margin-top: 0; }',
 		'.card-list { display: grid; gap: 7pt; }',
 		'.report-card { border: 0.5pt solid #cbd5e1; border-radius: 5pt; padding: 8pt 10pt; break-inside: avoid; }',
+		'.sqa-evidence-card { break-inside: avoid; page-break-inside: avoid; margin-bottom: 10pt; }',
+		'.sqa-evidence-card td { overflow-wrap: anywhere; word-break: break-word; }',
 		'.report-card.compact { padding: 6pt 9pt; }',
 		'.report-card h3, .report-card h4 { margin-top: 0; }',
 		'.card-heading { display: flex; align-items: flex-start; gap: 7pt; }',

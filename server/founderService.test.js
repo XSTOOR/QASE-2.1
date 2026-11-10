@@ -1,3 +1,4 @@
+import './testWorkingDirectory.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
@@ -93,7 +94,10 @@ test('Founder state requires authorization and exposes the complete bounded taxo
 
 test('Founder complete tool workflow records all lenses, finalizes strategy, and exports a traceable report', async () => {
 	const candidate = founderSession();
+	recordFounderPublicOnlyDecision(candidate, fixedNow);
+	candidate.founder.scope.contextDecision = { mode: 'assumptions', source: 'user' };
 	candidate.todos = createFounderReviewTodos().map(todo => ({ ...todo, status: 'completed' }));
+	candidate.todos.at(-1).status = 'in_progress';
 	const persistence = runStore();
 	const tools = createFounderTools(candidate, persistence);
 	const record = tools.find(tool => tool.name === 'record_founder_observation');
@@ -108,10 +112,13 @@ test('Founder complete tool workflow records all lenses, finalizes strategy, and
 	const result = await finish.run(reportInput(candidate));
 	assert.equal(result.success, true, result.error);
 	assert.ok(candidate.founder.finalizedAt);
+	assert.ok(candidate.todos.every(todo => todo.status === 'completed'));
 	assert.equal(candidate.founder.report.coverage.categoriesReviewed.length, FOUNDER_CATEGORY_IDS.length);
 	const markdown = buildFounderReportMarkdown(candidate);
 	assert.match(markdown, /30 \/ 60 \/ 90-day plan/);
 	assert.match(markdown, /Metrics & experiments/);
+	assert.match(markdown, /Public pages only; signed-in pages excluded/);
+	assert.match(markdown, /explicitly labeled assumptions approved by the user/);
 	for (const recommendation of candidate.founder.report.recommendations) {
 		for (const id of recommendation.evidenceObservationIds) {
 			assert.ok(candidate.founder.observations.some(observation => observation.id === id));
@@ -127,14 +134,18 @@ test('Founder complete tool workflow records all lenses, finalizes strategy, and
 test('Founder finalization storage failure preserves observations and permits a durable retry', async () => {
 	const candidate = founderSession();
 	populateObservations(candidate);
+	candidate.todos = [{text:'Synthesize recommendations and publish the Founder report',status:'in_progress'}];
+	const previousTodos = structuredClone(candidate.todos);
 	const previous = structuredClone(candidate.founder);
 	await assert.rejects(finishFounderReview(candidate, reportInput(candidate), {
 		async commit() { throw new Error('persistence unavailable'); }
 	}, fixedNow), /persistence unavailable/);
 	assert.deepEqual(candidate.founder, previous);
+	assert.deepEqual(candidate.todos, previousTodos);
 	const persistence = runStore();
 	await finishFounderReview(candidate, reportInput(candidate), persistence, fixedNow);
 	assert.ok(candidate.founder.finalizedAt);
+	assert.equal(candidate.todos[0].status, 'completed');
 	assert.equal(persistence.commits.length, 1);
 });
 

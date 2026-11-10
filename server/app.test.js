@@ -1,3 +1,4 @@
+import './testWorkingDirectory.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
@@ -6,9 +7,15 @@ import { prepareHostDecision } from './hybridContinuation.js';
 import { hybridProfile } from './hybridConfig.js';
 import { PublicInputError } from './publicErrors.js';
 import { createInstanceAccess } from './instanceAccess.js';
-import { finishSqaAssessment } from './sqaService.js';
+import { createSqaState, finishSqaAssessment } from './sqaService.js';
+import { createFounderState,createFounderReviewTodos,recordFounderObservations } from './founderService.js';
 import { aggregateSessionFindings, setFindingStatus } from './store.js';
 import { createCoverageService } from './coverageService.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { withUserConfiguration } from './config.js';
+import { profileIdentity, REQUIRED_CAPABILITIES, HYBRID_SDK_VERSION } from './hybridConfig.js';
 
 export const TEST_TENANT = Object.freeze({
 	organizationId: '55c15025-8ef4-4ce8-8ad5-4562f33f1852',
@@ -106,6 +113,7 @@ export function createMemoryServices(options = {}) {
 		const now = Date.now();
 		const session = {
 			id: randomUUID(),
+			mode: 'qa',
 			title,
 			createdAt: now,
 			updatedAt: now,
@@ -370,6 +378,151 @@ async function body(response) {
 	return response.json();
 }
 
+async function pausedFounderFixture(t){
+	const f=await startFixture();t.after(()=>f.close());
+	const setStatus=f.services.runs.setStatus;f.services.runs.setStatus=(session,status,detail)=>{session.statusDetail=detail;return setStatus(session,status,detail);};
+	const session=await f.services.runs.create('Paused Founder');
+	Object.assign(session,{mode:'founder',status:'interrupted',targetUrl:'https://fixture.test/',tokenUsage:{inputTokens:40000,outputTokens:1000},todos:createFounderReviewTodos(),founder:createFounderState({authorizationConfirmed:true,target:{name:'Fixture',url:'https://fixture.test/'}})});
+	session.activities.push({id:'observed-browser',toolName:'browser_open',status:'done',ts:Date.now()});
+	return {...f,session};
+}
+
+test('Founder evidence API resolves only attached receipts without starting a model or changing run data',async t=>{
+	const f=await pausedFounderFixture(t),{session}=f;
+	session.activities[0].toolName='browser_snapshot';session.activities[0].summary='A task heading was visible.';
+	await recordFounderObservations(session,[{category:'product_clarity',type:'opportunity',title:'Observed task',summary:'A task heading was visible.',confidence:'medium'}],f.services.runs);
+	const before=structuredClone(session),id=session.founder.observations[0].id;
+	const response=await f.request(`/api/sessions/${session.id}/founder/evidence/${id}/1`);
+	assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');assert.equal((await body(response)).integrity,'verified');
+	assert.equal((await f.request(`/api/sessions/${session.id}/founder/evidence/missing/1`)).status,404);
+	assert.equal((await f.request(`/api/sessions/${session.id}/founder/evidence/${id}/0`)).status,400);
+	assert.equal((await f.request(`/api/sessions/${randomUUID()}/founder/evidence/${id}/1`)).status,404);
+	assert.deepEqual(session,before);assert.equal(f.state.ensureCalls.length,0);assert.equal(f.state.runCalls.length,0);
+});
+
+test('Founder continuation uses fresh owner-scoped progress and preserves the existing run and usage',async t=>{
+	const f=await pausedFounderFixture(t),{session}=f;
+	const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));
+	assert.equal(progress.recovery.available,true);assert.equal(progress.phase,'exploration');
+	const before=structuredClone({founder:session.founder,activities:session.activities,usage:session.tokenUsage,todos:session.todos});
+	const response=await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:progress.recovery.token}});assert.equal(response.status,202);
+	await f.whenIdle();assert.equal(f.state.runCalls.length,1);assert.match(f.state.runCalls[0].options.task,/saved plan/);
+	assert.deepEqual({founder:session.founder,activities:session.activities,usage:session.tokenUsage,todos:session.todos},before);
+	assert.equal(f.state.runCalls[0].sessionId,session.id);
+	assert.equal((await body(await f.request(`/api/sessions/${session.id}`))).founderProgress.version,1);
+	assert.equal((await f.request('/api/sessions/missing/founder/progress')).status,404);
+	const other=await f.services.runs.create('QA');assert.equal((await f.request(`/api/sessions/${other.id}/founder/continue`,{method:'POST',json:{}})).status,404);
+});
+
+test('Founder stale tabs and pending decisions cannot dispatch a model turn',async t=>{
+	const f=await pausedFounderFixture(t),{session}=f;
+	const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));session.todos[0].status='completed';
+	const stale=await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:progress.recovery.token}});
+	assert.equal(stale.status,409);assert.equal((await body(stale)).code,'STALE_CHECKPOINT');
+	session.pendingQuestion={toolCallId:'secure-question',credentialLike:true};
+	const blocked=await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:'ignored'}});
+	assert.equal(blocked.status,409);assert.equal((await body(blocked)).code,'INPUT_REQUIRED');
+	assert.equal(f.state.runCalls.length,0);assert.equal(f.state.ensureCalls.length,0);
+});
+
+test('duplicate Founder continuation and ordinary continue messages cannot race runtime initialization; Stop cancels admission',async t=>{
+	const f=await pausedFounderFixture(t),{session}=f;let release;
+	const gate=new Promise(resolve=>{release=resolve;});const original=f.services.agent.ensureRuntime;
+	f.services.agent.ensureRuntime=async(...args)=>{await gate;return original(...args);};
+	try{
+		const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));
+		const input={method:'POST',json:{expectedCheckpoint:progress.recovery.token}};
+		assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,input)).status,202);
+		assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,input)).status,409);
+		assert.equal((await f.request(`/api/sessions/${session.id}/message`,{method:'POST',json:{text:'continue'}})).status,409);
+		assert.equal((await body(await f.request(`/api/sessions/${session.id}/founder/progress`))).busy,true);
+		assert.equal((await f.request(`/api/sessions/${session.id}/stop`,{method:'POST'})).status,200);
+		assert.equal((await body(await f.request(`/api/sessions/${session.id}/founder/progress`))).title,'Stopping review');
+	}finally{release();await f.whenIdle();}
+	assert.equal(f.state.runCalls.length,0);assert.equal(session.status,'interrupted');assert.equal(session.statusDetail,'Stopped by user.');
+});
+
+test('Founder initialization failure retains progress and permits a fresh explicit retry',async t=>{
+	const f=await pausedFounderFixture(t),{session}=f;const before=structuredClone(session.founder);
+	f.state.ensureError=new Error('Fixture model connection unavailable');
+	const first=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));
+	assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:first.recovery.token}})).status,202);
+	await f.whenIdle();assert.equal(session.status,'error');assert.deepEqual(session.founder,before);assert.equal(f.state.runCalls.length,0);
+	f.state.ensureError=undefined;
+	const retry=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));assert.match(retry.lastError,/connection unavailable/);
+	assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:retry.recovery.token}})).status,202);
+	await f.whenIdle();assert.equal(f.state.runCalls.length,1);assert.deepEqual(session.founder,before);
+});
+
+test('deleting a Founder review while continuation initializes cannot resurrect it or dispatch a model turn',async t=>{
+	const f=await pausedFounderFixture(t),{session}=f;let release,disposed=0;
+	const gate=new Promise(resolve=>{release=resolve;});f.services.agent.ensureRuntime=async()=>{await gate;return {dispose(){disposed++;}};};
+	try{
+		const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));
+		assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:progress.recovery.token}})).status,202);
+		assert.equal((await f.request(`/api/sessions/${session.id}`,{method:'DELETE'})).status,200);
+	}finally{release();await f.whenIdle();}
+	assert.equal(f.state.runCalls.length,0);assert.equal(disposed,1);assert.equal(f.services.runs.get(session.id),undefined);
+});
+
+test('a failed deletion cancels pending Founder admission without losing the saved run or trapping future recovery',async t=>{
+	const f=await pausedFounderFixture(t),{session}=f;let release,disposed=0;
+	const gate=new Promise(resolve=>{release=resolve;});f.services.agent.ensureRuntime=async()=>{await gate;return {dispose(){disposed++;}};};
+	const originalDelete=f.services.runs.delete;f.services.runs.delete=()=>{throw new Error('Fixture deletion unavailable');};
+	try{
+		const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));
+		assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:progress.recovery.token}})).status,202);
+		assert.equal((await f.request(`/api/sessions/${session.id}`,{method:'DELETE'})).status,500);
+	}finally{release();await f.whenIdle();f.services.runs.delete=originalDelete;}
+	assert.equal(f.state.runCalls.length,0);assert.equal(disposed,0);assert.equal(f.services.runs.get(session.id),session);
+	const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));assert.equal(progress.recovery.available,true);
+	assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:progress.recovery.token}})).status,202);
+	await f.whenIdle();assert.equal(f.state.runCalls.length,1);
+});
+
+test('SQA human review API preserves versions, rejects stale writes and enforces reviewer permissions without a model turn', async t => {
+	let role = 'developer';
+	const access = { mount(app) { createTestAccess().mount(app); app.use('/api', (request, _response, next) => { request.auth = { ...request.auth, role }; next(); }); } };
+	const fixture = await startFixture({ access }); t.after(() => fixture.close());
+	const session = fixture.services.runs.create('Review API');
+	session.mode = 'sqa'; session.status = 'done';
+	session.sqa = createSqaState({ authorizationConfirmed: true, target: { name: 'Review API', release: 'v1', environment: 'local' } });
+	session.sqa.observations = session.sqa.scope.applicableControlIds.map(controlId => ({ controlId, status: 'blocked', rationale: 'Evidence missing.', evidence: [] }));
+	await finishSqaAssessment(session, fixture.services.runs);
+	const base = `/api/sessions/${session.id}/sqa`;
+	assert.equal((await fixture.request(`${base}/review/request`, { method: 'POST', json: { expectedRevision: 0, reason: 'Please review risk evidence.' } })).status, 200);
+	assert.equal((await fixture.request('/api/sqa/reviews')).status, 403);
+	assert.equal((await fixture.request(`${base}/review/reopen`, { method: 'POST', json: { expectedRevision: 1, reason: 'Review evidence.' } })).status, 403);
+	assert.equal((await fixture.request(`${base}/observations`, { method: 'POST', json: {} })).status, 403);
+	role = 'owner';
+	assert.equal((await body(await fixture.request('/api/sqa/reviews'))).reviews.length, 1);
+	const original = await body(await fixture.request(`${base}/versions/1`));
+	assert.equal((await fixture.request(`${base}/review/reopen`, { method: 'POST', json: { expectedRevision: 0, reason: 'Stale.' } })).status, 409);
+	assert.equal((await fixture.request(`${base}/review/reopen`, { method: 'POST', json: { expectedRevision: 1, reason: 'Review current risk evidence.' } })).status, 200);
+	assert.equal((await fixture.request(`/api/sessions/${session.id}/report.md`)).status, 409);
+	assert.equal((await fixture.request(`/api/sessions/${session.id}/report.md?version=1`)).status, 200);
+	assert.equal((await fixture.request(`/api/sessions/${session.id}/message`, { method: 'POST', json: { text: 'Restart' } })).status, 409);
+	const decision = { controlId: 'SQA-GOV-001', status: 'pass', rationale: 'Current risk register reviewed.', evidence: [{ type: 'risk_register', reference: 'artifact://release/v1/risk' }] };
+	assert.equal((await fixture.request(`${base}/observations`, { method: 'POST', json: { expectedRevision: 2, observation: decision } })).status, 200);
+	const inspected = await body(await fixture.request(`${base}/evidence/SQA-GOV-001/1`));
+	assert.equal(inspected.integrity, 'external_unverified');
+	assert.equal(inspected.evidence.reference, 'artifact://release/v1/risk');
+	assert.equal((await fixture.request(`${base}/evidence/SQA-GOV-001/1?version=1`)).status, 404);
+	assert.equal((await fixture.request(`${base}/evidence/SQA-GOV-001/0`)).status, 400);
+	assert.equal((await fixture.request(`${base}/observations`, { method: 'POST', json: { expectedRevision: 2, observation: decision } })).status, 409);
+	assert.equal((await fixture.request(`${base}/review/publish`, { method: 'POST', json: { expectedRevision: 3, reason: 'Reviewed risk evidence; other gaps remain.' } })).status, 200);
+	assert.equal((await body(await fixture.request(`${base}/versions`))).versions.length, 2);
+	assert.deepEqual(await body(await fixture.request(`${base}/versions/1`)), original);
+	assert.equal((await fixture.request(`${base}/versions/999`)).status, 404);
+	assert.equal((await body(await fixture.request('/api/sqa/reviews'))).reviews.length, 0);
+	assert.equal(fixture.state.runCalls.length, 0);
+	const get = fixture.services.runs.get;
+	fixture.services.runs.get = id => id === session.id ? undefined : get(id);
+	assert.equal((await fixture.request(`${base}/versions/1`)).status, 404);
+	assert.equal((await fixture.request(`${base}/evidence/SQA-GOV-001/1`)).status, 404);
+	assert.equal((await fixture.request(`${base}/review/reopen`, { method: 'POST', json: { expectedRevision: 4, reason: 'Unavailable run.' } })).status, 404);
+});
+
 test('application construction has no startup side effects and validates its service contract', () => {
 	const memory = createMemoryServices();
 	const application = createApplication({
@@ -465,6 +618,28 @@ test('hybrid creation is disabled by default and cannot be enabled by request-bo
   assert.equal(response.status, 400); assert.match((await body(response)).error, /disabled/);
   assert.equal((await body(await fixture.request('/api/sessions'))).length, 0);
   assert.equal((await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'legacy' } })).status, 201);
+  assert.equal((await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'legacy', allowTestWrites: true } })).status, 400);
+  assert.equal((await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'legacy', allowTestWrites: 'true' } })).status, 400);
+});
+
+test('hybrid test-write authorization is pinned by the owner request and ignores forged grant fields', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-api-write-grant-'));
+  const env = { QASE_HYBRID_QA_ENABLED: 'true', QASE_LOCK_MODEL: 'false', QASE_HYBRID_QUALIFICATION_FILE: path.join(root, 'qualification.json') };
+  const old = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]])); Object.assign(process.env, env);
+  t.after(() => { for (const [key, value] of Object.entries(old)) if (value === undefined) delete process.env[key]; else process.env[key] = value; fs.rmSync(root, { recursive: true, force: true }); });
+  const settings = { apiKey: 'api-write-fixture', provider: 'jev', model: 'jev-1.13' };
+  await withUserConfiguration(settings, async () => {}, async () => {
+    const profile = hybridProfile(settings);
+    fs.writeFileSync(env.QASE_HYBRID_QUALIFICATION_FILE, JSON.stringify({ sdkVersion: HYBRID_SDK_VERSION, profileIdentity: profileIdentity(profile), checkedAt: Date.now(), capabilities: Object.fromEntries(REQUIRED_CAPABILITIES.map(name => [name, { passed: true }])) }));
+    const fixture = await startFixture(); t.after(() => fixture.close());
+    const result = await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'hybrid', selectedTests: ['forms'], allowTestWrites: true, writeAuthorization: { ownerUserId: 'forged', maximumSubmissions: 100000 } } });
+    assert.equal(result.status, 201);
+    const created = await body(result), grant = created.hybrid.writeAuthorization;
+    assert.equal(grant.runId, created.id); assert.equal(grant.ownerUserId, created.ownerUserId); assert.notEqual(grant.ownerUserId, 'forged');
+    assert.equal(grant.maximumSubmissions, 10); assert.equal(grant.enabled, true);
+    const readonly = await body(await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'hybrid', selectedTests: ['forms'], writeAuthorization: { enabled: true } } }));
+    assert.equal(readonly.hybrid?.writeAuthorization, undefined);
+  });
 });
 
 test('standard QA run creation persists a whitelisted coverage scope selection', async t => {
@@ -726,6 +901,18 @@ test('SQA catalog and authorized scope creation stay pending until evidence is e
 	assert.equal(unauthorized.status, 400);
 	assert.match((await body(unauthorized)).error, /authorized/i);
 
+	const unconfirmedExpanded = await fixture.request('/api/sqa/sessions', {
+		method: 'POST',
+		json: {
+			authorizationConfirmed: true,
+			profiles: ['core', 'medical'],
+			target: { name: 'Expanded example', release: '1.0', environment: 'staging' },
+			scopeNotes: 'Medical-device profile requested.'
+		}
+	});
+	assert.equal(unconfirmedExpanded.status, 400);
+	assert.match((await body(unconfirmedExpanded)).error, /Confirm.*expanded SQA scope/);
+
 	const createdResponse = await fixture.request('/api/sqa/sessions', {
 		method: 'POST',
 		json: {
@@ -741,7 +928,7 @@ test('SQA catalog and authorized scope creation stay pending until evidence is e
         assert.equal(created.mode, 'sqa');
         assert.equal(created.sqa.scope.authorization.confirmed, true);
         assert.equal(created.sqa.assessment, undefined);
-		assert.equal(created.todos.length, 6);
+		assert.equal(created.todos.length, 8);
 		assert.ok(created.todos.every(item => item.status === 'pending'));
 		assert.match(created.todos[0].text, /authorized target.*assessment boundary/i);
 		assert.match(created.todos.at(-1).text, /publish the professional SQA report/i);
@@ -754,7 +941,7 @@ test('SQA catalog and authorized scope creation stay pending until evidence is e
 		const initialPlan = fixture.state.events.find(event => (
 			event.type === 'todos' && event.sessionId === created.id
 		));
-		assert.equal(initialPlan.todos.length, 6);
+		assert.equal(initialPlan.todos.length, 8);
 
         const report = await fixture.request(`/api/sessions/${created.id}/report.md`);
 	assert.equal(report.status, 409);
@@ -794,6 +981,31 @@ test('SQA refuses an unsupported runtime before creating an assessment or starti
 	assert.equal(fixture.state.runCalls.length, 0);
 });
 
+test('SQA rejects invalid explicit device and engine identifiers instead of silently falling back', async t => {
+	const fixture = await startFixture();
+	t.after(() => fixture.close());
+	const request = extra => fixture.request('/api/sqa/sessions', {
+		method: 'POST',
+		json: {
+			authorizationConfirmed: true,
+			target: { name: 'Runtime validation', release: 'build-123', environment: 'staging' },
+			...extra
+		}
+	});
+
+	const invalidDevice = await request({ device: 'mystery-phone' });
+	assert.equal(invalidDevice.status, 422);
+	assert.match((await body(invalidDevice)).error, /Unsupported SQA device.*available catalog/);
+
+	const invalidEngine = await request({ engine: 'safari' });
+	assert.equal(invalidEngine.status, 422);
+	assert.match((await body(invalidEngine)).error, /Unsupported SQA browser engine.*chromium, firefox, or webkit/);
+
+	assert.equal(fixture.state.events.filter(event => event.type === 'sqa.created').length, 0);
+	assert.equal(fixture.state.ensureCalls.length, 0);
+	assert.equal(fixture.state.runCalls.length, 0);
+});
+
 test('a pending SQA scope accepts its first target URL and starts the agent', async t => {
 	const fixture = await startFixture();
 	t.after(() => fixture.close());
@@ -827,6 +1039,87 @@ test('a pending SQA scope accepts its first target URL and starts the agent', as
 		options: { task: 'Run the SQA assessment against https://example.com/releases/1.0.0.' }
 	});
 	await fixture.whenIdle();
+});
+
+async function founderLaunchFixture(t, options={}) {
+	const fixture=await startFixture(options); t.after(()=>fixture.close());
+	const environment={envId:'founder-launch-env',active:true,platform:'windows',device:'Desktop',deviceType:'desktop',os:'Windows',osVersion:'11',browser:'Chrome',browserCode:'chrome',browserVersion:'151',executionType:'SIMULATED',executionProvider:'local',emulation:{viewport:{width:1440,height:1000},deviceScaleFactor:1,isMobile:false,hasTouch:false}};
+	fixture.services.environments.get=async id=>id===environment.envId?environment:null;
+	const input={setupVersion:1,authorizationConfirmed:true,target:{name:'Launch fixture',url:'https://example.test/'},environmentId:environment.envId,accessDecision:'public_only',contextMode:'assumptions'};
+	return {...fixture,input,environment};
+}
+
+test('Founder versioned setup persists scope/context and rejects missing or inactive device selections before dispatch',async t=>{
+	const f=await founderLaunchFixture(t);
+	for(const patch of [{environmentId:''},{accessDecision:'invented'},{contextMode:'provided'},{target:{name:'Bad',url:'https://user:password@example.test/'}}]){
+		const response=await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,...patch}});
+		assert.equal(response.status,400);
+	}
+	assert.equal((await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,environmentId:'missing'}})).status,422);
+	f.environment.active=false;
+	assert.equal((await f.request('/api/founder/sessions',{method:'POST',json:f.input})).status,422);
+	f.environment.active=true;
+	assert.equal(f.state.runCalls.length,0); assert.equal(f.state.ensureCalls.length,0);
+	const response=await f.request('/api/founder/sessions',{method:'POST',json:f.input});assert.equal(response.status,201);
+	const created=await body(response),restored=await body(await f.request(`/api/sessions/${created.id}`));
+	assert.equal(restored.founder.scope.access.decision,'public_only');
+	assert.equal(restored.founder.scope.contextDecision.mode,'assumptions');
+	assert.equal(restored.environmentId,f.environment.envId);assert.equal(restored.status,'idle');
+	assert.equal(f.state.runCalls.length,0);
+});
+
+test('Founder authenticated setup waits for secure credentials, rejects missing consent, and starts with placeholders only',async t=>{
+	const f=await founderLaunchFixture(t);
+	const created=await body(await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,accessDecision:'authenticated'}}));
+	const session=f.services.runs.get(created.id);
+	assert.equal(session.status,'awaiting_input');assert.equal(session.pendingQuestion.kind,'founder_launch_credentials');
+	assert.equal(f.state.runCalls.length,0);assert.equal(f.state.ensureCalls.length,0);
+	assert.equal((await f.request(`/api/sessions/${session.id}/message`,{method:'POST',json:{text:'continue'}})).status,409);
+	const fields={QA_USERNAME:'fixture@example.invalid',QA_PASSWORD:'private fixture password'};
+	assert.equal((await f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:{fields}})).status,400);
+	assert.deepEqual(await f.services.secrets.names(session.id),[]);
+	const result=await f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:{fields,authorizeLogin:true}});
+	assert.equal(result.status,200);await f.whenIdle();
+	assert.equal(session.pendingQuestion,undefined);assert.ok(session.founder.scope.access.credentialsProvidedAt);
+	assert.deepEqual(session.secretNames,['QA_USERNAME','QA_PASSWORD']);assert.equal(f.state.runCalls.length,1);
+	assert.match(f.state.runCalls[0].options.task,/\{\{QA_PASSWORD\}\}/);
+	assert.ok(!JSON.stringify({session,calls:f.state.runCalls,events:f.state.events,result:await body(result)}).includes(fields.QA_PASSWORD));
+	assert.equal((await f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:{fields,authorizeLogin:true}})).status,409);
+});
+
+test('Founder credential setup survives vault failure and serializes competing credential/skip answers',async t=>{
+	const f=await founderLaunchFixture(t);
+	const created=await body(await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,accessDecision:'authenticated'}}));
+	const session=f.services.runs.get(created.id),store=f.services.secrets.store;
+	const input={fields:{QA_USERNAME:'fixture@example.invalid',QA_PASSWORD:'private fixture password'},authorizeLogin:true};
+	f.services.secrets.store=async()=>{throw new Error('Fixture vault unavailable');};
+	assert.equal((await f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:input})).status,500);
+	assert.equal(session.pendingQuestion.kind,'founder_launch_credentials');assert.equal(f.state.runCalls.length,0);
+	let release,entered;const waiting=new Promise(resolve=>{release=resolve;});const observed=new Promise(resolve=>{entered=resolve;});
+	t.after(()=>release());
+	f.services.secrets.store=async(...args)=>{entered();await waiting;return store(...args);};
+	const first=f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:input});await observed;
+	assert.equal((await f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:input})).status,409);
+	assert.equal((await f.request(`/api/sessions/${session.id}/answer`,{method:'POST',json:{answer:'Skip login'}})).status,409);
+	assert.equal(session.founder.scope.access.decision,'authenticated');release();
+	assert.equal((await first).status,200);await f.whenIdle();assert.equal(f.state.runCalls.length,1);
+});
+
+test('Founder early Skip login records public-only scope and qualified execution refuses authenticated setup',async t=>{
+	const f=await founderLaunchFixture(t);
+	const created=await body(await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,accessDecision:'authenticated'}}));
+	assert.equal((await f.request(`/api/sessions/${created.id}/answer`,{method:'POST',json:{answer:'Skip login'}})).status,200);
+	await f.whenIdle();const session=f.services.runs.get(created.id);
+	assert.equal(session.founder.scope.access.decision,'public_only');assert.equal(session.pendingQuestion,undefined);
+	assert.deepEqual(session.secretNames,[]);assert.match(f.state.runCalls[0].options.task,/public-only/);
+	const qualified=await founderLaunchFixture(t,{environment:{QASE_FOUNDER_REASONING_ENABLED:'true'}});
+	const catalog=await body(await qualified.request('/api/founder/catalog'));assert.equal(catalog.launch.authenticatedAvailable,false);
+	const rejected=await qualified.request('/api/founder/sessions',{method:'POST',json:{...qualified.input,accessDecision:'authenticated'}});
+	assert.equal(rejected.status,400);assert.match((await body(rejected)).error,/sign-in review is unavailable/);
+	assert.equal(qualified.state.runCalls.length,0);
+	f.services.configuration.getPublic=()=>({provider:'jev',model:'jev-1.13',ready:true});
+	assert.equal((await body(await f.request('/api/founder/catalog'))).launch.authenticatedAvailable,false);
+	assert.equal((await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,accessDecision:'authenticated'}})).status,400);
 });
 
 test('Founder Mode creates an authorized pending review and starts only from a target URL message', async t => {
@@ -1210,6 +1503,26 @@ test('stop, report, configuration, malformed JSON, and API 404 contracts remain 
 	assert.equal(malformed.status, 400);
 	assert.deepEqual(await body(malformed), { error: 'Request body is not valid JSON.' });
 	assert.deepEqual(await body(await fixture.request('/api/unknown')), { error: 'API route not found.' });
+});
+
+test('hybrid qualification renewal uses only saved operator configuration and rejects cross-origin and payload overrides',async t=>{
+ const memory=createMemoryServices();let calls=0;
+ memory.services.configuration.qualifyHybrid=async()=>{calls++;return{hybridQa:{available:false,status:'qualification_running'}};};
+ const fixture=await startFixture({memory});t.after(()=>fixture.close());
+ const accepted=await fixture.request('/api/config/hybrid/qualification',{method:'POST',json:{}});
+ assert.equal(accepted.status,202);assert.equal((await body(accepted)).hybridQa.status,'qualification_running');assert.equal(calls,1);
+ const override=await fixture.request('/api/config/hybrid/qualification',{method:'POST',json:{apiKey:'untrusted',endpoint:'https://outside.test/'}});
+ assert.equal(override.status,400);assert.equal(calls,1);
+ const crossOrigin=await fixture.request('/api/config/hybrid/qualification',{method:'POST',json:{},headers:{origin:'https://outside.test'}});
+ assert.equal(crossOrigin.status,403);assert.equal(calls,1);
+});
+
+for(const role of ['pilot','viewer','unknown'])test(`${role} users cannot trigger billable qualification checks`,async t=>{
+ const memory=createMemoryServices();let calls=0;
+ memory.services.configuration.qualifyHybrid=async()=>{calls++;return{};};
+ const access={mount(app){app.use('/api',(request,_response,next)=>{request.auth={...TEST_TENANT,role};next();});}};
+ const fixture=await startFixture({memory,access});t.after(()=>fixture.close());
+ assert.equal((await fixture.request('/api/config/hybrid/qualification',{method:'POST',json:{}})).status,403);assert.equal(calls,0);
 });
 
 test('SSE stays live without login sessions and removes its subscription on disconnect', { timeout: 5_000 }, async t => {

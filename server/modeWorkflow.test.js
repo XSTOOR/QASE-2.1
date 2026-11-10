@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { AGENT_EVIDENCE_TYPES, createSqaState, createSqaTodoPlan } from './sqaService.js';
-import { getSqaControl, SQA_PROFILES, SQA_PRODUCT_ATTRIBUTES } from './sqaCatalog.js';
+import { getSqaControl, SQA_PROFILES, SQA_PRODUCT_ATTRIBUTES, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { createSqaTools } from './sqaTools.js';
 import { buildSqaReportMarkdown } from './sqaAssessment.js';
+import { seedSqaSmokePassReceipts } from '../scripts/fixtures/sqa-smoke.mjs';
 
 // Deterministic workflow tests exercise real recording, evidence contracts,
 // completion gates, and exported reports. Activity fixtures are simulated;
@@ -15,9 +16,12 @@ for (const profiles of [...Object.keys(SQA_PROFILES).map(profile => [profile]), 
 			id: randomUUID(), mode: 'sqa', messages: [], activities: [],
 			sqa: createSqaState({
 				authorizationConfirmed: true, profiles, attributes: SQA_PRODUCT_ATTRIBUTES,
+				expandedScopeConfirmed: true,
+				scopeNotes: 'Broad deterministic fixture scope for every catalog workflow.',
 				target: { name: 'Deterministic meeting application fixture', release: 'test', environment: 'test' }
 			})
 		};
+		await seedSqaSmokePassReceipts(session);
 		session.todos = createSqaTodoPlan(session.sqa);
 		const commits = [];
 		const tools = createSqaTools(session, { async commit(_session, type, payload) { commits.push({ type, payload }); } });
@@ -26,7 +30,11 @@ for (const profiles of [...Object.keys(SQA_PROFILES).map(profile => [profile]), 
 		assert.equal((await finish.run()).success, false);
 		let passed = 0;
 		let blocked = 0;
-		for (const controlId of session.sqa.scope.applicableControlIds) {
+		const orderedControlIds = [
+			...SQA_TECHNICAL_CONTROL_IDS.filter(controlId => session.sqa.scope.applicableControlIds.includes(controlId)),
+			...session.sqa.scope.applicableControlIds.filter(controlId => !SQA_TECHNICAL_CONTROL_IDS.includes(controlId))
+		];
+		for (const controlId of orderedControlIds) {
 			const control = getSqaControl(controlId);
 			const browserEligible = control.evidenceRequirements.every(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type));
 			let input;
@@ -58,6 +66,8 @@ for (const profiles of [...Object.keys(SQA_PROFILES).map(profile => [profile]), 
 		assert.match(markdown, /^# SQA assessment/);
 		assert.match(markdown, /Missing reviewed artifacts/);
 		assert.match(markdown, /not legal advice/);
+		assert.match(markdown, /## Execution budget/);
+		assert.match(markdown, /Budget closeout: not used/);
 		for (const id of session.sqa.scope.applicableControlIds) assert.ok(markdown.includes(id));
 		const commitsBeforeReplay = commits.length;
 		assert.equal((await finish.run()).already_finalized, true);

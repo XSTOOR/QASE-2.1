@@ -12,6 +12,9 @@
  * run inside the original owner's actor context.
  */
 
+import { hybridRecoveryProblem } from './hybridRecoveryGate.js';
+import { usesFounderDraft } from './founderReportDraft.js';
+
 const MAX_AUTO_RESUME_ATTEMPTS = 3;
 
 /** Default dependency bundle for createRunResume(). */
@@ -46,7 +49,9 @@ export function createRunResume(overrides = {}) {
 		if (session.interruptedFromRun !== true) return false;
 		if (session.status !== 'interrupted') return false;
 		if ((session.autoResumeCount ?? 0) >= MAX_AUTO_RESUME_ATTEMPTS) return false;
-		if (session.report?.publishedAt) return false;
+		// QA's persisted artifact uses ts; publishedAt is a legacy variant.
+		// A crash between report commit and status=done must not repeat testing.
+		if (session.report?.publishedAt || session.report?.ts) return false;
 		if (session.mode === 'sqa' && session.sqa?.finalizedAt) return false;
 		if (session.mode === 'founder' && session.founder?.finalizedAt) return false;
 		return true;
@@ -67,6 +72,7 @@ export function createRunResume(overrides = {}) {
 			parts.push('Preserve recorded control evidence and blocker decisions. Complete only the remaining scoped controls, then call finish_sqa_assessment to durably publish the final assessment.');
 		} else if (session?.mode === 'founder') {
 			parts.push('Preserve recorded observations, browser evidence, and plan progress. Complete only the remaining review work, then call finish_founder_review to durably publish the final report.');
+			if(usesFounderDraft(session))parts.push('Preserve all saved report sections. Continue only the next advertised draft_founder_report_section from the durable report checkpoint, then publish with its exact complete draft_revision. Do not replay completed browser work.');
 		} else {
 			parts.push('Continue from where your prior progress left off, verify remaining items, then publish the final report.');
 		}
@@ -155,6 +161,15 @@ export function createRunResume(overrides = {}) {
 
 			if (!isResumable(session)) continue;
 
+			// A durable accounting/closeout blocker cannot be repaired by restoring
+			// an SDK snapshot. Check BEFORE constructing the runtime/browser and
+			// before consuming a recovery attempt. Keep scanning for another safe run.
+			const recoveryProblem = hybridRecoveryProblem(session);
+			if (recoveryProblem) {
+				logger.info?.('runresume.blocked', { runId: session.id, errorCode: recoveryProblem.code });
+				continue;
+			}
+
 			let snapshot = await Promise.resolve()
 				.then(() => loadSnapshot(candidate.sessionId))
 				.catch(() => null);
@@ -228,6 +243,7 @@ export function createRunResume(overrides = {}) {
 				// A failed recovery attempt is logged, never thrown: boot must
 				// not die because one session could not resume.
 				logger.warn?.('runresume.turn-failed', { runId: session.id, error: String(error) });
+				return 0;
 			}
 			logger.info?.('runresume.resumed', { runId: session.id });
 			return 1;

@@ -1,5 +1,107 @@
 # Software Quality Assurance (SQA)
 
+## Release acceptance
+
+Run `npm run test:sqa-release` for isolated SQA contracts and Chromium, Firefox
+and WebKit startup, review, evidence, export and restart checks at desktop/mobile
+widths. No environment file or model key is needed. See
+[SQA release readiness](sqa-release-readiness.md) for setup, CI, results and the
+remaining deployment checks. This gate supplements full repository verification.
+
+## Inspecting evidence and report traceability
+
+Use **Inspect evidence** on a control or in the evidence traceability register to
+open the saved evidence record. Access uses the same account and run permissions
+as the assessment. The API is
+`GET /api/sessions/:id/sqa/evidence/:controlId/:index`, with a one-based index and
+optional `?version=N` for an earlier published assessment.
+
+New browser evidence retains the exact redacted JSON bundle used to compute its
+SHA-256 digest. Inspection checks the bundle, its run, anchor activity and evidence
+metadata. Retained activities are snapshots; later changes to the activity feed do
+not change the original bundle. Evidence persistence and observation changes are
+saved together, with rollback on failure and the existing aggregate size limit.
+Bundles are retained for published versions and are not added to model prompts.
+
+The viewer distinguishes these states:
+
+- **Digest verified:** the retained browser bundle matches the attached digest.
+- **Digest mismatch:** the bundle or its metadata differs; its payload is withheld.
+- **Original bundle unavailable:** older evidence did not retain the original
+  digest bundle. Any current anchor activity is context only.
+- **External document not verified:** a reviewer reference is shown without
+  fetching or authenticating the document bytes, even if a digest was supplied.
+- **Additional redaction applied:** the stored bundle matched, but current vault
+  redaction changed the delivered copy, so that copy cannot reproduce its digest.
+
+Digest verification checks record integrity, not the correctness of a control
+decision. An observation bundle does not imply that a screenshot or another binary
+artifact was retained. Opening an external reference does not fetch its contents.
+
+Quality, the report view, Markdown and PDF put the bounded technical sample and
+evidence-backed failures before broader documentary gaps. Their shared
+traceability register includes evidence for passing controls as well as failures:
+control, type, collection time, reference, digest, summary and origin. Historical
+exports retain the published metadata; current integrity checks are performed by
+the evidence inspector rather than asserted by a static report.
+
+Run `npm run test:sqa-evidence` for an isolated desktop/mobile browser workflow
+covering integrity states, safe rendering, reviewer publication, historical exports
+and evidence persistence after a complete server restart. It uses synthetic
+observations and starts no model calls.
+
+## Human review and published versions
+
+After a browser assessment is published, use **Quality → Human evidence review**
+to request review with a reason. An owner or administrator who already has access
+to the run can open a review draft. The reviewer inbox lists pending requests
+among the 100 most recent runs accessible to that account; it does not grant
+access to another account's runs.
+
+The reviewer selects a control and decision, supplies its required evidence
+references and summaries, and optionally records SHA-256 digests. Evidence is
+referenced in its existing document system; Qase does not upload, fetch, or
+independently authenticate these documents. Decisions retain the reviewer's
+trusted identity, role, timestamp and observation digest. Use **Publish reviewed
+version** after checking the remaining gaps. Missing evidence stays blocked;
+publication still checks scope completeness, unfinished work, authentication
+scope and finding/control contradictions. No model call is made by review.
+
+Reopening retains earlier published assessments, observations and scope.
+**Published versions** offers comparison against the current draft/result and
+historical Markdown downloads. Historical Markdown/PDF are also available from
+`/api/sessions/:id/report.md?version=N` and `report.pdf?version=N`, including while
+the next version is a draft. Previously finalized assessments are archived as
+version 1 when first reviewed. Existing reports remain reproducible snapshots.
+
+Review writes require the current `expectedRevision`; a stale editor receives
+HTTP 409 and must reload. Failed persistence restores the previous review state.
+Active model runs cannot be reviewed, and an open human draft cannot start a new
+model turn. History is bounded to 10 published versions and the existing storage
+limit; reaching a limit requires a new assessment rather than discarding history.
+
+API additions:
+
+- `POST /api/sessions/:id/sqa/review/request` with `expectedRevision` and `reason`.
+- `POST /api/sessions/:id/sqa/review/reopen` and `/publish` with the same fields
+  (owner/admin).
+- `POST /api/sessions/:id/sqa/observations` accepts `{ expectedRevision, observation }`
+  (owner/admin). The original observation-only shape remains available for an
+  untouched legacy assessment; revision checks apply after its first review write.
+- `GET /api/sqa/reviews` (owner/admin), `GET /api/sessions/:id/sqa/versions`, and
+  `GET /api/sessions/:id/sqa/versions/:version`.
+
+Run `npm run test:sqa-review` for the isolated browser acceptance workflow,
+including mobile layout, historical exports and a complete server restart.
+
+For the local browser regression covering SQA entry during sign-in startup, run
+`npm run test:sqa-startup` against a development server on `http://127.0.0.1:5173`,
+or pass its loopback URL with `npm run test:sqa-startup -- http://127.0.0.1:PORT`.
+The check creates separate local test accounts and does not start a model turn.
+It reproduces the previous startup overlap as a negative control, then checks
+immediate SQA entry, catalog retry, cancellation, and returning from QA setup
+at desktop and mobile widths.
+
 Qase SQA is a standards-informed, evidence-gated assessment mode built on the
 same CleanSlate runtime as ordinary Qase browser testing. It combines an
 independently authored control catalog, a constrained browser agent, reviewed
@@ -68,9 +170,11 @@ The principal responsibilities are deliberately separated:
 ## Assessment lifecycle
 
 1. The user assigned to the private Qase instance retrieves the current catalog.
-2. The user selects profiles and product attributes, identifies the exact
-   product release and environment, records scope assumptions, and explicitly
-   confirms authorization for non-destructive testing.
+2. The browser launcher always includes `web_application` and `user_interface`,
+   then the user selects any additional profiles and product attributes,
+   identifies the exact product release/build and environment, records scope
+   assumptions, and explicitly confirms authorization for non-destructive
+   testing. The launcher does not invent `Current` or `Preview` metadata.
 3. Qase resolves the applicable controls and creates an SQA run. With no
    evidence, its initial verdict is `blocked`; Qase never starts at `pass`.
 4. The user supplies the exact authorized URL through the normal run message
@@ -78,10 +182,21 @@ The principal responsibilities are deliberately separated:
    creation request.
 5. CleanSlate receives a bounded SQA context generated from the resolved scope.
    It asks for missing requirements, credentials, or intended workflows, then
-   executes a risk-based browser plan.
+   executes a risk-based browser plan. At bounded workflow checkpoints Qase
+   clears redundant provider transcript history and continues from durable
+   todos, observations, findings, messages, and live browser state. This keeps
+   long assessments from repeatedly resending an ever-growing page transcript.
+   A separate cumulative input-token ceiling (350,000 by default) stops further
+   browser exploration if provider context growth still becomes excessive.
+   Provider history is compacted at safe durable checkpoints after 75,000 new
+   input tokens by default. Once a hard safety limit is reached, the finalizer
+   can conservatively block every pending control and publish in one host-owned
+   closeout call instead of spending many model turns on bookkeeping.
 6. The agent records each browser-observable control with
    `record_sqa_control`. It files confirmed defects separately through
-   `report_finding`.
+   `report_finding`, linking every finding to the scoped controls whose
+   objectives it disproves. Linked controls must be recorded as `fail`; the
+   finalizer rejects a contradictory pass or blocked result.
 7. Controls requiring policy, approval, source, life-cycle, regulatory,
    independent, or other documentary proof remain `blocked` until an
    authorized reviewer supplies appropriate evidence references.
@@ -195,6 +310,13 @@ not automatically select a sector profile. In particular,
 `handles_payment_data` is not a substitute for selecting and scoping the
 `payment` profile.
 
+Every SQA session created through the browser runtime is a URL-based review, so
+the host always merges `web_application` and `user_interface` into the scope.
+The launcher marks both characteristics as required and explains that they add
+the six `SQA-WEB-001` through `SQA-WEB-006` browser checks. API callers cannot
+remove those host-owned attributes by sending an empty array. Additional
+attributes remain declaration-driven.
+
 Applicability is declaration-driven. Qase validates known values and resolves
 the catalog deterministically, but it does not independently decide whether
 GDPR, CCPA, FDA, FAA, PCI DSS, or another law or standard legally applies.
@@ -214,6 +336,8 @@ The evaluator is intentionally conservative:
 
 - a claimed `pass` missing any evidence contract is converted to `blocked`;
 - a claimed `fail` with no evidence reference is converted to `blocked`;
+- a confirmed SQA finding must name one or more in-scope control IDs, and the
+  finalizer rejects publication until every linked control is `fail`;
 - unknown fields, duplicate observations, unknown controls, out-of-scope
   controls, invalid status names, and non-canonical timestamps are rejected;
 - a SHA-256 digest must use `sha256:` followed by 64 lowercase hexadecimal
@@ -511,7 +635,8 @@ implementation. For SQA runs, Qase:
    session;
 2. supplies `buildSqaContext(...)` as the additional context for every turn;
 3. registers ordinary Qase browser/diagnostic/question/todo/finding tools plus
-   `record_sqa_control` and `finish_sqa_assessment`;
+   the SQA-only bounded `browser_sqa_smoke`, `record_sqa_control`, and
+   `finish_sqa_assessment` tools;
 4. denies command execution and allows only the host tool allowlist;
 5. wraps tool execution so browser activity and evidence binding are performed
    by Qase outside the model;
@@ -519,6 +644,13 @@ implementation. For SQA runs, Qase:
    context; and
 7. invokes the deterministic evaluator whenever an observation changes or the
    model requests finalization.
+
+Every model stream is also protected by a host-side inactivity deadline
+(`QASE_MODEL_ACTIVITY_TIMEOUT_MS`, 180 seconds by default). Streamed events plus
+host-observed tool starts and usage reports each reset the deadline. When a
+stream stays silent, the host aborts only that model call, preserves durable
+activities and control results, and applies the existing bounded retry policy;
+it does not mislabel the timeout as a user stop.
 
 The SQA context tells the model to treat target-page text as untrusted, stay in
 scope, avoid legal and classification claims, use vault placeholders for
@@ -539,8 +671,38 @@ checks remain authoritative.
 }
 ```
 
-`finish_sqa_assessment` accepts no arguments. The tool returns the assessment
-ID, verdict, coverage, risk, and disclaimer computed by application code.
+`browser_sqa_smoke` provides four bounded, action-specific browser checks:
+
+- `accessibility` samples a real Tab/Shift+Tab path and reports observed focus
+  targets and semantics;
+- `responsive` checks two or three declared viewports for overflow and clipped
+  interactive controls, then restores the original viewport;
+- `navigation` loads at most four explicitly named, same-origin links and
+  restores the original page; and
+- `form_validation` exercises empty, invalid-email, valid-email, and
+  invalid-after-valid states on one uniquely labelled empty email field. It is
+  limited to same-origin GET forms and refuses pre-filled fields, POST forms,
+  unsupported field types, and new-window submissions.
+
+Each result is a smoke sample, not WCAG conformance, complete device coverage,
+or an unrestricted crawler. After four successful browser actions since the
+last durable control result (configurable with
+`SQA_BROWSER_WORKFLOW_CHECKPOINT`), the host requires the agent to record the
+current workflow result before more browser activity. Context compaction is
+triggered only after durable control or blocker records, so a plan update cannot
+interrupt a parallel browser action.
+
+`finish_sqa_assessment` normally accepts an empty object. After Qase reports
+that the hard input-token or browser-tool limit is exhausted, the model may
+send `{ "close_after_safety_limit": true }` once. The host verifies that a
+limit was actually reached, preserves every existing result, records all still
+pending controls as blocked with the exact safety-limit rationale, completes
+the visible plan, and invokes the deterministic evaluator. The option is
+rejected before a limit is reached and cannot override finding/control
+conflicts or an unresolved authentication-scope decision.
+
+The tool returns the assessment ID, verdict, coverage, risk, and disclaimer
+computed by application code.
 
 ## Persistence and assessment data
 

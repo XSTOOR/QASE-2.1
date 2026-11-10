@@ -1,3 +1,4 @@
+import './testWorkingDirectory.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -15,7 +16,7 @@ import { withUserConfiguration } from './config.js';
 // deterministic mocks. No model gateway or external website is contacted.
 for (const closeout of [false, true]) test(`installed SDK publishes without depth deadlock: ${closeout ? 'budget closeout at six pages' : 'six plus three fills eight-page capacity'}`, { timeout: 120000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-route-capacity-'));
-  const overrides = { NODE_ENV: 'development', QASE_ALLOW_PRIVATE_NETWORK: 'true', QASE_HYBRID_QA_ENABLED: 'true', QASE_LOCK_MODEL: 'false',
+  const overrides = { QASE_HYBRID_AUTONOMOUS_COMPLETION: 'false', NODE_ENV: 'development', QASE_ALLOW_PRIVATE_NETWORK: 'true', QASE_HYBRID_QA_ENABLED: 'true', QASE_LOCK_MODEL: 'false',
     JEV_API_KEY: 'route-capacity-fixture', QASE_HYBRID_QUALIFICATION_FILE: path.join(root, 'qualification.json'), QASE_HYBRID_OPUS_CALLS: closeout ? '6' : '60' };
   const saved = Object.fromEntries(Object.keys(overrides).map(key => [key, process.env[key]])); Object.assign(process.env, overrides);
   t.after(() => { for (const [key, value] of Object.entries(saved)) if (value === undefined) delete process.env[key]; else process.env[key] = value; });

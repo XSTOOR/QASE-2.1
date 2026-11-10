@@ -74,6 +74,8 @@ export function createQaJourney({ document, getState, changed, onBlocked }) {
 		$('journey-review-devices').textContent = state.automatic ? 'Chrome · Default desktop · 1 run'
 			: state.browserLabel || state.environmentLabel || 'Choose one browser and one device';
 		$('journey-review-model').textContent = state.config?.model || 'Provided by Qase';
+		const writes = $('qa-allow-test-writes');
+		if ($('journey-review-access')) $('journey-review-access').textContent = writes?.checked ? 'Reads, local input checks and marked test records (up to 10 submissions)' : 'Reads and local input checks; no test-record submissions';
 		const goal = $('qa-goal').value.trim();
 		$('journey-review-goal-row').hidden = !goal;
 		$('journey-review-goal').textContent = goal;
@@ -101,6 +103,7 @@ export function createQaJourney({ document, getState, changed, onBlocked }) {
 	target.addEventListener('blur', () => { normalize(); changed(); });
 	target.addEventListener('input', () => target.setCustomValidity(''));
 	$('qa-goal').addEventListener('input', sync);
+	$('qa-allow-test-writes')?.addEventListener('change', sync);
 	form.addEventListener('submit', event => {
 		if (step < 2) { event.preventDefault(); event.stopImmediatePropagation(); go(step + 1); }
 	}, true);

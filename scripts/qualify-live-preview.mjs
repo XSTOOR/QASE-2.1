@@ -11,7 +11,7 @@ const session = { id: randomUUID(), title: 'Live preview fixture', mode: 'qa', q
   environmentSnapshot: { device: 'Desktop', deviceType: 'desktop', platform: 'macos', browser: 'Chrome' },
   messages: [], activities: [], todos: [], findings: [], secretNames: [],
   hybrid: { counts: { planned: 2, passed: 0 }, scenarios: [{ id: 'nav', category: 'navigation', status: 'planned' }, { id: 'layout', category: 'responsive', status: 'planned' }] } };
-const listeners = new Set(), streams = new Set();
+const listeners = new Set(), streams = new Set(), writeRequests = [];
 const publish = (s, type, payload = {}) => { for (const listener of listeners) listener({ type, sessionId: s.id, ts: Date.now(), ...payload }); };
 const config = { provider: 'custom', model: 'preview-fixture', ready: true, hasApiKey: true, providers: ['custom'], headless: true };
 const services = {
@@ -28,7 +28,7 @@ const services = {
 };
 const application = createApplication({ services, environment: { NODE_ENV: 'production' } });
 const server = await new Promise(resolve => { const value = application.app.listen(0, '127.0.0.1', () => resolve(value)); });
-server.on('request', (request, response) => { if (request.url.endsWith('/events')) streams.add(response); });
+server.on('request', (request, response) => { if (request.url.endsWith('/events')) streams.add(response); if (request.method === 'POST' && request.url.startsWith('/api/sessions')) writeRequests.push(request.url); });
 const browser = await chromium.launch(), base = `http://127.0.0.1:${server.address().port}`;
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }), errors = [];
@@ -67,6 +67,15 @@ try {
   await page.waitForFunction(() => document.querySelector('#current-activity-state')?.textContent.includes('Tested menu or accordion'));
   activity({ id: 'child', status: 'done', label: 'Tested menu or accordion', ts: Date.now() });
   await page.waitForFunction(() => document.querySelector('#current-activity-state')?.textContent === 'Tested observed routes');
+  // Transport loss must never leave an indefinitely reassuring Working label.
+  const outage = route => route.abort('connectionfailed');
+  await page.route('**/api/sessions/*/events', outage);
+  for (const response of streams) if (!response.writableEnded) response.end();
+  await page.waitForFunction(() => document.querySelector('#status-chip')?.textContent === 'Reconnecting…' && document.querySelector('#thinking-label')?.textContent === 'Reconnecting');
+  assert.match(await page.locator('#journey-run-description').textContent(), /last received state/);
+  assert.equal(session.status, 'running', 'The UI must not invent a server terminal state.');
+  await page.unroute('**/api/sessions/*/events', outage);
+  await page.waitForFunction(() => document.querySelector('#status-chip')?.textContent === 'Running');
   session.hybrid.telemetry = { elapsedMs: 137706, browserActions: 18, reasoner: {}, classifier: {} };
   session.hybrid.status = 'paused'; session.hybrid.recovery = { resumeBlockedReason: 'usage_unverified' };
   session.status = 'interrupted';
@@ -78,6 +87,17 @@ try {
   await page.reload();
   await page.waitForFunction(() => document.querySelector('#timer-chip')?.textContent === '02:17');
   assert.equal(await page.locator('#resume-run').isDisabled(), true);
+  // A missing receipt must offer a reviewable setup, never replay uncertain
+  // work, inherit credentials/results, or silently create another paid run.
+  const savedRun = structuredClone(session), writesBefore = writeRequests.length;
+  await page.locator('#journey-run-fresh-test').click();
+  await page.waitForURL('**/#/runs/new');
+  assert.equal(await page.locator('#qa-target-url').inputValue(), session.targetUrl);
+  assert.equal(await page.locator('#qa-goal').inputValue(), '');
+  assert.equal(writeRequests.length, writesBefore);
+  assert.deepEqual(session, savedRun);
+  await page.goto(`${base}/#/runs/${session.id}`);
+  await page.waitForFunction(() => document.querySelector('#resume-run')?.disabled);
   // Completing a run must preserve the route and selected tab on desktop/mobile.
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -144,6 +164,9 @@ try {
   session.qaExecutionMode = 'hybrid'; session.hybrid = { authentication: { status: 'unrequested', required: true } };
   session.status = 'awaiting_input'; session.pendingQuestion = { question: 'Provide test account credentials securely or continue public-only?', credentialLike: true, options: ['Provide test account', 'Continue public-only'] };
   await page.reload();
+  // The initial session render precedes the stream's resync render. Finish
+  // workspace boot before typing into the final credential form.
+  await page.waitForFunction(() => document.body.dataset.page === 'run' && !document.body.dataset.pageLoading);
   const credentialForm = page.locator('.cred-form'); await credentialForm.waitFor();
   await credentialForm.getByLabel('Username or email', { exact: true }).fill('fixture@example.invalid');
   await credentialForm.getByLabel('Password', { exact: true }).fill('fixture-password');
@@ -151,8 +174,10 @@ try {
   assert.equal(await credentialForm.getByLabel('One-time code or extra field').count(), 0);
   await credentialForm.locator('input[type=checkbox]').check();
   await credentialForm.getByLabel('Expected signed-in page URL').fill('https://outside.test/');
-  const refused = page.waitForResponse(response => response.url().endsWith('/credentials') && response.status() === 400);
-  await credentialForm.getByRole('button', { name: 'Store and continue' }).click(); await refused;
+  const refused = page.waitForResponse(response => response.url().endsWith('/credentials') && response.request().method() === 'POST');
+  await credentialForm.getByRole('button', { name: 'Store and continue' }).click();
+  const refusedResponse = await refused;
+  assert.equal(refusedResponse.status(), 400, await refusedResponse.text());
   assert.equal(await credentialForm.getByLabel('Password', { exact: true }).inputValue(), 'fixture-password', 'Validation failure must retain the secure question/form.');
   await credentialForm.getByRole('button', { name: 'Skip login' }).click();
   await credentialForm.waitFor({ state: 'detached' });
@@ -176,7 +201,7 @@ try {
   assert.equal(new URL(page.url()).hash, `#/runs/${session.id}`);
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ passed: true, liveProgress: true, chromeUrlUpdated: true, responsivePreviewStable: true, responsiveStatusClearedAfterRestore: true, nestedActivityUpdated: true, honestLegacyCoverage: true, explicitAgentIdentity: true,
-    receiptRecoveryExplained: true, pausedTimerStableAfterReload: true, completionKeepsDesktopAndMobileView: true, explicitResultsNavigation: true,
+    disconnectExplainedAndResynced: true, receiptRecoveryExplained: true, freshTestSetupDoesNotCreateOrReplay: true, pausedTimerStableAfterReload: true, completionKeepsDesktopAndMobileView: true, explicitResultsNavigation: true,
     completedRunStartupAndRefreshStayOnRun: true, latestRunFallbackStaysOnRun: true, launchHandleStaysOnRun: true, explicitResultsRefreshPreserved: true,
     budgetContinuationOptionUsable: true, exactBudgetApprovalPreservesUsage: true, secureCredentialConsent: true, failedCredentialQuestionPreserved: true, publicOnlyDecisionRemembered: true, pageErrors: errors }));
 } finally {

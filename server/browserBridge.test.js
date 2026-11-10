@@ -408,3 +408,17 @@ test('hybrid preview reads the existing page without SDK ensurePage or viewport 
 	assert.equal(bridge.getLastFrame(), frame, 'Failed preview keeps the last honest frame, without failing the QA action.');
 	bridge.dispose();
 });
+
+test('context route teardown errors cannot escape and kill the server; unexpected dispatch failures remain blocked', async () => {
+  const { service, context } = fakeService(), runStore = fakeRunStore();
+  const session = { id: 'route-race', qaExecutionMode: 'hybrid', targetUrl: service.activePage.url(), messages: [] };
+  const policy = createBrowserPolicy({ getTargetUrl: () => session.targetUrl, environment: { NODE_ENV: 'production' }, resolveHost: async () => [{ address: '93.184.216.34', family: 4 }] });
+  const bridge = await attachBrowserBridge(session, service, runStore, { policy });
+  await service.ensurePage(); let blocked = 0;
+  const request = () => ({ url: () => session.targetUrl, method: () => 'GET', resourceType: () => 'document', isNavigationRequest: () => true, frame: () => ({ parentFrame: () => null }) });
+  await context.routeHandler({ request, continue: async () => { throw new Error('Route is already handled!'); }, abort: async () => { blocked++; } });
+  assert.equal(blocked, 0);
+  await context.routeHandler({ request, continue: async () => { throw new Error('Unexpected dispatch failure'); }, abort: async () => { blocked++; } });
+  assert.equal(blocked, 1); assert.ok(bridge.securityBlocks.some(item => item.code === 'BROWSER_ROUTE_DISPATCH_FAILED'));
+  bridge.dispose();
+});

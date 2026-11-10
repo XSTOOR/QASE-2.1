@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import pg from 'pg';
-import { runPostgresMigrations } from './migrations.js';
+import { loadMigrations, MIGRATIONS_DIRECTORY, runPostgresMigrations } from './migrations.js';
 import { createPostgresExecutionQueue } from './executionQueue.js';
 import {
 	RunVersionConflictError,
@@ -13,6 +18,7 @@ import {
 	createPostgresRetentionRepository
 } from './retentionRepository.js';
 import { createSqaState } from '../sqaService.js';
+import { createFounderActions } from '../founderActions.js';
 
 const { Pool } = pg;
 const DATABASE_URL = String(process.env.QASE_TEST_DATABASE_URL ?? '').trim();
@@ -247,7 +253,14 @@ test(
 
 		await administrationPool.query(`CREATE SCHEMA ${identifier}`);
 		migrationPool = scopedPool(schema);
-		await runPostgresMigrations(migrationPool);
+		const legacyDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'qase-founder-upgrade-'));
+		t.after(async () => {
+			assert.equal(path.dirname(path.resolve(legacyDirectory)), path.resolve(os.tmpdir()));
+			assert.ok(path.basename(legacyDirectory).startsWith('qase-founder-upgrade-'));
+			await fs.rm(legacyDirectory, { recursive: true, force: true });
+		});
+		for (const migration of await loadMigrations()) if (migration.version < 44) await fs.copyFile(path.join(MIGRATIONS_DIRECTORY, migration.filename), path.join(legacyDirectory, migration.filename));
+		assert.equal((await runPostgresMigrations(migrationPool, { directory: legacyDirectory })).currentVersion, 43);
 
 		tenantAPool = scopedPool(schema);
 		tenantBPool = scopedPool(schema);
@@ -268,13 +281,54 @@ test(
 		});
 		await tenantARepository.bootstrapTenant();
 		await tenantBRepository.bootstrapTenant();
+		const legacyFounder = { schemaVersion: 1, ownerUserId: contextA.actorUserId, targetUrl: 'https://fixture.invalid/', recommendationSet: { setVersion: 1, generatedAt: '2026-11-07T00:00:00.000Z', recommendations: [{ id: 'legacy-rec', title: 'Preserve legacy work' }] }, selections: ['legacy-rec'] };
+		await tenantARepository.saveFounderProjectState(legacyFounder);
+		const upgrade = await runPostgresMigrations(migrationPool);
+		assert.deepEqual(upgrade.applied.map(item => item.version), [44]);
+		assert.deepEqual(await tenantARepository.getFounderProjectState(), legacyFounder, 'Migration 044 preserves the exact legacy selection and report.');
+
+		await t.test('Founder actions serialize across separate PostgreSQL replicas and preserve another report during delivery', { timeout: 30_000 }, async subtest => {
+			const replicaPool = scopedPool(schema);
+			const replica = createPostgresRunRepository({ pool: replicaPool, tenantContext: contextA });
+			subtest.after(() => replica.close());
+			let enter, release, deliveries = 0;
+			const entered = new Promise(resolve => { enter = resolve; });
+			const gate = new Promise(resolve => { release = resolve; });
+			subtest.after(() => release());
+			const deliveryClient = { async deliver() { deliveries++; enter(); await gate; return { status: 202, body: { jobId: 'postgres-fixture-job' } }; } };
+			const makeActions = repository => createFounderActions({ projectId: contextA.projectId, deliveryClient, backend: {
+				get: repository.getFounderProjectState, save: repository.saveFounderProjectState, update: repository.updateFounderProjectState
+			} });
+			const first = makeActions(tenantARepository), second = makeActions(replica);
+			const source = name => ({ id: randomUUID(), mode: 'founder', ownerUserId: contextA.actorUserId, founder: {
+				finalizedAt: '2026-11-08T00:00:00.000Z', scope: { target: { url: 'https://fixture.invalid/' }, productContext: { primaryGoal: name } },
+				report: { generatedAt: '2026-11-08T00:00:00.000Z', recommendationSet: { setVersion: 1, generatedAt: '2026-11-08T00:00:00.000Z' }, recommendations: [{ id: 'rec-1', title: name }, { id: 'rec-2', title: `${name} second` }] }
+			} });
+			const a = source('First report'), b = source('Other report');
+			const request = (state, ids = state.selections) => ({ reviewKey: state.reviewKey, expectedRevision: state.revision, selectedRecommendationIds: ids });
+			const start = await first.read(a);
+			const raced = await Promise.allSettled([first.select(a, request(start, ['rec-1'])), second.select(a, request(start, ['rec-2']))]);
+			assert.equal(raced.filter(item => item.status === 'fulfilled').length, 1);
+			assert.equal(raced.find(item => item.status === 'rejected').reason.status, 409);
+			const saved = await second.read(a), sending = first.send(a, request(saved));
+			await entered;
+			await assert.rejects(second.send(a, request(saved)), error => error.status === 409);
+			await second.publish(b);
+			await second.select(b, request(await second.read(b), ['rec-2']));
+			release(); const delivered = await sending;
+			assert.equal(delivered.state.handoff.reference, 'postgres-fixture-job');
+			assert.equal(deliveries, 1); assert.deepEqual((await second.read(b)).selections, ['rec-2']);
+			assert.equal((await second.send(a, request(saved))).deduplicated, true); assert.equal(deliveries, 1);
+			assert.equal(await tenantBRepository.getFounderProjectState(), undefined, 'Another project cannot read Founder actions.');
+			assert.equal((await tenantAPool.query('SELECT COUNT(*)::int AS count FROM founder_project_state')).rows[0].count, 0, 'Founder state defaults to deny without a transaction tenant.');
+		});
 
 		const value = runAggregate();
 		const created = await tenantARepository.create(value, {
 			eventType: 'session',
 			payload: { title: value.title }
 		});
-		assert.equal(created.version, 1);
+		assert.equal(created.version, 0, 'new aggregates start at lock version zero');
 
 		const tenantAGet = await tenantARepository.get(value.id);
 		assert.equal(tenantAGet.session.id, value.id);
@@ -301,9 +355,12 @@ test(
 		assert.equal(sqaLoaded.session.mode, 'sqa');
 		assert.equal(sqaLoaded.session.sqa.scope.catalogVersion, sqaRun.sqa.scope.catalogVersion);
 		assert.equal(sqaLoaded.session.sqa.assessment, undefined);
+		sqaLoaded.session.sqa.execution={version:1,strategy:'qualified-opus-jev-v1',actions:[{id:'executed',status:'done'}],modelBudget:{roles:{reasoner:{inputTokens:123,outputTokens:4,reservations:[]}}}};
+		const reasoningSave=await tenantARepository.save(sqaLoaded.session,{expectedVersion:sqaLoaded.version,eventType:'mode.reasoning',payload:{}});
+		assert.deepEqual((await tenantARepository.get(sqaRun.id)).session.sqa.execution,sqaLoaded.session.sqa.execution,'reasoning checkpoint and exact accounting survive real hydration');
 		assert.equal(await tenantBRepository.get(sqaRun.id), undefined);
 		assert.equal(await tenantARepository.delete(sqaRun.id, {
-			expectedVersion: sqaCreated.version,
+			expectedVersion: reasoningSave.version,
 			eventType: 'run.deleted',
 			actorType: 'user',
 			actorUserId: contextA.actorUserId
@@ -362,6 +419,41 @@ test(
 			workerId: 'integration-worker-a'
 		}), 'succeeded');
 
+		await t.test('a crashed claiming process is fenced and a restart retains the durable checkpoint', async () => {
+			await tenantAQueue.enqueue({runId:value.id,requestedByUserId:contextA.actorUserId,turnOptions:{task:'restart fixture'}});
+			const child = spawn(process.execPath,['--input-type=module','-e',`
+				import pg from 'pg';
+				import {createPostgresExecutionQueue} from ${JSON.stringify(new URL('./executionQueue.js',import.meta.url).href)};
+				import {createPostgresRunRepository} from ${JSON.stringify(new URL('./runRepository.js',import.meta.url).href)};
+				const tenant=Object.freeze(JSON.parse(process.env.QASE_RESTART_TENANT));
+				const pool=new pg.Pool({connectionString:process.env.QASE_TEST_DATABASE_URL,options:process.env.QASE_RESTART_OPTIONS});
+				const queue=createPostgresExecutionQueue({pool,tenantContext:tenant});
+				const job=await queue.claim('crash-fixture',5000);
+				const repo=createPostgresRunRepository({pool,tenantContext:tenant});
+				const saved=await repo.get(job.runId);saved.session.contextUsage={fixtureCompletedActionIds:['already-executed'],providerReportedTokens:123};
+				await repo.save(saved.session,{expectedVersion:saved.version,eventType:'context',payload:{}});
+				process.send(job);setInterval(()=>{},1000);
+			`],{cwd:process.cwd(),env:{...process.env,QASE_RESTART_TENANT:JSON.stringify(contextA),QASE_RESTART_OPTIONS:`-c search_path=${schema},public`},stdio:['ignore','ignore','pipe','ipc']});
+			let childError='';child.stderr.on('data',data=>childError+=data);
+			const claimed=await Promise.race([once(child,'message').then(([job])=>job),once(child,'exit').then(()=>{throw new Error(`Crash fixture exited before claim: ${childError}`);})]);
+			const exited=once(child,'exit');child.kill('SIGKILL');await exited;
+			assert.equal(await tenantAQueue.claim('too-early-restart',5000),undefined);
+			await new Promise(resolve=>setTimeout(resolve,Math.max(1,claimed.leaseExpiresAt-Date.now()+50)));
+			const competing=await Promise.all([tenantAQueue.claim('restart-a',5000),tenantAQueue.claim('restart-b',5000)]);
+			assert.equal(competing.filter(Boolean).length,1);
+			const recovered=competing.find(Boolean);assert.equal(recovered.id,claimed.id);assert.equal(recovered.attempts,2);
+			assert.notEqual(recovered.leaseToken,claimed.leaseToken);
+			assert.equal(await tenantAQueue.complete({jobId:claimed.id,leaseToken:claimed.leaseToken,workerId:'crash-fixture'}),undefined);
+			const checkpoint=await tenantARepository.get(value.id);
+			assert.deepEqual(checkpoint.session.contextUsage.fixtureCompletedActionIds,['already-executed']);
+			assert.equal(checkpoint.session.contextUsage.providerReportedTokens,123);
+			assert.equal(await tenantAQueue.cancelRun(value.id),'cancel_requested');
+			assert.equal(await tenantAQueue.heartbeat({jobId:recovered.id,leaseToken:recovered.leaseToken,workerId:recovered.leaseOwner}),'cancel_requested');
+			assert.equal(await tenantAQueue.complete({jobId:recovered.id,leaseToken:recovered.leaseToken,workerId:recovered.leaseOwner}),'cancelled');
+			// The child saved a checkpoint. Use its authoritative new version below.
+			created.version=checkpoint.version;
+		});
+
 		assert.equal(await tenantBRepository.get(value.id), undefined);
 		assert.deepEqual(await tenantBRepository.list(), []);
 
@@ -390,6 +482,27 @@ test(
 			error => error instanceof RunVersionConflictError
 		);
 		assert.equal((await tenantARepository.get(value.id)).session.status, 'done');
+
+		await t.test('concurrent publication has one winner and a severed transaction rolls back',async()=>{
+			const before=await tenantARepository.get(value.id);
+			const make=()=>({...structuredClone(before.session),report:{ts:1_900_000_000_300,verdict:'partial',summary:'Synthetic transaction fixture',covered:[],notCovered:['Fixture only'],recommendations:[]}});
+			const attempts=await Promise.allSettled([tenantARepository.save(make(),{expectedVersion:before.version,eventType:'report',payload:{}}),tenantARepository.save(make(),{expectedVersion:before.version,eventType:'report',payload:{}})]);
+			assert.equal(attempts.filter(r=>r.status==='fulfilled').length,1);
+			assert.ok(attempts.find(r=>r.status==='rejected').reason instanceof RunVersionConflictError);
+			const persisted=await tenantARepository.get(value.id);assert.equal(persisted.session.report.summary,'Synthetic transaction fixture');
+			const connection=await tenantAPool.connect();connection.on('error',()=>{});
+			try{
+				await connection.query('BEGIN');
+				await connection.query("SELECT set_config('qase.organization_id',$1,true),set_config('qase.project_id',$2,true)",[contextA.organizationId,contextA.projectId]);
+				const pid=(await connection.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+				await connection.query('UPDATE qa_runs SET title=$2 WHERE id=$1',[value.id,'MUST ROLLBACK']);
+				const interrupted=connection.query('SELECT pg_sleep(10)').catch(error=>error);
+				assert.equal((await tenantAPool.query('SELECT pg_terminate_backend($1) AS stopped',[pid])).rows[0].stopped,true);
+				assert.ok(await interrupted instanceof Error);
+			}finally{connection.release(true);}
+			const recovered=await tenantARepository.get(value.id);assert.equal(recovered.session.title,value.title);assert.deepEqual(recovered.session.report,persisted.session.report);
+			saved.version=recovered.version;
+		});
 
 		const retentionA = createPostgresRetentionRepository({
 			pool: tenantAPool,
@@ -440,7 +553,7 @@ test(
 		const purged = await retentionA.purgeBatch({
 			execute: true,
 			acknowledgement: PURGE_ACKNOWLEDGEMENT,
-			idempotencyKey: 'integration/phase-10/purge-001',
+			idempotencyKey: 'integration.phase-10.purge-001',
 			retentionDays: 30,
 			actorType: 'worker',
 			reasonCode: 'integration_retention_expired',
@@ -468,8 +581,9 @@ test(
 		assert.equal(role.rows[0]?.rolsuper, false, 'QASE_TEST_DATABASE_URL must not use a superuser role');
 		assert.equal(role.rows[0]?.rolbypassrls, false, 'QASE_TEST_DATABASE_URL role must not have BYPASSRLS');
 
-		const raw = await tenantAPool.query('SELECT COUNT(*)::int AS count FROM runs');
+		const raw = await tenantAPool.query('SELECT COUNT(*)::int AS count FROM qa_runs');
 		assert.equal(raw.rows[0].count, 0, 'forced RLS must default-deny without transaction-local tenant context');
+		assert.equal((await tenantAPool.query('SELECT COUNT(*)::int AS count FROM users')).rows[0].count,0,'bootstrap actor visibility must not leak after its transaction ends');
 		const rawJobs = await tenantAPool.query('SELECT COUNT(*)::int AS count FROM qa_execution_jobs');
 		assert.equal(rawJobs.rows[0].count, 0, 'execution jobs must default-deny without tenant context');
 		const rawLifecycle = await tenantAPool.query('SELECT COUNT(*)::int AS count FROM qase_lifecycle_events');

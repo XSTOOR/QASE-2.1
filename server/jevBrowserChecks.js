@@ -1,14 +1,16 @@
+import { safeBrowserRoute } from './browserRouteSafety.js';
 /** Fixed, bounded browser scenarios. No model-written scripts or selectors.
  * All actions use the already policy-guarded browser context. No form is
  * submitted and no credentials, purchases or persistent records are created.
  */
 import { runJevAccessibility } from './jevAccessibility.js';
-import { runJevAnchors, runJevTabs, isolated } from './jevInteractions.js';
+import { runJevAnchors, runJevTabs, runJevNavigationControl, isolated } from './jevInteractions.js';
 import { responsiveWidths } from './qaViewport.js';
-import { settleQaControl } from './qaRenderReadiness.js';
+import { settleQaControl, qaPageReadiness } from './qaRenderReadiness.js';
 import { runLiveFormChecks } from './qaLiveForms.js';
+import { featureStateKey, legacyFeatureStateKey } from './qaFeatureState.js';
 
-export const JEV_BROWSER_CHECKS = ['inspect', 'navigation', 'responsive', 'forms', 'search', 'media', 'disclosure', 'accessibility', 'dismiss_overlay', 'anchors', 'tabs', 'scroll'];
+export const JEV_BROWSER_CHECKS = ['inspect', 'navigation', 'responsive', 'forms', 'search', 'media', 'disclosure', 'accessibility', 'dismiss_overlay', 'anchors', 'tabs', 'scroll', 'navigation_control', 'open_test_form', 'submit_test_form'];
 const risky = /delete|remove|logout|log.?out|sign.?out|reset|cancel|purchase|checkout|payment|subscribe|send|invite|publish|deploy|save|create|destroy|revoke|confirm|unsubscribe/i;
 const trim = value => String(value ?? '').slice(0, 1500);
 const sameUrl = (a, b) => new URL(a).href.replace(/\/$/, '') === new URL(b).href.replace(/\/$/, '');
@@ -21,16 +23,22 @@ export async function settleJevPage(page) {
   await page.evaluate(() => new Promise(resolve => {
     let timer;
     const finish = () => { observer.disconnect(); clearTimeout(timer); clearTimeout(deadline); resolve(); };
-    const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(finish, 180); });
+    const settled = () => {
+      // CSS transitions can reveal a sidebar without a child/text mutation.
+      // Ignore perpetual decorative animations; retain the existing deadline.
+      const moving = document.getAnimations().some(animation => animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime));
+      if (moving) timer = setTimeout(settled, 50); else finish();
+    };
+    const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(settled, 180); });
     const deadline = setTimeout(finish, 1200);
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-    timer = setTimeout(finish, 180);
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'open', 'aria-hidden', 'aria-expanded', 'aria-busy'] });
+    timer = setTimeout(settled, 180);
   }));
   // A quiet loading shell is not a rendered application. Wait for explicit
   // busy state to clear; callers still record the observation if it times out.
   await page.waitForFunction(() => {
     const text = document.body?.innerText.trim() || '';
-    const loadingShell = /^(loading|please wait|loading[.\s…]+|loading (page|application|app)[.\s…]*)$/i.test(text);
+    const loadingShell = /^(loading|please wait|loading[.\s…]+|loading (page|application|app)[.\s…]*|redirecting[.\s…]*)$/i.test(text);
     const busy = [...document.querySelectorAll('[aria-busy="true"]')].some(element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
     // A download/meter/demo progressbar on an otherwise rendered page is not
     // a loading shell and cannot impose a repeated three-second wait.
@@ -42,7 +50,9 @@ export async function inspectJevPage(page) {
   await settleJevPage(page);
   await page.waitForFunction(() => document.body?.innerText.trim().length > 0, undefined, { timeout: 5000 }).catch(() => {});
   const inventory = await page.evaluate(() => {
+    const modal = document.querySelector('dialog:modal');
     const visible = element => {
+      if(modal&&!modal.contains(element))return false;
       if (!element.getClientRects().length || element.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
       // Closed native details can expose descendant geometry while their
       // content is not interactable. Do not publish those links as visible.
@@ -67,17 +77,38 @@ export async function inspectJevPage(page) {
     };
     const label = element => (element.getAttribute('aria-label') || element.innerText || element.getAttribute('title') || '').replace(/\s+/g, ' ').trim().slice(0, 180);
     const links = [...document.querySelectorAll('a[href]')].filter(visible).map(element => ({ selector: selector(element), href: element.href, label: label(element), target: element.target, download: element.hasAttribute('download') }));
-    const forms = [...document.forms].map(form => ({ method: form.method, action: form.action, fields: form.querySelectorAll('input,select,textarea').length }));
+    const forms = [...document.forms].filter(visible).map(form => ({ selector: selector(form), method: form.method, action: form.action, fields: form.querySelectorAll('input,select,textarea').length }));
     const search = [...document.querySelectorAll('input[type="search"],input[name="q"],input[name="query"],input[placeholder*="search" i],input[aria-label*="search" i],[role="searchbox"]')].filter(visible).filter(element => element.tagName === 'INPUT' && ['text', 'search'].includes(element.type)).map(element => ({ selector: selector(element), name: element.name, formMethod: element.form?.method, formAction: element.form?.action }));
     const auth = [...document.querySelectorAll('input[type="password"]')].filter(visible).length > 0 || links.some(link => /\b(log ?in|sign ?in|sign ?up)\b/i.test(link.label));
     const disclosures = [...document.querySelectorAll('summary,button,[role="button"]')].filter(visible).filter(element => element.getAttribute('role') !== 'tab' && !element.disabled && !element.form && element.getAttribute('aria-disabled') !== 'true').filter(element => /^(open |close |toggle |show |hide )?(menu|navigation|details|more|faq|help|filters?|accordion)\b/i.test(label(element)) || element.tagName === 'SUMMARY' || (element.hasAttribute('aria-controls') && element.hasAttribute('aria-expanded')) || (element.closest('[class*="faq" i],[class*="accordion" i]') && /\?/.test(label(element)))).map(element => ({ selector: selector(element), label: label(element) }));
     const tabs = [...document.querySelectorAll('button[role="tab"],[role="tablist"] [role="tab"]')].filter(visible).filter(element => !element.form && !element.hasAttribute('href') && !element.disabled && element.getAttribute('aria-disabled') !== 'true').map(element => ({ selector: selector(element), label: label(element), selected: element.getAttribute('aria-selected') }));
-    const overlays = [...document.querySelectorAll('[role="dialog"],dialog[open],[aria-modal="true"]')].filter(visible).map(dialog => {
-      const close = [...dialog.querySelectorAll('button,[role="button"]')].find(element => visible(element) && !element.disabled && !element.form && /^(close|dismiss)(?:\b|$)/i.test(label(element)));
-      return { selector: selector(dialog), title: label(dialog).slice(0, 120), close: close ? { selector: selector(close), label: label(close) } : null };
+    const dialogs = [...document.querySelectorAll('[role="dialog"],dialog[open],[aria-modal="true"]')].filter(visible);
+    // Some onboarding overlays omit dialog semantics. Recognize only a
+    // centered welcome/tour container with an exact Skip button in a fixed layer.
+    for (const button of [...document.querySelectorAll('button')].filter(visible).filter(element => !element.form && !element.disabled && /^skip(?: (?:the )?tour)?$/i.test(label(element)))) {
+      for (let parent = button.parentElement, depth = 0; parent && depth < 5; parent = parent.parentElement, depth++) {
+        const heading = parent.querySelector('h1,h2,h3,[role="heading"]'), box = parent.getBoundingClientRect();
+        if (!/^(?:welcome|quick tour|getting started|onboarding)/i.test(heading ? label(heading) : label(parent)) || box.width < 150 || box.width > innerWidth * .95 || box.height < 80) continue;
+        let fixed = false;
+        for (let layer = parent, index = 0; layer && index < 5; layer = layer.parentElement, index++) if (getComputedStyle(layer).position === 'fixed') fixed = true;
+        if (fixed && !dialogs.some(dialog => dialog.contains(button))) dialogs.push(parent);
+        break;
+      }
+    }
+    const overlays = dialogs.map(dialog => {
+      const onboarding = /welcome|quick tour|getting started|onboarding/i.test(label(dialog));
+      const close = [...dialog.querySelectorAll('button,[role="button"]')].find(element => visible(element) && !element.disabled && !element.form && (/^(close|dismiss)(?:\b|$)/i.test(label(element)) || onboarding && /^skip(?: (?:the )?tour)?$/i.test(label(element))));
+      return { containsForm: Boolean(dialog.querySelector('form,input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),textarea')), selector: selector(dialog), title: label(dialog).slice(0, 120), close: close ? { selector: selector(close), label: label(close) } : null };
     });
-    return { url: location.href, title: document.title, text: document.body.innerText.slice(0, 6000), viewport: { width: innerWidth, height: innerHeight }, links: links.slice(0, 100), totalLinks: links.length, forms, fieldCount: [...document.querySelectorAll('input:not([type="hidden"]),select,textarea')].filter(visible).length, search, auth, authForm: [...document.querySelectorAll('input[type="password"]')].some(visible), disclosures: disclosures.slice(0, 24), totalDisclosures: disclosures.length, tabs: tabs.slice(0, 24), overlays, images: document.images.length, players: document.querySelectorAll('audio,video').length };
+    const formOpeners = [...document.querySelectorAll('button,[role="button"]')].filter(visible).filter(element => !element.form && !element.disabled && /^(new|add|create|edit)(?: (?:a|an|the))? (project|record|item|note|task|document|folder|entry|draft)$/i.test(label(element))).map(element => ({ selector: selector(element), label: label(element) }));
+    const navigationControls = [...document.querySelectorAll('nav button,[role="navigation"] button,aside button,nav [role="button"],[role="navigation"] [role="button"],button[role="tab"],[role="tablist"] [role="tab"]')].filter(visible).filter(element => !element.form && !element.disabled && element.getAttribute('aria-disabled') !== 'true' && !element.getAttribute('aria-current') && element.getAttribute('aria-selected') !== 'true' && /^(?:home|dashboard|projects?|meetings?|chat|settings|search|documents?|docs|teams?|overview|activity|reports?|about|files?|members?|analytics|templates?|integrations?|profile|account|general|appearance|notifications|history|favorites?|all|mine|shared|details|permissions)$/i.test(label(element))).map(element => ({ selector: selector(element), label: label(element) }));
+    const controls = [...document.querySelectorAll('button,[role=button],[role=tab],select,input:not([type=hidden]),textarea')].filter(visible).map(element => ({ selector: selector(element), label: label(element), role: element.getAttribute('role') || element.tagName.toLowerCase(), expanded: element.getAttribute('aria-expanded'), selected: element.getAttribute('aria-selected') })).slice(0, 80);
+    const regions = [...document.querySelectorAll('[role=region],[role=dialog],main,aside')].filter(visible).map(element => ({ role: element.getAttribute('role') || element.tagName.toLowerCase(), label: element.getAttribute('aria-label') || '', controls: element.querySelectorAll('button,input,select,textarea,[role=button]').length })).slice(0, 16);
+    return { controls, regions, headings: [...document.querySelectorAll('h1,h2,[role="heading"]')].filter(visible).map(label).slice(0, 12), selectedNavigation: [...document.querySelectorAll('[aria-current],[role="tab"][aria-selected="true"]')].filter(visible).map(label).slice(0, 12), url: location.href, title: document.title, text: document.body.innerText.slice(0, 6000), viewport: { width: innerWidth, height: innerHeight }, links: links.slice(0, 100), totalLinks: links.length, forms, fieldCount: [...document.querySelectorAll('input:not([type="hidden"]),select,textarea')].filter(visible).length, search, auth, authForm: [...document.querySelectorAll('input[type="password"]')].some(visible), disclosures: disclosures.slice(0, 24), totalDisclosures: disclosures.length, tabs: tabs.slice(0, 24), overlays, formOpeners: formOpeners.slice(0, 12), navigationControls: navigationControls.slice(0, 24), totalNavigationControls: navigationControls.length, images: document.images.length, players: document.querySelectorAll('audio,video').length };
   });
+  inventory.readiness = await page.evaluate(qaPageReadiness);
+  inventory.stateKey = featureStateKey(inventory);
+  inventory.legacyStateKey = legacyFeatureStateKey(inventory);
   return inventory;
 }
 
@@ -285,7 +316,7 @@ async function search(page) {
     }, contract.resultsId);
     // Run local filter trials only, under a request guard. A remote dependency
     // makes the trial inconclusive, never a target defect or an implicit pass.
-    const guard = route => { blockedRequests.push({ url: route.request().url(), method: route.request().method() }); return route.abort('blockedbyclient'); };
+    const guard = safeBrowserRoute(route => { blockedRequests.push({ url: route.request().url(), method: route.request().method() }); return route.abort('blockedbyclient'); });
     const requestStart = blockedRequests.length;
     await page.route('**/*', guard);
     try {
@@ -386,7 +417,7 @@ async function disclosureLocal(page, input, onAction) {
       const target = document.getElementById(id);
       return { id, exists: Boolean(target), visible: visible(target), text: target?.innerText?.slice(0, 2000) || '' };
     });
-    return { tag: element?.tagName, label: (element?.getAttribute('aria-label') || element?.innerText || '').slice(0, 180), expanded: element?.getAttribute('aria-expanded'), open: element?.closest('details')?.open, controlled, hasForm: Boolean(element?.form), faq: Boolean(element?.closest('[class*="faq" i],[class*="accordion" i]')), body: document.body.innerText.slice(0, 12000) };
+    return { tag: element?.tagName, label: (element?.getAttribute('aria-label') || element?.innerText || element?.getAttribute('title') || '').replace(/\s+/g, ' ').trim().slice(0, 180), expanded: element?.getAttribute('aria-expanded'), open: element?.closest('details')?.open, controlled, hasForm: Boolean(element?.form), faq: Boolean(element?.closest('[class*="faq" i],[class*="accordion" i]')), body: document.body.innerText.slice(0, 12000) };
   }, input.selector);
   const before = await describe();
   if (before.hasForm || risky.test(before.label) || !(before.tag === 'SUMMARY' || /^(open |close |toggle |show |hide )?(menu|navigation|details|more|faq|help|filters?|accordion)\b/i.test(before.label) || (before.controlled.length && before.expanded !== null) || (before.faq && /\?/.test(before.label)))) throw new Error('Only observed non-destructive disclosure controls are eligible.');
@@ -472,15 +503,33 @@ async function dismissOverlay(page, input) {
   return { assertions: [assertion('navigation', 'Observed dialog closes after its close control is activated', closed, 'The original dialog becomes hidden or is detached; any replacement is inspected separately', { label: overlay.close.label, closed })], inventory: await inspectJevPage(page) };
 }
 
-export async function runJevBrowserCheck(page, input, { signal, authorizeControl, onAction, onViewport, responsiveBoundaries = false, liveForms = false, requireLiveForms = false, protectInputs } = {}) {
+export async function runJevBrowserCheck(page, input, { signal, authorizeControl, onAction, onViewport, responsiveBoundaries = false, liveForms = false, requireLiveForms = false, protectInputs, executeTestForm } = {}) {
   const startedAt = Date.now();
-  if (!page || page.isClosed()) return { success: false, action: input?.action, error: 'No live browser page.' };
-  if (!JEV_BROWSER_CHECKS.includes(input?.action)) return { success: false, error: 'Unknown QA scenario.' };
+  if (!page || page.isClosed()) return { success: false, dispatched: false, action: input?.action, error: 'No live browser page.' };
+  if (!JEV_BROWSER_CHECKS.includes(input?.action)) return { success: false, dispatched: false, error: 'Unknown QA scenario.' };
   signal?.throwIfAborted();
   const url = page.url();
   try {
+    if (!['inspect', 'scroll'].includes(input.action)) {
+      let readiness = await page.evaluate(qaPageReadiness);
+      if (readiness?.ready === false) {
+        await settleJevPage(page);
+        readiness = await page.evaluate(qaPageReadiness);
+        if (!readiness.ready) return { success: false, code: 'QA_PAGE_NOT_READY', dispatched: false, action: input.action, url, assertions: [], inventory: await inspectJevPage(page), gaps: ['The application is still loading. Inspect its rendered state before executing checks; no pass or feature absence was inferred.'] };
+      }
+    }
+    if (input.action === 'disclosure') {
+      const inventory = await inspectJevPage(page);
+      const control = input.selector && page.locator(input.selector);
+      const unique = control && await control.count() === 1;
+      // Preserve supported selector aliases (e.g. a unique summary selector).
+      // Compare resolved DOM identity with the observed eligible controls.
+      const observed = unique && await control.evaluate((element, selectors) => selectors.some(selector => document.querySelector(selector) === element), inventory.disclosures.map(c => c.selector));
+      if (!observed) return { success: false, code: 'QA_CONTROL_STALE', dispatched: false, action: input.action, url, inventory, assertions: [], error: 'The disclosure is not uniquely observed on this page. Restore the planned feature location and use its fresh observed selector; no click was dispatched.' };
+    }
     let result;
     switch (input.action) {
+      case 'submit_test_form': result = executeTestForm ? await executeTestForm(input.selector, signal) : { success: false, assertions: [], gaps: ['No test-write authorization is available.'] }; break;
       case 'inspect': result = { inventory: await inspectJevPage(page), assertions: [] }; break;
       case 'navigation': result = await navigation(page, input, onAction); break;
       case 'responsive': result = await responsive(page, { authorizeControl, signal, onAction, onViewport, responsiveBoundaries }); break;
@@ -492,6 +541,8 @@ export async function runJevBrowserCheck(page, input, { signal, authorizeControl
       case 'dismiss_overlay': result = await dismissOverlay(page, input); break;
       case 'anchors': result = await runJevAnchors(page, { inspect: inspectJevPage, settle: settleJevPage, prepare: prepareJevControl, authorizeControl, onAction }); break;
       case 'tabs': result = await runJevTabs(page, { inspect: inspectJevPage, settle: settleJevPage, prepare: prepareJevControl, authorizeControl, onAction }); break;
+      case 'open_test_form':
+      case 'navigation_control': result = await runJevNavigationControl(page, input, { inspect: inspectJevPage, settle: settleJevPage, authorizeControl, onAction, signal }); break;
       case 'scroll': result = await exploreScroll(page, signal); break;
     }
     signal?.throwIfAborted();

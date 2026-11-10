@@ -1,5 +1,7 @@
 import { closeBrowser, ensureRuntime, runTurn } from './agent.js';
-import { getPublicConfig, saveConfig, testConnection, withUserConfiguration } from './config.js';
+import { getConfig, getPublicConfig, saveConfig, testConnection, withUserConfiguration } from './config.js';
+import { hybridProfile } from './hybridConfig.js';
+import { hybridQualificationService } from './hybridQualificationService.js';
 import { buildReportMarkdown } from './report.js';
 import { clearSecrets, secretNames, storeSecrets } from './secrets.js';
 import {
@@ -7,7 +9,7 @@ import {
 	getSession, dropLive, flushSessions, listSessions, liveEntries, liveFor, loadSessions,
 	markExecutionStarted, markReportPhase, persistSoon, peekLive, setFindingStatus, setStatus,
 	updateActivity, watchRunBus,
-	loadFounderProjectState, writeFounderProjectState
+	loadFounderProjectState, writeFounderProjectState, updateFounderProjectState
 } from './store.js';
 import { createArtifactStore } from './artifactStore.js';
 import { createEnvironmentService, createLocalEnvironmentBackend } from './environmentService.js';
@@ -80,6 +82,10 @@ export function createRuntimeApplicationServices(runStore, options = {}) {
 		},
 		configuration: {
 			getPublic: () => inWorkspace(getPublicConfig),
+			qualifyHybrid: () => inWorkspace(() => {
+				hybridQualificationService.start(hybridProfile(getConfig()));
+				return getPublicConfig();
+			}),
 			save: patch => inWorkspace(() => saveConfig(patch)),
 			testConnection: patch => inWorkspace(() => testConnection(patch))
 		},
@@ -126,6 +132,7 @@ export function createRuntimeApplicationServices(runStore, options = {}) {
 			stop(sessionId) {
 				const record = runStore.peekLive?.(sessionId);
 				if (record?.running) {
+					record.userStopRequested = true;
 					record.controller?.abort();
 					return;
 				}
@@ -314,7 +321,9 @@ export function createLocalApplicationServices(options = {}) {
 			return deleteSession(id, ownerUserId());
 		},
 		async commit(session, type, payload = {}) {
-			emit(session, type, payload, { durable: session.qaExecutionMode === 'hybrid' });
+			// A Founder checkpoint or usage receipt must survive an immediate
+			// restart once acknowledged. Live frames remain ephemeral in emit.
+			emit(session, type, payload, { durable: session.qaExecutionMode === 'hybrid' || session.mode === 'founder' });
 			return session;
 		},
 		async setFindingStatus(session, findingId, patch) {
@@ -392,6 +401,7 @@ export function createLocalApplicationServices(options = {}) {
 		async saveFounderProjectState(state) {
 			return writeFounderProjectState(state);
 		},
+		updateFounderProjectState,
 		async addMessage(session, message) {
 			return addMessage(session, message);
 		},
@@ -402,7 +412,7 @@ export function createLocalApplicationServices(options = {}) {
 			return updateActivity(session, id, patch);
 		},
 		async setStatus(session, status, detail) {
-			setStatus(session, status, detail);
+			setStatus(session, status, detail, { durable: session.mode === 'founder' });
 		},
 		markReportPhase,
 		markExecutionStarted,

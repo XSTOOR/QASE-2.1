@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildSqaContext } from './sqaPrompt.js';
 import { createSqaState } from './sqaService.js';
+import { SQA_BROWSER_EVIDENCE_LIMIT, SQA_BROWSER_WORKFLOW_CHECKPOINT, SQA_INPUT_TOKEN_BUDGET, SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD } from './sqaBrowserBudget.js';
 
 test('SQA context makes progress explicit and orders technical smoke checks before documentary assurance', () => {
 	const session = {
@@ -26,14 +27,30 @@ test('SQA context makes progress explicit and orders technical smoke checks befo
 
 	assert.match(context, /Recorded controls: 1\/\d+\./);
 	assert.match(context, /record_sqa_blockers/);
+	assert.match(context, /host automatically[\s\S]*reviewer-only prerequisite/i);
+	assert.match(context, /close_remaining=true/);
+	assert.match(context, /Do not enumerate reviewer-only control\s+IDs/i);
 	assert.match(context, /authentication prevents representative workflows/);
 	assert.match(context, /SQA-WEB-001 \[PENDING/);
-	assert.match(context, /SQA-QUA-001 \[PENDING/);
-	assert.match(context, /SQA-GOV-001 \[recorded=blocked/);
-	assert.ok(context.indexOf('- SQA-WEB-001 [') < context.indexOf('- SQA-GOV-001 ['));
-	assert.ok(context.indexOf('- SQA-QUA-001 [') < context.indexOf('# Reviewer-only assurance controls'));
+	assert.doesNotMatch(context, /SQA-QUA-001 \[PENDING/);
+	assert.doesNotMatch(context, /SQA-GOV-001 \[recorded=blocked/);
+	assert.match(context, /Recorded result index: SQA-GOV-001=blocked/);
+	assert.ok(context.indexOf('- SQA-WEB-001 [') < context.indexOf('# Reviewer-only assurance controls'));
+	assert.match(context, /hidden until every browser-first control is recorded/);
 	assert.match(context, /controls batch of up to 12/);
 	assert.match(context, /Browser tool budget: 2\/120 used; 118 remaining/);
-	assert.match(context, /at most 12 observed Tab\/Shift\+Tab steps per workflow/i);
+	assert.match(context, /browser_sqa_smoke once with action=accessibility/i);
+	assert.match(context, /browser_sqa_smoke once with action=responsive/i);
+	assert.match(context, /browser_sqa_smoke action=navigation/i);
+	assert.match(context, /action=form_validation/i);
+	assert.match(context, /without field_label or submit_name/i);
+	assert.match(context, /eligible=false.*immediately record/i);
+	assert.match(context, /close_after_safety_limit=true/i);
+	assert.match(context, /close_from_saved_evidence=true/i);
+	assert.ok(context.includes(`Evidence-collection limit: ${SQA_BROWSER_EVIDENCE_LIMIT}`));
+	assert.ok(context.includes(`Input-token closeout threshold: 0/${SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD} used; hard limit ${SQA_INPUT_TOKEN_BUDGET}`));
+	assert.ok(context.includes(`Workflow checkpoint: 2/${SQA_BROWSER_WORKFLOW_CHECKPOINT} browser actions`));
 	assert.match(context, /two verified locator strategies/);
+	assert.match(context, /controls batch for SQA-WEB-001, SQA-WEB-004,/);
+	assert.match(context, /controls batch for SQA-WEB-002 and SQA-WEB-003/);
 });

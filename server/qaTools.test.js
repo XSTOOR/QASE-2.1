@@ -1,7 +1,9 @@
+import './testWorkingDirectory.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { createQaTools } from './qaTools.js';
+import { createSqaState } from './sqaService.js';
 import { buildReportMarkdown } from './report.js';
 import { clearSecrets, storeSecrets } from './secrets.js';
 
@@ -40,6 +42,22 @@ test('partial results require gaps, keep runtime integrity and never hide high s
 	const high = fixture({ findings: [{ ...finding }] });
 	await high.finish.run(partial);
 	assert.equal(high.session.report.verdict, 'fail');
+});
+
+test('SQA findings require scoped control links and persist only validated links', async () => {
+	const sqa = createSqaState({
+		authorizationConfirmed: true,
+		profiles: ['core'],
+		target: { name: 'Fixture', release: 'phase-2', environment: 'local' }
+	});
+	const target = fixture({ mode: 'sqa', sqa });
+	assert.equal((await target.finding.run(finding)).success, false);
+	assert.equal((await target.finding.run({ ...finding, control_ids: ['SQA-NOT-999'] })).success, false);
+	assert.equal((await target.finding.run({ ...finding, control_ids: ['SQA-WEB-003', 'SQA-WEB-003'] })).success, false);
+	const result = await target.finding.run({ ...finding, control_ids: ['SQA-WEB-003'] });
+	assert.equal(result.success, true);
+	assert.deepEqual(result.control_ids, ['SQA-WEB-003']);
+	assert.deepEqual(target.session.findings[0].controlIds, ['SQA-WEB-003']);
 });
 
 test('QA finding to Markdown workflow preserves evidence, redacts vaulted data, and fails high-impact defects', async t => {

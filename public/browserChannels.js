@@ -14,12 +14,12 @@
  */
 
 export const BROWSER_VERSIONS = Object.freeze({
-	chrome: ['140', '141', '142', '143', '144', '145', '146', '147', '148', '149', '150', '151', '152', '153', '154', '155', '156'],
-	firefox: ['141', '142', '143', '144', '145', '146', '147', '148', '149', '150', '151', '152', '153', '154', '155', '156', '157', '158'],
-	edge: ['140', '141', '142', '143', '144', '145', '146', '147', '148', '149', '150', '151', '152', '153', '154', '155', '156'],
-	opera: ['122', '123', '124', '125', '126', '127', '128', '129', '130', '131', '132', '133', '134', '135', '136', '137'],
-	brave: ['136', '137', '138', '139', '140'],
-	duckduckgo: ['1', '2', '3']
+	chrome: ['151'],
+	firefox: ['153'],
+	edge: ['124'],
+	opera: ['136'],
+	brave: ['155'],
+	duckduckgo: ['3']
 	// safari: version derives from the OS — no independent channel ladder.
 });
 
@@ -39,6 +39,8 @@ export function channelFor(browserCode, version) {
 	if (!ladder || ladder.length === 0) return 'stable';
 	const versions = BROWSER_VERSIONS[browserCode];
 	if (!versions) return 'stable';
+	// A singleton is the catalog's shipping binary, not a pre-release ladder.
+	if (versions.length === 1) return ladder.includes('stable') ? 'stable' : ladder.at(-1);
 	const index = versions.indexOf(String(version));
 	if (index < 0) return 'stable';
 	const distanceFromNewest = versions.length - 1 - index;

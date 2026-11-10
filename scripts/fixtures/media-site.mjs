@@ -24,7 +24,9 @@ statusNode.textContent='Microphone active'; start.disabled=true; mute.disabled=f
 } catch(error){ statusNode.textContent='Microphone unavailable: '+error.name+'. Allow microphone permission and try again.'; } };
 mute.onclick=()=>{const track=stream.getAudioTracks()[0];track.enabled=!track.enabled;mute.textContent=track.enabled?'Mute microphone':'Unmute microphone';statusNode.textContent=track.enabled?'Microphone active':'Microphone muted';};
 stop.onclick=async()=>{if(recorder?.state==='recording')recorder.stop();stream?.getTracks().forEach(t=>t.stop());cancelAnimationFrame(frame);await context?.close();statusNode.textContent='Microphone off';start.disabled=false;mute.disabled=true;mute.textContent='Mute microphone';stop.disabled=true;};
-document.querySelector('#form').onsubmit=e=>{e.preventDefault();document.querySelector('#form-status').textContent='Email format accepted locally. Nothing was sent.';};
+const emailField = document.querySelector('#email'), formStatus = document.querySelector('#form-status');
+emailField.addEventListener('input',()=>{formStatus.textContent='';});
+document.querySelector('#form').onsubmit=e=>{e.preventDefault();formStatus.textContent='Email format accepted locally. Nothing was sent.';};
 </script></body></html>`;
 	const server = createServer((req, res) => {
 		res.setHeader('Content-Type', 'text/html; charset=utf-8');

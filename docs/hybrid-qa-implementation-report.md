@@ -2174,3 +2174,692 @@ Production defaults remain disabled; legacy/JEV-only, SQA and Founder regression
 coverage passed. No SDK internals, node_modules, production configuration or
 production data changed. No deployment or GitHub push was performed for this
 fix. Linux image/staging and opt-in database/integration checks remain required.
+
+
+## 30. Automatic completion, access-phase memory and live-model qualification
+
+Release `qase-2026-10-27-hybrid-production-r2`, UI `20261027-7`.
+
+The reported run `4bb78172-f7d5-42e6-be77-fc2fab3e4e74` asked for three
+budget extensions, then stopped on a generic coverage question. Saved state
+already recorded owner-confirmed access, while scenario reasons still asserted
+that no credentials or authentication permission had been supplied. The visible
+welcome-tour overlay and button-based platform navigation were not reliably
+handled by anchor-only route exploration. These were execution/context defects,
+not evidence that the platform was fully tested.
+
+Implemented:
+
+- New runs use automatic continuation policy 2. Native access questions remain
+  available, but model priority/continue/budget questions and generic host
+  coverage questions no longer interrupt the run. Missing optional copy/design
+  expectations remain report limitations. They are never inferred from the
+  target's own text or converted into passing tests.
+- `hybridAutonomy.js` pins an operator-defined lifetime envelope at creation.
+  Allocation grows within that envelope without user budget questions; exact
+  receipts, pending exposure, action counts and active execution time remain
+  cumulative. Explicit QASE_HYBRID_* limits override the automatic defaults.
+  Defaults cap exposure at 2M Opus / 500k JEV tokens, 200/100 calls, 1,000 browser
+  tool actions and 60 active minutes. Observed page attempts expand to 40 by
+  default, configurable to 80. No unlimited execution or spending is enabled.
+- A known configured-limit stop finishes through the existing native SDK ledger
+  and report tools without another paid request or synthetic user approval.
+  Bounded prose-only continuations can also reach deterministic closeout.
+  Missing usage receipts, persistence failures, uncertain actions and failed
+  navigation restoration still stop safely; user Stop takes precedence even
+  at the automatic closeout boundary. Local/distributed service cancellation
+  and deletion preserve that intent.
+- Rolling inference context removes only old complete native call/result pairs.
+  All human requirements, SDK system policies, recent observations, unmatched
+  calls and original durable transcripts remain available. An access-phase
+  transition archives stale anonymous limitations as history and reopens
+  unexecuted relevant checks. Current host access is authoritative over stale
+  assistant claims; no cross-run credentials or permissions are reused.
+- Guarded onboarding dismissal supports observed Close/Dismiss controls and
+  narrowly identified welcome/tour Skip buttons, including fixed overlays that
+  omit dialog semantics. Navigation-region buttons can reveal observed routes;
+  selectors are freshly validated, writes are blocked, the source is restored,
+  and a failed restore requires state verification. Same-URL transitions remain
+  explicitly limited rather than implying their entire workflow was tested.
+- The loop guard now distinguishes host-owned route executions. Opening the
+  same shared source page to follow different validated links is legitimate
+  work. Repeated mutations within one execution still stop, while read-only
+  inspect does not count as a repeated mutation.
+- Existing runs retain their original pinned policy. The prior interactive
+  behavior remains available for new runs through
+  QASE_HYBRID_AUTONOMOUS_COMPLETION=false. Existing reports are unchanged. New
+  UI status explains automatic completion without promising exhaustive coverage.
+  Release metadata now consistently identifies r2 and UI 20261027-7.
+
+Actual validation:
+
+- Full repository verification: **2,070 passed, 26 skipped, zero failures or cancellations**, 2,096 tests, 31 suites, approximately 139 seconds. Syntax, ignore rules and high-confidence credential scan passed.
+- Installed SDK/browser fixture: onboarding Skip, button-only route discovery,
+  real field filling/negative cases, one reproduced seeded finding and honest
+  final publication, with zero budget/coverage questions or writes. No separate
+  autonomous loop or SDK internals were introduced.
+- Real configured Opus 4.7 and JEV 1.13 canary on the repository's disposable
+  six-page fixture passed: **6/6 pages, all 9 seeded defect groups detected,
+  9 evidence-linked findings, zero unexpected groups, zero writes and zero
+  questions**. Seven category suites and 65 actual SDK browser-tool calls
+  completed in approximately **168 seconds**. This is fixture qualification,
+  not a whole-platform accuracy or production-performance guarantee.
+- Exact canary receipts: Opus 11 calls, 182,209 input / 7,930 output tokens;
+  JEV 11 calls, 11,868 input / 1,448 output tokens. Both roles ended with zero
+  reserved tokens. Only JEV reported cost (0.000498456); no overall cost was
+  estimated. The canary used explicit caps of 600k Opus tokens, 20 calls per
+  role and five active minutes, with no customer login or production changes.
+- An earlier live canary completed only 3/6 pages and failed qualification.
+  It exposed the shared-source repeated-action false positive, which was fixed
+  and covered by a dedicated regression before the successful rerun. In the
+  successful run, malformed tool arguments and an unreproduced finding attempt
+  were rejected; the model recovered and only validated evidence was published.
+- The first broad regression run exposed differences between automatic defaults
+  and fixtures intended to preserve the interactive policy, plus a legacy
+  budget-object synchronization regression. Those fixtures now explicitly
+  select interactive mode, and synchronization preserves its configured limits.
+  Failing attempts were not counted as passes. Focused depth/rollback checks
+  passed 48/48 and final model/UI/continuation contracts passed 67/67 before
+  the additional loop-guard regression.
+- Actual dashboard/SSE checks passed with zero page errors, preserving secure
+  credential consent, failed-form recovery, stable preview, root/refresh behavior
+  and explicit Results navigation. Existing interactive decisions remain usable.
+
+Logs: `/private/tmp/qase-autonomy-release-verify.log`,
+`/private/tmp/qase-autonomy-live-depth-final.log`,
+`/private/tmp/qase-autonomy-native.log`,
+`/private/tmp/qase-autonomy-depth-final.log`,
+`/private/tmp/qase-autonomy-dashboard.log`.
+
+Limitations/readiness: secure credentials, SSO/MFA, unsupported authorization,
+missing authoritative requirements, uncertain state and unavailable external
+services cannot be solved by unlimited retries or fabricated results. This
+release finishes the evidence-backed run and records remaining scope honestly.
+Production hybrid remains disabled by default; Linux image/staging and opt-in
+PostgreSQL/integration checks still require the deployment host. The new release
+was not deployed to qase.drytis.com during this work. Use a fresh run to select
+the automatic policy; saved interactive runs are not silently given new limits.
+
+
+## 31. Late-onboarding obstruction and API-process crash (2026-10-28)
+
+Release `qase-2026-10-28-hybrid-production-r3`, UI `20261028-1`.
+
+The reported run `05ed471e-07a2-44eb-a6f9-6bdcb49753c0` was not merely
+waiting for slow reasoning. Saved evidence shows that the initial inventory
+contained no overlay, but the welcome tour appeared before the Projects button
+was exercised. The source reload restored that overlay. The log then ends with
+an unhandled Playwright `route.continue: Route is already handled!` rejection at
+the context request handler. The Node server exited, leaving the browser's last
+known Running/Working view unchanged. A classifier request had a pending
+reservation with no verified usage receipt at the crash boundary.
+
+Changes:
+
+1. `browserRouteSafety.js` contains expected request-cancellation/already-handled
+   errors inside asynchronous routing callbacks. Unknown dispatch failures
+   attempt abort and emit sanitized diagnostics; no retry or forwarding bypass
+   is introduced. The same wrapper protects context routing and fixed-check
+   page guards so a cancellation/unroute race cannot escape into an unhandled
+   rejection and terminate the API process.
+2. Navigation controls check fresh observations and perform a bounded trial
+   click before dispatch. A newly obstructed control returns
+   `QA_CONTROL_OBSTRUCTED`, explicitly `dispatched:false`, with no assertions
+   or source reload. No force click is used.
+3. The existing host route composition refreshes inventory, dismisses only
+   validated safe close controls, and chooses fresh unique navigation selectors.
+   One retry is allowed only for an explicitly undispatched obstruction.
+   Actual or uncertain actions are never replayed automatically. Onboarding
+   preparation can execute without a cosmetic scenario-planning step; actual
+   checks still require scoped scenario/evidence validation. Restoration and
+   mutating-check boundaries also refresh safe overlay preparation. Child
+   control identity keeps legitimate setup steps separate in the loop guard.
+4. The dashboard exposes Reconnecting and last-received-state guidance on SSE
+   loss instead of continuing to promise active work. It freezes extrapolated
+   hybrid elapsed time while disconnected and resynchronizes an authoritative
+   snapshot when the stream returns. Server run status is not fabricated, Stop
+   priority is preserved, and Results navigation remains explicit.
+5. The existing startup recovery marks crashed work interrupted and preserves
+   evidence. The old classifier reservation has not been erased or estimated as
+   authoritative usage. Its receipt is unavailable in local logs, so that run
+   cannot safely be automatically replayed; a fresh run or exact provider
+   reconciliation is required. No target credentials were requested or exposed
+   during this investigation.
+
+Actual validation:
+
+- Full repository verification: **2,077 passed, 26 skipped, zero failures or cancellations**, 2,103 tests, 31 suites, approximately 147 seconds. Syntax, ignore rules and high-confidence credential checks passed.
+- Focused SDK/browser checks: **10/10 passed**, including initial and delayed
+  onboarding with actual browser actions, field filling/negative paths,
+  reproduced seeded evidence and final publication. A separate late-modal
+  fixture inserts the overlay after initial inspection but before the click:
+  the first operation returns undispatched, performs no reload, then an observed
+  dismissal enables destination discovery and source restoration.
+- Context-handler and routing tests prove already-consumed requests do not
+  reject outward, unknown failures abort, blocked writes remain blocked and
+  diagnostic-sink failures cannot create another unhandled rejection.
+- Actual dashboard/SSE checks pass disconnect/reconnect and snapshot resync,
+  with zero page errors. Existing secure consent, failed-form recovery, primary
+  viewport, Stop and explicit Results/navigation checks remain intact.
+- The first broad run passed 2,076 tests but failed one existing static status
+  wiring assertion because the connection condition preceded Stop. Stop was
+  restored as the first status priority, its three checks reran successfully,
+  and the final full suite was rerun. The failed run was not counted as a pass.
+
+Logs: `/private/tmp/qase-stall-release-verify.log`,
+`/private/tmp/qase-stall-browser-tests.log`,
+`/private/tmp/qase-stall-dashboard-final.log`,
+`/private/tmp/qase-stall-core-tests.log`.
+
+Readiness: the patched local service is restarted with hybrid qualification and
+operator limits intact. Existing evidence is preserved; unknown model receipts
+still require reconciliation rather than invented accounting. Production was
+not deployed or reconfigured. Linux image/staging and opt-in integrations remain
+deployment-host gates. No SDK internals or node_modules were changed, and the
+single SDK/browser execution lifecycle is retained.
+
+## 32. Interrupted-run receipt recovery follow-up (2026-10-28, r4)
+
+The new screenshot is the same saved run as the previous incident, not a
+second API process crash. The patched r3 process remained listening and its log
+contained no new fatal routing exception. The saved run was interrupted with
+ten evidence records, seven settled reasoner requests and one uncertain
+classifier reservation (6,090 reserved exposure tokens; not verified usage).
+There is no exact classifier receipt available locally to reconcile it.
+Neither the reservation nor the evidence was altered during this repair.
+
+An additional recovery defect was found: boot recovery instantiated a runtime
+before checking durable hybrid blockers and then logged `runresume.resumed`
+even when the turn could not proceed. `server/runResume.js` now checks the
+existing host recovery gate before snapshot/runtime construction, leaves the
+retry count and ledger untouched for blocked work, logs a bounded blocker code,
+and scans for another safely resumable owner run. A thrown recovery turn is
+logged and counted as failed rather than resumed. Existing QA, SQA and Founder
+recovery contracts remain in place.
+
+The dashboard now accurately describes a missing *saved* receipt, which can
+result from process interruption, without claiming the gateway necessarily
+failed to return it. An explicit secondary **Set up a fresh test** action opens
+the existing launcher with the original website and an empty goal. It does not
+POST a run, reuse credentials, replay mutations, copy old findings as current
+proof, or bypass Review & Launch. The paused run and its saved progress remain
+available. This is fresh setup, not automatic continuation or reconciliation.
+
+Validation executed:
+
+- Focused recovery, receipt, UI guidance and route-safety tests: **31 passed**.
+- Final focused rerun including operational-log filtering: **34 passed**. The
+  blocker uses the existing sanitized `errorCode` log field.
+- Actual Chromium dashboard/SSE fixture: passed, including the fresh setup
+  action, zero run-creation/message POSTs during that action, unchanged saved
+  session, zero page errors, disabled unsafe Resume, disconnect/resync, secure
+  consent and explicit Results navigation.
+- Initial full verification was sandbox-blocked on disposable loopback HTTP
+  fixtures and was stopped; it is not counted as a passing verification.
+- The loopback-enabled full rerun passed: **2,080 passed, 26 skipped, zero
+  failures/cancellations**; 2,106 tests, 31 suites, approximately 152 seconds.
+  Syntax, private-path ignores and high-confidence credential checks passed.
+- Local gateway qualification had expired during investigation. It was rerun
+  without changing its expiry policy: **all 13 capabilities passed**, nine
+  direct qualification requests plus the native SDK probe. The SDK executed its
+  fixture tool once, continued from the result, read its image, cancelled within
+  the bound and captured two exact completed usage receipts (10,773 total
+  tokens) matching SDK accounting. This does not reconcile the historical
+  missing receipt or establish private-platform coverage. The production
+  example flag remains disabled by default.
+
+Logs: `/private/tmp/qase-recovery-dashboard-final.log`,
+`/private/tmp/qase-recovery-gateway.log`,
+`/private/tmp/qase-recovery-verify.log` (sandbox-blocked attempt),
+`/private/tmp/qase-recovery-verify-final.log` (loopback-enabled rerun).
+
+Readiness: r4 is a local recovery/UI follow-up. The prior routing crash fix is
+retained. Old unverified usage still needs exact provider reconciliation; no
+estimated settlement or automatic replay was introduced. No production
+configuration, deployment, SDK internals or model selection was changed.
+The local r4 listener passes health checks, serves UI `20261028-2`, and its
+configured hybrid profile is enabled, qualified and available. Authenticated
+configuration APIs continue to reject anonymous access. No real private-site
+test was replayed or claimed completed during this follow-up.
+
+## 33. Functional feature depth and scoped test writes (2026-10-28, r5)
+
+Audit: the reported new run finished voluntarily after approximately 173 seconds,
+30 browser actions and 13 Opus calls. It had substantial unused operator capacity,
+one observed URL, only three executed suite outcomes, and eight incomplete
+dispositions. Navigation trials blocked background reads and SPA state changes
+were not separate frontier entries. A high-severity finding produced verdict
+`fail`, which the UI presented as Complete despite gaps. This was premature
+functional coverage, not a gateway timeout or budget interruption.
+
+Implemented:
+
+- `qaFeatureState.js` gives structural state identity without hashing private
+  body copy, field values or timestamps. Same-URL features, nested tabs and
+  observed native test-form openers become bounded frontier entries with intact
+  transition evidence and native replay paths. Path execution validates source,
+  unique freshly observed controls, destination, run ownership and provenance.
+  One SDK/browser owner remains; no second agent/crawler was introduced.
+- Default batches exercise feature states before publication, using the same
+  category suites and state-specific durable route runs. The existing depth gate
+  now sees those states. Form dialogs remain open for testing instead of being
+  mistaken for dismissible onboarding. Ordinary guarded background reads are
+  permitted during navigation trials; unsafe endpoints and writes remain guarded.
+- An owner-approved sign-in followed by an observed same-origin platform can
+  continue reads under `access_observed` without another confirmation. It is
+  explicitly not a verified authentication assertion. Legacy interactive access
+  verification, uncertain sign-in protection and genuine credential/MFA needs
+  remain intact.
+- Setup and review offer **Allow test data writes**, disabled unless selected.
+  The authenticated creation route pins owner/run identity and a maximum of ten
+  native POST-form attempts. `qaTestWrites.js` fills empty non-sensitive fields
+  with run-scoped synthetic values. Requests must match those exact plain field
+  values (plus observed CSRF/nonce fields); nested operations, unrelated payloads,
+  account/communication/commerce/destructive operations and cross-origin writes
+  are excluded. Intent is durable before dispatch. Attempted forms, including
+  uncertain ones, cannot be replayed. Cancellation retains uncertainty.
+- Test submissions are observed before returning to the known source state.
+  A POST receiver is not manufactured into another GET exploration entry.
+  HTTP acknowledgment creates no passing business assertion. Reports retain
+  unverified business outcomes and cleanup requirements, and the UI shows the
+  synthetic record labels for owner review. Custom API/rich-editor workflows
+  need an application-specific contract; they are not silently authorized.
+- Detailed and local/PostgreSQL summary UI distinguish coverage gaps from defect
+  severity, so a severe finding cannot hide 3/11 coverage behind Complete. The
+  PostgreSQL change is a read-only optional-column-safe projection; no migration
+  or production data change was performed. SDK internals remain unchanged.
+
+Actual validation:
+
+- SDK/browser fixture with read-only and authorized-write variants: both passed.
+  It explores Projects, Reports, nested Details and form dialogs at one URL,
+  exercises real negative inputs, detects the seeded defect, sends zero writes
+  in read-only mode and exactly two namespaced submissions in write mode. Suites
+  remain three, rather than expanding into one plan item per state.
+- API/sign-in/SDK fixture group: **58 passed** before adding modal coverage;
+  final modal SDK fixture: **2 passed**. Policy/storage/status checks: **88 passed**.
+- Full repository rerun: **2,091 passed, 26 skipped, zero failures or
+  cancellations**, 2,117 tests, 31 suites, approximately 221 seconds. Syntax,
+  private-path ignore and source credential checks passed. An earlier broad run
+  failed the existing compact-context limit; the host brief was condensed and
+  its 13 focused checks and the full suite were rerun successfully. The limit
+  was not raised.
+- Final frozen-code verification, including exact-endpoint/plain-field write
+  guards and all new tests: **2,093 passed, 26 skipped, zero failures or
+  cancellations**; 2,119 tests, 31 suites, approximately 244 seconds. A prior
+  final attempt was interrupted by confirmed macOS sleep, cancelling timed
+  browser fixtures; that attempt is not a passing result. The successful rerun
+  used a temporary keep-awake assertion without persistent power changes.
+- Final API/authentication/SDK/write fixture group: **55 passed**. The subsequent
+  exact-endpoint/payload guard rerun: **5 passed**, including wrong endpoint,
+  nested operation, hidden method, wrong-owner and uncertain replay rejection.
+  UI/model-context focused checks: **25 passed**.
+- Actual dashboard/SSE checks passed with zero page errors, including secure
+  credential handling, stable preview, no automatic Results navigation and safe
+  fresh setup. Final test-write payload checks are recorded separately below.
+- Launcher qualification passed on desktop and 390px mobile: test writes default
+  off, the permission fits the existing layout, review states the selected
+  access, and only an explicit selection reaches the intercepted creation API.
+  No model or real target run was created by these UI checks.
+- Live paid Opus/JEV canary on the owned disposable SPA fixture completed in
+  **132,268 ms**, with **150 native SDK browser calls**, **six tested states at
+  one URL**, **three suites**, **three filled fields / five negative cases**, and
+  **two authorized test submissions**. It confirmed the one seeded accessibility
+  group and no unexpected groups; no question was asked. Opus: ten calls,
+  129,907 input and 2,561 output tokens. JEV: nine calls, 8,017 input and 1,194
+  output tokens. Both roles ended with zero pending token reservations. This is
+  a fixture result, not a claim of exhaustive production recall or zero false
+  positives on arbitrary applications. Form business outcomes remain explicitly
+  inconclusive where only transport acknowledgment was demonstrated.
+
+Reproduce the live feature canary through `scripts/qualify-hybrid-depth.mjs`
+with `QASE_LIVE_HYBRID_EXECUTION=true`, `QASE_HYBRID_FEATURE_FIXTURE=true`, and
+optionally `QASE_LIVE_TEST_WRITES=true`; hybrid qualification and bounded operator
+budgets are still mandatory. The optional writes reach only the disposable
+fixture server. `hybridFeatureFixture.js` is shared with the SDK regression tests.
+
+Logs: `/private/tmp/qase-features-live-canary.log`,
+`/private/tmp/qase-features-release-awake.log` (final complete verification),
+`/private/tmp/qase-features-verify-final.log`,
+`/private/tmp/qase-feature-modal-sdk.log`,
+`/private/tmp/qase-features-dashboard.log`,
+`/private/tmp/qase-features-write-final.log`,
+`/private/tmp/qase-features-payload-final.log`,
+`/private/tmp/qase-features-launcher.log`.
+
+Readiness: tested local production candidate, not deployed. Hybrid remains
+disabled in production examples and existing execution modes remain pinned.
+Neither arbitrary live-platform writes nor exhaustive edge-case completion is
+claimed. Production image/staging and opt-in integrations remain deployment-host
+gates; historical missing usage receipts still require exact reconciliation.
+
+## 34. SDK segment continuation and scenario accounting (2026-10-28)
+
+This change addresses run `f98395b8-a155-4ec9-930c-a437212f83ad`.
+It is a working-tree candidate; no deployment or production configuration change
+has been made.
+
+### Established causes
+
+- Installed `@cleanslate/sdk` is 0.1.0. Its execution query ends a segment after
+  a nonempty assistant answer without tool calls. QASE already ignores the SDK's
+  `task_complete` event as proof of QA success, but allowed only two automatic
+  follow-up segments before requesting a gap closeout, even when useful evidence
+  continued to arrive. That policy could truncate progressing runs.
+- The reported run actually reached `finish_qa_report` normally. It was not
+  stopped by a timeout or exhausted model budget: 35 browser actions, 18 Opus
+  calls, approximately 319k Opus tokens, and 213 seconds of execution were
+  recorded. Terminal dispositions did not reliably prove that each supported
+  check had executed. Discovery-only work could be disposed as inconclusive;
+  later fixed checks had no active owner or referenced a terminal scenario.
+- Feature restoration compared an immediately loaded DOM with a previously
+  observed state. The recorded Studio inventory had transient empty headings
+  during hydration. The exact-state mismatch prevented the feature click.
+  A standalone welcome-dialog preference checkbox also classified the overlay
+  as a form and prevented safe automatic dismissal.
+- Live validation found another integration issue: after valid empty-media and
+  absent-search outcomes, the model reopened those inconclusive scenarios and
+  repeated identical checks until the repetition guard paused the run. An
+  accounted gap must not become another attempt to manufacture a pass.
+
+No verified SDK internals defect was established. `runtime.run`, native tool
+execution, the same agent session and browser owner are retained. The existing
+supported `continueWithLatestUserMessage` integration remains in use.
+
+### Implementation and files
+
+- **`server/qaExecutionState.js` (new):** exact host receipt/accounting checks,
+  remaining executable work, meaningful progress fingerprints and durable SDK
+  segment counters. Model prose alone cannot discharge a supported check.
+- **`server/agent.js`:** continue the existing SDK/session while evidence or
+  scenario progress advances. Three consecutive stagnant segments checkpoint
+  an interruption rather than silently publish a successful report. User stop,
+  unresolved usage and fixed resource limits still take precedence.
+- **`server/hybridQaRuntime.js`:** serialize scenario lifecycle mutations with
+  browser actions; restore the sole running scenario pointer; allow fixed
+  checks to activate only their unique existing validated suite; preserve
+  completed browser receipts/outcomes before classifier failures. SDK internal
+  summary requests retain their no-tool contract and still use exact usage,
+  timeout and cancellation accounting.
+- **`server/qaScenarioLedger.js`, `server/qaCompletionGate.js`:** require intact
+  current-access execution or absence evidence before supported-check
+  dispositions/publication. One pending route also gates publication. Prevent
+  reopening already-accounted gaps; fresh observed routes or separately
+  validated investigations remain distinct work. Genuine budget closeout still
+  records incomplete coverage honestly.
+- **`server/hybridContext.js`:** expose scenario activation in the initial
+  catalog, clarify accounted gaps and explicitly direct publication when the
+  host determines all planned outcomes and route obligations are accounted for.
+- **`server/qaFeatureState.js`, `server/hybridRouteExecution.js`:** bounded,
+  cancellable fresh inventory reads wait for an already evidenced feature state.
+  No broader state match, permission change or automatic mutation replay.
+- **`server/jevBrowserChecks.js`:** a standalone checkbox/radio in a welcome
+  overlay does not turn its dismissal into a form submission. Actual forms and
+  writable fields retain the existing exclusion.
+- **`scripts/qualify-hybrid-target.mjs`:** explicit isolated public-only live
+  verification and SDK segment reporting; no secret transfer from existing runs.
+- New **`server/qaExecutionState.test.js`** and
+  **`server/hybridLifecycle.integration.test.js`**, plus updated agent,
+  hybrid architecture/autonomy/context/continuation/depth, feature-state and
+  browser-check tests, exercise the changed contracts.
+
+### Validation record
+
+The eleven-scenario regression runs the installed SDK and a real Chromium
+fixture with deterministic mocked inference. Every scenario has executed host
+assertions and durable evidence; final-looking intermediate answers and rejected
+premature publication do not end the run. SDK conversation compaction occurs
+within the test. It publishes exactly once and sends zero fixture writes.
+It is not a live-model compatibility measurement.
+
+The first attempt at that regression failed because its fake model treated
+SDK summary calls as execution turns. The fixture was corrected to honor the
+actual no-tool summary protocol. The same distinction is now protected in
+QASE's transport adapter. SDK internals were not edited.
+
+The initial broad suite exposed old test doubles lacking the continuation API,
+a fixture with an execution call represented as a summary request, and the old
+10-tool catalog expectation (now 11 with explicit scenario activation). Those
+fixtures were corrected; the subsequent full suite passed 2,103 tests with 26
+skipped, no failures/cancellations, before the final live-discovered gap-reopen
+fix. Its focused follow-up passed 57 tests. Final frozen-code results follow.
+
+The first live Opus/JEV Studio public-only attempt did **not** pass: it paused
+on the repeated-media guard after 229,916 ms, 50 browser actions, 42 Opus calls
+and four JEV calls. Three public routes were tested and the primary viewport
+was restored. That failure drove the gap-reopen fix above; it must not be
+reported as a successful end-to-end run.
+
+Final validation on the completed implementation:
+
+- `npm run verify`: **2,104 passed, 26 skipped, zero failures and zero
+  cancellations** (2,130 tests). Syntax, private-path ignore and source secret
+  checks also passed. This includes the eleven-scenario SDK/browser regression,
+  malformed classification, ownership, early publication, cancellation, budget,
+  stream/usage interruption and existing JEV/SQA/Founder compatibility tests.
+- The final live **public-only** Studio run completed in **115,170 ms**, with
+  **38 browser actions, 38 evidence receipts, 106 host assertions, three filled
+  fields and nine negative-input cases**. All eleven scenarios had terminal
+  dispositions: five passed, one failed, two inconclusive, one not executed and
+  two blocked. No question was asked; exactly one report was published; no
+  scenario remained planned/running. Three public routes were tested:
+  `/login`, `/forgot-password`, `/register`.
+- It confirmed one evidence-linked accessibility finding: the register form's
+  password-visibility toggle lacked an accessible name. Two observations remain
+  unresolved. Final verdict is **partial**, not a whole-platform pass. Media
+  and search lacked eligible controls; authentication lacked credentials;
+  content and visual correctness lacked authoritative references. The selected
+  1440x900 viewport was restored.
+- Live usage: Opus **17 calls, 227,909 input / 4,174 output tokens**; JEV
+  **four calls, 5,111 input / 506 output tokens**. Both ended with zero pending
+  reservations and provider-reported usage. The SDK `runtime.run` identity was
+  unchanged. This live check used one SDK segment; the deterministic browser
+  fixture separately verifies more than eleven segments and SDK compaction.
+  These two attempts are diagnostic runs, not a statistical performance or
+  defect-recall benchmark.
+
+Local validation logs:
+`/private/tmp/qase-lifecycle-release-verify.log`,
+`/private/tmp/qase-lifecycle-sdk.log`,
+`/private/tmp/qase-lifecycle-gaps.log`,
+`/private/tmp/qase-lifecycle-studio.log` (failed first live attempt), and
+`/private/tmp/qase-lifecycle-studio-final.log` (successful public-only rerun).
+The latter's protected temporary directory contains the durable checkpoint and
+result JSON. No secrets from user runs were copied into the verification run.
+
+### Limits and readiness
+
+This fixes and tests the identified host continuation/accounting failures; it
+cannot guarantee that arbitrary applications have no inaccessible or untestable
+workflows. A provider interruption without a verified usage receipt still pauses
+safely. No timeout/budget ceiling was removed, no unexecuted check was passed, and
+no general write/navigation permission was added. Authenticated Studio execution
+was **not verified** in this isolated run because no test credentials were
+available. Owned authenticated/browser fixtures passed in the regression suite.
+
+No production deployment, production activation or production configuration
+change was performed. Existing run modes remain pinned. Deployment should still
+require authenticated staging validation and the existing production-image/
+infrastructure gates. Rolling back the code requires no data migration; retain
+run evidence and do not replay uncertain actions. Production defaults remain
+unchanged; local hybrid enablement is an explicit launch environment override.
+
+Local handoff: the updated working tree was started at
+`http://127.0.0.1:5174/` with hybrid enabled only in its process environment;
+HTTP returned 200. The isolated hybrid startup check also passed using the
+existing saved qualification (13 capabilities), unchanged SDK loop and durable
+checkpoint, without inference or target browsing. `release:manifest` regenerated
+and verified the source inventory; no release promotion or GitHub push was made.
+
+## 35. Authenticated discovery and premature frontier exhaustion — 2026-10-29
+
+### Verified cause
+
+Saved run `a931d996-15bb-4f40-8a49-842678c22f3f` ended through normal report
+publication, not cancellation, an SDK iteration limit, or resource exhaustion.
+Its authenticated route batch explicitly selected six checks and **omitted
+navigation and search**. The host nevertheless consumed the route as `tested`.
+There were zero recorded exploration interactions, so the route frontier could
+appear exhausted without exercising the observed Projects/Meeting/Chat/About
+navigation. The earlier anonymous batch had included navigation, but that did
+not establish authenticated coverage.
+
+Two additional host defects compounded this:
+
+- Authentication was `access_observed`, while the separate access-phase state
+  was still `public`. Access synchronization omitted that status, although
+  permissions and evidence tagging already recognized it as authorized access.
+- A manual navigation trial and its restored source both contained only
+  `Loading...`. Inventories lacked explicit readiness, and batches could infer
+  feature absence from those empty shells. The trial's temporary network guard
+  also remained installed during source restoration. Blocked requests included
+  telemetry and a disconnect endpoint; their presence did not establish that
+  they caused the navigation failure.
+
+### Focused changes
+
+- Autonomous route batches enforce every operator-selected supported check,
+  even if a model supplies a subset. Legacy explicit-subset behavior is retained.
+  The result reports the enforced checks and distinguishes failed route IDs
+  from tested IDs. This makes navigation discovery a host obligation.
+- Access synchronization uses the same `hasConfirmedAccess` predicate as the
+  permissions/evidence layers, preserving historical anonymous dispositions and
+  reopening their stale limitations after authorized access.
+- Browser inventories carry explicit rendered/loading/busy readiness. A loading
+  shell cannot generate a successful fixed check, a feature transition, or
+  absence credit. A failed initial render can be retried only after a new intact
+  ready observation, at most twice; dispatched/uncertain interactions are not
+  replayed. Browser and lifetime budgets still apply.
+- Category absence decisions use a fresh inventory after interactions and safe
+  overlay dismissal, rather than the page's initial snapshot.
+- Navigation removes its temporary trial guard before source restoration;
+  underlying host security remains in force. Blocked-request causality remains
+  explicitly uncertain and does not create a navigation correctness pass.
+- Execution accounting rejects pre-dispatch refusals and loading-shell absence
+  as proof that a selected check was executed. A host-verified readiness refusal
+  can support an explicitly blocked outcome; a later ready observation
+  invalidates that blocker and permits the unexecuted scenario to start.
+
+Files changed for this investigation: `hybridAutonomy.js`,
+`hybridRouteExecution.js`, `qaRenderReadiness.js`, `jevBrowserChecks.js`,
+`jevInteractions.js`, `qaExecutionState.js`, their associated regression tests,
+and the new `hybridAuthenticatedDiscovery.integration.test.js` (all under
+`server/`). No CleanSlate SDK internals, provider transport, production
+configuration, historical run outcome, or UI coverage percentage was changed.
+
+### Executed validation
+
+- Targeted host regression suite: **38 passed, zero failed**.
+- Real Chromium check suite: **10 passed, zero failed**, including loading
+  exclusion, source bootstrap restoration, write quarantine, and preserved
+  uncertainty for blocked requests.
+- Installed CleanSlate SDK/browser integration suite: **3 passed, zero failed**.
+  The new workspace fixture seeds an authorized host access state, uses real
+  browser tools and deterministic model responses, deliberately omits navigation
+  from requested batches, and attempts premature publication. QASE enforces
+  navigation, discovers and tests the same-URL Projects feature, executes its
+  search assertions, rejects early publication, and continues across a final-
+  looking SDK response. All three scoped categories produce host assertions;
+  checkpoints retain feature execution and evidence; no writes reach the server.
+  The existing eleven-scenario continuation fixture and seeded-defect depth
+  fixture also passed. These are deterministic integration tests, not live model
+  accuracy or whole-platform coverage benchmarks.
+- Final full `npm run verify`: **2,111 passed, 26 skipped, zero failed or
+  cancelled (2,137 tests)**, including syntax and private-state/secret checks.
+  The first full run caught a regression where hidden mobile-only controls
+  were mistaken for an empty shell. The readiness predicate was corrected;
+  all six interaction tests and the subsequent full suite passed.
+- Isolated local hybrid startup passed with the existing saved qualification
+  covering 13 capabilities, the unchanged SDK loop and a durable checkpoint.
+  This startup check did not invoke inference or browse a target.
+
+Logs: `/private/tmp/qase-auth-depth-unit.log`,
+`/private/tmp/qase-auth-depth-browser.log`, `/private/tmp/qase-auth-depth-sdk.log`,
+and `/private/tmp/qase-auth-depth-verify.log`.
+Final verification: `/private/tmp/qase-auth-depth-verify-final.log`;
+startup: `/private/tmp/qase-auth-depth-startup.log`.
+
+### Limits
+
+Authenticated Studio was diagnosed from its stored evidence; the new code has
+not been revalidated against a fresh signed-in Studio session. Secure user
+credentials were not extracted or copied into fixtures. Full arbitrary-platform
+coverage cannot be promised: inaccessible workflows, missing expected behavior,
+unverified usage, cancellation and hard limits must still remain truthful gaps
+or interruptions. The fix prevents the identified omissions; it does not turn
+blocked or unexecuted tests into passes. Existing completed runs retain their
+original evidence and results. No deployment or production promotion was made.
+
+## 36. Late feature discovery and stale controls — 2026-10-30
+
+### Evidence and root cause
+
+Saved authenticated Studio run `deb5fb1a-3c7d-47de-8ca8-5a915bdf5a15`
+ended through normal publication without budget closeout. Both route batches
+included the selected fixed checks, so the previous omitted-navigation fix was
+active. However, search was recorded absent before responsive testing. Later
+inventories (`ed1ba8eb-61a3-4f70-909f-5b7bfa774905` and
+`f511f534-5614-43ed-a3c5-32b57edc79df`) exposed a Search projects field on the
+same URL. The host never revisited that skipped check and accepted stale absence
+at publication. Search had zero assertions despite the visible field.
+
+Navigation also returned a stale-control refusal; responsive trials rejected
+disclosure candidates. Code inspection found inconsistent control labels:
+inventory accepted `title`, while disclosure execution ignored it. A real
+Chromium fixture reproduces and verifies the title-only menu case; the saved
+Studio evidence alone does not prove every rejected selector had that cause.
+Page settling observed text/children but ignored attribute changes and finite
+CSS animations, allowing transitional sidebar inventories.
+
+### Focused changes
+
+- `jevBrowserChecks.js`: use the same title/whitespace fallback for disclosure
+  discovery and execution; observe rendering attributes and finite animations
+  within the existing settling deadline. Infinite decorative animations do not
+  hold up inventory. Viewport restoration remains enforced.
+- `jevInteractions.js` and `hybridRouteExecution.js`: a missing observed control
+  returns a typed pre-dispatch refusal with its fresh inventory. The host may
+  rebind once to a unique same-label, same-kind eligible control. Ambiguous
+  targets are not clicked, and uncertain dispatched actions are not replayed.
+- `hybridRouteExecution.js`: test search after responsive controls; before
+  closing a route, reconcile previously skipped search/forms/media checks
+  against fresh inventories. Each recovered category executes at most once;
+  executed checks are not repeated. Every action still uses the existing SDK
+  tool wrapper, ledger ownership, permissions and budgets.
+- `qaInventoryCoverage.js` and `qaExecutionState.js`: share explicit
+  presence/absence semantics; incomplete inventories cannot prove absence.
+  Later intact same-page, same-access evidence of a feature invalidates earlier
+  absence, independently of the model's proposed final disposition.
+- Regression coverage is in `jevBrowserChecks.test.js`, `hybridDepth.test.js`,
+  and `qaExecutionState.test.js`. The existing CleanSlate integration and
+  continuation tests are retained unchanged.
+
+### Executed validation
+
+- Targeted browser/ledger/route suite: **44 passed, zero failed**.
+- SDK/continuation/navigation suite after bounded selector recovery:
+  **31 passed, zero failed**, including real Chromium and the installed SDK's
+  eleven-scenario continuation and authenticated same-URL feature fixtures.
+- Full `npm run verify`: **2,118 passed, 26 skipped, zero failed/cancelled
+  (2,144 tests)**; syntax, private-state ignore and credential scans passed.
+- Isolated hybrid startup passed against the existing saved 13-capability
+  qualification, with the native SDK loop unchanged and checkpoint persisted.
+  This was not a new live gateway qualification or an inference call.
+- After confirming no active saved runs, the local server was restarted with
+  hybrid enabled. `http://127.0.0.1:5174/healthz` returned `status: ok` and the
+  home page returned HTTP 200.
+
+Logs: `/private/tmp/qase-late-feature-tests.log`,
+`/private/tmp/qase-late-feature-sdk-tests.log`, and
+`/private/tmp/qase-late-feature-verify.log`. Startup verification is recorded in
+`/private/tmp/qase-late-feature-startup.log`.
+
+### Remaining limits
+
+The new code has not yet completed a fresh authenticated live Studio run.
+Deterministic fixture results do not establish whole-platform coverage or live
+model accuracy. Missing content/design references, absent media, and prohibited
+or network-dependent operations remain explicit gaps. The existing 295
+accessibility assertions and confirmed finding were not erased, and old runs
+were not rewritten. No provider usage accounting, SDK internals, production
+configuration, or deployment was changed.

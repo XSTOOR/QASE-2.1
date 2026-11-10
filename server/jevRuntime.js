@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { createJevClient } from './jevClient.js';
 import { redact } from './secrets.js';
-import { getSqaControl } from './sqaCatalog.js';
+import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { FOUNDER_CATEGORIES } from './founderSchema.js';
 import { buildJevFounderReport } from './jevFounderReport.js';
 import { runJevQa } from './jevQaRunner.js';
@@ -170,7 +170,12 @@ export function installJevRuntime(runtime, { session, runStore, configuration, o
   }
 
   async function* finishSqa(sample, snapshot, diagnostics, actions) {
-    const controls = (session.sqa?.scope?.applicableControlIds ?? []).map(id => getSqaControl(id));
+    const applicableControlIds = session.sqa?.scope?.applicableControlIds ?? [];
+    const orderedControlIds = [
+      ...SQA_TECHNICAL_CONTROL_IDS.filter(id => applicableControlIds.includes(id)),
+      ...applicableControlIds.filter(id => !SQA_TECHNICAL_CONTROL_IDS.includes(id))
+    ];
+    const controls = orderedControlIds.map(id => getSqaControl(id));
     for (let offset = 0; offset < controls.length; offset += 20) {
       const batch = controls.slice(offset, offset + 20);
       const rendered = snapshot?.success && !snapshot.loading && !snapshot.loadError && snapshot.bodyText?.trim();

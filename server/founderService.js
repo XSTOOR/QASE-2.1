@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
+import { founderEvidenceDigest } from './founderEvidence.js';
 import {
 	assertPlainObject,
 	boundedStrings,
@@ -15,6 +16,9 @@ import {
 	upgradeLegacyReport
 } from './founderSchema.js';
 import { redact } from './secrets.js';
+import { publicationTodos } from './finalizationGuard.js';
+import {modeDiscoveryRequired,modeExplorationReadiness} from './modeDiscovery.js';
+import { founderLaunchProblems } from '../public/founderLaunch.js';
 
 const observationTypes = new Set(FOUNDER_OBSERVATION_TYPES);
 export const MAX_FOUNDER_STATE_BYTES = 1_000_000;
@@ -40,14 +44,6 @@ function assertFounderStateSize(founder) {
 	if (Buffer.byteLength(JSON.stringify(founder), 'utf8') >= MAX_FOUNDER_STATE_BYTES) {
 		throw new TypeError('Founder state must be smaller than 1,000,000 serialized bytes. Reduce observations or report detail.');
 	}
-}
-
-function canonical(value) {
-	if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-	if (value && typeof value === 'object') {
-		return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
-	}
-	return JSON.stringify(value);
 }
 
 function normalizeTarget(input) {
@@ -98,6 +94,12 @@ export function createFounderState(input = {}, now = () => Date.now()) {
 		throw new TypeError('You must confirm that you are authorized to review this target.');
 	}
 	const createdAt = new Date(now()).toISOString();
+	if (input.setupVersion !== undefined && input.setupVersion !== 1) throw new TypeError('Unsupported Founder setup version.');
+	const productContext = normalizeProductContext(input.productContext);
+	if (input.setupVersion === 1) {
+		const problems = founderLaunchProblems({ ...input, targetUrl: input.target?.url, productContext });
+		if (problems.length) throw new TypeError(`Before starting: ${problems.join('; ')}.`);
+	}
 	return {
 		schemaVersion: FOUNDER_SCHEMA_VERSION,
 		scope: {
@@ -107,7 +109,12 @@ export function createFounderState(input = {}, now = () => Date.now()) {
 				confirmedAt: createdAt,
 				policy: 'non_destructive_product_review'
 			},
-			productContext: normalizeProductContext(input.productContext),
+			productContext,
+			...(input.setupVersion === 1 ? {
+				setupVersion: 1,
+				contextDecision: { mode: input.contextMode, decidedAt: createdAt, source: 'user' },
+				access: { decision: input.accessDecision, authenticatedSurfaces: input.accessDecision === 'public_only' ? 'excluded' : 'requested', decidedAt: createdAt, source: 'user' }
+			} : {}),
 			categories: [...FOUNDER_CATEGORY_IDS],
 			// Trusted project context detected server-side (Phase 1). Never
 			// sourced from request bodies — see app.js detectFounderProjectContext.
@@ -283,7 +290,7 @@ function evidenceBundle(session, requestedIds, now) {
 		summary: activity.summary
 	})));
 	return safe.map(activity => {
-		const digest = createHash('sha256').update(canonical({ runId: session.id, collectedAt, activity })).digest('hex');
+		const digest = founderEvidenceDigest({ runId: session.id, collectedAt, activity }).slice(7);
 		return {
 			activityId: activity.activityId,
 			reference: `qase://runs/${session.id}/activities/${encodeURIComponent(activity.activityId)}/founder-evidence/${digest.slice(0, 24)}`,
@@ -387,6 +394,7 @@ export async function finishFounderReview(session, input, runStore, now = () => 
 		throw new TypeError('This Founder review is finalized without a report and cannot be recalculated.');
 	}
 	assertMutable(session);
+	if(modeDiscoveryRequired(session)&&!modeExplorationReadiness(session).ready)throw new TypeError('Founder publication requires intact discovery, completed evidence-backed workflows, verified browser state and classification.');
 	const coverage = founderCoverage(session.founder);
 	if (coverage.missing.length > 0) {
 		throw new TypeError(`Founder review is missing evidence-backed categories: ${coverage.missing.join(', ')}.`);
@@ -404,11 +412,14 @@ export async function finishFounderReview(session, input, runStore, now = () => 
 	});
 	assertFounderStateSize({ ...session.founder, report, updatedAt: generatedAt, finalizedAt: generatedAt });
 	const previous = session.founder;
+	const previousTodos = session.todos;
 	session.founder = { ...previous, report, updatedAt: generatedAt, finalizedAt: generatedAt };
+	session.todos = publicationTodos(previousTodos, 'founder');
 	try {
-		await runStore.commit(session, 'founder.finalized', { report });
+		await runStore.commit(session, 'founder.finalized', { report, todos: session.todos });
 	} catch (error) {
 		session.founder = previous;
+		session.todos = previousTodos;
 		throw error;
 	}
 	return report;
@@ -448,6 +459,8 @@ export function buildFounderReportMarkdown(founderOrSession) {
 		...(report.target.url ? [`- **Target URL:** ${report.target.url}`] : []),
 		...(report.target.release ? [`- **Release:** ${report.target.release}`] : []),
 		...(report.target.environment ? [`- **Environment:** ${report.target.environment}`] : []),
+		...(founder.scope?.access?.decision ? [`- **Review scope:** ${founder.scope.access.decision === 'public_only' ? 'Public pages only; signed-in pages excluded.' : 'Public and signed-in product requested; coverage is limited to recorded evidence.'}`] : []),
+		...(founder.scope?.contextDecision?.mode ? [`- **Business context:** ${founder.scope.contextDecision.mode === 'provided' ? 'Supplied by the user.' : 'Observed evidence and explicitly labeled assumptions approved by the user.'}`] : []),
 		`- **Coverage:** ${report.coverage.categoriesReviewed.length}/${report.coverage.totalCategories} areas`,
 		`- **Evidence-backed observations:** ${report.coverage.evidenceBackedObservations}`,
 		'',

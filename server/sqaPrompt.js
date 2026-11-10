@@ -1,13 +1,28 @@
 import { describeDeviceForPrompt } from './deviceProfiles.js';
-import { BROWSER_WORKFLOW_GUIDANCE } from './browserWorkflowPrompt.js';
 import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { AGENT_EVIDENCE_TYPES } from './sqaService.js';
-import { countSqaBrowserActivities, SQA_BROWSER_TOOL_BUDGET } from './sqaBrowserBudget.js';
+import { buildSqaWorkPlan } from './sqaWorkPlan.js';
+import { countSqaBrowserActivities, countSqaBrowserActivitiesSinceControlCheckpoint, SQA_BROWSER_EVIDENCE_LIMIT, SQA_BROWSER_TOOL_BUDGET, SQA_BROWSER_WORKFLOW_CHECKPOINT, SQA_INPUT_TOKEN_BUDGET, SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD } from './sqaBrowserBudget.js';
+
+/** Evidence collection has ended; retain the actual control decisions and plan,
+ * rather than paying to resend browser/tool transcripts for publication. */
+export function buildSqaSynthesisContext(session) {
+ const controls=session.sqa.observations.map(({controlId,status})=>({controlId,status}));
+ return `Complete this SQA assessment using only its saved evidence and native finalizer.
+The host has accounted for every applicable control; missing reviewer artifacts remain blocked.
+Update the existing plan statuses from the completed work, then call finish_sqa_assessment.
+Do not claim compliance, certification, whole-product coverage or unsupported passes.
+The deterministic evaluator and finalizer still validate all required evidence and plan completion.
+Authorized target and scope: ${JSON.stringify(session.sqa.scope)}
+Plan: ${JSON.stringify(session.todos)}
+Recorded controls: ${JSON.stringify(controls)}`;
+}
 
 /** Build the bounded, standards-informed operating brief for a CleanSlate SQA run. */
 export function buildSqaContext(session, liveUrl) {
 	const scope = session.sqa?.scope;
 	if (!scope) throw new TypeError('SQA context requires a resolved assessment scope.');
+	const workPlan = buildSqaWorkPlan(session.sqa);
 	const targetUrl = session.targetUrl
 		? `Authorized target URL: ${session.targetUrl}`
 		: 'No target URL has been supplied. Call ask_question for the exact authorized URL, then stop.';
@@ -21,7 +36,7 @@ export function buildSqaContext(session, liveUrl) {
 		const reviewerOnly = control.evidenceRequirements.filter(item => !AGENT_EVIDENCE_TYPES.has(item.type)).map(item => item.type);
 		const observation = observations.get(id);
 		const progress = observation ? `recorded=${observation.status}` : 'PENDING';
-		return `- ${control.id} [${progress}; ${control.severity}; ${control.automationLevel}; ${control.mandatory ? 'mandatory' : 'optional'}] ${control.title}. Browser-eligible evidence: ${eligible.join(', ') || 'none'}. Reviewer-only evidence: ${reviewerOnly.join(', ') || 'none'}.`;
+		return `- ${control.id} [${progress}; ${control.severity}; ${control.automationLevel}; ${control.mandatory ? 'mandatory' : 'optional'}] ${control.title}. Browser-eligible evidence: ${eligible.join(', ') || 'none'}. Reviewer-only evidence: ${reviewerOnly.join(', ') || 'none'}.${SQA_TECHNICAL_CONTROL_IDS.includes(id) ? '' : ` Objective: ${control.objective}. Required counts: ${control.evidenceRequirements.map(r => `${r.type} >= ${r.minimum}`).join(', ')}.`}`;
 	};
 	const controls = scope.applicableControlIds.map(id => getSqaControl(id));
 	const technicalIds = SQA_TECHNICAL_CONTROL_IDS.filter(id => scope.applicableControlIds.includes(id));
@@ -38,11 +53,33 @@ export function buildSqaContext(session, liveUrl) {
 	const assuranceIds = scope.applicableControlIds.filter(id => !browserFirstIds.includes(id));
 	const pendingIds = scope.applicableControlIds.filter(id => !observations.has(id) || observations.get(id)?.status === 'not_assessed');
 	const recorded = scope.applicableControlIds.length - pendingIds.length;
+	const recordedResults = scope.applicableControlIds
+		.filter(id => !pendingIds.includes(id))
+		.map(id => `${id}=${observations.get(id).status}`);
+	const pendingTechnicalIds = technicalIds.filter(id => pendingIds.includes(id));
+	const pendingOtherBrowserFirstIds = otherBrowserFirstIds.filter(id => pendingIds.includes(id));
+	// Keep the active prompt on one phase. Sending every hybrid and documentary
+	// control during the six mandatory web checks repeatedly consumes context and
+	// encourages premature assurance work.
+	const pendingBrowserFirstIds = pendingTechnicalIds.length > 0
+		? pendingTechnicalIds
+		: workPlan.activeControls.map(control => control.id);
+	const pendingAssuranceIds = assuranceIds.filter(id => pendingIds.includes(id));
+	const activeAssuranceIds = pendingTechnicalIds.length === 0 && pendingOtherBrowserFirstIds.length === 0
+		? pendingAssuranceIds
+		: [];
 	const browserToolsUsed = countSqaBrowserActivities(session);
 	const browserToolsRemaining = Math.max(0, SQA_BROWSER_TOOL_BUDGET - browserToolsUsed);
+	const inputTokensUsed = Math.max(0, Number(session.tokenUsage?.inputTokens) || 0);
+	const workflowBrowserTools = countSqaBrowserActivitiesSinceControlCheckpoint(session);
+	const closeoutReserve = SQA_BROWSER_TOOL_BUDGET - SQA_BROWSER_EVIDENCE_LIMIT;
 	const progress = `Recorded controls: ${recorded}/${scope.applicableControlIds.length}.
+Recorded result index: ${recordedResults.join(', ') || 'none'}.
 Pending control IDs: ${pendingIds.join(', ') || 'none'}.
 Browser tool budget: ${browserToolsUsed}/${SQA_BROWSER_TOOL_BUDGET} used; ${browserToolsRemaining} remaining.
+Evidence-collection limit: ${SQA_BROWSER_EVIDENCE_LIMIT}; ${Math.max(0, SQA_BROWSER_EVIDENCE_LIMIT - browserToolsUsed)} evidence actions remain. The final ${closeoutReserve} actions are a hard safety reserve, not exploration allowance.
+Input-token closeout threshold: ${inputTokensUsed}/${SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD} used; hard limit ${SQA_INPUT_TOKEN_BUDGET}. At either closeout threshold, call finish_sqa_assessment with close_from_saved_evidence=true and do not explore further.
+Workflow checkpoint: ${workflowBrowserTools}/${SQA_BROWSER_WORKFLOW_CHECKPOINT} browser actions since the latest technical-control result. Record the workflow before this reaches the limit.
 Do not repeat recorded controls unless correcting a rejected or incomplete result.`;
 
 	return `# Role
@@ -79,8 +116,10 @@ ${scope.scopeNotes ? `Scope notes: ${scope.scopeNotes}` : ''}
    type in the evidence array. Never pass from an absent, generic, or unrelated
    browser activity. If a required reviewer-only type is unavailable, the full
    assurance control remains blocked even when its technical sample succeeds.
-5. Report confirmed product defects separately with report_finding. Do not call
-   finish_qa_report in SQA mode.
+5. Report confirmed product defects separately with report_finding and include
+   every scoped control_id whose objective the defect disproves. Record each
+   linked control as fail with matching browser evidence; a linked control can
+   never remain pass or blocked. Do not call finish_qa_report in SQA mode.
 6. Do not delete data, change passwords/settings, make purchases/payments, send
    messages/invitations, upload secrets, run denial-of-service/load tests, or use
    intrusive security payloads. Ask the user before any irreversible or risky
@@ -96,39 +135,84 @@ ${scope.scopeNotes ? `Scope notes: ${scope.scopeNotes}` : ''}
 
 1. If the URL, required account, acceptance criteria, or intended workflow is
    missing, call ask_question. The host pauses until the user answers.
-2. Open and snapshot the target. Use update_todo for a risk-based plan covering
-   the browser-first technical controls below before reviewer-only assurance
-   controls, grouped by workflow to avoid repetition.
-3. Prefer roles, labels, text, placeholders, and test ids. Re-snapshot after
+2. Open and snapshot the target. Use update_todo once for a risk-based plan of at
+   most 10 items covering the browser-first technical controls below before
+   reviewer-only assurance controls, grouped by workflow to avoid repetition.
+   Do not spend separate turns updating the plan between technical workflows.
+${pendingTechnicalIds.length ? `3. Immediately after the initial snapshot and diagnostics, call
+   browser_sqa_smoke once with action=accessibility, then call
+   browser_sqa_smoke once with action=responsive. Then call record_sqa_control
+   exactly once with a controls batch for SQA-WEB-001, SQA-WEB-004,
+   SQA-WEB-005 and SQA-WEB-006. Give each control its own evidence or precise
+   blocker. Do this before navigation, forms, media, hybrid controls or broader
+   exploration. Do not replace these bounded checks with many individual Tab
+   presses, snapshots or viewport changes unless the tool reports unavailable.
+4. Next call browser_sqa_smoke action=navigation with up to four exact
+   same-origin link names from the snapshot, then browser_sqa_smoke
+   action=form_validation without field_label or submit_name so the host
+   deterministically discovers one empty labeled email field on a same-origin
+   GET form without submit overrides. The host isolates HTTP requests during
+   input and tests local validation feedback only. If eligible=false, immediately record
+   SQA-WEB-003 as blocked using its blockerReason in the batch below. Then call record_sqa_control exactly once with a
+   controls batch for SQA-WEB-002 and SQA-WEB-003. If a form is absent, POST,
+   non-empty, unlabeled, unsupported, or otherwise rejected by the host, record
+   SQA-WEB-003 as blocked in that same batch with the exact reason; never bypass
+   the safety refusal with ordinary submit clicks. A form pass requires blocked
+   invalid input before and after a corrected value that produced local feedback.
+   Record a failure if that newly produced success signal remains after invalid
+   input. For navigation, record failed HTTP destinations as failures and mark
+   unavailable or unverified samples blocked. A snapshot alone cannot support
+   either control's pass or fail.` : '3–4. The six technical-control dispositions are already recorded. Continue with the next browser controls below, using matching saved evidence where valid. Do not repeat the completed smoke workflows.'}
+
+5. Prefer roles, labels, text, placeholders, and test ids. Re-snapshot after
    state changes. Confirm apparent defects twice and rule out overlays. Try at
    most two verified locator strategies for one target; if neither works,
    record the precise blocker or defect and continue the plan. Do not guess
-   coordinates after semantic locators fail.
-4. Exercise positive, negative, boundary, state-transition, keyboard,
+   coordinates after semantic locators fail. Use one snapshot per meaningful
+   state, one diagnostics collection per workflow, and screenshots only for a
+   confirmed visual issue or final evidence. Do not re-read an unchanged page.
+6. Exercise positive, negative, boundary, state-transition, keyboard,
    responsive, recovery, console/network, security-header, privacy-facing, and
    localization checks only where the declared scope and oracle support them.
-   Use at most 12 observed Tab/Shift+Tab steps per workflow; that is enough to
-   detect a focus trap or reachability gap without cycling through the page.
-5. Record each pending applicable control. Use record_sqa_control for technical
+   The bounded accessibility smoke tool already performs up to 12 Tab and 3
+   Shift+Tab steps; do not repeat its path when it returned usable evidence.
+7. Record each pending browser-eligible control. Use record_sqa_control for technical
    pass/fail and for blockers with useful partial browser evidence. The tool
    accepts either one result or a controls batch of up to 12 results; batch only
    closely related controls supported by the immediately preceding workflow,
    and give every result its own control-specific rationale and evidence
-   summary. After the technical checks, use one record_sqa_blockers batch only
-   for controls with no browser-eligible evidence whose prerequisites are
-   reviewer-supplied artifacts. A missing manual artifact is blocked, not
-   not_assessed and never pass.
-6. When every control has a defensible result, call finish_sqa_assessment. The
+   summary. After the final browser-eligible result, the host automatically
+   closes every remaining reviewer-only prerequisite in one transaction using
+   its exact catalog evidence contract. Do not enumerate reviewer-only control
+   IDs or invent blocker prose. If automatic closeout did not run, call
+   record_sqa_blockers once with close_remaining=true. A missing manual artifact
+   is blocked, not not_assessed and never pass. Record results immediately after
+   each bounded workflow; never defer completed workflows to bookkeeping turns.
+8. When every control has a defensible result, call finish_sqa_assessment. The
    host rejects incomplete plans, in-flight browser work, missing controls,
    incomplete pass evidence, and unresolved authentication scope. The host—not
    you—computes the final verdict. PASS can occur only when every mandatory
    applicable control has sufficient evidence and no gate is open.
-7. Treat the browser-tool budget in Progress as a hard ceiling. When it reaches
-   zero, stop browser work immediately, record remaining browser-dependent
-   controls as blocked from the evidence already collected, batch the
-   reviewer-only blockers, complete the plan, and call finish_sqa_assessment.
+9. Treat the evidence-collection ceiling in Progress as the normal stopping
+   point and the total browser-tool budget as a hard ceiling. At the evidence
+   ceiling, stop exploratory browser work and close out from already collected
+   evidence. The reserved actions exist only for a required final
+   snapshot, recovery, or correction—not more exploration. At the hard ceiling,
+   do not call another browser tool. Call finish_sqa_assessment exactly once
+   with close_after_safety_limit=true. The host then records every pending
+   control as blocked with the observed safety-limit reason, completes the
+   visible plan, and publishes deterministically in that one call. Do not spend
+   separate model turns manually batching those safety blockers.
 
-${BROWSER_WORKFLOW_GUIDANCE}
+# Meeting and media evidence
+
+When meeting, call, recording or microphone surfaces are present or requested,
+read read_sqa_work_plan with sqa_view=media before testing them. Use
+browser_test_meeting_link for observed anchors and ordinary clicks for buttons.
+Never invent links, broaden allowed origins or bypass a host refusal. Inspect
+tracked new tabs before calling navigation broken. browser_media must verify
+actual input activity; permission configuration, prejoin pages and synthetic
+devices cannot prove physical input, remote participants or a joined call.
 
 Bind meeting navigation and microphone checks to the relevant scoped functional,
 interaction, recovery, or browser technical controls with record_sqa_control.
@@ -138,21 +222,25 @@ the evidence summary. Permission configuration by itself is not pass evidence.
 # Progress
 
 ${progress}
+Work priority: ${workPlan.phase}. Pending browser controls: ${workPlan.pendingBrowserCount}.
+Remaining browser control IDs: ${workPlan.planningIndex.map(control => control.id).join(', ') || 'none'}
+Act on the current group shown below before reading more catalog pages. Use read_sqa_work_plan only if a needed contract description is missing; do not prefetch all browser pages or reviewer documents before testing. Record supported results immediately, then restart any requirement read at offset 0. Further pages require the returned revision. This is read-only guidance and never reopens a closed run or expands scope. All pending control IDs remain in Progress; the detail window does not reduce the assessment scope.
 
 # Browser-first technical controls
 
 These controls are eligible for browser evidence, but eligibility is not proof.
 Run the objective and required scope before pass/fail.
 
-${browserFirstIds.map(describeControl).join('\n') || '- none'}
+${pendingBrowserFirstIds.map(describeControl).join('\n') || '- none pending'}
 
 # Reviewer-only assurance controls
 
-These have no browser-eligible evidence contract. Do them after technical
-checks and batch precise missing-artifact blockers. Do not place hybrid or
-otherwise browser-observable controls in record_sqa_blockers.
+These have no browser-eligible evidence contract. The host closes them
+automatically after browser-backed work, with catalog-derived missing-artifact
+reasons. Do not enumerate them or place hybrid/browser-observable controls in
+record_sqa_blockers.
 
-${assuranceIds.map(describeControl).join('\n') || '- none'}
+${activeAssuranceIds.map(describeControl).join('\n') || '- hidden until every browser-first control is recorded'}
 
 These ${scope.applicableControlIds.length} controls are independently authored
 Qase objectives informed by public framework descriptions. They are not the
@@ -160,8 +248,8 @@ normative text of any standard.
 
 # Allowed tools
 
-Use browser tools, browser_diagnostics, browser_media, browser_test_meeting_link, update_todo, ask_question,
-report_finding, record_sqa_control, record_sqa_blockers, and
+Use browser tools, browser_sqa_smoke, browser_diagnostics, browser_media, browser_test_meeting_link, update_todo, ask_question,
+report_finding, read_sqa_work_plan, record_sqa_control, record_sqa_blockers, and
 finish_sqa_assessment. Filesystem,
 shell, code-editing, arbitrary network, and host tools are blocked.${describeDeviceForPrompt(session.device, { landscape: session.deviceLandscape === true })}`;
 }

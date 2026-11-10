@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { sqaReportModel } from '../public/sqaReportModel.js';
 import {
 	SQA_CATALOG,
 	SQA_EVIDENCE_TYPES,
@@ -428,11 +429,8 @@ export function buildSqaReportMarkdown(assessment) {
         const failures = assessment.results.filter(result => result.status === 'fail').sort(compareReportPriority);
         const blocked = assessment.results.filter(result => result.status === 'blocked').sort(compareReportPriority);
         const notAssessed = assessment.results.filter(result => result.status === 'not_assessed').sort(compareReportPriority);
-        const evidenceItems = assessment.results.flatMap(result => (result.evidence ?? []).map((item, index) => ({
-			controlId: result.controlId,
-			index: index + 1,
-			...item
-		})));
+        const reportModel = sqaReportModel(assessment);
+        const evidenceItems = reportModel.evidence;
         const lines = [
                 `# SQA assessment — ${markdown(assessment.target?.name)}`,
                 '',
@@ -448,6 +446,21 @@ export function buildSqaReportMarkdown(assessment) {
                 '',
                 '> **Important:** ' + markdown(assessment.disclaimer),
                 '',
+			'## Bounded technical smoke sample',
+			'',
+			`- Verdict: ${String(reportModel.technical?.verdict ?? 'not_applicable').toUpperCase()}`,
+			`- Applicable controls: ${markdown(reportModel.technical?.applicableControls ?? 0)}`,
+			`- Pass: ${markdown(reportModel.technical?.pass ?? 0)}`,
+			`- Fail: ${markdown(reportModel.technical?.fail ?? 0)}`,
+			`- Blocked: ${markdown(reportModel.technical?.blocked ?? 0)}`,
+			`- Not assessed: ${markdown(reportModel.technical?.not_assessed ?? 0)}`,
+			'',
+			'> This sampled browser result does not establish whole-product compliance and does not override the broad assurance verdict.',
+			'',
+			'## Evidence-backed control failures',
+			'',
+			...(reportModel.failures.length ? reportModel.failures.map(item => `- **${markdown(item.controlId)} — ${markdown(item.title)}:** ${markdown(item.rationale ?? 'Remediate and retest this control.')}`) : ['No evidence-backed control failures were recorded.']),
+			'',
 			'## Executive summary',
 			'',
 			`The deterministic assurance verdict is **${String(assessment.verdict).toUpperCase()}**. Of ${markdown(assessment.summary?.applicableControls)} applicable controls, ${markdown(assessment.summary?.pass)} passed, ${markdown(assessment.summary?.fail)} failed, ${markdown(assessment.summary?.blocked)} are blocked by missing evidence or prerequisites, and ${markdown(assessment.summary?.not_assessed)} were not assessed. Residual risk is **${String(assessment.risk?.level ?? 'unknown').toUpperCase()}** at ${markdown(assessment.risk?.score)}% using the documented severity-weighted unresolved-control method.`,
@@ -462,6 +475,14 @@ export function buildSqaReportMarkdown(assessment) {
 			`- Declared product attributes: ${assessment.attributes?.length ? assessment.attributes.map(markdown).join(', ') : 'none declared'}`,
 			`- Method: risk-ordered, non-destructive browser sampling plus deterministic evidence-contract evaluation against Qase catalog ${markdown(assessment.catalogVersion)}.`,
 			...(assessment.scopeNotes ? [`- Scope notes: ${markdown(assessment.scopeNotes)}`] : []),
+			'',
+			'## Execution budget',
+			'',
+			...(assessment.executionBudget ? [
+				`- Browser actions used: ${markdown(assessment.executionBudget.browserTools?.used)}/${markdown(assessment.executionBudget.browserTools?.evidenceLimit)} evidence limit; hard limit ${markdown(assessment.executionBudget.browserTools?.hardLimit)}.`,
+				`- Input tokens used: ${markdown(assessment.executionBudget.inputTokens?.used)}/${markdown(assessment.executionBudget.inputTokens?.closeoutThreshold)} closeout threshold; hard limit ${markdown(assessment.executionBudget.inputTokens?.hardLimit)}.`,
+				`- Budget closeout: ${assessment.executionBudget.closeout ? `${markdown(assessment.executionBudget.closeout.mode)} (${markdown(assessment.executionBudget.closeout.trigger)})` : 'not used; all scoped control decisions were recorded before the closeout thresholds.'}`
+			] : ['Execution-budget usage was not recorded for this legacy assessment.']),
 			'',
 			'## Priority action plan',
 			''
@@ -493,17 +514,6 @@ export function buildSqaReportMarkdown(assessment) {
 		`- Mandatory passed: ${markdown(assessment.coverage?.mandatoryPassed)}%`,
 		`- Evidence requirements satisfied: ${markdown(assessment.coverage?.evidence)}%`,
 		'',
-		'## Bounded technical smoke sample',
-		'',
-		`- Verdict: ${String(assessment.technicalSummary?.verdict ?? 'not_applicable').toUpperCase()}`,
-		`- Applicable controls: ${markdown(assessment.technicalSummary?.applicableControls ?? 0)}`,
-		`- Pass: ${markdown(assessment.technicalSummary?.pass ?? 0)}`,
-		`- Fail: ${markdown(assessment.technicalSummary?.fail ?? 0)}`,
-		`- Blocked: ${markdown(assessment.technicalSummary?.blocked ?? 0)}`,
-		`- Not assessed: ${markdown(assessment.technicalSummary?.not_assessed ?? 0)}`,
-		'',
-		'> This sampled browser result does not establish whole-product compliance and does not override the broad assurance verdict.',
-		'',
                 '## Decision gates',
                 ''
         );
@@ -530,21 +540,21 @@ export function buildSqaReportMarkdown(assessment) {
         }
 
 		lines.push('## Evidence traceability register', '');
+		lines.push('References identify saved browser records or external reviewer documents. A listed digest does not prove that external document bytes were checked.', '');
 		if (evidenceItems.length === 0) {
 			lines.push('No evidence artifacts were attached to this assessment.', '');
 		} else {
-			lines.push('| Control | # | Type | Collected at | Reference | Digest | Summary |', '|---|---:|---|---|---|---|---|');
+			lines.push('| Control | # | Type | Collected at | Reference | Digest | Summary | Origin |', '|---|---:|---|---|---|---|---|---|');
 			for (const item of evidenceItems) {
-				lines.push(`| ${markdown(item.controlId)} | ${item.index} | ${markdown(item.type)} | ${markdown(item.collectedAt ?? 'not recorded')} | ${markdown(item.reference)} | ${markdown(item.digest ?? 'not supplied')} | ${markdown(item.summary ?? '')} |`);
+				lines.push(`| ${markdown(item.controlId)} | ${item.index} | ${markdown(item.type)} | ${markdown(item.collectedAt)} | ${markdown(item.reference)} | ${markdown(item.digest)} | ${markdown(item.summary)} | ${markdown(item.origin)} |`);
 			}
 			lines.push('');
 		}
 
-		const evidenceRequests = [...blocked, ...notAssessed].filter(result => result.evidenceCoverage?.missing?.length);
-		if (evidenceRequests.length > 0) {
-			lines.push('## Reviewer evidence request register', '', '| Control | Priority | State | Required evidence not yet satisfied |', '|---|---|---|---|');
-			for (const result of evidenceRequests) {
-				lines.push(`| ${markdown(result.controlId)} — ${markdown(result.title)} | ${markdown(result.severity)}${result.mandatory ? ' · mandatory' : ''} | ${markdown(result.status)} | ${result.evidenceCoverage.missing.map(markdown).join(', ')} |`);
+		if (reportModel.evidenceRequests.length > 0) {
+			lines.push('## Reviewer evidence request register', '', 'Browser rows need further verified testing. Reviewer rows need release-specific artifacts supplied through human evidence review; browser samples cannot replace those documents.', '', '| Control | Evidence owner | Requirement | Type / minimum | What to provide |', '|---|---|---|---|---|');
+			for (const request of reportModel.evidenceRequests) {
+				lines.push(`| ${markdown(request.controlId)} | ${markdown(request.owner)} | ${markdown(request.id)} | ${markdown(request.type)} / ${markdown(request.minimum)} | ${markdown(request.description)} |`);
 			}
 			lines.push('');
 		}

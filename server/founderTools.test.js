@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createFounderState, FOUNDER_CATEGORY_IDS, recordFounderPublicOnlyDecision } from './founderService.js';
 import { createFounderTools, founderFinishReadiness, founderReportToolSchema } from './founderTools.js';
+import { founderDraftProgress } from './founderReportDraft.js';
 
 const now = Date.parse('2026-08-18T00:00:00.000Z');
 
@@ -29,6 +30,28 @@ test('Founder tools expose bounded observation and complete strategy schemas', (
 	assert.deepEqual(tools[0].parametersSchema.properties.observations.items.properties.category.enum, FOUNDER_CATEGORY_IDS);
 	assert.ok(founderReportToolSchema().required.includes('monetization'));
 	assert.ok(founderReportToolSchema().properties.icp.required.includes('evidence_observation_ids'));
+});
+
+test('configured observations expose and enforce concise bounds without changing legacy input contracts',async()=>{
+ const legacy=session();assert.equal(createFounderTools(legacy,{async commit(){}})[0].parametersSchema.properties.summary.maxLength,undefined);
+ const candidate=session();candidate.founder.reportGeneration={version:1,protocol:'section-draft-v1',evidenceHashVersion:1};let writes=0;
+ const tool=createFounderTools(candidate,{async commit(){writes++;}})[0];assert.equal(tool.parametersSchema.properties.observations.items.properties.summary.maxLength,600);
+ const result=await tool.run({observations:[{category:'product_clarity',type:'opportunity',title:'Observed task entry',summary:'x'.repeat(601),confidence:'medium'}]});
+ assert.equal(result.success,false);assert.match(result.error,/600/);assert.equal(writes,0);assert.equal(candidate.founder.observations.length,0);
+});
+
+test('a running report batch can save its sections, while a concurrent browser action still blocks drafting',async()=>{
+ const candidate=session();candidate.status='running';candidate.founder.reportGeneration={version:1,protocol:'section-draft-v1',evidenceHashVersion:1,sectionBatchSize:3};
+ candidate.founder.scope.productContext={stage:'MVP',targetCustomer:'Small teams',businessModel:'Hypothesis',primaryGoal:'Task practice'};
+ candidate.founder.observations=FOUNDER_CATEGORY_IDS.map((category,index)=>({id:`obs-${index}`,category,title:category,summary:'Observed fixture.',confidence:'medium',evidence:['open','snap','diag'].map(activityId=>({activityId}))}));
+ candidate.activities.push({id:'batch',toolName:'draft_founder_report_batch',status:'running',ts:Date.now()});
+ const batch=createFounderTools(candidate,{async commit(){}},{stagedReport:true}).find(t=>t.name==='draft_founder_report_batch');assert.ok(batch);
+ const proof={evidence_observation_ids:['obs-0'],assumptions:[]};
+ const result=await batch.run({expected_revision:'initial',sections:{executive_summary:'Observed fixture; business outcomes are unmeasured.',icp:{primary:'Team hypothesis',users:['Members'],buyers:['Leads'],jobs:['Practice'],pains:['Unclear tasks'],...proof},positioning:{category:'Task practice',one_liner:'Practice tasks.',value_proposition:'Clearer tasks.',differentiators:['Local practice'],alternatives:['Notes'],...proof}}});
+ assert.equal(result.success,true,result.error);assert.equal(founderDraftProgress(candidate).completed.length,3);assert.equal(candidate.founder.finalizedAt,undefined);
+ const revision=candidate.founder.reportDraft.revision;candidate.activities.push({id:'active',toolName:'browser_click',status:'running',ts:Date.now()});
+ const blocked=await createFounderTools(candidate,{async commit(){}},{stagedReport:true}).find(t=>t.name==='draft_founder_report_section').run({section:'monetization',value:{model:'Hypothesis',value_metric:'Practicing teams',packages:['Pilot'],pricing_presentation:'Pilot scope',next_tests:['Interview users'],...proof}});
+ assert.equal(blocked.success,false);assert.match(blocked.error,/prerequisites/);assert.equal(candidate.founder.reportDraft.revision,revision);
 });
 
 test('Founder finalization readiness requires category, workflow, diagnostics, context, and auth decisions', () => {

@@ -84,6 +84,7 @@ function summary(session) {
 		findingCount: session.findings.length,
 		messageCount: session.messages.length,
 		...(session.report?.verdict ? { reportVerdict: session.report.verdict } : {}),
+		...(session.mode === 'sqa' && session.sqa?.assessment?.verdict ? { sqaVerdict: session.sqa.assessment.verdict } : {}),
 		tokenUsage: session.tokenUsage
 	};
 }
@@ -380,6 +381,7 @@ export function createPostgresApplicationServices({
 			}));
 			if (!deleted) return false;
 			const record = live.get(id);
+			if (record) record.userStopRequested = true;
 			record?.controller?.abort();
 			record?.dispose?.();
 			live.delete(id);
@@ -418,6 +420,10 @@ export function createPostgresApplicationServices({
 				throw new TypeError('Founder project state persistence is not supported by this repository.');
 			}
 			return repository.saveFounderProjectState(state);
+		},
+		async updateFounderProjectState(work) {
+			if (!repository.updateFounderProjectState) throw new TypeError('Atomic Founder persistence is unavailable.');
+			return repository.updateFounderProjectState(work);
 		},
 		commit,
 		async addMessage(session, message) {

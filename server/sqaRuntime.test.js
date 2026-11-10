@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { preflightSqaRuntime } from './sqaRuntime.js';
+import { preflightSqaRuntime, preflightFounderRuntime } from './sqaRuntime.js';
 
 test('SQA preflight detects the selected Safari engine before creating a run', async () => {
   let checked;
@@ -32,4 +32,10 @@ test('an available branded binary does not depend on the bundled Chromium instal
     executionResolver: async () => ({ mode: 'emulated', executionEngine: 'chromium', brandedExecutablePath: 'chrome.exe' }),
     engineResolver: async () => { throw new Error('must not require a separate bundle'); }
   }), 'chromium');
+});
+
+test('Founder preflight retains the selected engine and reports an unavailable device before launch',async()=>{
+  const dependencies={executionResolver:async()=>({mode:'emulated',executionEngine:'firefox'}),engineResolver:async()=>({available:true})};
+  assert.equal(await preflightFounderRuntime({},dependencies),'firefox');
+  await assert.rejects(preflightFounderRuntime({}, {...dependencies,engineResolver:async()=>({available:false,reason:'Firefox is not installed.'})}),error=>error.status===422&&/Founder cannot start.*firefox/.test(error.message));
 });

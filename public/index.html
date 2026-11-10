@@ -9,17 +9,19 @@
 <title>QASE — Autonomous quality assurance</title>
 <script src="theme.js?v=20261015-11"></script>
 <script src="studioMode.js?v=20261014-6"></script>
-<link rel="stylesheet" href="styles.css?v=20261015-15">
+<link rel="stylesheet" href="styles.css?v=20261110-1">
 <link rel="stylesheet" href="bugsView.css?v=20261014-6">
 <link rel="stylesheet" href="studio-workspace.css?v=20261015-6">
-<link rel="stylesheet" href="studio-embed.css?v=20261015-7">
+<link rel="stylesheet" href="studio-embed.css?v=20261108-2">
 <link rel="stylesheet" href="journey.css?v=20261015-4">
 <link rel="stylesheet" href="matrixPicker.css?v=20261016-3">
 <link rel="stylesheet" href="resultsPage.css?v=20261015-8">
 <link rel="stylesheet" href="brand.css?v=20261027-1">
 <link rel="stylesheet" href="runCard.css?v=20261015-17">
-<link rel="stylesheet" href="auth.css?v=20261015-14">
+<link rel="stylesheet" href="auth.css?v=20261109-1">
 <link rel="stylesheet" href="runStartup.css?v=20261016-1">
+<link rel="stylesheet" href="founderReader.css?v=20261108-2">
+<link rel="stylesheet" href="reportReadability.css?v=20261109-1">
 <link rel="icon" type="image/svg+xml" href="qase-mark.svg">
 </head>
 <body class="cli-theme studio-workspace" data-has-run="false">
@@ -59,6 +61,7 @@
       <div class="auth-password-actions"><label class="auth-show"><input id="auth-show-password" type="checkbox"> Show password</label><button class="auth-recovery-link" id="auth-forgot-switch" type="button">Recover account</button></div>
       <p class="auth-hint" id="auth-password-hint" hidden>Use at least 8 characters.</p>
       <p class="auth-error" id="auth-error" role="alert" hidden></p>
+      <p class="auth-notice" id="auth-notice" role="status" aria-live="polite" aria-atomic="true" hidden></p>
       <button class="btn btn-primary auth-submit" id="auth-submit" type="submit">Sign in</button>
     </form>
     <div class="auth-account-switch"><span id="auth-switch-context">New to QASE?</span><button class="auth-switch" id="auth-switch" type="button">Create an account</button></div>
@@ -293,7 +296,7 @@
          Collapsible: toggle keeps the token row visible and swaps the detail for a
          compact one-line mirror (see #run-summary-mini). -->
     <section class="run-summary" id="run-summary" aria-label="Run summary" hidden>
-      <div class="journey-run-guide" id="journey-run-guide" hidden><div><strong id="journey-run-title"></strong><p id="journey-run-description"></p></div><button type="button" class="btn btn-ghost btn-sm" id="journey-run-action"></button></div>
+      <div class="journey-run-guide" id="journey-run-guide" hidden><div><strong id="journey-run-title"></strong><p id="journey-run-description"></p></div><button type="button" class="btn btn-ghost btn-sm" id="journey-run-action"></button><button type="button" class="btn btn-ghost btn-sm" id="journey-run-fresh-test" hidden>Set up a fresh test</button></div>
       <div class="run-summary-mini" id="run-summary-mini" hidden>
         <span class="mini-tokens" id="mini-tokens"></span>
         <span class="mini-status" id="mini-status"></span>
@@ -506,7 +509,7 @@
       <section class="tab-pane" id="pane-bugs" data-pane="bugs" role="tabpanel" aria-label="Bugs"><div class="feed" id="bugs-list" role="list"><div class="feed-empty">No bugs detected yet — use Report bug on a run with findings.</div></div></section>
       <section class="tab-pane" id="pane-report" data-pane="report" role="tabpanel" aria-labelledby="tab-report"><div class="feed" id="report-view"></div></section>
       <section class="tab-pane" id="pane-sqa" data-pane="sqa" role="tabpanel" aria-labelledby="tab-sqa"><div class="feed sqa-view" id="sqa-view" aria-live="polite"></div></section>
-      <section class="tab-pane" id="pane-founder" data-pane="founder" role="tabpanel" aria-labelledby="tab-founder"><div class="feed founder-view" id="founder-view" aria-live="polite"></div></section>
+      <section class="tab-pane" id="pane-founder" data-pane="founder" role="tabpanel" aria-labelledby="tab-founder"><section id="founder-progress" hidden></section><div class="feed founder-view" id="founder-view"></div></section>
     </div>
 
   </aside>
@@ -842,7 +845,7 @@
         <select id="cfg-model" aria-describedby="cfg-model-note">
           <option value="">Loading available models…</option>
         </select>
-        <input id="cfg-model-custom" autocomplete="off" spellcheck="false" placeholder="Enter the exact model ID" hidden>
+        <input id="cfg-model-custom" name="customModel" aria-label="Custom model ID" aria-describedby="cfg-model-note" autocomplete="off" spellcheck="false" placeholder="Enter the exact model ID" hidden>
         <small id="cfg-model-note">Models are provided and managed by Qase.</small>
       </label>
 
@@ -930,6 +933,7 @@
           <button type="button" class="link-btn" id="qa-demo-fill">Try the demo site</button></small>
       </label>
       <label class="field journey-goal"><span>Anything you’d like Qase to focus on? <small>Optional</small></span><textarea id="qa-goal" rows="3" maxlength="2000" placeholder="For example: check sign-in, project creation, and the mobile navigation."></textarea><small>Describe the workflow or concern. Provide sign-in credentials only when the agent asks.</small></label>
+      <label class="field qa-write-permission"><span><input id="qa-allow-test-writes" type="checkbox"> Allow test data writes</span><small>For an isolated test account: Qase may submit clearly marked test records. Records may persist. Account changes, payments, messages and destructive actions remain excluded. Read-only tests need no extra confirmation.</small></label>
       </section>
       <section class="journey-step" data-journey-panel="1" aria-labelledby="journey-coverage-title" hidden>
       <p class="journey-eyebrow">STEP 02 / YOUR TEST PLAN</p>
@@ -1099,7 +1103,7 @@
         <p class="journey-eyebrow">STEP 03 / READY WHEN YOU ARE</p>
         <h2 id="journey-review-title" tabindex="-1">Here’s your test run.</h2>
         <p class="journey-lead">Check the details, then let Qase take it from here.</p>
-        <div class="journey-review-card"><div class="journey-review-target"><span class="journey-site-icon" aria-hidden="true">↗</span><div><small>Website</small><strong id="journey-review-url"></strong></div><button type="button" class="link-btn" data-journey-edit="0">Edit</button></div><dl><div><dt>Checks selected</dt><dd id="journey-review-checks">—</dd></div><div><dt>Test environment</dt><dd id="journey-review-devices">—</dd></div><div><dt>Qase-provided model</dt><dd id="journey-review-model">—</dd></div><div id="journey-review-goal-row" hidden><dt>Your focus</dt><dd id="journey-review-goal"></dd></div></dl><button type="button" class="link-btn" data-journey-edit="1">Edit checks and environment</button></div>
+        <div class="journey-review-card"><div class="journey-review-target"><span class="journey-site-icon" aria-hidden="true">↗</span><div><small>Website</small><strong id="journey-review-url"></strong></div><button type="button" class="link-btn" data-journey-edit="0">Edit</button></div><dl><div><dt>Checks selected</dt><dd id="journey-review-checks">—</dd></div><div><dt>Browser configurations</dt><dd id="journey-review-devices">—</dd></div><div><dt>Qase-provided model</dt><dd id="journey-review-model">—</dd></div><div><dt>Test access</dt><dd id="journey-review-access"></dd></div><div id="journey-review-goal-row" hidden><dt>Your focus</dt><dd id="journey-review-goal"></dd></div></dl><button type="button" class="link-btn" data-journey-edit="1">Edit coverage and devices</button></div>
         <p class="journey-volume-note" id="journey-volume-note" hidden></p>
         <div class="journey-next"><strong>What happens next</strong><ol><li>Qase opens your website in a real browser.</li><li>Follow progress live. Answer any sign-in or workflow questions.</li><li>Review findings, evidence, and the final report when the run finishes.</li></ol></div>
       </section>
@@ -1177,6 +1181,8 @@
         <h3>Recommended quality review</h3>
         <p>Qase includes the universal product-quality baseline and uses evidence it can observe directly.</p>
         <p class="sqa-selection-summary" id="sqa-selection-summary" role="status" aria-live="polite">Loading the recommended scope…</p>
+        <p class="sqa-scope-warning" id="sqa-scope-warning" role="alert" hidden></p>
+        <ul class="sqa-selection-reasons" id="sqa-selection-reasons" aria-label="Why these controls are selected"></ul>
         <details class="sqa-boundary">
           <summary>About this review</summary>
           <p id="sqa-catalog-disclaimer">This is readiness guidance, not certification or regulatory approval.</p>
@@ -1184,7 +1190,10 @@
         <span class="sqa-catalog-meta" id="sqa-catalog-version" aria-live="polite"></span>
       </div>
 
-      <div class="sqa-catalog-state" id="sqa-catalog-state" role="status" aria-live="polite">Loading assessment catalog…</div>
+      <div class="sqa-catalog-state" id="sqa-catalog-state" role="status" aria-live="polite">
+        <span id="sqa-catalog-message">Loading assessment catalog…</span>
+        <button class="btn btn-ghost btn-sm" type="button" id="sqa-catalog-retry" hidden>Retry catalog</button>
+      </div>
 
       <fieldset class="sqa-fieldset sqa-target-primary">
         <legend>Product to review</legend>
@@ -1193,6 +1202,22 @@
           <input id="sqa-target-url" name="targetUrl" type="url" required maxlength="2048" inputmode="url" autocomplete="url" placeholder="https://staging.example.com…">
           <small>Qase opens this URL and starts the recommended review.</small>
         </label>
+        <div class="field-row sqa-field-row sqa-build-fields">
+          <label class="field">
+            <span>Product name <small>(optional)</small></span>
+            <input id="sqa-target-name" name="targetName" maxlength="200" autocomplete="off" placeholder="Customer portal…">
+          </label>
+          <label class="field">
+            <span>Release or build identifier</span>
+            <input id="sqa-target-release" name="targetRelease" required maxlength="200" autocomplete="off" placeholder="2026.11.2+abc123">
+            <small>Use the deployed version, commit, or immutable build ID.</small>
+          </label>
+          <label class="field">
+            <span>Environment</span>
+            <input id="sqa-target-environment" name="targetEnvironment" required maxlength="100" autocomplete="off" placeholder="Local, staging, or production">
+            <small>Name the environment represented by the target URL.</small>
+          </label>
+        </div>
       </fieldset>
 
       <label class="check sqa-authorization">
@@ -1216,24 +1241,11 @@
           </fieldset>
 
           <fieldset class="sqa-fieldset sqa-target-fields">
-            <legend>Review details</legend>
-            <div class="field-row sqa-field-row">
-              <label class="field">
-                <span>Product name <small>(optional)</small></span>
-                <input id="sqa-target-name" name="targetName" maxlength="200" autocomplete="off" placeholder="Customer portal…">
-              </label>
-              <label class="field">
-                <span>Release <small>(optional)</small></span>
-                <input id="sqa-target-release" name="targetRelease" maxlength="200" autocomplete="off" placeholder="Current…">
-              </label>
-              <label class="field">
-                <span>Environment <small>(optional)</small></span>
-                <input id="sqa-target-environment" name="targetEnvironment" maxlength="100" autocomplete="off" placeholder="Preview…">
-              </label>
-            </div>
+            <legend>Review notes</legend>
             <label class="field">
-              <span>Scope notes <small>(optional)</small></span>
+              <span>Scope notes <small>(optional for the recommended scope)</small></span>
               <textarea id="sqa-scope-notes" name="scopeNotes" rows="3" maxlength="4000" placeholder="In-scope workflows, exclusions, assumptions, and evidence locations…"></textarea>
+              <small>Required when additional profiles or product characteristics expand the recommended review.</small>
             </label>
           </fieldset>
 
@@ -1244,6 +1256,10 @@
           </aside>
         </div>
       </details>
+      <label class="check sqa-expanded-confirmation" id="sqa-expanded-confirmation" hidden>
+        <input id="sqa-expanded-scope" type="checkbox">
+        <span>I confirmed that the expanded scope applies to this product.<small>The added standards profiles and product characteristics will create additional evidence requirements.</small></span>
+      </label>
       <fieldset class="qa-device-fieldset sqa-device-fieldset test-on-fieldset">
         <legend>TEST ON</legend>
         <div class="test-on-summary" id="sqa-test-on" data-empty="true">
@@ -1263,8 +1279,9 @@
     </div>
 
     <footer class="modal-foot">
+      <p class="sqa-launch-status" id="sqa-launch-status" role="status" aria-live="polite"></p>
       <button class="btn btn-ghost" type="button" id="sqa-cancel">Cancel</button>
-      <button class="btn btn-primary" type="submit" id="sqa-submit" disabled>Start quality review</button>
+      <button class="btn btn-primary" type="submit" id="sqa-submit" aria-describedby="sqa-launch-status sqa-form-error" disabled>Start quality review</button>
     </footer>
   </form>
 </dialog>
@@ -1291,7 +1308,7 @@
         </div>
       </aside>
 
-      <div class="founder-detected-context" id="founder-detected-context" hidden></div>
+      <div class="founder-detected-context" id="founder-detected-context" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
       <fieldset class="founder-fieldset founder-target-primary">
         <legend>Product to review</legend>
@@ -1299,6 +1316,50 @@
           <span>Target URL</span>
           <input id="founder-target-url" name="targetUrl" type="url" required maxlength="8192" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://product.example.com…">
           <small>Qase uses the current Studio project when it is available.</small>
+        </label>
+      </fieldset>
+
+      <fieldset class="founder-fieldset">
+        <legend>Review scope</legend>
+        <label class="field">
+          <span>Which pages should Qase review?</span>
+          <select id="founder-access" name="accessDecision" aria-describedby="founder-access-help">
+            <option value="public_only">Public pages only</option>
+            <option value="authenticated">Public pages and signed-in product</option>
+          </select>
+          <small id="founder-access-help">Signed-in pages are excluded. Qase will record that boundary and continue without asking for credentials.</small>
+        </label>
+      </fieldset>
+
+      <fieldset class="founder-fieldset">
+        <legend>Business context</legend>
+        <label class="field">
+          <span>How should Qase use business context?</span>
+          <select id="founder-context-mode" name="contextMode" aria-describedby="founder-context-help">
+            <option value="assumptions">Use visible evidence and label assumptions</option>
+            <option value="provided">I will supply the business context</option>
+          </select>
+          <small id="founder-context-help">Unknown customers, stage and business model remain explicit assumptions in the report.</small>
+        </label>
+        <div id="founder-business-fields" hidden>
+          <div class="field-row founder-context-row">
+            <label class="field">
+              <span>Product stage</span>
+              <input id="founder-stage" name="stage" maxlength="200" autocomplete="off" placeholder="MVP, beta, or established product">
+            </label>
+            <label class="field">
+              <span>Business model</span>
+              <input id="founder-business-model" name="businessModel" maxlength="500" autocomplete="off" placeholder="Subscription, marketplace, or internal tool">
+            </label>
+          </div>
+          <label class="field">
+            <span>Target customer</span>
+            <textarea id="founder-target-customer" name="targetCustomer" rows="2" maxlength="1000" placeholder="Who uses and buys the product?"></textarea>
+          </label>
+        </div>
+        <label class="field">
+          <span>Primary goal <small id="founder-goal-optional">(optional)</small></span>
+          <textarea id="founder-primary-goal" name="primaryGoal" rows="2" maxlength="1000" placeholder="The outcome this review should focus on"></textarea>
         </label>
       </fieldset>
 
@@ -1329,11 +1390,7 @@
           </fieldset>
 
           <fieldset class="founder-fieldset">
-            <legend>Business Context <small class="founder-context-note">optional</small></legend>
-            <label class="field">
-              <span>Primary goal</span>
-              <textarea id="founder-primary-goal" name="primaryGoal" rows="2" maxlength="1000" placeholder="The outcome this review should optimize for…"></textarea>
-            </label>
+            <legend>Additional context <small class="founder-context-note">optional</small></legend>
             <label class="field">
               <span>Constraints</span>
               <textarea id="founder-constraints" name="constraints" rows="3" maxlength="2000" placeholder="Team, runway, compliance, or launch constraints…"></textarea>
@@ -1359,7 +1416,8 @@
       <div class="test-result" id="founder-form-error" role="alert" aria-live="assertive"></div>
     </div>
 
-    <footer class="modal-foot">
+    <footer class="modal-foot founder-modal-foot">
+      <p id="founder-launch-status" class="founder-launch-status" role="status" aria-live="polite">Complete the review setup to start.</p>
       <button class="btn btn-ghost" type="button" id="founder-cancel">Cancel</button>
       <button class="btn btn-primary founder-submit" type="submit" id="founder-submit">Start Product Review</button>
     </footer>
@@ -1596,12 +1654,10 @@
       <div class="mx-shell">
         <nav class="mx-sidebar" id="mx-sidebar" aria-label="Device categories"></nav>
         <div class="mx-main">
-          <!-- Matrix top bar (M4 #14423): target URL + refresh, bound to the
-               REAL run state — no decorative chrome. Refresh pre-fills the QA
-               launcher with the current target and reloads live picker data. -->
+          <!-- The target field belongs to QA. SQA keeps its target on the review form. -->
           <div class="mx-topbar">
             <button type="button" class="mx-sidebar-toggle" id="mx-sidebar-toggle" aria-expanded="true" aria-controls="mx-sidebar" title="Show or hide the device categories">▾ Categories</button>
-            <label class="mx-topbar-url">
+            <label class="mx-topbar-url" id="mx-target-field">
               <span class="sr-only" id="mx-url-label">Target URL</span>
               <input id="mx-target-url" type="url" maxlength="2048" placeholder="https://example.com — target for the next run" aria-labelledby="mx-url-label">
             </label>
@@ -1614,6 +1670,9 @@
       </div>
       <p id="dp-summary" class="dp-summary" data-empty="true">SELECT A DEVICE</p>
     </div>
+    <footer class="modal-foot" id="dp-sqa-actions" hidden>
+      <button type="button" class="btn btn-primary" id="dp-sqa-continue">Continue to quality review</button>
+    </footer>
   </div>
 </dialog>
 
@@ -1708,6 +1767,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261027-7" type="module"></script>
+<script src="app.js?v=20261110-1" type="module"></script>
 </body>
 </html>

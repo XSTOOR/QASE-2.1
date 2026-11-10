@@ -4,13 +4,18 @@
  */
 export function runPresentationStatus(session) {
 	const status = String(session?.status ?? '').toLowerCase();
-	const verdict = String(session?.report?.verdict ?? session?.reportVerdict ?? '').toLowerCase();
+	const verdict = String(session?.mode === 'sqa'
+		? session.sqa?.assessment?.verdict ?? session.sqaVerdict ?? session.reportVerdict ?? ''
+		: session?.report?.verdict ?? session?.reportVerdict ?? '').toLowerCase();
+	if (status === 'done' && session?.mode === 'sqa' && verdict === 'fail') return 'failed';
+	if (status === 'done' && (session.coverageIncomplete || session?.qaExecutionMode === 'hybrid' && session.report?.notCovered?.length)) return verdict === 'blocked' ? 'blocked' : 'partial';
 	return status === 'done' && ['blocked', 'partial'].includes(verdict) ? verdict : status;
 }
 
 export function runPresentationLabel(session) {
 	const status = runPresentationStatus(session);
 	if (status === 'blocked') return 'Blocked';
+	if (status === 'failed') return 'Failed';
 	if (status === 'partial') return 'Completed with gaps';
 	if (status === 'done') return 'Complete';
 	if (status === 'running') return 'Running';
@@ -30,6 +35,7 @@ export function preferredResultTab(session, { sqaVisible = false, founderVisible
 
 export function blockedRunReason(session) {
 	if (runPresentationStatus(session) !== 'blocked') return '';
+	if (session?.mode === 'sqa') return 'The quality assessment has unresolved controls. Review their missing evidence and any recorded execution limits in the quality report.';
 	const gaps = session?.report?.notCovered;
 	// Integrity failures are concrete global blockers. Optional skipped checks
 	// (e.g. credentials or absent search) must not hide the actual reason.

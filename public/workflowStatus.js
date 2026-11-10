@@ -1,10 +1,21 @@
 import { runPresentationStatus } from './runPresentation.js';
 
 /** Guidance derived from actual run state, never elapsed-time guesses. */
-export function workflowStatus(session) {
+export function workflowStatus(session, connection) {
 	const status = runPresentationStatus(session);
+	if (status === 'running' && ['reconnecting', 'syncing'].includes(connection)) return { tone: 'attention', title: 'Reconnecting to your run', description: 'The server connection was interrupted. The preview and progress shown are the last received state. Qase will check saved progress when the connection returns.', action: 'View saved progress', destination: 'progress' };
+	if(session?.mode==='founder'&&session.founderProgress?.version===1&&!session.founderProgress.finalized){
+		const progress=session.founderProgress;
+		if(progress.status==='waiting')return {tone:'attention',title:progress.title,description:progress.detail,action:'Answer question',destination:'question',resumeBlocked:progress.recovery.reason};
+		if(progress.busy)return {hidden:status==='running',tone:'running',title:progress.title,description:progress.detail,action:'View saved progress',destination:'progress',resumeBlocked:'The review is already running or resuming.'};
+		if(progress.pause)return {tone:'attention',title:progress.title,description:progress.detail,action:'View review progress',destination:'founder',resumeBlocked:progress.recovery.reason};
+		if(progress.recovery.available)return {tone:'attention',title:progress.title,description:progress.detail,action:'View review progress',destination:'founder'};
+	}
 	if (session?.pendingQuestion || status === 'awaiting_input') return { tone: 'attention', title: 'Qase needs your input', description: 'Answer the question below so testing can continue.', action: 'Answer question', destination: 'question' };
-	if (status === 'blocked') return { tone: 'attention', title: 'Testing needs a prerequisite', description: 'Open the report to see what prevented testing and what to provide next.', action: 'Review blocker', destination: 'results' };
+	if (status === 'failed') return { tone: 'attention', title: 'Quality review found failed controls', description: 'Review the failed controls, their supporting evidence and any remaining coverage gaps in the quality report.', action: 'Review quality report', destination: 'results' };
+	if (status === 'blocked') return session?.mode === 'sqa'
+		? { tone: 'attention', title: 'Quality review has unresolved controls', description: 'Review the quality report for missing evidence and any recorded execution limits. Completed technical checks remain available.', action: 'Review quality report', destination: 'results' }
+		: { tone: 'attention', title: 'Testing needs a prerequisite', description: 'Open the report to see what prevented testing and what to provide next.', action: 'Review blocker', destination: 'results' };
 	if (status === 'partial') return { tone: 'attention', title: 'Testing completed with coverage gaps', description: session?.qaExecutionMode === 'hybrid' && session.hybrid?.budgetFinalizing
 		? 'This run finished with its approved budget. Review the saved evidence and untested areas. Start a new test for remaining scope; continuing this closed run cannot reopen exploration.'
 		: 'The browser sample finished. Review what was exercised and what remains untested; this is not a full-workflow pass.', action: 'Review coverage', destination: 'results' };
@@ -15,7 +26,7 @@ export function workflowStatus(session) {
 		const hybrid = session?.mode === 'qa' && session.qaExecutionMode === 'hybrid' ? session.hybrid : null;
 		if (hybrid?.recovery?.resumeBlockedReason === 'usage_unverified' || (hybrid && /HYBRID_USAGE_UNRESOLVED|unverified prior usage receipt|usage must be reconciled|usage receipt.*reconcil/i.test(`${hybrid.pauseReason || ''} ${session.statusDetail || ''}`))) {
 			const resumeBlocked = 'A provider usage receipt is missing. Usage reconciliation is required before this run can resume.';
-			return { tone: 'attention', title: 'Progress saved · usage review needed', description: 'The model gateway did not return a verifiable usage receipt. Your collected evidence is preserved. This run needs provider usage reconciliation; repeatedly pressing Resume will not resolve it.', action: 'View saved progress', destination: 'progress', resumeBlocked };
+			return { tone: 'attention', title: 'Progress saved · usage review needed', description: 'A model request has no saved, verifiable usage receipt. This can happen if the server stops before the receipt is saved. Your evidence is preserved; this run needs provider usage reconciliation before it can resume. You can open a fresh test setup for the same website. It will not replay this run or copy its credentials or results.', action: 'View saved progress', destination: 'progress', resumeBlocked, freshTest: true };
 		}
 		if (hybrid && (hybrid.recovery?.resumeBlockedReason === 'budget_reached' || /HYBRID_MODEL_BUDGET|HYBRID_TIME_BUDGET|budget exhausted|exceeded.*budget/i.test(`${hybrid.pauseReason || ''} ${session.statusDetail || ''}`))) return {
 			tone: 'attention', title: 'Progress saved · budget reached', description: 'This run reached its approved execution budget. Review the saved evidence and remaining scope before starting a new test with an approved budget.', action: 'View saved progress', destination: 'progress', resumeBlocked: 'This run has reached its approved budget.'

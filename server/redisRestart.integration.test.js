@@ -1,0 +1,41 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import net from 'node:net';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {randomUUID} from 'node:crypto';
+import {createClient} from 'redis';
+import {createRedisEventTransport} from './redisEvents.js';
+
+test('disposable Redis restart fails readiness promptly and restores tenant-scoped event delivery',{skip:!process.env.QASE_TEST_REDIS_SERVER,timeout:20000},async t=>{
+ const binary=path.resolve(process.env.QASE_TEST_REDIS_SERVER);
+ assert.equal(fs.statSync(binary).isFile(),true);
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'qase-redis-restart-'));
+ const probe=net.createServer();probe.listen(0,'127.0.0.1');await once(probe,'listening');const port=probe.address().port;await new Promise(r=>probe.close(r));
+ let server;const start=async()=>{
+  server=spawn(binary,['--bind','127.0.0.1','--port',String(port),'--save','','--appendonly','no','--dir',root],{stdio:['ignore','pipe','pipe']});
+  server.stderr.resume();await new Promise((resolve,reject)=>{server.once('error',reject);server.stdout.on('data',chunk=>{if(String(chunk).includes('Ready to accept connections'))resolve();});});
+ };
+ const stop=async()=>{if(server&&server.exitCode===null){const exited=once(server,'exit');server.kill('SIGTERM');await exited;}};
+ const transports=[],clients=[];t.after(async()=>{for(const client of clients)if(client.isOpen)client.destroy();await Promise.allSettled(transports.map(x=>x.close()));await stop();fs.rmSync(root,{recursive:true,force:true});});
+ await start();
+ const tenant={organizationId:randomUUID(),projectId:randomUUID()};
+ const transport=(scope=tenant)=>{const publisher=createClient({url:`redis://127.0.0.1:${port}`,socket:{reconnectStrategy:()=>30}}),subscriber=publisher.duplicate();clients.push(publisher,subscriber);const value=createRedisEventTransport({tenantContext:scope,url:`redis://127.0.0.1:${port}`,publisher,subscriber});transports.push(value);return value;};
+ const sender=transport(),receiver=transport(),outsider=transport({...tenant,projectId:randomUUID()});
+ await Promise.all(transports.map(x=>x.load()));const id=randomUUID(),received=[],other=[];
+ await receiver.subscribe(id,e=>received.push(e));await outsider.subscribe(id,e=>other.push(e));
+ const wait=async predicate=>{const until=Date.now()+5000;while(!await predicate()){assert.ok(Date.now()<until,'Redis recovery deadline');await new Promise(r=>setTimeout(r,10));}};
+ sender.publish({sessionId:id,type:'status',status:'running'});await wait(()=>received.length===1);
+ await stop();
+ const began=Date.now();
+ const readiness=await Promise.race([receiver.check(),new Promise(resolve=>setTimeout(()=>resolve('hung'),700))]);
+ assert.equal(readiness,false,'Offline readiness must not wait indefinitely in the Redis command queue.');
+ assert.ok(Date.now()-began<700);
+ await start();
+ await wait(async()=>(await Promise.all(transports.map(x=>x.check()))).every(Boolean));
+ sender.publish({sessionId:id,type:'status',status:'interrupted'});await wait(()=>received.some(e=>e.status==='interrupted'));
+ assert.equal(other.length,0);assert.equal(await receiver.check(),true);
+});

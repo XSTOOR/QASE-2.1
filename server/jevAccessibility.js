@@ -4,8 +4,10 @@
 const bounded = value => String(value ?? '').slice(0, 1500);
 
 function observeNaming() {
+  const modal=document.querySelector('dialog:modal');
   const normalize = value => String(value ?? '').replace(/\s+/g, ' ').trim();
   const hidden = element => {
+    if(modal&&!modal.contains(element))return true;
     if (!element.getClientRects().length) return true;
     for (let node = element; node instanceof Element; node = node.parentElement) {
       const style = getComputedStyle(node);

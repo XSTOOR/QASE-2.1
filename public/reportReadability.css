@@ -1,0 +1,87 @@
+/* Shared report type scale. Scope overrides to report surfaces, after brand CSS. */
+body.studio-workspace :is(#sqa-view, #founder-view, #report-view) {
+  --report-body-size: 14px;
+  --report-meta-size: 12px;
+  font-size: var(--report-body-size);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+body.studio-workspace :is(#sqa-view, #report-view) :is(
+  .sqa-notice p, .sqa-verdict p, .sqa-section header p, .sqa-scope-grid,
+  .sqa-scope-notes, .sqa-technical-summary p, .sqa-gate p, .sqa-unresolved p,
+  .sqa-unresolved-group-description, .sqa-control-body, .sqa-control-body p,
+  .sqa-control summary > span:nth-child(2), .sqa-source-card p, .sqa-section-empty,
+  .sqa-pending p
+) {
+  font-size: var(--report-body-size);
+  line-height: 1.65;
+}
+
+body.studio-workspace :is(#sqa-view, #report-view) :is(
+  .sqa-eyebrow, .sqa-assessment-id, .sqa-metric > div, .sqa-technical-counts dt,
+  .sqa-control summary code, .sqa-control-meta, .sqa-source-tags code,
+  .sqa-source-title, .sqa-status
+) {
+  font-size: var(--report-meta-size);
+  line-height: 1.5;
+}
+
+body.studio-workspace :is(#sqa-view, #report-view) :is(.sqa-section h3, .sqa-notice strong) { font-size: 18px; }
+body.studio-workspace :is(#sqa-view, #report-view) :is(.sqa-unresolved-group > h4, .sqa-control-body h4, .sqa-gate strong, .sqa-unresolved strong, .sqa-pending strong) { font-size: 15px; }
+body.studio-workspace :is(#sqa-view, #report-view) .sqa-technical-counts dd { font-size: 18px; }
+
+body.studio-workspace :is(#founder-view, #report-view) :is(
+  .founder-copy, .founder-card p, .founder-priority p, .founder-roadmap-item p,
+  .founder-list, .founder-assumption-list, .founder-scope strong, .founder-evidence-grid dd
+) {
+  font-size: var(--report-body-size);
+  line-height: 1.65;
+}
+
+body.studio-workspace :is(#founder-view, #report-view) :is(
+  .founder-hero p, .founder-section > header p, .founder-scope span,
+  .founder-evidence-grid dt, .founder-evidence-note, .founder-card-meta,
+  .founder-score, .founder-confidence, .founder-select-hint,
+  .founder-inline-assumptions, .founder-report-navigation label,
+  .founder-evidence-link, .founder-status
+) {
+  font-size: var(--report-meta-size);
+  line-height: 1.6;
+}
+
+body.studio-workspace :is(#founder-view, #report-view) .founder-hero h2 { font-size: 20px; line-height: 1.35; }
+
+/* Status badges may wrap below their tab label on narrow screens. */
+body.studio-workspace[data-page="results"] .viewer { grid-template-rows: auto auto minmax(0, 1fr); }
+body.studio-workspace[data-page="results"] #tabs { height: auto; min-height: 56px; }
+body.studio-workspace[data-page="results"] #tabs .tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  column-gap: 6px;
+  row-gap: 2px;
+  min-width: 0;
+  min-height: 56px;
+  padding: 8px 4px;
+  white-space: normal;
+}
+body.studio-workspace[data-page="results"] #tabs .tab .count {
+  flex: 0 0 auto;
+  position: static;
+  max-width: 100%;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+body.studio-workspace[data-page="results"] #results-page-findings { max-width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+body.studio-workspace :is(.status-chip, .mini-status)[data-status="failed"],
+body.studio-workspace[data-page="results"] .results-page-meta #results-page-status[data-status="failed"] {
+  color: var(--danger);
+  background: var(--danger-soft, var(--surface-2));
+  border-color: var(--danger);
+}
+
+body.studio-workspace .run[data-status="failed"] .run-status-label { color: var(--danger); }

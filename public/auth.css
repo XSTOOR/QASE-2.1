@@ -161,3 +161,12 @@ html body.studio-workspace #auth-gate .auth-bottom span > span { margin: 0 8px; 
 @media (prefers-reduced-motion: reduce) {
   html body.studio-workspace #auth-gate *, html body.studio-workspace #auth-gate *::before, html body.studio-workspace #auth-gate *::after { animation: none !important; transition: none !important; }
 }
+html body.studio-workspace #auth-gate .auth-notice {
+  margin: 12px 0 0;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: 14px/1.6 var(--font-ui);
+}

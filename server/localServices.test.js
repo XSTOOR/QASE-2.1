@@ -1,12 +1,87 @@
+import './testWorkingDirectory.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
 import { createRuntimeApplicationServices } from './localServices.js';
+import { hybridQualificationService } from './hybridQualificationService.js';
+import { runWithRequestActor } from './requestActor.js';
 
 const RUN_ID = '6bf078e0-20df-48c3-a6f8-eb74ca14b9e1';
+
+test('acknowledged Founder checkpoints and usage survive immediate process exit', async () => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'qase-founder-crash-'));
+	const moduleUrl = new URL('./localServices.js', import.meta.url).href;
+	try {
+		const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+			import { createLocalApplicationServices } from ${JSON.stringify(moduleUrl)};
+			const services = createLocalApplicationServices({});
+			await services.runs.load();
+			const session = await services.runs.create('Founder crash boundary');
+			session.mode = 'founder';
+			session.founder = { scope: {}, observations: [], reportDraft: { revision: 'saved', input: { executive_summary: 'Persisted before acknowledgement.' } } };
+			session.tokenUsage = { inputTokens: 521118, outputTokens: 42600, totalTokens: 563718 };
+			await services.runs.setStatus(session, 'running');
+			await services.runs.commit(session, 'founder.report_draft');
+			session.tokenUsage.inputTokens += 100;
+			session.tokenUsage.totalTokens += 100;
+			await services.runs.commit(session, 'usage');
+			await services.runs.setStatus(session, 'interrupted', 'Stopped by user.');
+			process.stdout.write(session.id);
+			process.exit(0); // No debounce delay, lifecycle close or exit flush.
+		`], { cwd: directory, encoding: 'utf8', timeout: 30_000, windowsHide: true });
+		assert.equal(child.status, 0, child.stderr || child.error?.message);
+		const saved = JSON.parse(await fs.readFile(path.join(directory, '.qase', 'sessions.json'), 'utf8')).find(s => s.id === child.stdout);
+		assert.equal(saved.founder.reportDraft.input.executive_summary, 'Persisted before acknowledgement.');
+		assert.deepEqual(saved.tokenUsage, { inputTokens: 521218, outputTokens: 42600, totalTokens: 563818 });
+		assert.equal(saved.status, 'interrupted');assert.equal(saved.statusDetail, 'Stopped by user.');
+		const restored = spawnSync(process.execPath, ['--input-type=module', '-e', `
+			import { createLocalApplicationServices } from ${JSON.stringify(moduleUrl)};
+			const services = createLocalApplicationServices({}); await services.runs.load();
+			const session = await services.runs.getAny(${JSON.stringify(child.stdout)});
+			process.stdout.write(JSON.stringify({ draft: session.founder.reportDraft, usage: session.tokenUsage, status: session.status, detail: session.statusDetail, interruptedFromRun: session.interruptedFromRun === true }));
+			process.exit(0);
+		`], { cwd: directory, encoding: 'utf8', timeout: 30_000, windowsHide: true });
+		assert.equal(restored.status, 0, restored.stderr || restored.error?.message);
+		assert.deepEqual(JSON.parse(restored.stdout), { draft: saved.founder.reportDraft, usage: saved.tokenUsage, status: 'interrupted', detail: 'Stopped by user.', interruptedFromRun: false });
+	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
+
+test('Founder commits refuse acknowledgement when the local checkpoint cannot be written', async () => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'qase-founder-write-failure-'));
+	const moduleUrl = new URL('./localServices.js', import.meta.url).href;
+	try {
+		const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+			import assert from 'node:assert/strict';
+			import fs from 'node:fs';
+			import { createLocalApplicationServices } from ${JSON.stringify(moduleUrl)};
+			const services = createLocalApplicationServices({}); await services.runs.load();
+			const session = await services.runs.create('Founder unwritable checkpoint');
+			session.mode = 'founder';
+			fs.mkdirSync('.qase/sessions.json', { recursive: true });
+			let published = false;
+			services.runs.subscribe(session.id, () => { published = true; });
+			await assert.rejects(services.runs.commit(session, 'founder.report_draft'));
+			assert.equal(published, false);
+			process.exit(0);
+		`], { cwd: directory, encoding: 'utf8', timeout: 30_000, windowsHide: true });
+		assert.equal(child.status, 0, child.stderr || child.error?.message);
+	} finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
+
+test('qualification renewal binds concurrent accounts to their own effective credentials',async()=>{
+ const start=hybridQualificationService.start,lock=process.env.QASE_LOCK_MODEL,seen=[];
+ hybridQualificationService.start=profile=>{seen.push(profile.reasoner.apiKey);};process.env.QASE_LOCK_MODEL='false';
+ try{
+  const services=createRuntimeApplicationServices({}, {auth:{async getSettings(id){await new Promise(resolve=>setImmediate(resolve));return{provider:'jev',model:'jev-1.13',baseUrl:'https://llm.drytis.ai/typesafe/api/alpha/decisions',apiKey:`fixture-key-${id}`};}}});
+  const configs=await Promise.all(['account-a','account-b'].map(actorUserId=>runWithRequestActor({actorUserId},()=>services.configuration.qualifyHybrid())));
+  assert.deepEqual(seen.sort(),['fixture-key-account-a','fixture-key-account-b']);
+  assert.ok(configs.every(config=>!Object.hasOwn(config,'apiKey')));
+ }finally{hybridQualificationService.start=start;if(lock===undefined)delete process.env.QASE_LOCK_MODEL;else process.env.QASE_LOCK_MODEL=lock;}
+});
 
 test('stop aborts a running turn but leaves the runtime for the loop to finalize', () => {
 	const calls = [];

@@ -12,12 +12,14 @@ export function focusedBrowserConfiguration(configurations, hybrid = false) {
     ?? available.find(row => row.browserCode === 'chrome') ?? available[0] ?? null;
 }
 
-export function qaBrowserStatus({ fetchState, configurations = [], envIds = [], mode = 'legacy', config }) {
+export function qaBrowserStatus({ fetchState, configurations = [], envIds = [], mode = 'legacy', config, qualificationChecking = false }) {
   const result = (state, title, detail, action, actionLabel) => ({ state, title, detail, action, actionLabel });
   if (fetchState === 'loading') return result('loading', 'Finding your browser…', 'Checking the available browsers and devices. Your selected checks are kept.', null);
   if (fetchState === 'error') return result('blocked', 'Browser list could not load', 'Your setup is saved. Retry the browser list to continue.', 'reload', 'Retry browser list');
   const hybrid = mode === 'hybrid';
-  if (hybrid && !config?.hybridQa?.available) return result('blocked', 'Hybrid QA is not ready', 'Refresh model status or choose Existing QA. A current model qualification is required.', 'config', 'Refresh model status');
+  if (hybrid && !config?.hybridQa?.available) return config?.hybridQa?.status === 'qualification_running' && qualificationChecking
+    ? result('loading', 'Checking model compatibility…', 'Verifying Opus, JEV and the agent runtime. Your website, browser and selected checks are kept.', 'config', 'Checking compatibility…')
+    : result('blocked', 'Model compatibility needs checking', config?.hybridQa?.reason || 'Check model compatibility to continue. Your website, browser and selected checks are kept.', 'config', config?.hybridQa?.status === 'qualification_running' ? 'Check progress' : 'Check model compatibility');
   const recommended = focusedBrowserConfiguration(configurations, hybrid);
   if (hybrid && !envIds.length && !recommended && configurations.some(row => row.availability === 'AVAILABLE')) return result('blocked', 'Browser details need a refresh', 'Available browsers were found, but their execution details need refreshing. Your setup is kept.', 'reload', 'Refresh browser details');
   if (!envIds.length) return recommended
