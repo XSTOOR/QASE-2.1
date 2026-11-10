@@ -7,6 +7,28 @@ const GROUPS = Object.freeze({
 
 const failure = (code, error, extra = {}) => ({ success: false, code, error, ...extra });
 
+/** Small continuation projection of matching host receipts, not model prose.
+ * Retain concrete facts after SDK history compaction so a related control can
+ * reuse an already observed oracle without repeating browser input. */
+export function savedSqaSmokeContext(session) {
+	const saved = ['navigation', 'form_validation'].flatMap(action => {
+		const receipt = session.sqa?.smokeEvidence?.findLast(item => item.action === action
+			&& ['pass', 'fail'].includes(item.verdict)
+			&& session.activities?.some(activity => activity.id === item.activityId && activity.toolName === 'browser_sqa_smoke'
+				&& activity.status === 'done' && activity.input?.action === action));
+		if (!receipt) return [];
+		const common = { activity_id: receipt.activityId, action, verdict: receipt.verdict };
+		return [action === 'navigation' ? { ...common, samples: receipt.samples?.slice(0, 4).map(({ destination, ok, status, reason }) => ({ destination, ok, status, reason })) }
+			: { ...common, cases: receipt.cases?.slice(0, 4).map(({ name, validity, submissionBlocked, feedbackChanged }) => ({
+				name, validity: { valid: validity?.valid, required: validity?.required, failures: validity?.failures }, submissionBlocked, feedbackChanged
+			})), stale_success_after_invalid: receipt.staleSuccessSignalAfterInvalid }];
+	});
+	if (!saved.length) return '';
+	return `# Saved technical observations from this run
+${JSON.stringify(saved)}
+These matching completed host receipts survive history compaction. They describe bounded local samples, not broader assurance. Reuse a saved check only when the next control's exact objective and declared oracle match; give that control its own factual summary and retain its limitations. Recording a supported result from these facts needs no new snapshot or input replay. The existing evidence recorder still validates provenance and contracts. Missing reviewer artifacts remain blocked.`;
+}
+
 /** Compose existing SDK capabilities; every child retains its own guards,
  * activity, budget charge and host evidence receipt. No control verdicts are
  * inferred here. The model must review the returned checks before recording. */

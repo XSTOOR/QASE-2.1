@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "releaseId": "qase-founder-sqa-2026-11-10-batching-r1",
+  "releaseId": "qase-founder-sqa-2026-11-10-batching-r2",
   "files": [
     {
       "path": ".dockerignore",
@@ -92,11 +92,11 @@
     },
     {
       "path": "DEPLOYMENT_PROMPT.md",
-      "sha256": "4e3560bdd2b62d213f3f4fe73d2c1993f8826d3cf73d934db046e3aa8f51c202"
+      "sha256": "3540a115468129db3727bbfacf67ca79bee39da82f7f9c9d2ea03c50bfdbe7c8"
     },
     {
       "path": "Dockerfile",
-      "sha256": "404d06bab68c209f8286638c81433bd59c68a828f5a799f9c6999957b5b1d0fb"
+      "sha256": "d04633ba1fc6e18ebc7440b007c836822ce2eeec05861d51982986ff36f70b6b"
     },
     {
       "path": "docs/auth-architecture-2026-09-10.md",
@@ -280,7 +280,7 @@
     },
     {
       "path": "docs/sqa-batching-2026-11-10.md",
-      "sha256": "6b8784bb93fead12208b20e308f8ff34a500b1e03d144c11a8c8e0ad1068dcb4"
+      "sha256": "bbee75d475d78abbed6eece36ba12cfa479c88f92978a9d697aef982479ddbba"
     },
     {
       "path": "docs/sqa-coverage-2026-11-10.md",
@@ -800,7 +800,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "ca5a90f21df7de7babde414500c8a021dc55c3b59419bf8368dceb7f0ad5ce2e"
+      "sha256": "7134a916c4005e1b27aaecefdc78d158fdb508b52193766db036cfe0a28297d5"
     },
     {
       "path": "public/renderHealth.js",
@@ -952,7 +952,7 @@
     },
     {
       "path": "RELEASE_NOTES.md",
-      "sha256": "c1cc83d7027174eb829ccb4b27ece30d1677946d0dcbb822852d302607a4b5b0"
+      "sha256": "0ef2430c3e08c5ab295f5c6a5101b2a524c810824bf4d5211bf5d2fa7ccac15e"
     },
     {
       "path": "run-jev.command",
@@ -1108,7 +1108,7 @@
     },
     {
       "path": "scripts/qualify-sqa-release.mjs",
-      "sha256": "a410d76b493b98f679966d06303657f6aa1f98e4e0c70937c4208c3cb09b8503"
+      "sha256": "73116b518038ee0a332c569ee4f0f1d7e0c3e863165fd423413d6b06df01f277"
     },
     {
       "path": "scripts/qualify-studio-demo.mjs",
@@ -3104,11 +3104,11 @@
     },
     {
       "path": "server/sqaPrompt.js",
-      "sha256": "e3e204087b4aad817976739e733c5a161731fc1c0d1cb7a58ce7364ceedda380"
+      "sha256": "6a44a9355a523dcd1a691d79175069257e3f838a9ec5e09815a5ca74fee72678"
     },
     {
       "path": "server/sqaPrompt.test.js",
-      "sha256": "deca2ebb5e6fe78f5ac04117637ad2b4530ed2973cffcc832382d7989b403d14"
+      "sha256": "1f700c4f56751eeeb1953e8aa08b46a81bcdb4ce257deb3b3bbd0f7c71524f9d"
     },
     {
       "path": "server/sqaReleaseHarness.test.js",
@@ -3144,11 +3144,11 @@
     },
     {
       "path": "server/sqaSmokeWorkflow.js",
-      "sha256": "f1884bdfeaa1a9323aa9ea72a685f67ff881b2a280bb8c7b210393b97eafa108"
+      "sha256": "605e71aaf28cb2e78cc74533901bbeff670dc70c6fb25836c1d25000a2c96daf"
     },
     {
       "path": "server/sqaSmokeWorkflow.test.js",
-      "sha256": "2d2388e93638ca7eb6c0c356096e1d5636e87e342302b389658642337a252713"
+      "sha256": "ff03ae6189545077f670cc4365adbaa67ca097916a8cc49d3b2173f0c2dcd177"
     },
     {
       "path": "server/sqaTools.js",

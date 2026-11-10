@@ -117,10 +117,12 @@ try {
 	result.smokeWorkflows = {
 		attempts: workflowActivities.length,
 		completed: workflowActivities.filter(item => item.status === 'done').map(item => item.input?.workflow),
-		childSmokeActions: activities.filter(item => item.toolName === 'browser_sqa_smoke').map(item => item.input?.action)
+		childSmokeActions: activities.filter(item => item.toolName === 'browser_sqa_smoke').map(item => item.input?.action),
+		uncomposedInputActions: activities.filter(item => ['browser_fill', 'browser_click', 'browser_type', 'browser_key', 'browser_select', 'browser_check'].includes(item.toolName)).length
 	};
 	if (!externalTarget && !finalSession.sqa.execution) {
 		assert.deepEqual([...result.smokeWorkflows.completed].sort(), ['interaction', 'presentation'], 'The controlled live qualification must exercise each preferred composition exactly once.');
+		assert.deepEqual([...result.smokeWorkflows.childSmokeActions].sort(), ['accessibility', 'form_validation', 'navigation', 'responsive'], 'The healthy controlled fixture must not repeat completed smoke checks.');
 	}
 	for (const action of ['accessibility', 'responsive', 'navigation', 'form_validation']) {
 		const completed = activities.some(item => item.toolName === 'browser_sqa_smoke' && item.input?.action === action);

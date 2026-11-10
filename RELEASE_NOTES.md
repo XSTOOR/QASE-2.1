@@ -1,6 +1,6 @@
 # QASE Founder/SQA integration candidate
 
-Current release: `qase-founder-sqa-2026-11-10-batching-r1`. UI: `20261110-1`.
+Current release: `qase-founder-sqa-2026-11-10-batching-r2`. UI: `20261110-1`.
 
 Configured-provider SQA can compose diagnostics, keyboard/responsive checks,
 and navigation/form checks through two bounded SDK calls. Each child retains
@@ -10,6 +10,12 @@ recording control batches. Cancellation, child failure or missing durable
 results stop later dispatch; attempted smoke groups cannot replay. Qualified
 mode retains its existing planned workflow composition. See
 [SQA batching](docs/sqa-batching-2026-11-10.md) for the scope and verification.
+
+Continuation briefs retain a small projection of matching completed host
+navigation/form receipts after history compaction. Related controls can reuse
+those exact observations without input replay; the existing evaluator still
+owns the verdict. Missing thresholds, authorization, environments or release
+artifacts produce explicit prerequisite blockers, never substituted evidence.
 
 SQA form smoke checks activate the native submit button with Enter to avoid
 repeated pointer timeouts in Windows Firefox. Browser tests check trusted

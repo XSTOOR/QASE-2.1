@@ -2,6 +2,7 @@ import { describeDeviceForPrompt } from './deviceProfiles.js';
 import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { AGENT_EVIDENCE_TYPES } from './sqaService.js';
 import { buildSqaWorkPlan } from './sqaWorkPlan.js';
+import { savedSqaSmokeContext } from './sqaSmokeWorkflow.js';
 import { countSqaBrowserActivities, countSqaBrowserActivitiesSinceControlCheckpoint, SQA_BROWSER_EVIDENCE_LIMIT, SQA_BROWSER_TOOL_BUDGET, SQA_BROWSER_WORKFLOW_CHECKPOINT, SQA_INPUT_TOKEN_BUDGET, SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD } from './sqaBrowserBudget.js';
 
 /** Evidence collection has ended; retain the actual control decisions and plan,
@@ -197,6 +198,16 @@ ${pendingTechnicalIds.length ? `3. Immediately after the initial snapshot, call 
    record_sqa_blockers once with close_remaining=true. A missing manual artifact
    is blocked, not not_assessed and never pass. Record results immediately after
    each bounded workflow; never defer completed workflows to bookkeeping turns.
+   Before another browser call, check the active group's prerequisites and
+   the saved receipts below. An allowed browser evidence type does not mean
+   this public page can prove the complete objective. If approved thresholds,
+   supported platform/integration targets, fault-injection authorization,
+   deployment access, a verification baseline or release artifacts are absent,
+   batch precise prerequisite blockers for those controls. Do not repeat forms,
+   reloads or unrelated pages merely to create another activity. Useful partial
+   browser evidence may accompany a blocker, but cannot substitute for the
+   missing contract. Reuse the completed local form sample for a matching
+   declared functional oracle rather than repeating its fills and submit.
 8. When every control has a defensible result, call finish_sqa_assessment. The
    host rejects incomplete plans, in-flight browser work, missing controls,
    incomplete pass evidence, and unresolved authentication scope. The host—not
@@ -229,6 +240,8 @@ Include the synthetic-input limitation and any untested end-to-end steps in
 the evidence summary. Permission configuration by itself is not pass evidence.
 
 # Progress
+
+${savedSqaSmokeContext(session)}
 
 ${progress}
 Work priority: ${workPlan.phase}. Pending browser controls: ${workPlan.pendingBrowserCount}.

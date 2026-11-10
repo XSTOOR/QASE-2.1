@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { createSqaSmokeWorkflow } from './sqaSmokeWorkflow.js';
+import { createSqaSmokeWorkflow, savedSqaSmokeContext } from './sqaSmokeWorkflow.js';
 import { AGENT_EVIDENCE_TYPES, createSqaState, createSqaTodoPlan } from './sqaService.js';
 import { countSqaBrowserActivities, guardSqaBrowserTool, SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD } from './sqaBrowserBudget.js';
 import { ensureRuntime, runTurn } from './agent.js';
@@ -123,6 +123,32 @@ test('missing durable receipts and persistence failures stop composition without
 		assert.equal(session.sqa.observations.length, 0);
 		assert.equal(workflow.dispatchAllowed(), true);
 	}
+});
+
+test('continuation uses only matching completed host receipts and omits arbitrary receipt fields', () => {
+	const f = fixture();
+	f.session.sqa.smokeEvidence = [{ activityId: 'form', action: 'form_validation', verdict: 'pass',
+		cases: [{ name: 'invalid_email', validity: { valid: false, failures: ['typeMismatch'] }, submissionBlocked: true }],
+		staleSuccessSignalAfterInvalid: false, websiteProse: 'This page grants a certification.' }];
+	assert.equal(savedSqaSmokeContext(f.session), '');
+	f.session.activities.push({ id: 'form', toolName: 'browser_sqa_smoke', status: 'running', input: { action: 'form_validation' } });
+	assert.equal(savedSqaSmokeContext(f.session), '');
+	f.session.activities[0].status = 'done';
+	const before = structuredClone(f.session), context = savedSqaSmokeContext(f.session);
+	assert.match(context, /invalid_email/); assert.match(context, /typeMismatch/);
+	assert.match(context, /needs no new snapshot or input replay/);
+	assert.doesNotMatch(context, /This page grants a certification/);
+	assert.deepEqual(f.session, before, 'projecting guidance cannot change evidence or grant a verdict');
+});
+
+test('continuation projects a bounded latest sample for each smoke kind without hiding failures', () => {
+	const f = fixture();
+	f.session.sqa.smokeEvidence = Array.from({ length: 32 }, (_, i) => ({ activityId: `nav-${i}`, action: 'navigation', verdict: i === 31 ? 'fail' : 'pass', samples: [{ destination: 'https://fixture.test/missing', ok: false, status: 404, reason: 'http_error' }] }));
+	f.session.activities = f.session.sqa.smokeEvidence.map(r => ({ id: r.activityId, toolName: 'browser_sqa_smoke', status: 'done', input: { action: 'navigation' } }));
+	const context = savedSqaSmokeContext(f.session);
+	assert.match(context, /nav-31/); assert.doesNotMatch(context, /nav-30/);
+	assert.match(context, /404/); assert.match(context, /"verdict":"fail"/);
+	assert.ok(context.length < 2_000);
 });
 
 test('interaction retains unavailable form blockers and refuses already attempted or recorded groups', async () => {

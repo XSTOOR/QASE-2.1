@@ -53,3 +53,17 @@ The previous seven-pass/23-blocked result is a comparison baseline, not a
 promise of more passes on a fixture without performance, security or reviewer
 artifacts. Test at the same limits and report measured usage, real evidence
 gaps and honest blockers. Studio scope remains export-only.
+
+The first composed live candidate (`3b09662`) passed technical/evidence
+qualification with the same seven passes and 23 blocked controls. It used
+320,254 estimated input tokens, compared with 314,732 previously: no overall
+usage or coverage gain was demonstrated. Its trace repeated the local form
+after compaction even though matching host observations were already saved.
+
+The revised continuation brief projects only the latest matching completed
+navigation and form host receipts, preserving failures and bounded sample
+limitations. It supplies facts for a related control's declared oracle, not a
+new permission or automatic verdict. The work guidance checks exact missing
+prerequisites before another browser action and batches honest blockers where
+the public fixture cannot satisfy a broader contract. Final live results and
+exact-source release qualification remain separate measured evidence.
