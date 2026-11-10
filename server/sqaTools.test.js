@@ -76,6 +76,10 @@ test('SQA batch record verifies every pass decision through the JEV verifier', a
 	const verified = [];
 	const jevVerifier = { verify: async input => { verified.push(input); return { challenge: null }; } };
 	const candidate = session();
+	// The coverage-r3 technical-first guard requires the six SQA-WEB controls
+	// before non-technical work; keep this #17997 fixture off that path so it
+	// exercises ONLY the JEV batch-verification behavior.
+	candidate.sqa.scope.applicableControlIds = ['SQA-QUA-001', 'SQA-TRC-001'];
 	const record = createSqaTools(candidate, store(), { jevVerifier }).find(tool => tool.name === 'record_sqa_control');
 	const result = await record.run({ controls: [{
 		control_id: 'SQA-QUA-001',
@@ -97,7 +101,9 @@ test('SQA batch record verifies every pass decision through the JEV verifier', a
 	assert.equal(result.jev_verifications, undefined, 'no challenge entries when JEV is satisfied');
 	// A challenge must surface per-control, never flip the result.
 	const challenging = { verify: async input => ({ challenge: input.controlId === 'SQA-QUA-001' ? 'Evidence too thin.' : null }) };
-	const record2 = createSqaTools(session(), store(), { jevVerifier: challenging }).find(tool => tool.name === 'record_sqa_control');
+	const challengingSession = session();
+	challengingSession.sqa.scope.applicableControlIds = ['SQA-QUA-001'];
+	const record2 = createSqaTools(challengingSession, store(), { jevVerifier: challenging }).find(tool => tool.name === 'record_sqa_control');
 	const result2 = await record2.run({ controls: [{ control_id: 'SQA-QUA-001', status: 'pass', rationale: 'r', evidence: [{ type: 'test_result', summary: 's' }] }] });
 	assert.equal(result2.results[0].status, 'pass', 'JEV challenge never flips the decision');
 	assert.equal(result2.jev_verifications?.[0]?.control_id, 'SQA-QUA-001');

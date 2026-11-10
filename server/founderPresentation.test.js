@@ -87,7 +87,7 @@ test('Founder assumptions include monetization and metric hypotheses', () => {
 // #17935 — premature 'Review Failed': execution errors are NOT review failures.
 test('execution error with saved evidence is labelled recoverable, not Review failed', () => {
 	const founder = { observations: [{ id: 1, type: 'strength', category: 'user_experience' }] };
-	const lifecycle = describeFounderLifecycle(founder, 'error', 5, { lifecycle: { outcome: 'failed' } });
+	const lifecycle = describeFounderLifecycle(founder, 'error', 5, undefined, { lifecycle: { outcome: 'failed' } });
 	assert.equal(lifecycle.label, 'Execution error — evidence saved');
 	assert.match(lifecycle.detail, /1 observation/);
 	assert.match(lifecycle.message, /continue from the saved evidence/);
@@ -95,13 +95,13 @@ test('execution error with saved evidence is labelled recoverable, not Review fa
 
 test('genuine review-generation failure keeps the Review failed label', () => {
 	const founder = { observations: [{ id: 1, type: 'strength', category: 'user_experience' }] };
-	const lifecycle = describeFounderLifecycle(founder, 'error', 9, { lifecycle: { outcome: 'review_failed' } });
+	const lifecycle = describeFounderLifecycle(founder, 'error', 9, undefined, { lifecycle: { outcome: 'review_failed' } });
 	assert.equal(lifecycle.label, 'Review failed');
 	assert.match(lifecycle.detail, /could not be generated/);
 	assert.match(lifecycle.message, /evidence remains saved/);
 });
 
 test('timeout outcome reads as a timeout, not a generic review failure', () => {
-	const lifecycle = describeFounderLifecycle({}, 'error', 3, { lifecycle: { outcome: 'timed_out' } });
+	const lifecycle = describeFounderLifecycle({}, 'error', 3, undefined, { lifecycle: { outcome: 'timed_out' } });
 	assert.equal(lifecycle.label, 'Execution error — evidence saved');
 });

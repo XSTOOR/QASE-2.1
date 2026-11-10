@@ -16,7 +16,7 @@
     },
     {
       "path": ".github/workflows/sqa-release.yml",
-      "sha256": "fd8de90b83f828ef99053993607f73c237db0ecdf21e504aa94a54912c5a5730"
+      "sha256": "28c9cb075a52f3fc603dbe3ffb98917077c46965a8d6bf4f94dc522e370916f6"
     },
     {
       "path": ".github/workflows/verify.yml",
@@ -96,7 +96,7 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "11a5fad648f5008af4de6f298ccfe06e695d525e5742c940e98f3a17411d6489"
+      "sha256": "ca20a6a6bc14c9d784b76c4bbab294e9687b64884c3f2aa08e4cf04a0c921fa6"
     },
     {
       "path": "docs/auth-architecture-2026-09-10.md",
@@ -1976,7 +1976,7 @@
     },
     {
       "path": "server/founderPresentation.test.js",
-      "sha256": "f5d8391930afae9a7f562d1ebb4a2e2d2651e56d925ee6dab285fea644a16ee0"
+      "sha256": "e320840a07c0a6ac663d08c1396b4be1006fa6510a299056f713d25f7d50a15f"
     },
     {
       "path": "server/founderProgress.js",
@@ -3304,7 +3304,7 @@
     },
     {
       "path": "server/sqaTools.test.js",
-      "sha256": "f41bb6d67fdb94b5cc73bf06b5cef0807deb99b4561a9f2ee43438722ad927e6"
+      "sha256": "834b13998ac1ff3bd665af243fe914546778b157ecacfcad3862ea7be8e7fb31"
     },
     {
       "path": "server/sqaUi.test.js",
