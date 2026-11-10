@@ -9,7 +9,7 @@ import { createFounderReviewTodos, FOUNDER_CATEGORY_IDS } from './founderService
 import { clearSecrets, resolveSecrets, storeSecrets } from './secrets.js';
 import { withUserConfiguration } from './config.js';
 import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
-import { AGENT_EVIDENCE_TYPES, createSqaState, createSqaTodoPlan } from './sqaService.js';
+import { AGENT_EVIDENCE_TYPES, createSqaState, createSqaTodoPlan, recordSqaSmokeActivity } from './sqaService.js';
 import { createSqaTools } from './sqaTools.js';
 
 function runtimeFixture(overrides = {}) {
@@ -1094,6 +1094,17 @@ test('deterministic fake-model SQA agent completes the real closeout path withou
 		target: { name: 'Deterministic SQA agent fixture', release: 'phase-6', environment: 'test' }
 	});
 	const fixture = runtimeFixture({ mode: 'sqa', activities: [browserActivity], sqa });
+	const url = fixture.session.targetUrl;
+	for (const result of [
+		{ action: 'navigation', originalUrl: url, restoredUrl: url, samples: [{ href: url, ok: true, status: 200 }] },
+		{ action: 'form_validation', eligible: true, cases: ['empty', 'invalid_email', 'valid_email', 'invalid_after_valid'].map(name => ({
+			name, validity: { valid: name === 'valid_email' }, submissionBlocked: name !== 'valid_email', feedbackChanged: name === 'valid_email'
+		})) }
+	]) {
+		const id = `smoke-${result.action}`;
+		await fixture.store.addActivity(fixture.session, { id, toolName: 'browser_sqa_smoke', input: { action: result.action }, status: 'running' });
+		await recordSqaSmokeActivity(fixture.session, id, { success: true, ...result }, { status: 'done' }, fixture.store);
+	}
 	fixture.session.todos = createSqaTodoPlan(sqa);
 	const commits = [];
 	const commit = fixture.store.commit;

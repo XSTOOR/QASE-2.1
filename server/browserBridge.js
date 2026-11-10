@@ -255,6 +255,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 		? environmentEmulationOptions(environment)
 		: contextOptionsFor(deviceId, { landscape: deviceLandscape });
 	const readOnlyExecution = session.qaExecutionMode === 'hybrid' || session[session.mode]?.execution?.discovery?.version === 1;
+	const isolateInputs = readOnlyExecution || session.mode === 'sqa';
 	const inputIsolation = createQaInputIsolation();
 	const authentication = createHybridAuthentication(session);
 	const testWrites = createQaTestWrites(session, () => runStore.commit(session, 'hybrid.state', {}));
@@ -658,7 +659,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 	 */
 	const installNetworkPolicy = async context => {
 		if (!context || protectedContexts.has(context)) return;
-		if (readOnlyExecution) inputIsolation.attach(context);
+		if (isolateInputs) inputIsolation.attach(context);
 		if (readOnlyExecution && typeof context.addInitScript === 'function') await context.addInitScript(() => {
 			// HTTP routing cannot intercept RTC data channels or WebTransport.
 			// Public hybrid QA does not authorize those out-of-band write paths.
@@ -671,7 +672,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 		// SDK-created tabs register diagnostics; window.open popups did not.
 		context.on?.('page', page => { attachDiagnostics(page); service.registerPage?.(page); });
 		for (const page of context.pages?.() ?? []) attachDiagnostics(page);
-		if ((policy.isProduction || readOnlyExecution) && typeof context.addInitScript === 'function') {
+		if ((policy.isProduction || isolateInputs) && typeof context.addInitScript === 'function') {
 			// Playwright routing cannot observe requests intercepted by a Service
 			// Worker. A new Qase browser context has no existing registrations, so
 			// disabling registration before the first target navigation closes that
@@ -708,7 +709,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 			}
 			const writeDecision = session.qaExecutionMode === 'hybrid' && !authDecision?.allowed ? await testWrites.requestDecision(request) : null;
 			if (writeDecision?.allowed === false) { await route.abort('blockedbyclient'); return; }
-			const inputBlock = readOnlyExecution && !authDecision?.allowed && !writeDecision?.allowed && inputIsolation.decision(request);
+			const inputBlock = isolateInputs && !authDecision?.allowed && !writeDecision?.allowed && inputIsolation.decision(request);
 			if (inputBlock) {
 				const destination = new URL(request.url());
 				recordSecurityBlock(inputBlock, { method: request.method(), resourceType: request.resourceType(), url: `${destination.origin}${destination.pathname}` });
@@ -1198,7 +1199,10 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 		if (!page) {
 			return { success: false, code: 'SQA_SMOKE_UNAVAILABLE', error: 'No live browser page yet — open the authorized target first.' };
 		}
-		const smoke = createSqaBrowserSmoke(page);
+		const smoke = createSqaBrowserSmoke(page, {
+			protectInputs: protectedContexts.has(page.context()) && isolateInputs ? () => inputIsolation.protect(page) : undefined,
+			navigate: (work, url) => inputIsolation.navigation(page, [url], work)
+		});
 		if (input.action === 'accessibility') {
 			return smoke.accessibility({ steps: input.steps, reverseSteps: input.reverse_steps });
 		}

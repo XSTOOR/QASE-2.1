@@ -1,6 +1,13 @@
 # QASE Founder/SQA integration candidate
 
-Current release: `qase-founder-sqa-2026-11-10-launch-r1`. UI: `20261110-1`.
+Current release: `qase-founder-sqa-2026-11-10-safety-r2`. UI: `20261110-1`.
+
+SQA rejects native submit overrides and blocks browser HTTP requests during
+live form smoke checks. Tests verify local validation feedback and restore the
+sampled field. Navigation reports HTTP failures as failed destinations. Legacy
+SQA binds navigation and form verdicts to matching host-recorded browser results
+in the evidence bundle. Existing published assessments keep their original
+evidence. The production image is built and smoke-tested in GitHub Actions.
 
 The SQA device picker now offers **Continue to quality review** and keeps the
 target field on the assessment form. The browser regression checks the iPad

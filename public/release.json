@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-founder-sqa-2026-11-10-launch-r1",
+  "releaseId": "qase-founder-sqa-2026-11-10-safety-r2",
   "uiVersion": "20261110-1",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "SQA device-picker handoff on Push-SQA 5c4b0db. The selected browser and target carry through to the quality review form. Studio handoff remains export-only."
+  "source": "Push-SQA successor to 64e4364. SQA preserves the device picker handoff, isolates HTTP requests during form smoke checks, and requires matching host evidence for form and navigation verdicts. Studio handoff remains export-only."
 }
