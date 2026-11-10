@@ -39,8 +39,10 @@ test(`SQA ${expectedEngine} can launch, exercise a workflow, and record verifiab
     const page = await service.ensurePage();
     await page.setContent(`<form><label>Work email<input required type="email"></label><button>Validate</button><output></output></form>
       <script>const form = document.querySelector('form'), output = form.querySelector('output');
+        const events = window.formEvents = [];
+        form.addEventListener('invalid', event => { events.push(['invalid', event.isTrusted]); }, true);
         form.oninput = () => { output.textContent = ''; };
-        form.onsubmit = event => { event.preventDefault(); output.textContent = 'Email accepted locally'; };
+        form.onsubmit = event => { event.preventDefault(); events.push(['submit', event.isTrusted]); output.textContent = 'Email accepted locally'; };
       </script>`);
     const result = await bridge.sqaSmoke({ action: 'form_validation' });
     assert.equal(result.success, true, result.error);
@@ -48,6 +50,9 @@ test(`SQA ${expectedEngine} can launch, exercise a workflow, and record verifiab
     assert.equal(result.cases[1].submissionBlocked, true);
     assert.equal(result.cases[2].statusSignals[0].text, 'Email accepted locally');
     assert.equal(result.staleSuccessSignalAfterInvalid, false);
+    assert.deepEqual(await page.evaluate(() => window.formEvents), [
+      ['invalid', true], ['invalid', true], ['submit', true], ['invalid', true]
+    ]);
     const facts = await bridge.readRuntimeFacts();
     assert.match(facts.userAgent, expectedEngine === 'firefox' ? /Firefox\// : expectedEngine === 'chromium' ? /Chrome\// : /AppleWebKit/);
     assert.equal(bridge.execution.level, 'SIMULATED', 'never claim this is physical Safari/iPad');

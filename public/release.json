@@ -1,5 +1,5 @@
 {
-  "releaseId": "qase-founder-sqa-2026-11-10-coverage-r2",
+  "releaseId": "qase-founder-sqa-2026-11-10-coverage-r3",
   "uiVersion": "20261110-1",
   "productionOrigin": "https://qase.drytis.com",
   "source": "Combined 8229259 strict SQA smoke receipts, isolated form checks and device-picker fixes with revision-safe evidence work queues and reviewer artifact requests; export-only scope"

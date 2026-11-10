@@ -411,7 +411,8 @@ export function createSqaBrowserSmoke(page, { protectInputs, navigate = work => 
 				const beforeClick = await validityState(field);
 				if (!await safeSubmitter(submit, field, originalUrl)) return false;
 				const signalsBefore = await statusSignals(page);
-				await submit.click({ timeout: 3_000, noWaitAfter: true });
+				// Native validation feedback can interrupt Firefox pointer actions.
+				await submit.press('Enter', { timeout: 3_000 });
 				await settle(120);
 				const urlAfter = page.url();
 				if (urlAfter !== originalUrl || blocked.total !== blockedBefore) return false;
