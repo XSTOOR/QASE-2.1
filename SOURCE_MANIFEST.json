@@ -388,7 +388,7 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "5e32c0a8b5bb00f6aa81beb407330bf11031cb1a34d14ca6ca0a7075e71c0408"
+      "sha256": "9f13cd225e90148e565f7a3ebb084be24f46e792961dde7b8e80482af29e0c57"
     },
     {
       "path": "public/auth.css",
@@ -532,7 +532,7 @@
     },
     {
       "path": "public/feedbackAutoPrompt.test.js",
-      "sha256": "eab388d78311c49cc33c7a7baa029f7db9a72a1000ca18f05009f4e4f2a92656"
+      "sha256": "0a18afa4ab421f62e9ee15d61ecbbb9e6ccdef28215f4d2d16404e451c82b956"
     },
     {
       "path": "public/feedbackRunBinding.test.js",
@@ -956,7 +956,7 @@
     },
     {
       "path": "public/studioHierarchyContract.test.js",
-      "sha256": "b741c80590cd74809dcf73f077f2272bbe8c7fbe51e50f068b0f76d677c1baa2"
+      "sha256": "e8067a80de40a082b50b4d9d0a5a710877bd0166ede4feee71602075cb2349b3"
     },
     {
       "path": "public/studioMode.js",
@@ -1180,7 +1180,7 @@
     },
     {
       "path": "scripts/qualify-live-preview.mjs",
-      "sha256": "e3fe29951b4830d7c278be48a13e2307c74ab2c0891e89cbf73b5aea4f4b92b7"
+      "sha256": "7ddcd9271a3ed90369255ef798c41cfc5c8e8e09956eeeb2386416999e6fd536"
     },
     {
       "path": "scripts/qualify-qa-scheduler.mjs",

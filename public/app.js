@@ -2054,13 +2054,6 @@ function showRunningQaPlan() {
 	activateDetailTab($('tab-plan'));
 }
 
-function showCompletedQaResults() {
-	const session = state.session;
-	if (!session || session.mode === 'sqa' || session.mode === 'founder' || session.status !== 'done') return;
-	if (state.shownQaResults === session.id) return;
-	state.shownQaResults = session.id;
-	activateDetailTab((session.findings?.length ?? 0) > 0 ? $('tab-findings') : el.reportTab);
-}
 
 function syncStageCollapse(status) {
 	// Status events must not undo an explicit user choice during a live run.
@@ -2305,7 +2298,7 @@ async function syncFeedbackForSession(session) {
  * browser session, only on the terminal event itself, only for the run the
  * user is actually viewing, and only when the completion view was rendered
  * here (this handler runs in the SSE status branch that just called
- * showCompletedQaResults / showCompletedFounderReport / renderSqa). Runs that
+ * renderReport / showCompletedFounderReport / renderSqa). Runs that
  * complete while the user is elsewhere keep the Provide Feedback button as
  * the entry point — no interrupting unrelated work. `openFeedbackModal`
  * re-checks the server's existing record, so an already-submitted run (or a
@@ -5262,7 +5255,7 @@ function handleEvent(event) {
 			void refreshRuns();
 			if (FEEDBACK_TERMINAL_STATUSES.has(event.status) && feedbackEligible(session)) {
 				renderReport();
-				showCompletedQaResults();
+				// Completion refreshes results without changing the user-selected tab.
 				void syncFeedbackForSession(session);
 				// #16655: auto pop-up once per run per browser session, after
 				// the completion view renders (QA + SQA share this branch).

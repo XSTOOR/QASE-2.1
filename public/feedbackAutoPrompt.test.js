@@ -43,7 +43,8 @@ test('#16655 QA/SQA terminal branch auto-prompts after the completion view rende
 	const idx = app.indexOf(marker);
 	assert.ok(idx >= 0, 'QA/SQA terminal branch must exist');
 	const body = app.slice(idx, idx + 500);
-	assert.match(body, /showCompletedQaResults\(\);/, 'completion view renders first');
+	assert.match(body, /renderReport\(\);/, 'report content refreshes first');
+	assert.doesNotMatch(body, /activateDetailTab|showCompletedQaResults/, 'completion preserves the selected tab');
 	assert.match(body, /void syncFeedbackForSession\(session\);/, 'sync still runs');
 	assert.match(body, /void maybeAutoPromptFeedback\(session\);/, 'auto-prompt wired after sync');
 });
