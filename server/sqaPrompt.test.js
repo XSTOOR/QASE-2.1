@@ -40,6 +40,9 @@ test('SQA context makes progress explicit and orders technical smoke checks befo
 	assert.match(context, /controls batch of up to 12/);
 	assert.match(context, /Browser tool budget: 2\/120 used; 118 remaining/);
 	assert.match(context, /browser_sqa_smoke once with action=accessibility/i);
+	assert.match(context, /run_sqa_smoke_workflow with\s+workflow=presentation/i);
+	assert.match(context, /run_sqa_smoke_workflow with workflow=interaction/i);
+	assert.match(context, /each child separately\s+guarded, budget-counted and saved/i);
 	assert.match(context, /browser_sqa_smoke once with action=responsive/i);
 	assert.match(context, /browser_sqa_smoke action=navigation/i);
 	assert.match(context, /action=form_validation/i);

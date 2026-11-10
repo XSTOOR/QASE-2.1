@@ -139,17 +139,19 @@ ${scope.scopeNotes ? `Scope notes: ${scope.scopeNotes}` : ''}
    most 10 items covering the browser-first technical controls below before
    reviewer-only assurance controls, grouped by workflow to avoid repetition.
    Do not spend separate turns updating the plan between technical workflows.
-${pendingTechnicalIds.length ? `3. Immediately after the initial snapshot and diagnostics, call
-   browser_sqa_smoke once with action=accessibility, then call
-   browser_sqa_smoke once with action=responsive. Then call record_sqa_control
+${pendingTechnicalIds.length ? `3. Immediately after the initial snapshot, call run_sqa_smoke_workflow with
+   workflow=presentation. This one host composition collects diagnostics and
+   runs keyboard/semantic and responsive checks, with each child separately
+   guarded, budget-counted and saved. Review all returned facts, including
+   diagnostic failures and sample limitations. Then call record_sqa_control
    exactly once with a controls batch for SQA-WEB-001, SQA-WEB-004,
    SQA-WEB-005 and SQA-WEB-006. Give each control its own evidence or precise
    blocker. Do this before navigation, forms, media, hybrid controls or broader
    exploration. Do not replace these bounded checks with many individual Tab
    presses, snapshots or viewport changes unless the tool reports unavailable.
-4. Next call browser_sqa_smoke action=navigation with up to four exact
-   same-origin link names from the snapshot, then browser_sqa_smoke
-   action=form_validation without field_label or submit_name so the host
+4. Next call run_sqa_smoke_workflow with workflow=interaction and up to four
+   exact same-origin link names from the snapshot in links. The composition
+   runs navigation and then form_validation without field_label or submit_name so the host
    deterministically discovers one empty labeled email field on a same-origin
    GET form without submit overrides. The host isolates HTTP requests during
    input and tests local validation feedback only. If eligible=false, immediately record
@@ -162,7 +164,14 @@ ${pendingTechnicalIds.length ? `3. Immediately after the initial snapshot and di
    Record a failure if that newly produced success signal remains after invalid
    input. For navigation, record failed HTTP destinations as failures and mark
    unavailable or unverified samples blocked. A snapshot alone cannot support
-   either control's pass or fail.` : '3–4. The six technical-control dispositions are already recorded. Continue with the next browser controls below, using matching saved evidence where valid. Do not repeat the completed smoke workflows.'}
+   either control's pass or fail.
+   Do not call the individual smoke tools as well as the composition. For a
+   partial or restored group, inspect saved child activities and use only the
+   missing individual check if safe: browser_sqa_smoke once with action=accessibility,
+   browser_sqa_smoke once with action=responsive, browser_sqa_smoke action=navigation,
+   or action=form_validation. Never replay attempted checks to refresh context.
+   Record completed observations in one controls batch immediately; do not add
+   plan-only, snapshot-only or requirement-prefetch turns between these groups.` : '3–4. The six technical-control dispositions are already recorded. Continue with the next browser controls below, using matching saved evidence where valid. Do not repeat the completed smoke workflows.'}
 
 5. Prefer roles, labels, text, placeholders, and test ids. Re-snapshot after
    state changes. Confirm apparent defects twice and rule out overlays. Try at
@@ -248,7 +257,7 @@ normative text of any standard.
 
 # Allowed tools
 
-Use browser tools, browser_sqa_smoke, browser_diagnostics, browser_media, browser_test_meeting_link, update_todo, ask_question,
+Use browser tools, run_sqa_smoke_workflow, browser_sqa_smoke, browser_diagnostics, browser_media, browser_test_meeting_link, update_todo, ask_question,
 report_finding, read_sqa_work_plan, record_sqa_control, record_sqa_blockers, and
 finish_sqa_assessment. Filesystem,
 shell, code-editing, arbitrary network, and host tools are blocked.${describeDeviceForPrompt(session.device, { landscape: session.deviceLandscape === true })}`;

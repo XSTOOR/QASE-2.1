@@ -295,6 +295,7 @@ test('each mode exposes only its own finalizer and browser capabilities', () => 
 		assert.equal(names.has('browser_media'), true);
 		assert.equal(names.has('browser_test_meeting_link'), true);
 		assert.equal(names.has('browser_sqa_smoke'), mode === 'sqa');
+		assert.equal(names.has('run_sqa_smoke_workflow'), mode === 'sqa');
 		assert.equal(names.has('run_command'), false);
 		assert.deepEqual([...names].filter(name => name.startsWith('finish_')), [finalizer]);
 		assert.equal(names.has('report_finding'), mode !== 'founder');

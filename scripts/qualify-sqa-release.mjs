@@ -88,7 +88,7 @@ try {
 	sessionId = created.id; assert.equal(created.mode, 'sqa'); assert.notEqual(created.qaExecutionMode, 'hybrid');
 	const instruction = externalTarget
 		? `${target} Run this explicitly authorized public-only SQA release qualification. Verify initial rendering, safe public navigation and return, any harmless visible form validation without submitting data, keyboard/semantics, narrow-screen layout and diagnostics. Use browser_sqa_smoke for all four actions. Finish all six SQA-WEB technical controls with observed evidence or a precise target-specific blocker. Batch missing reviewer-only documents as blocked, complete the host plan and publish finish_sqa_assessment. There are no credentials or documents to request. Do not sign in, create an account, upload, purchase, leave the target origin or submit personal data.`
-		: `${target} Run this explicitly authorized public-only SQA release qualification. Verify initial rendering, navigation to Privacy and back, native invalid/valid email behavior, keyboard/semantics, narrow-screen layout and diagnostics. Use browser_sqa_smoke for all four actions. Finish all six SQA-WEB technical controls with observed evidence. Batch missing reviewer-only documents as blocked, complete the host plan and publish finish_sqa_assessment. There are no credentials or documents to request. Do not expand into media, checkout, outside origins or an account workflow.`;
+		: `${target} Run this explicitly authorized public-only SQA release qualification. Verify initial rendering, navigation to Privacy and back, native invalid/valid email behavior, keyboard/semantics, narrow-screen layout and diagnostics. Use run_sqa_smoke_workflow with workflow=presentation, review and batch-record its four controls, then workflow=interaction with links=["Privacy"] and batch-record its two controls. These compositions execute all four browser_sqa_smoke actions with individually saved and budget-counted children; do not repeat them as separate tools. Finish all six SQA-WEB technical controls with observed evidence. Continue other scoped work only where this fixture supplies an oracle; block unsupported assurance claims honestly. Complete the host plan and publish finish_sqa_assessment. There are no credentials or documents to request. Do not expand into media, checkout, outside origins or an account workflow.`;
 	await json('POST', `/sessions/${sessionId}/message`, { text: instruction });
 	const started = Date.now();
 	let progress;
@@ -113,6 +113,15 @@ try {
 	if (externalTarget) assert.ok(technical.every(item => item.status !== 'not_assessed'), 'An external-target technical control was not assessed.');
 	else assert.ok(technical.every(item => item.status === 'pass'), 'A healthy fixture technical control did not pass; inspect the retained session.');
 	const activities = finalSession.activities.filter(item => item.status === 'done' && item.toolName?.startsWith('browser_'));
+	const workflowActivities = finalSession.activities.filter(item => item.toolName === 'run_sqa_smoke_workflow');
+	result.smokeWorkflows = {
+		attempts: workflowActivities.length,
+		completed: workflowActivities.filter(item => item.status === 'done').map(item => item.input?.workflow),
+		childSmokeActions: activities.filter(item => item.toolName === 'browser_sqa_smoke').map(item => item.input?.action)
+	};
+	if (!externalTarget && !finalSession.sqa.execution) {
+		assert.deepEqual([...result.smokeWorkflows.completed].sort(), ['interaction', 'presentation'], 'The controlled live qualification must exercise each preferred composition exactly once.');
+	}
 	for (const action of ['accessibility', 'responsive', 'navigation', 'form_validation']) {
 		const completed = activities.some(item => item.toolName === 'browser_sqa_smoke' && item.input?.action === action);
 		if (externalTarget && action === 'form_validation' && !completed) {

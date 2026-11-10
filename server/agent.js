@@ -18,6 +18,7 @@ import { createFounderTools, founderFinishReadiness,founderReportToolSchema } fr
 import { createFounderReviewTodos } from './founderService.js';
 import { buildSqaContext, buildSqaSynthesisContext } from './sqaPrompt.js';
 import { createSqaTools, finishReadiness as sqaFinishReadiness } from './sqaTools.js';
+import { createSqaSmokeWorkflow } from './sqaSmokeWorkflow.js';
 import { recordSqaSmokeActivity } from './sqaService.js';
 import { modeExplorationReadiness } from './modeReasoningRuntime.js';
 import {buildModeExecutionContext} from './modeReasoningContext.js';
@@ -198,7 +199,7 @@ export function allowedToolNames(mode = 'qa') {
 		...(mode === 'founder'
 			? ['record_founder_observation', 'finish_founder_review']
 			: mode === 'sqa'
-				? ['browser_sqa_smoke', 'report_finding', 'read_sqa_work_plan', 'record_sqa_control', 'record_sqa_blockers', 'finish_sqa_assessment']
+				? ['browser_sqa_smoke', 'run_sqa_smoke_workflow', 'report_finding', 'read_sqa_work_plan', 'record_sqa_control', 'record_sqa_blockers', 'finish_sqa_assessment']
 				: ['report_finding', 'finish_qa_report'])]);
 }
 
@@ -479,6 +480,7 @@ const ACTIVITY_LABELS = {
 	browser_media: 'Tested synthetic microphone',
 	browser_test_meeting_link: 'Checked meeting link',
 	browser_sqa_smoke: 'Ran bounded SQA browser smoke check',
+	run_sqa_smoke_workflow: 'Ran bounded SQA browser workflow',
 	update_todo: 'Updated the test plan',
 	ask_question: 'Asked the user',
 	report_finding: 'Filed a finding',
@@ -811,7 +813,12 @@ async function constructRuntime(session, runStore) {
 				}),
 				...(session.mode === 'sqa' ? createSqaTools(session, runStore, { isCancelled: () => Boolean(record.controller?.signal.aborted) }) : [])
 			];
-		const sessionTools = [...modeTools, ...createBrowserTools(() => record.bridge), ...(record.hybrid?.tools || []), ...(record.modeReasoning?.tools || [])]
+		if (session.mode === 'sqa' && !isQualified) record.sqaSmokeWorkflow = createSqaSmokeWorkflow(session, {
+			invoke: (...args) => record.invokeSqaSmokeTool(...args),
+			isCancelled: () => Boolean(record.controller?.signal.aborted)
+		});
+		if (isQualified) allowedTools.delete('run_sqa_smoke_workflow');
+		const sessionTools = [...modeTools, ...createBrowserTools(() => record.bridge), ...(record.sqaSmokeWorkflow ? [record.sqaSmokeWorkflow.tool] : []), ...(record.hybrid?.tools || []), ...(record.modeReasoning?.tools || [])]
 			.filter(tool => allowedTools.has(tool.name));
 		if (isHybrid) sessionTools.push(createHybridScenarioTool(sessionTools.find(tool => tool.name === 'browser_qa_check')));
 		const headless = runtime.headlessRuntime;
@@ -876,6 +883,10 @@ async function constructRuntime(session, runStore) {
 		// executor the loop calls.
 		const originalExecute = headless.executeTool.bind(headless);
 		headless.executeTool = async function* (toolName, input, toolCallId, signal) {
+			if (record.sqaSmokeWorkflow && !record.sqaSmokeWorkflow.dispatchAllowed()) {
+				yield { type: 'tool_result', toolName, toolCallId, input, result: { success: false, code: 'SQA_WORKFLOW_BUSY', error: 'A bounded SQA workflow owns tool dispatch. Wait for its saved results before another action or control write.' } };
+				return;
+			}
 			await record.hybrid?.awaitToolDispatch(signal);
 			const activity = await record.onToolStart?.(toolName, input, toolCallId);
 			if (record.modeReasoning && activity) {
@@ -899,6 +910,20 @@ async function constructRuntime(session, runStore) {
 						yield part;
 					}
 				} else yield* originalExecute(toolName, input, toolCallId, signal);
+		};
+		if (record.sqaSmokeWorkflow) record.invokeSqaSmokeTool = async (toolName, input, signal) => {
+			if (!['browser_diagnostics', 'browser_sqa_smoke'].includes(toolName)) throw new Error('Unsupported SQA workflow child.');
+			const activityId = randomUUID();
+			let result;
+			for await (const part of headless.executeTool(toolName, input, activityId, signal)) {
+				if (part.type === 'tool_result') {
+					result = redact(session.id, part.result);
+					await record.onNestedToolResult?.(part);
+				}
+			}
+			const activity = session.activities.find(item => item.id === activityId);
+			if (!activity || !['done', 'failed'].includes(activity.status)) throw new Error('SQA child activity was not durably completed.');
+			return { activityId, result };
 		};
 		if (isQualified) record[isHybrid?'invokeHybridTool':'invokeModeTool'] = async (toolName, input, signal) => {
 			if (!['browser_open', 'browser_get_url', 'browser_snapshot', 'browser_qa_check', 'browser_qa_scenario', 'browser_diagnostics',...(!isHybrid?['browser_fill','browser_click','browser_key']:[])].includes(toolName)) throw new Error('This tool is not approved for route composition.');
@@ -1348,7 +1373,9 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 	record.onNestedToolResult = async part => {
 		const id = openActivities.get(part.toolCallId) ?? part.toolCallId;
 		const result = redact(session.id, part.result), ok = result?.success !== false;
-		await runStore.updateActivity(session, id, { status: ok ? 'done' : 'failed', error: ok ? undefined : sanitizeErrorDetail(result?.error ?? result?.message), summary: summariseResult(part.toolName, result) });
+		const smokeSaved = session.mode === 'sqa' && !record.modeReasoning && part.toolName === 'browser_sqa_smoke'
+			&& session.activities.some(activity => activity.id === id && ['done', 'failed'].includes(activity.status));
+		if (!smokeSaved) await runStore.updateActivity(session, id, { status: ok ? 'done' : 'failed', error: ok ? undefined : sanitizeErrorDetail(result?.error ?? result?.message), summary: summariseResult(part.toolName, result) });
 		openActivities.delete(part.toolCallId);
 		if (part.toolName === 'browser_open' && ok) bridge.startFrames();
 		if (session.qaExecutionMode === 'hybrid' && ['browser_open', 'browser_qa_check', 'browser_qa_scenario'].includes(part.toolName)) await bridge.captureFrame();
@@ -1892,6 +1919,9 @@ export function summariseResult(toolName, result) {
 	}
 	if (toolName === 'browser_test_meeting_link') {
 		return `Meeting prejoin check: ${JSON.stringify({ url: result.url, title: result.title, joined: result.joined, code: result.code }).slice(0, 950)}`;
+	}
+	if (toolName === 'run_sqa_smoke_workflow') {
+		return `SQA ${result.workflow ?? 'smoke'} workflow: ${result.checks?.length ?? 0} saved child check(s); review ${(result.control_ids ?? []).join(', ')}`;
 	}
 	if (toolName === 'browser_sqa_smoke') {
 		if (result.action === 'accessibility') return `Accessibility smoke: ${result.uniqueForwardTargets ?? 0} unique focus target(s), ${result.noFocusSteps ?? 0} no-focus step(s), wrapped=${Boolean(result.wrappedDuringSample)}`;
