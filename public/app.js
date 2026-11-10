@@ -8092,12 +8092,16 @@ const devicePicker = $('device-picker') ? createDevicePicker({
 	},
 	onClose: () => void refreshDevicePickerData(),
 	onOpen: () => {
+		const forSqa = sqaUi.dialog.open && !devicePicker.state.addPick;
+		$('mx-target-field').hidden = forSqa;
+		$('dp-sqa-actions').hidden = !forSqa;
 		void refreshDevicePickerData();
 		// Re-sync the sidebar highlight to the current selection on every open.
 		const current = activeTestEnvStore.get();
 		if (current) matrixSidebar?.setSelection?.(current.device, current.osVersion);
 	}
 }) : null;
+$('dp-sqa-continue')?.addEventListener('click', () => devicePicker.close());
 
 /* ── Device & Browser Matrix (M3 #14422): sidebar + stores inside the picker.
  * The M2 model layer builds the tree; this wires the renderer, the shared
@@ -8165,19 +8169,18 @@ function renderMatrixColumns() {
 // channelForClient (top-of-file import) mirrors the server ladder client-side
 // (see browserChannels.js).
 
-/* Top bar: target URL bound to the REAL run state — the QA launcher's URL
- * field is the canonical "next run target"; we prefill from the last session
- * target when present. Refresh reloads picker data + re-opens QA prefilled. */
+/* Refresh the shared device catalog. Outside SQA, retain the target for the
+ * next QA setup. */
 if ($('mx-target-url')) {
 	const urlInput = $('mx-target-url');
 	urlInput.value = state.session?.targetUrl ?? '';
 }
 if ($('mx-refresh')) {
 	$('mx-refresh').addEventListener('click', async () => {
+		const forSqa = sqaUi.dialog.open;
 		await refreshDevicePickerData();
 		renderMatrixColumns();
-		// Pre-open the QA launcher with the current target so Refresh is a
-		// one-click "reload catalog + go run this URL".
+		if (forSqa) return;
 		const url = $('mx-target-url')?.value?.trim();
 		if (url) {
 			const qa = $('qa-target-url');

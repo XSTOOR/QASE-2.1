@@ -9,7 +9,7 @@
 <title>QASE — Autonomous quality assurance</title>
 <script src="theme.js?v=20261015-11"></script>
 <script src="studioMode.js?v=20261014-6"></script>
-<link rel="stylesheet" href="styles.css?v=20261109-1">
+<link rel="stylesheet" href="styles.css?v=20261110-1">
 <link rel="stylesheet" href="bugsView.css?v=20261014-6">
 <link rel="stylesheet" href="studio-workspace.css?v=20261015-6">
 <link rel="stylesheet" href="studio-embed.css?v=20261108-2">
@@ -1648,12 +1648,10 @@
       <div class="mx-shell">
         <nav class="mx-sidebar" id="mx-sidebar" aria-label="Device categories"></nav>
         <div class="mx-main">
-          <!-- Matrix top bar (M4 #14423): target URL + refresh, bound to the
-               REAL run state — no decorative chrome. Refresh pre-fills the QA
-               launcher with the current target and reloads live picker data. -->
+          <!-- The target field belongs to QA. SQA keeps its target on the review form. -->
           <div class="mx-topbar">
             <button type="button" class="mx-sidebar-toggle" id="mx-sidebar-toggle" aria-expanded="true" aria-controls="mx-sidebar" title="Show or hide the device categories">▾ Categories</button>
-            <label class="mx-topbar-url">
+            <label class="mx-topbar-url" id="mx-target-field">
               <span class="sr-only" id="mx-url-label">Target URL</span>
               <input id="mx-target-url" type="url" maxlength="2048" placeholder="https://example.com — target for the next run" aria-labelledby="mx-url-label">
             </label>
@@ -1666,6 +1664,9 @@
       </div>
       <p id="dp-summary" class="dp-summary" data-empty="true">SELECT A DEVICE</p>
     </div>
+    <footer class="modal-foot" id="dp-sqa-actions" hidden>
+      <button type="button" class="btn btn-primary" id="dp-sqa-continue">Continue to quality review</button>
+    </footer>
   </div>
 </dialog>
 
@@ -1760,6 +1761,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261109-1" type="module"></script>
+<script src="app.js?v=20261110-1" type="module"></script>
 </body>
 </html>

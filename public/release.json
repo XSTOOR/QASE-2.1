@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-founder-sqa-2026-11-09-ui-r1",
-  "uiVersion": "20261109-1",
+  "releaseId": "qase-founder-sqa-2026-11-10-launch-r1",
+  "uiVersion": "20261110-1",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Founder/SQA UI audit fixes on 1b0d075: accurate quality verdicts, working device management, readable reports, accessible model field and visible reset confirmation; export-only scope"
+  "source": "SQA device-picker handoff on Push-SQA 5c4b0db. The selected browser and target carry through to the quality review form. Studio handoff remains export-only."
 }

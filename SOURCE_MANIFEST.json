@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "releaseId": "qase-founder-sqa-2026-11-09-ui-r1",
+  "releaseId": "qase-founder-sqa-2026-11-10-launch-r1",
   "files": [
     {
       "path": ".dockerignore",
@@ -92,11 +92,11 @@
     },
     {
       "path": "DEPLOYMENT_PROMPT.md",
-      "sha256": "3e930506cfcae5252a0cca1b82a443989dc41b7f9c30dffd8db42ed5184df799"
+      "sha256": "973e2b0d9ec8e00603647b1523d7afa4cfda095f23dd9165af41a3819bbde6d2"
     },
     {
       "path": "Dockerfile",
-      "sha256": "2c14d0a9fcca977d763f79eaf5270aee83be0839be5637c806d45fb09732c2bb"
+      "sha256": "849d944a14989d5715db39bb0be99239f63ba37641e840fd5343d7ec4a44382f"
     },
     {
       "path": "docs/auth-architecture-2026-09-10.md",
@@ -380,7 +380,7 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "a6f2ab876367ac554a1dacb47da9d1854ca447b4f9609ce5f8eafa7b222a0873"
+      "sha256": "b9de8c9456b0d1261518a99a2373936da40500e7494806f20d0173a126ecd149"
     },
     {
       "path": "public/auth.css",
@@ -616,7 +616,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "af461ed731034127577be38d581558bff6c6691bcb0bba062a6af2fca0035f78"
+      "sha256": "21d43edb7b5894f1704b5c24606d288399b007bb10bbf81c37b7f5f971b3772d"
     },
     {
       "path": "public/jevExecutionView.js",
@@ -792,7 +792,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "10a2d76da96d9b361d54b4ceb9bce34f247f3387db93f32c85f6d7fbb6c834ce"
+      "sha256": "3f1dfe492cdc5f4f94c6f191e4a51da609f1a6cd017b03b6c635f15e73d81b5c"
     },
     {
       "path": "public/renderHealth.js",
@@ -940,11 +940,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "fcf1a2150cf7b5b2584cb28e80c4cec7684bdefd1b51c89185e8e1b07a109e3b"
+      "sha256": "51b4a1d89303a25657717771292492564afced6f9485b4f95db2166ede23e998"
     },
     {
       "path": "RELEASE_NOTES.md",
-      "sha256": "21b284191313d50f150e3f6685b155863adf3b3cabbf32d631ac064f6a177d32"
+      "sha256": "88e1128c0e7acd7355b2ff83feb66cafeaed6baf00495a9bd25348f68e09e628"
     },
     {
       "path": "run-jev.command",
@@ -1200,7 +1200,7 @@
     },
     {
       "path": "scripts/test-sqa-launch.mjs",
-      "sha256": "b558845273f2d4eab516ef5069e96e15d7ca23dcfb90b56c2f5bbec0283c2159"
+      "sha256": "047da8959730a756d962676735b14a87c84e488df281fdb2eb1adf4ad2c8d93a"
     },
     {
       "path": "scripts/test-sqa-release.mjs",
