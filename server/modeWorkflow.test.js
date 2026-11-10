@@ -5,6 +5,7 @@ import { AGENT_EVIDENCE_TYPES, createSqaState, createSqaTodoPlan } from './sqaSe
 import { getSqaControl, SQA_PROFILES, SQA_PRODUCT_ATTRIBUTES, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { createSqaTools } from './sqaTools.js';
 import { buildSqaReportMarkdown } from './sqaAssessment.js';
+import { seedSqaSmokePassReceipts } from '../scripts/fixtures/sqa-smoke.mjs';
 
 // Deterministic workflow tests exercise real recording, evidence contracts,
 // completion gates, and exported reports. Activity fixtures are simulated;
@@ -20,6 +21,7 @@ for (const profiles of [...Object.keys(SQA_PROFILES).map(profile => [profile]), 
 				target: { name: 'Deterministic meeting application fixture', release: 'test', environment: 'test' }
 			})
 		};
+		await seedSqaSmokePassReceipts(session);
 		session.todos = createSqaTodoPlan(session.sqa);
 		const commits = [];
 		const tools = createSqaTools(session, { async commit(_session, type, payload) { commits.push({ type, payload }); } });

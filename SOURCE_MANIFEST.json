@@ -987,6 +987,10 @@
       "sha256": "119004076f0da42606339716855b4c228d137955f268e7b498277766b2660b3a"
     },
     {
+      "path": "scripts/fixtures/sqa-smoke.mjs",
+      "sha256": "bf513b1c0edfd8af8a14ddfc9baf734dadcd8fabfa9a5989350e50e647869ef3"
+    },
+    {
       "path": "scripts/founder-browser-fixture.mjs",
       "sha256": "7eff1a216f8add611d2547d6099a4d0b3596e6e065d74f6e11d260622ab98088"
     },
@@ -1196,7 +1200,7 @@
     },
     {
       "path": "scripts/test-sqa-evidence.mjs",
-      "sha256": "dd9f160378964ee9ab6dc3051e8414eb893edb3209cf1d4d6bd0bbaa952e8760"
+      "sha256": "a582c47230c323dd76f68fda8b5d0a726a2fc6a741e20a1a66b6ab0afbd3aa0e"
     },
     {
       "path": "scripts/test-sqa-launch.mjs",
@@ -1264,7 +1268,7 @@
     },
     {
       "path": "server/agent.test.js",
-      "sha256": "6086d1471d31821c8a697797d457a1f07fef9ab52733155814540569b6b3926d"
+      "sha256": "4788a70565b31a4893567e35c24d0b6e547c8da100d3ef665044497800d31808"
     },
     {
       "path": "server/analytics.js",
@@ -2388,7 +2392,7 @@
     },
     {
       "path": "server/modeWorkflow.test.js",
-      "sha256": "49254ae799c8ffbb5e13e45da4ef51c9222018e789c8421b981880fea8deed80"
+      "sha256": "5fbec16fcbcf1230c0f5c00c6bd81ec36ed649ef859486bec99969fe779844d9"
     },
     {
       "path": "server/multiEngine.integration.test.js",
