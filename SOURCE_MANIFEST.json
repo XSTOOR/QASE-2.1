@@ -1100,7 +1100,7 @@
     },
     {
       "path": "scripts/qualify-sqa-release.mjs",
-      "sha256": "5d9fb6069c50a05b88f87318de3e1baddea04914c281269019a986d38bc74975"
+      "sha256": "f95047b520c553937ca4492ef235670a39e18074dedf653b476269720e0a140f"
     },
     {
       "path": "scripts/qualify-studio-demo.mjs",

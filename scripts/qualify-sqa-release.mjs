@@ -53,7 +53,7 @@ const result = {
 	target, modelBacked: true
 };
 async function json(method, route, data) {
-	const response = await api.fetch(`/api${route}`, { method, headers: { Origin: runtime.base, ...(!['GET', 'HEAD'].includes(method) && csrf ? { 'X-CSRF-Token': csrf } : {}) }, ...(data === undefined ? {} : { data }) });
+	const response = await api.fetch(`/api${route}`, { method, maxRetries: ['GET', 'HEAD'].includes(method) ? 2 : 0, headers: { Origin: runtime.base, ...(!['GET', 'HEAD'].includes(method) && csrf ? { 'X-CSRF-Token': csrf } : {}) }, ...(data === undefined ? {} : { data }) });
 	assert.ok(response.ok(), `${method} ${route} returned HTTP ${response.status()}.`);
 	return response.json();
 }
