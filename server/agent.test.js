@@ -504,7 +504,7 @@ test('SQA threshold publishes through the host after any completed tool without 
 	const fixture = runtimeFixture({
 		mode: 'sqa',
 		sqa: { scope: { applicableControlIds: [] }, observations: [] },
-		tokenUsage: { inputTokens: 300_000 },
+		tokenUsage: { inputTokens: 299_999 },
 		status: 'running'
 	});
 	const closeoutInputs = [];
@@ -521,6 +521,7 @@ test('SQA threshold publishes through the host after any completed tool without 
 	let modelTurns = 0;
 	fixture.record.runtime.run = async function* () {
 		modelTurns++;
+		fixture.session.tokenUsage.inputTokens = 300_000;
 		yield {
 			type: 'tool_result', toolName: 'update_todo', toolCallId: 'budget-plan', input: {},
 			result: { success: true, todos: [] }
@@ -535,6 +536,86 @@ test('SQA threshold publishes through the host after any completed tool without 
 	assert.equal(fixture.session.status, 'done');
 	assert.equal(fixture.session.sqa.assessment.assessmentId, 'sqa-host-closeout');
 	assert.equal(fixture.session.activities.find(item => item.toolName === 'finish_sqa_assessment')?.status, 'done');
+});
+
+function sqaRecoveryFixture(inputTokens = 314358) {
+	const sqa = createSqaState({ authorizationConfirmed: true, profiles: ['core'],
+		attributes: ['web_application', 'user_interface'], target: { name: 'Recovery fixture' } });
+	const f = runtimeFixture({ mode: 'sqa', sqa, status: 'error',
+		tokenUsage: { inputTokens, outputTokens: 14493, totalTokens: inputTokens + 14493, estimated: true } });
+	f.session.todos = createSqaTodoPlan(sqa);
+	f.session.sqa.observations = [{ controlId: 'SQA-WEB-001', status: 'blocked',
+		rationale: 'Saved fixture limitation', evidence: [] }];
+	f.record.runtime.headlessRuntime = { getTools: () => createSqaTools(f.session, f.store) };
+	return f;
+}
+
+test('SQA restart at the closeout threshold publishes saved evidence without model or browser replay', async () => {
+	const f = sqaRecoveryFixture();
+	const saved = structuredClone(f.session.sqa.observations), usage = structuredClone(f.session.tokenUsage);
+	let calls = 0;
+	f.record.runtime.run = async function* () { calls++; throw new Error('Gateway is unavailable'); };
+	await runTurn(f.session, { task: 'Continue' }, f.store);
+	assert.equal(calls, 0);
+	assert.equal(f.session.status, 'done');
+	assert.ok(f.session.sqa.finalizedAt);
+	assert.deepEqual(f.session.sqa.observations.slice(0, saved.length), saved);
+	assert.deepEqual(f.session.tokenUsage, usage);
+	assert.ok(f.session.sqa.observations.every(o => o.status === 'blocked'));
+	assert.ok(f.session.sqa.observations.slice(saved.length).every(o => /budget reached/.test(o.rationale)));
+	assert.equal(f.session.activities.filter(a => a.toolName.startsWith('browser_')).length, 0);
+	assert.equal(f.session.sqa.budgetCloseout.used, usage.inputTokens);
+});
+
+test('SQA disconnect crossing the threshold flushes usage and publishes without another model call', async () => {
+	const f = sqaRecoveryFixture(299999);
+	let calls = 0;
+	f.record.runtime.run = async function* () {
+		calls++;
+		f.record.onUsageHarvested({ inputTokens: 14359, outputTokens: 7, totalTokens: 14366, callId: 'disconnect-usage', estimated: false });
+		throw new Error('Connection error.');
+	};
+	await runTurn(f.session, { task: 'Continue' }, f.store);
+	assert.equal(calls, 1);
+	assert.equal(f.session.status, 'done');
+	assert.equal(f.session.tokenUsage.inputTokens, 314358);
+	assert.equal(f.session.tokenUsage.outputTokens, 14500);
+	assert.equal(f.session.sqa.budgetCloseout.used, 314358);
+	assert.equal(f.session.activities.filter(a => a.toolName === 'finish_sqa_assessment').length, 1);
+});
+
+for (const constraint of ['active tool', 'finding conflict', 'authentication', 'qualified exploration', 'storage failure']) {
+	test(`SQA recovery preserves the ${constraint} publication gate without replay`, async () => {
+		const f = sqaRecoveryFixture();
+		if (constraint === 'active tool') f.session.activities.push({ id: 'in-flight', toolName: 'browser_click', status: 'running', ts: Date.now() });
+		if (constraint === 'finding conflict') f.session.findings.push({ id: 'confirmed', controlIds: ['SQA-WEB-001'] });
+		if (constraint === 'authentication') f.session.sqa.observations = ['SQA-WEB-002', 'SQA-WEB-003'].map(controlId => ({ controlId, status: 'blocked', rationale: 'Authentication is required', evidence: [] }));
+		if (constraint === 'qualified exploration') f.session.sqa.execution = { routes: [], actions: [] };
+		if (constraint === 'storage failure') f.store.commit = async (_s, type) => { if (type === 'sqa') throw new Error('Fixture storage unavailable'); };
+		const saved = structuredClone(f.session.sqa.observations);
+		let calls = 0;
+		f.record.runtime.run = async function* () { calls++; };
+		await runTurn(f.session, { task: 'Continue' }, f.store);
+		assert.equal(calls, 0);
+		assert.equal(f.session.status, 'interrupted');
+		assert.equal(f.session.sqa.finalizedAt, undefined);
+		assert.deepEqual(f.session.sqa.observations, saved);
+		assert.equal(f.session.activities.at(-1).status, 'failed');
+	});
+}
+
+test('SQA cancellation during a disconnect cannot trigger saved-evidence publication', async () => {
+	const f = sqaRecoveryFixture(299999);
+	f.record.runtime.run = async function* () {
+		f.session.tokenUsage.inputTokens = 314358;
+		f.record.userStopRequested = true;
+		f.record.controller.abort();
+		throw new Error('Connection error');
+	};
+	await runTurn(f.session, { task: 'Continue' }, f.store);
+	assert.equal(f.session.status, 'interrupted');
+	assert.equal(f.session.sqa.finalizedAt, undefined);
+	assert.equal(f.session.activities.length, 0);
 });
 
 test('media evidence summaries fit Founder evidence limits and retain the latest app track state', () => {

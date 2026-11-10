@@ -1382,6 +1382,44 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 		runStore.markExecutionStarted?.(session);
 	};
 
+
+	// The same validated host finalizer handles tool boundaries, restored runs,
+	// and transport failures. Publication must not depend on another model call
+	// once durable usage has reached the existing closeout threshold.
+	let sqaCloseoutFailure;
+	const trySqaBudgetCloseout = async (result = {}) => {
+		if (session.mode !== 'sqa' || !session.sqa || session.sqa.finalizedAt
+			|| sqaAutomaticCloseoutAttempted || controller.signal.aborted || record.userStopRequested
+			|| runtime.getPendingQuestion?.()) return false;
+		const input = sqaAutomaticBudgetCloseoutInput(result, session);
+		if (!input) return false;
+		const finalizer = runtime.headlessRuntime?.getTools().find(tool => tool.name === 'finish_sqa_assessment');
+		if (!finalizer) return false;
+		sqaAutomaticCloseoutAttempted = true;
+		const callId = `sqa-budget-closeout-${randomUUID()}`;
+		const activity = await beginActivity(finalizer.name, input, callId);
+		let closeout;
+		try {
+			closeout = await finalizer.run(input, { signal: controller.signal });
+		} catch (error) {
+			closeout = { success: false, error: sanitizeErrorDetail(error) };
+		}
+		const published = closeout?.success === true && closeout.published === true && Boolean(finalArtifact(session));
+		sqaCloseoutFailure = published ? undefined
+			: sanitizeErrorDetail(closeout?.error ?? 'The SQA closeout validator did not publish an assessment.');
+		await runStore.updateActivity(session, activity.id, {
+			status: published ? 'done' : 'failed', error: sqaCloseoutFailure,
+			summary: summariseResult(finalizer.name, closeout)
+		});
+		openActivities.delete(callId);
+		if (published) successfulFinalizer = true;
+		return published;
+	};
+	const pauseSqaCloseout = async () => {
+		await runStore.setStatus(session, 'interrupted',
+			`SQA progress is saved, but the assessment could not be published: ${sqaCloseoutFailure}`);
+	};
+
 	// Crash recovery: mirror the model conversation to disk while the run is in
 	// flight so an interrupted run can be auto-resumed after a restart.
 	const snapshots = snapshotWriter(session.id, runtime, session.ownerUserId);
@@ -1394,6 +1432,12 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 
 	try {
 		controller.signal.throwIfAborted();
+		if (await trySqaBudgetCloseout()) {
+			await completeRun();
+			deleteRunSnapshot(session.id);
+			return;
+		}
+		if (sqaCloseoutFailure) { await pauseSqaCloseout(); return; }
 		if (record.hybrid) await record.hybrid.beginTurn(controller.signal);
 		if (record.modeReasoning) await record.modeReasoning.beginTurn(controller.signal);
 		if(record.modeReasoning&&!hostContinuation&&incompleteAttempt===0&&retryAttempt===0){
@@ -1496,34 +1540,7 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 					openActivities.delete(part.toolCallId);
 					if(ok&&session.mode==='founder'&&session.founder.reportGeneration)await rememberFounderEvidence(session,runStore,{toolName:part.toolName,activityId:id,result,currentUrl:liveBrowserUrl(record)});
 					snapshots.maybePersist();
-					const automaticSqaCloseout = session.mode === 'sqa' && !sqaAutomaticCloseoutAttempted
-						? sqaAutomaticBudgetCloseoutInput(result, session)
-						: undefined;
-					if (automaticSqaCloseout) {
-						sqaAutomaticCloseoutAttempted = true;
-						const finalizer = runtime.headlessRuntime.getTools().find(tool => tool.name === 'finish_sqa_assessment');
-						if (finalizer) {
-							const closeoutCallId = `sqa-budget-closeout-${randomUUID()}`;
-							const closeoutActivity = await beginActivity(finalizer.name, automaticSqaCloseout, closeoutCallId);
-							let closeoutResult;
-							try {
-								closeoutResult = await finalizer.run(automaticSqaCloseout, { signal: controller.signal });
-							} catch (error) {
-								closeoutResult = { success: false, error: error instanceof Error ? error.message : String(error) };
-							}
-							const closeoutOk = closeoutResult?.success !== false;
-							await runStore.updateActivity(session, closeoutActivity.id, {
-								status: closeoutOk ? 'done' : 'failed',
-								error: closeoutOk ? undefined : sanitizeErrorDetail(closeoutResult?.error ?? closeoutResult?.message),
-								summary: summariseResult(finalizer.name, closeoutResult)
-							});
-							openActivities.delete(closeoutCallId);
-							if (closeoutResult?.success === true && closeoutResult.published === true && finalArtifact(session)) {
-								successfulFinalizer = true;
-								break streamLoop;
-							}
-						}
-					}
+					if (await trySqaBudgetCloseout(result) || sqaCloseoutFailure) break streamLoop;
 					if (record.hybridPause) break streamLoop;
 					if(ok&&['record_sqa_control','record_sqa_blockers'].includes(part.toolName)&&prepareSqaSynthesis(session,record)){
 						handoffToSqaSynthesis=true;break streamLoop;
@@ -1607,6 +1624,8 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 				else await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
 				deleteRunSnapshot(session.id);
 			}
+		} else if (sqaCloseoutFailure) {
+			await pauseSqaCloseout();
 		} else if (handoffToFounderSynthesis) {
 			continueIncompleteRun=true;
 			await runStore.setStatus(session,'running','Evidence collection complete. Preparing the Founder report.');
@@ -1673,6 +1692,9 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 		}
 	} catch (error) {
 		await commitTurnUsage().catch(() => undefined);
+		if (!successfulFinalizer && isRetryableModeInterruption(error, session.mode)) {
+			await trySqaBudgetCloseout();
+		}
 		const budgetDecision = record.hybrid && !successfulFinalizer ? await pauseForBudgetApproval(session, runtime, record.hybridPause || error) : null;
 		if (successfulFinalizer) {
 			await completeRun();
@@ -1696,6 +1718,8 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 				else await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
 				deleteRunSnapshot(session.id);
 			}
+		} else if (sqaCloseoutFailure) {
+			await pauseSqaCloseout();
 		} else if (record.hybrid) {
 			session.hybrid.pauseReason = error.code ? `${error.code}: ${sanitizeErrorDetail(error)}` : 'Reasoner interrupted; progress checkpointed.';
 			await record.hybrid.endTurn('paused');
