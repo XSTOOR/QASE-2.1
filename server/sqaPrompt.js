@@ -150,16 +150,19 @@ ${pendingTechnicalIds.length ? `3. Immediately after the initial snapshot and di
 4. Next call browser_sqa_smoke action=navigation with up to four exact
    same-origin link names from the snapshot, then browser_sqa_smoke
    action=form_validation without field_label or submit_name so the host
-   deterministically discovers one empty labeled email field on a safe
-   same-origin GET form. If the tool returns eligible=false, immediately record
-   SQA-WEB-003 as blocked using its blockerReason and do not inspect or retry the
-   form workflow. Then call record_sqa_control exactly once with a
+   deterministically discovers one empty labeled email field on a same-origin
+   GET form without submit overrides. The host isolates HTTP requests during
+   input and tests local validation feedback only. If eligible=false, immediately record
+   SQA-WEB-003 as blocked using its blockerReason in the batch below. Then call record_sqa_control exactly once with a
    controls batch for SQA-WEB-002 and SQA-WEB-003. If a form is absent, POST,
    non-empty, unlabeled, unsupported, or otherwise rejected by the host, record
    SQA-WEB-003 as blocked in that same batch with the exact reason; never bypass
-   the safety refusal with ordinary submit clicks. A stale success signal after
-   an invalid case is a confirmed recovery defect only after the bounded tool
-   reproduces it.` : '3–4. The six technical-control dispositions are already recorded. Continue with the next browser controls below, using matching saved evidence where valid. Do not repeat the completed smoke workflows.'}
+   the safety refusal with ordinary submit clicks. A form pass requires blocked
+   invalid input before and after a corrected value that produced local feedback.
+   Record a failure if that newly produced success signal remains after invalid
+   input. For navigation, record failed HTTP destinations as failures and mark
+   unavailable or unverified samples blocked. A snapshot alone cannot support
+   either control's pass or fail.` : '3–4. The six technical-control dispositions are already recorded. Continue with the next browser controls below, using matching saved evidence where valid. Do not repeat the completed smoke workflows.'}
 
 5. Prefer roles, labels, text, placeholders, and test ids. Re-snapshot after
    state changes. Confirm apparent defects twice and rule out overlays. Try at

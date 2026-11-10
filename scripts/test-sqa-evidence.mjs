@@ -8,6 +8,7 @@ import { assertSqaTestBrowser, createSqaTestServer, launchSqaTestBrowser } from 
 import { createSqaState, finishSqaAssessment, recordAgentSqaObservation } from '../server/sqaService.js';
 import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from '../server/sqaCatalog.js';
 import { createTenantContext } from '../server/tenancy.js';
+import { seedSqaSmokePassReceipts } from './fixtures/sqa-smoke.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const { values } = parseArgs({ options: { browser: { type: 'string', default: 'chromium' }, 'output-dir': { type: 'string' } } });
@@ -17,6 +18,7 @@ await mkdir(path.join(directory, '.qase'), { recursive: true });
 const session = { id: randomUUID(), title: 'Phase 9 evidence fixture', mode: 'sqa', status: 'done', ownerUserId: createTenantContext().actorUserId, createdAt: Date.now(), updatedAt: Date.now(), todos: [], findings: [], activities: [{ id: 'fixture-observation', toolName: 'browser_snapshot', status: 'done', ts: Date.now(), summary: 'Synthetic observation used solely to test evidence transport and report rendering.' }], messages: [], secretNames: [] };
 session.sqa = createSqaState({ authorizationConfirmed: true, target: { name: 'Controlled evidence fixture', release: 'phase-9', environment: 'isolated browser test' } });
 session.sqa.observations = session.sqa.scope.applicableControlIds.map(controlId => ({ controlId, status: 'blocked', rationale: 'Fixture evidence prerequisite.', evidence: [] }));
+await seedSqaSmokePassReceipts(session);
 for (const controlId of SQA_TECHNICAL_CONTROL_IDS) {
 	await recordAgentSqaObservation(session, { control_id: controlId, status: 'pass', evidence: getSqaControl(controlId).evidenceRequirements.flatMap(requirement => Array.from({ length: requirement.minimum }, () => ({ type: requirement.type, summary: `Synthetic ${controlId} rendering fixture; no product behavior is claimed. <script>window.evidenceInjection = true</script>` }))) }, { async commit() {} });
 }

@@ -36,7 +36,9 @@ const qa = { id: randomUUID(), mode: 'qa', title: 'Ordinary completed QA fixture
 
 async function openReport(session) {
   await page.goto(`${runtime.base}/#/runs/${session.id}/results`);
-  await page.waitForFunction(() => document.body.dataset.page && !document.body.dataset.pageLoading);
+  // A hash navigation can resolve while the previous report is still visible.
+  await page.waitForFunction(title => document.body.dataset.page === 'results' && !document.body.dataset.pageLoading
+    && document.getElementById('results-page-title').title === title, session.title);
   await page.locator('#tab-report').click();
   await page.locator('#report-view').waitFor({ state: 'visible' });
 }
@@ -119,7 +121,7 @@ try {
 
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(`${runtime.base}/#/runs/${qa.id}`);
-  await page.waitForFunction(() => document.body.dataset.page && !document.body.dataset.pageLoading);
+  await page.waitForFunction(() => document.body.dataset.page === 'run' && !document.body.dataset.pageLoading);
   await page.locator('#new-founder').click();
   await page.locator('#founder-target-url').fill('https://fixture.test/');
   await page.locator('#founder-detected-context').waitFor({ state: 'visible' });

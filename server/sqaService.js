@@ -203,25 +203,77 @@ export function normalizePendingSqaState(input) {
 	return pending;
 }
 
-function relevantBrowserActivities(session, controlId) {
+const LEGACY_SMOKE_CONTROLS = new Map([
+	['SQA-WEB-002', 'navigation'], ['SQA-WEB-003', 'form_validation']
+]);
+
+function smokeEvidence(result) {
+	if (result?.success !== true) return;
+	if (result.action === 'navigation' && result.samples?.length && result.originalUrl && result.restoredUrl === result.originalUrl) {
+		const samples = result.samples.map(({ href, ok, status, reason }) => ({
+			destination: href?.split(/[?#]/, 1)[0].slice(0, 512), ok, status, reason
+		}));
+		if (samples.some(sample => sample.reason === 'http_error')) return { verdict: 'fail', samples };
+		if (samples.every(sample => sample.ok === true)) return { verdict: 'pass', samples };
+	}
+	if (result.action !== 'form_validation' || !result.eligible || result.cases?.length !== 4) return;
+	const cases = result.cases.map(({ name, validity, submissionBlocked, feedbackChanged }) => ({ name, validity, submissionBlocked, feedbackChanged }));
+	const [empty, invalid, valid, recovery] = cases;
+	if (empty.name !== 'empty' || invalid.name !== 'invalid_email' || valid.name !== 'valid_email' || recovery.name !== 'invalid_after_valid') return;
+	if ((empty.validity?.required && !empty.submissionBlocked) || !invalid.submissionBlocked
+		|| !recovery.submissionBlocked || !valid.validity?.valid || !valid.feedbackChanged) return;
+	return { verdict: result.staleSuccessSignalAfterInvalid ? 'fail' : 'pass', cases,
+		staleSuccessSignalAfterInvalid: result.staleSuccessSignalAfterInvalid === true };
+}
+
+// Persist host-produced receipts in the same write as their activity. Tool
+// inputs and model-authored summaries cannot supply a receipt.
+export async function recordSqaSmokeActivity(session, id, result, patch, runStore) {
+	const receipt = patch.status === 'done' && session.mode === 'sqa' && session.sqa && !modeDiscoveryRequired(session)
+		&& session.activities.some(activity => activity.id === id && activity.toolName === 'browser_sqa_smoke'
+			&& activity.input?.action === result?.action) && smokeEvidence(result);
+	if (!receipt) return runStore.updateActivity(session, id, patch);
+	const previous = session.sqa.smokeEvidence;
+	const evidence = [...(previous ?? []).filter(item => item.activityId !== id),
+		{ activityId: id, action: result.action, ...receipt }].slice(-32);
+	session.sqa.smokeEvidence = evidence;
+	try {
+		return await runStore.updateActivity(session, id, patch);
+	} catch (error) {
+		if (session.sqa.smokeEvidence === evidence) session.sqa.smokeEvidence = previous;
+		throw error;
+	}
+}
+
+function matchingSmokeEvidence(session, controlId) {
+	return (session.sqa.smokeEvidence ?? []).filter(item => item.action === LEGACY_SMOKE_CONTROLS.get(controlId)
+		&& session.activities.some(activity => activity.id === item.activityId && activity.status === 'done'
+			&& activity.toolName === 'browser_sqa_smoke' && activity.input?.action === item.action));
+}
+
+function relevantBrowserActivities(session, controlId, status) {
 	const allowed = modeSqaEvidenceActivityIds(session,controlId);
+	const smoke = !allowed && LEGACY_SMOKE_CONTROLS.has(controlId) && ['pass', 'fail'].includes(status)
+		? new Map(matchingSmokeEvidence(session, controlId).filter(item => item.verdict === status).map(item => [item.activityId, item])) : null;
 	return (session.activities ?? [])
-		.filter(activity => activity.status === 'done' && String(activity.toolName ?? '').startsWith('browser_') && (!allowed || allowed.has(activity.id)))
+		.filter(activity => activity.status === 'done' && String(activity.toolName ?? '').startsWith('browser_')
+			&& (!allowed || allowed.has(activity.id)) && (!smoke || smoke.has(activity.id)))
 		.slice(-12)
 		.map(activity => ({
 			id: String(activity.id),
 			toolName: activity.toolName,
 			ts: activity.ts,
 			detail: activity.detail,
-			summary: activity.summary
+			summary: activity.summary,
+			...(smoke && { smokeEvidence: smoke.get(activity.id) })
 		}));
 }
 
-function evidenceFromBrowser(session, type, summary, now, records, controlId) {
+function evidenceFromBrowser(session, type, summary, now, records, controlId, status) {
 	if (!AGENT_EVIDENCE_TYPES.has(type)) {
 		throw new TypeError('The SQA agent cannot attest documentary, regulatory, approval, or independent-review evidence.');
 	}
-	const activities = relevantBrowserActivities(session,controlId);
+	const activities = relevantBrowserActivities(session,controlId,status);
 	if (activities.length === 0) {
 		if(modeDiscoveryRequired(session))throw new TypeError(`Control ${controlId} needs completed matching checks in a workflow tagged with that control_id. Add a feature-linked workflow for missing checks; completed workflows cannot replay. A generic snapshot or unrelated control check cannot support pass/fail.`);
 		throw new TypeError('A pass or fail requires a completed browser observation in this run.');
@@ -319,13 +371,20 @@ function normalizeAgentObservation(session, input, now, records) {
 			throw new TypeError(`A pass for ${control.id} is missing required browser evidence types: ${missing.join(', ')}.`);
 		}
 	}
+	if (!modeDiscoveryRequired(session) && LEGACY_SMOKE_CONTROLS.has(controlId) && ['pass', 'fail'].includes(status)) {
+		const receipts = matchingSmokeEvidence(session, controlId);
+		if (!receipts.some(item => item.verdict === status) || (status === 'pass' && receipts.some(item => item.verdict === 'fail'))) {
+			throw new TypeError(`A ${status} for ${controlId} requires matching host-observed ${LEGACY_SMOKE_CONTROLS.get(controlId)} smoke evidence. Record the actual failure or an evidenced blocker if the check could not verify this result.`);
+		}
+	}
 	const evidence = requestedEvidence.map(item => evidenceFromBrowser(
 		session,
 		item.type,
 		item.summary ?? `Browser evidence for ${control.id}.`,
 		now,
 		records,
-		control.id
+		control.id,
+		status
 	));
 	return {
 		controlId: control.id,

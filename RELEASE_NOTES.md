@@ -1,6 +1,6 @@
 # QASE Founder/SQA integration candidate
 
-Current release: `qase-founder-sqa-2026-11-10-coverage-r1`. UI: `20261109-1`.
+Current release: `qase-founder-sqa-2026-11-10-coverage-r2`. UI: `20261110-1`.
 
 SQA uses a risk-prioritized browser-evidence work queue and paged requirement
 reads. Configured-provider and qualified modes retain the complete scope while
@@ -8,6 +8,17 @@ reducing repeated prompt detail. Markdown exports separate browser evidence
 from reviewer documents with exact requirement types, minimums and artifact
 descriptions. See [SQA coverage](docs/sqa-coverage-2026-11-10.md). Budgets and
 deterministic evidence/assurance gates are preserved.
+
+SQA rejects native submit overrides and blocks browser HTTP requests during
+live form smoke checks. Tests verify local validation feedback and restore the
+sampled field. Navigation reports HTTP failures as failed destinations. Legacy
+SQA binds navigation and form verdicts to matching host-recorded browser results
+in the evidence bundle. Existing published assessments keep their original
+evidence. The production image is built and smoke-tested in GitHub Actions.
+
+The SQA device picker now offers **Continue to quality review** and keeps the
+target field on the assessment form. The browser regression checks the iPad
+and Edge selection, retained form values and one explicit start request.
 
 The UI audit follow-up presents SQA assurance verdicts in results and list
 summaries, shows unresolved control counts, restores Device Management from

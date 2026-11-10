@@ -11,6 +11,7 @@ import { withUserConfiguration } from './config.js';
 import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { AGENT_EVIDENCE_TYPES, createSqaState, createSqaTodoPlan } from './sqaService.js';
 import { createSqaTools } from './sqaTools.js';
+import { seedSqaSmokePassReceipts } from '../scripts/fixtures/sqa-smoke.mjs';
 
 function runtimeFixture(overrides = {}) {
 	const session = { id: randomUUID(), mode: 'qa', targetUrl: 'https://example.test', messages: [], activities: [], todos: [], findings: [], secretNames: [], ...overrides };
@@ -1094,6 +1095,7 @@ test('deterministic fake-model SQA agent completes the real closeout path withou
 		target: { name: 'Deterministic SQA agent fixture', release: 'phase-6', environment: 'test' }
 	});
 	const fixture = runtimeFixture({ mode: 'sqa', activities: [browserActivity], sqa });
+	await seedSqaSmokePassReceipts(fixture.session, fixture.session.targetUrl);
 	fixture.session.todos = createSqaTodoPlan(sqa);
 	const commits = [];
 	const commit = fixture.store.commit;

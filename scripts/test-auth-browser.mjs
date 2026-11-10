@@ -92,7 +92,13 @@ try {
 	await page.locator('#auth-password').fill('a strong replacement password');
 	await page.locator('#auth-submit').click();
 	await page.locator('#auth-gate').waitFor({ state:'hidden' });
-	if (await page.locator('#qa-start').isVisible()) await page.locator('#qa-close').click();
+	// Password rotation reloads the account URL. Wait for that route to be
+	// restored after sign-in, then leave it through the same control users use.
+	const accountPage = page.locator('#profile-dialog');
+	await page.waitForURL('**/#/account');
+	await accountPage.waitFor({ state: 'visible' });
+	await accountPage.getByRole('button', { name: 'Back to tests' }).click();
+	await accountPage.waitFor({ state: 'hidden' });
 	await page.locator('#sidebar-sign-out').click();
 	await page.locator('#auth-gate').waitFor({ state:'visible' });
 	assert.equal(await page.locator('.app').evaluate(node => node.inert), true);

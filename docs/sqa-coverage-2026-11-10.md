@@ -39,7 +39,10 @@ are unchanged.
 
 On the fixed core-scope context fixture, the qualified operating brief changed
 from 13,878 to 9,167 characters; the configured-provider brief changed from
-15,039 to 12,660 characters before technical work. These are character counts,
+15,039 to 12,980 characters before technical work in the combined release.
+The combined release retains matching host receipts for navigation/form
+verdicts, isolated form HTTP requests and the explicit device-picker return
+to quality review. These are character counts,
 not token or end-to-end coverage guarantees. Live-provider verification and
 final release checks are recorded in the local handoff and exact-commit CI.
 

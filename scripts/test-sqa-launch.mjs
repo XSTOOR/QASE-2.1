@@ -48,9 +48,14 @@ try {
   assert.equal(await page.locator('#sqa-submit').isDisabled(), true);
   assert.match(await page.locator('#sqa-launch-status').innerText(), /choose a device and browser/i);
   await page.locator('#sqa-start [data-test-on-change]').click();
-  await page.locator('#mx-sidebar .mx-device-name').filter({ hasText: /^Pixel 9$/ }).first().click();
-  await page.locator('#mx-columns').getByRole('group', { name: 'Chrome versions', exact: true }).locator('.mx-version').first().click();
-  await page.locator('#dp-close').click();
+  await page.locator('#mx-sidebar .mx-device-name').filter({ hasText: /^iPad \(10th Gen\)$/ }).first().click();
+  await page.locator('#mx-columns').getByRole('group', { name: 'Edge versions', exact: true }).locator('.mx-version').first().click();
+  assert.equal(await page.locator('#mx-target-url').isHidden(), true, 'SQA already has its own target field');
+  await page.getByRole('button', { name: 'Continue to quality review' }).click();
+  assert.equal(await page.locator('#device-picker').isHidden(), true);
+  assert.equal(await page.locator('#sqa-target-url').inputValue(), 'https://example.test/');
+  assert.match(await page.locator('#sqa-test-on').innerText(), /iPad \(10th Gen\)[\s\S]*Edge/);
+  assert.equal(launchDispatches, 0, 'Continuing from the picker only returns to the form');
   assert.equal(await page.locator('#sqa-submit').isDisabled(), false);
   await page.locator('#sqa-target-url').fill('not-a-url');
   assert.equal(await page.locator('#sqa-submit').isDisabled(), true);
@@ -93,6 +98,8 @@ try {
   const created = await response.json();
   assert.equal(created.mode, 'sqa');
   assert.equal(created.sqa.scope.target.release, 'launch-regression');
+  assert.equal(created.environmentSnapshot.device, 'iPad (10th Gen)');
+  assert.equal(created.environmentSnapshot.browserCode, 'edge');
   await page.waitForURL(`**/#/runs/${created.id}`);
   await page.waitForFunction(() => !document.querySelector('#sqa-start').open);
   const dispatched = await dispatchedResponse;

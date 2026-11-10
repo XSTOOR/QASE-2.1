@@ -18,6 +18,7 @@ import { createFounderTools, founderFinishReadiness,founderReportToolSchema } fr
 import { createFounderReviewTodos } from './founderService.js';
 import { buildSqaContext, buildSqaSynthesisContext } from './sqaPrompt.js';
 import { createSqaTools, finishReadiness as sqaFinishReadiness } from './sqaTools.js';
+import { recordSqaSmokeActivity } from './sqaService.js';
 import { modeExplorationReadiness } from './modeReasoningRuntime.js';
 import {buildModeExecutionContext} from './modeReasoningContext.js';
 import {projectFounderMessages,rememberFounderEvidence} from './founderInvestigation.js';
@@ -884,7 +885,20 @@ async function constructRuntime(session, runStore) {
 					return parts;
 				});
 				yield* parts;
-			} else yield* originalExecute(toolName, input, toolCallId, signal);
+				} else if (session.mode === 'sqa' && toolName === 'browser_sqa_smoke' && activity) {
+					for await (const part of originalExecute(toolName, input, toolCallId, signal)) {
+						if (part.type === 'tool_result') {
+							const result = redact(session.id, part.result);
+							const ok = result?.success !== false;
+							await recordSqaSmokeActivity(session, activity.id, result, {
+								status: ok ? 'done' : 'failed',
+								error: ok ? undefined : sanitizeErrorDetail(result?.error ?? result?.message),
+								summary: summariseResult(toolName, result)
+							}, runStore);
+						}
+						yield part;
+					}
+				} else yield* originalExecute(toolName, input, toolCallId, signal);
 		};
 		if (isQualified) record[isHybrid?'invokeHybridTool':'invokeModeTool'] = async (toolName, input, signal) => {
 			if (!['browser_open', 'browser_get_url', 'browser_snapshot', 'browser_qa_check', 'browser_qa_scenario', 'browser_diagnostics',...(!isHybrid?['browser_fill','browser_click','browser_key']:[])].includes(toolName)) throw new Error('This tool is not approved for route composition.');
@@ -1446,7 +1460,8 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 					const id = openActivities.get(part.toolCallId) ?? part.toolCallId;
 					const result = redact(session.id, part.result);
 					const ok = result?.success !== false;
-					if (!(record.modeReasoning && session.activities.some(a=>a.id===id&&['done','failed'].includes(a.status)))) await runStore.updateActivity(session, id, {
+					const persistedAtDispatch = record.modeReasoning || (session.mode === 'sqa' && part.toolName === 'browser_sqa_smoke');
+					if (!(persistedAtDispatch && session.activities.some(a=>a.id===id&&['done','failed'].includes(a.status)))) await runStore.updateActivity(session, id, {
 						status: ok ? 'done' : 'failed',
 						error: ok ? undefined : sanitizeErrorDetail(result?.error ?? result?.message),
 						summary: summariseResult(part.toolName, result)

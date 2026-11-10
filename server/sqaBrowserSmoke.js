@@ -73,7 +73,7 @@ async function statusSignals(page) {
 
 async function validityState(field) {
 	return field.evaluate(element => ({
-		valid: element.checkValidity(),
+		valid: element.validity.valid,
 		required: Boolean(element.required),
 		type: element.type || null,
 		failures: Object.entries({
@@ -121,15 +121,17 @@ async function inspectFormEligibility(page) {
 			try { action = new URL(form.action || location.href, location.href); }
 			catch { rejectionCodes.add('invalid_action'); continue; }
 			const method = String(form.method || 'get').toLowerCase();
-			const safeForm = method === 'get' && action.origin === location.origin && form.target !== '_blank';
+			const target = form.getAttribute('target') || document.querySelector('base[target]')?.target || '_self';
+			const safeForm = method === 'get' && !form.noValidate && action.origin === location.origin && target.toLowerCase() === '_self';
 			if (!safeForm) rejectionCodes.add('unsafe_form');
 			const submits = [...form.querySelectorAll('button:not([type]),button[type="submit"],input[type="submit"]')]
-				.filter(element => !element.disabled && visible(element))
+				.filter(element => element.form === form && !element.disabled && !element.formNoValidate && visible(element)
+					&& !element.matches('[formmethod],[formaction],[formtarget]'))
 				.map(element => accessibleName(element)).filter(Boolean);
 			for (const field of form.querySelectorAll('input[type="email"]')) {
 				const fieldLabel = accessibleName(field);
 				if (!fieldLabel) { rejectionCodes.add('unlabeled_email'); continue; }
-				if (field.disabled || !visible(field)) { rejectionCodes.add('unavailable_email'); continue; }
+				if (field.form !== form || !field.willValidate || !visible(field)) { rejectionCodes.add('unavailable_email'); continue; }
 				if (field.value) { rejectionCodes.add('nonempty_email'); continue; }
 				labeledEmptyEmailFields++;
 				if (names.filter(name => name === fieldLabel).length !== 1) { rejectionCodes.add('nonunique_email_label'); continue; }
@@ -150,13 +152,38 @@ async function inspectFormEligibility(page) {
 	});
 }
 
+async function safeSubmitter(submit, field, expectedUrl) {
+	const element = await field.elementHandle({ timeout: 3_000 });
+	try {
+		return await submit.evaluate((button, { field, expectedUrl }) => {
+			const form = field.form;
+			if (!form || !field.willValidate || form.noValidate || button.formNoValidate
+				|| button.form !== form || button.type !== 'submit' || button.disabled
+				|| button.matches('[formmethod],[formaction],[formtarget]') || form.method !== 'get'
+				|| location.href !== expectedUrl) return false;
+			const target = form.getAttribute('target') || document.querySelector('base[target]')?.target || '_self';
+			const action = new URL(form.action || location.href, location.href);
+			return target.toLowerCase() === '_self' && action.origin === location.origin
+				&& (['http:', 'https:'].includes(action.protocol) || (location.href === 'about:blank' && action.href === 'about:blank'));
+		}, { field: element, expectedUrl }, { timeout: 3_000 });
+	} finally {
+		await element.dispose();
+	}
+}
+
+function isFragmentNavigation(from, to) {
+	return from.href !== to.href && Boolean(to.hash)
+		&& from.origin === to.origin && from.pathname === to.pathname && from.search === to.search;
+}
+
 /**
  * Bounded, deterministic SQA browser checks that collapse repetitive driver
  * actions into one tool call. Results are sampled evidence, never a WCAG or
  * whole-product conformance claim.
  */
-export function createSqaBrowserSmoke(page) {
+export function createSqaBrowserSmoke(page, { protectInputs, navigate = work => work() } = {}) {
 	if (!page) throw new TypeError('SQA browser smoke checks require a live page.');
+	const open = url => navigate(() => page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 }), url);
 	return {
 		async accessibility(input = {}) {
 			const steps = boundedInteger(input.steps, 8, 1, MAX_KEYBOARD_STEPS);
@@ -279,28 +306,33 @@ export function createSqaBrowserSmoke(page) {
 						samples.push({ name: requestedName, href: target.href, ok: false, reason: 'not_same_origin_safe_navigation' });
 						continue;
 					}
-					const response = await page.goto(target.href, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+					const response = await open(target.href);
 					await settle(100);
 					const observed = await page.evaluate(() => ({
 						url: location.href,
 						title: document.title,
 						heading: String(document.querySelector('h1,h2')?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160) || null
 					}));
+					const status = response?.status() ?? null;
+					const sameOrigin = new URL(observed.url).origin === original.origin;
+					const ok = sameOrigin && (response?.ok()
+						?? (isFragmentNavigation(original, target) && observed.url === target.href));
 					samples.push({
 						name: requestedName,
 						href: target.href,
-						ok: true,
-						status: response?.status() ?? null,
+						ok,
+						status,
+						...(!ok && { reason: sameOrigin && status >= 400 ? 'http_error' : 'destination_unverified' }),
 						...observed
 					});
 					if (page.url() !== originalUrl) {
-						await page.goto(originalUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+						await open(originalUrl);
 						await settle(80);
 					}
 				}
 			} finally {
 				if (page.url() !== originalUrl) {
-					await page.goto(originalUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => undefined);
+					await open(originalUrl).catch(() => undefined);
 				}
 			}
 			return {
@@ -356,66 +388,71 @@ export function createSqaBrowserSmoke(page) {
 				return { success: false, code: 'FORM_SMOKE_SUBMIT_UNAVAILABLE', error: 'The exact submit button was not found uniquely inside the field form.' };
 			}
 			const originalUrl = page.url();
-			const original = new URL(originalUrl);
-			const metadata = await form.evaluate(element => ({
-				method: String(element.method || 'get').toLowerCase(),
-				action: element.action || location.href,
-				target: element.target || null
-			}));
-			const action = new URL(metadata.action, originalUrl);
+			const unsafe = () => ({ success: false, code: 'FORM_SMOKE_UNSAFE_SUBMISSION', error: 'Form smoke requires a same-origin GET form, a current-page target, and a native submitter without submission overrides.' });
 			const fieldMetadata = await field.evaluate(element => ({
 				type: element.type || 'text',
 				required: Boolean(element.required),
 				hasExistingValue: Boolean(element.value)
 			}));
-			if (metadata.method !== 'get' || action.origin !== original.origin || metadata.target === '_blank') {
-				return { success: false, code: 'FORM_SMOKE_UNSAFE_SUBMISSION', error: 'Only same-origin GET forms without a new-window target are eligible for bounded automatic validation.' };
-			}
+			if (!await safeSubmitter(submit, field, originalUrl)) return unsafe();
 			if (fieldMetadata.hasExistingValue) {
 				return { success: false, code: 'FORM_SMOKE_NONEMPTY_FIELD', error: 'The selected field already contains a value; refusing to read, replace, or expose it.' };
 			}
 			if (fieldMetadata.type !== 'email') {
 				return { success: false, code: 'FORM_SMOKE_UNSUPPORTED_FIELD', error: `The bounded generated cases currently support email fields, not ${fieldMetadata.type}.` };
 			}
+			if (!protectInputs) return { success: false, code: 'FORM_SMOKE_ISOLATION_UNAVAILABLE', error: 'The browser cannot isolate network requests during a live form smoke check.' };
+			const blocked = protectInputs(page);
+			const blockedBefore = blocked.total;
+			const testedField = await field.elementHandle({ timeout: 3_000 });
 			const cases = [];
 			const exercise = async (name, value) => {
-				await field.fill(value);
+				await testedField.fill(value, { timeout: 3_000 });
 				const beforeClick = await validityState(field);
-				const urlBefore = page.url();
-				await submit.click().catch(() => undefined);
+				if (!await safeSubmitter(submit, field, originalUrl)) return false;
+				const signalsBefore = await statusSignals(page);
+				await submit.click({ timeout: 3_000, noWaitAfter: true });
 				await settle(120);
 				const urlAfter = page.url();
-				cases.push({ name, validity: beforeClick, submissionBlocked: !beforeClick.valid && urlAfter === urlBefore, urlChanged: urlAfter !== urlBefore, statusSignals: await statusSignals(page) });
-				if (urlAfter !== originalUrl) {
-					await page.goto(originalUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 });
-					await settle(80);
-				}
+				if (urlAfter !== originalUrl || blocked.total !== blockedBefore) return false;
+				const signals = await statusSignals(page);
+				cases.push({ name, validity: beforeClick, submissionBlocked: !beforeClick.valid, urlChanged: false, statusSignals: signals,
+					feedbackChanged: JSON.stringify(signals) !== JSON.stringify(signalsBefore) });
+				return true;
 			};
+			let interrupted;
 			try {
-				await exercise('empty', '');
-				await exercise('invalid_email', 'not-an-email');
-				await exercise('valid_email', 'sqa@example.test');
-				await exercise('invalid_after_valid', 'not-an-email');
-			} finally {
-				if (page.url() !== originalUrl) {
-					await page.goto(originalUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => undefined);
+				for (const [name, value] of [['empty', ''], ['invalid_email', 'not-an-email'], ['valid_email', 'sqa@example.test'], ['invalid_after_valid', 'not-an-email']]) {
+					if (!await exercise(name, value)) { interrupted = true; break; }
 				}
-				const restored = page.getByLabel(selected.fieldLabel, { exact: true });
-				if (await restored.count() === 1) await restored.fill('').catch(() => undefined);
+			} finally {
+				try {
+					if (page.url() !== originalUrl) await open(originalUrl).catch(() => undefined);
+					else if (await testedField.evaluate(element => element.isConnected).catch(() => false)) {
+						await testedField.fill('', { timeout: 3_000 });
+					} else interrupted = true;
+				} finally {
+					await testedField.dispose();
+				}
 			}
-			const validSignals = cases.find(item => item.name === 'valid_email')?.statusSignals ?? [];
+			if (interrupted || blocked.total !== blockedBefore) return {
+				success: false, action: 'form_validation', code: 'FORM_SMOKE_BLOCKED', cases,
+				error: 'The form changed its submission behavior or attempted network access. The bounded local validation check could not finish.'
+			};
+			const valid = cases.find(item => item.name === 'valid_email');
+			const validSignals = valid?.statusSignals ?? [];
 			const recoverySignals = cases.find(item => item.name === 'invalid_after_valid')?.statusSignals ?? [];
 			return {
 				success: true,
 				action: 'form_validation',
 				eligible: true,
 				field: { label: selected.fieldLabel, type: fieldMetadata.type, required: fieldMetadata.required },
-				form: { method: metadata.method, sameOrigin: true },
+				form: { method: 'get', sameOrigin: true },
 				discovery: { automatic: !suppliedField, eligibleForms: inspection.eligibleForms },
 				cases,
-				staleSuccessSignalAfterInvalid: validSignals.length > 0 && JSON.stringify(validSignals) === JSON.stringify(recoverySignals),
+				staleSuccessSignalAfterInvalid: valid?.feedbackChanged && validSignals.length > 0 && JSON.stringify(validSignals) === JSON.stringify(recoverySignals),
 				restoredUrl: page.url(),
-				limitation: 'Generated empty/invalid/valid email cases on one same-origin GET form only; no POST, account creation, message, or purchase action is attempted.'
+				limitation: 'Generated email cases on one form with browser HTTP egress blocked. Results cover local feedback and constraints only.'
 			};
 		}
 	};

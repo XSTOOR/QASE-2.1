@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createSqaState } from './sqaService.js';
+import { createSqaState, recordSqaSmokeActivity } from './sqaService.js';
 import { createSqaTools, finishReadiness } from './sqaTools.js';
 import { SQA_INPUT_TOKEN_BUDGET, SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD } from './sqaBrowserBudget.js';
 
@@ -26,6 +26,14 @@ function session() {
 
 function store() {
 	return { async commit() {} };
+}
+
+async function addSmokeResult(candidate, id, result) {
+	const activity = { id, toolName: 'browser_sqa_smoke', status: 'running', ts: fixedNow(), input: { action: result.action } };
+	candidate.activities.push(activity);
+	await recordSqaSmokeActivity(candidate, id, result, { status: 'done' }, {
+		async updateActivity(_session, _id, patch) { Object.assign(activity, patch); }
+	});
 }
 
 test('SQA tool contract supports multi-evidence observations and bounded blocker batches', () => {
@@ -196,6 +204,13 @@ test('a confirmed finding prevents publication until every linked control is fai
 	const tools = createSqaTools(candidate, store());
 	const record = tools.find(tool => tool.name === 'record_sqa_control');
 	const finish = tools.find(tool => tool.name === 'finish_sqa_assessment');
+	const formResult = {
+		success: true, action: 'form_validation', eligible: true,
+		cases: ['empty', 'invalid_email', 'valid_email', 'invalid_after_valid'].map(name => ({
+			name, validity: { valid: name === 'valid_email' }, submissionBlocked: name !== 'valid_email', feedbackChanged: name === 'valid_email'
+		}))
+	};
+	await addSmokeResult(candidate, 'form-pass', formResult);
 	assert.equal((await record.run({
 		control_id: 'SQA-WEB-003',
 		status: 'pass',
@@ -209,6 +224,7 @@ test('a confirmed finding prevents publication until every linked control is fai
 	assert.deepEqual(rejected.finding_control_conflicts.map(item => item.controlId), ['SQA-WEB-003']);
 	assert.equal(candidate.sqa.finalizedAt, undefined);
 
+	await addSmokeResult(candidate, 'form-fail', { ...formResult, staleSuccessSignalAfterInvalid: true });
 	assert.equal((await record.run({
 		control_id: 'SQA-WEB-003',
 		status: 'fail',
@@ -216,4 +232,21 @@ test('a confirmed finding prevents publication until every linked control is fai
 		evidence: [{ type: 'test_result', summary: 'The stale success message remained after invalid submission.' }]
 	})).success, true);
 	assert.deepEqual(finishReadiness(candidate, fixedNow()).findingControlConflicts, []);
+});
+
+test('legacy navigation and form verdicts require matching completed host receipts', async () => {
+	const candidate = session();
+	const record = createSqaTools(candidate, store()).find(tool => tool.name === 'record_sqa_control');
+	const claim = (control_id, status) => record.run({ control_id, status, rationale: 'Claim from model', evidence: [{ type: 'test_result', summary: 'Claim from model' }] });
+	await addSmokeResult(candidate, 'unavailable', { success: true, action: 'form_validation', eligible: false, cases: [] });
+	assert.match((await claim('SQA-WEB-003', 'pass')).error, /matching host-observed form_validation/);
+	assert.match((await claim('SQA-WEB-003', 'fail')).error, /matching host-observed form_validation/);
+	assert.match((await claim('SQA-WEB-002', 'pass')).error, /matching host-observed navigation/);
+	await addSmokeResult(candidate, 'missing-link', {
+		success: true, action: 'navigation', originalUrl: 'https://example.test/', restoredUrl: 'https://example.test/',
+		samples: [{ ok: false, status: 404, reason: 'http_error' }]
+	});
+	assert.match((await claim('SQA-WEB-002', 'pass')).error, /matching host-observed navigation/);
+	assert.equal((await claim('SQA-WEB-002', 'fail')).success, true);
+	assert.match(candidate.sqa.observations[0].evidence[0].reference, /activities\/missing-link\/evidence\//);
 });

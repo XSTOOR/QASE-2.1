@@ -3,6 +3,19 @@ import test from 'node:test';
 import { chromium } from 'playwright';
 import { startMediaFixture } from '../scripts/fixtures/media-site.mjs';
 import { createSqaBrowserSmoke, SQA_SMOKE_LIMITS } from './sqaBrowserSmoke.js';
+import { createQaInputIsolation } from './qaInputIsolation.js';
+
+async function formSmoke(page, handleRequest = route => route.continue()) {
+	const isolation = createQaInputIsolation();
+	const context = page.context();
+	isolation.attach(context);
+	await context.route('**/*', route => isolation.decision(route.request())
+		? route.abort('blockedbyclient') : handleRequest(route));
+	return createSqaBrowserSmoke(page, {
+		protectInputs: isolation.protect,
+		navigate: (work, url) => isolation.navigation(page, [url], work)
+	});
+}
 
 async function withPage(html, run) {
 	const browser = await chromium.launch();
@@ -66,14 +79,16 @@ test('navigation smoke samples exact same-origin links and restores the page', a
 			const url = new URL(route.request().url());
 			const body = url.pathname === '/privacy'
 				? '<h1>Privacy</h1><a href="/">Back</a>'
-				: '<h1>Studio</h1><a href="/privacy">Privacy</a><a href="/#pricing">Pricing</a>';
-			await route.fulfill({ status: 200, contentType: 'text/html', body });
+				: '<h1>Studio</h1><a href="/privacy">Privacy</a><a href="/#pricing">Pricing</a><a href="/missing">Missing</a><a href="/error">Error</a>';
+			const status = { '/missing': 404, '/error': 500 }[url.pathname] ?? 200;
+			await route.fulfill({ status, contentType: 'text/html', body });
 		});
 		await page.goto('http://fixture.test/');
-		const result = await createSqaBrowserSmoke(page).navigation({ links: ['Privacy', 'Pricing'] });
+		const result = await createSqaBrowserSmoke(page).navigation({ links: ['Privacy', 'Pricing', 'Missing', 'Error'] });
 		assert.equal(result.success, true);
-		assert.equal(result.samples.length, 2);
-		assert.equal(result.samples.every(sample => sample.ok), true);
+		assert.deepEqual(result.samples.map(sample => [sample.ok, sample.status, sample.reason]), [
+			[true, 200, undefined], [true, null, undefined], [false, 404, 'http_error'], [false, 500, 'http_error']
+		]);
 		assert.equal(result.samples[0].heading, 'Privacy');
 		assert.equal(result.samples[1].heading, 'Studio');
 		assert.equal(result.restoredUrl, 'http://fixture.test/');
@@ -88,7 +103,7 @@ test('form smoke discovers one safe form, runs generated cases, and detects stal
 		<output role="status"></output>
 		<script>document.querySelector('form').addEventListener('submit', event => { event.preventDefault(); document.querySelector('output').textContent = 'Email format accepted locally.'; });</script>
 	</body></html>`, async page => {
-		const result = await createSqaBrowserSmoke(page).formValidation();
+		const result = await (await formSmoke(page)).formValidation();
 		assert.equal(result.success, true);
 		assert.equal(result.eligible, true);
 		assert.deepEqual(result.discovery, { automatic: true, eligibleForms: 1 });
@@ -132,7 +147,7 @@ test('controlled qualification fixture clears success state when email becomes i
 		browser = await chromium.launch();
 		const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
 		await page.goto(fixture.url);
-		const result = await createSqaBrowserSmoke(page).formValidation({
+		const result = await (await formSmoke(page)).formValidation({
 			fieldLabel: 'Work email',
 			submitName: 'Validate email'
 		});
@@ -143,6 +158,49 @@ test('controlled qualification fixture clears success state when email becomes i
 	} finally {
 		await browser?.close();
 		await fixture.close();
+	}
+});
+
+test('form smoke rejects native submission overrides for automatic and explicit selection', async () => {
+	await withPage(`<form><label>Email <input type="email" required></label>
+		<button formmethod="post" formaction="/write">Send</button></form>`, async page => {
+		const smoke = await formSmoke(page);
+		assert.equal((await smoke.formValidation()).eligible, false);
+		assert.equal((await smoke.formValidation({ fieldLabel: 'Email', submitName: 'Send' })).code, 'FORM_SMOKE_UNSAFE_SUBMISSION');
+		assert.equal(await page.getByLabel('Email').inputValue(), '');
+	});
+});
+
+test('form smoke checks the submitter again after input handlers change the form', async () => {
+	await withPage(`<form><label>Email <input type="email" required></label><button>Send</button></form>
+		<script>document.querySelector('input').oninput = () => document.querySelector('button').formMethod = 'post';</script>`, async page => {
+		const result = await (await formSmoke(page)).formValidation();
+		assert.equal(result.code, 'FORM_SMOKE_BLOCKED');
+		assert.equal(await page.getByLabel('Email').inputValue(), '');
+	});
+});
+
+test('form smoke stops a handler-triggered write and retains HTTP isolation until a fresh navigation', async () => {
+	const browser = await chromium.launch();
+	try {
+		const page = await browser.newPage();
+		const requests = [];
+		const smoke = await formSmoke(page, async route => {
+			requests.push(route.request().url());
+			await route.fulfill({ contentType: 'text/html', body: `<a href="/next">Next</a><form><label>Email <input type="email" required></label><button>Send</button></form>
+				<script>document.querySelector('input').oninput = () => { fetch('/write', {method: 'POST'}).catch(() => {}); };</script>` });
+		});
+		await page.goto('http://fixture.test/');
+		const result = await smoke.formValidation();
+		assert.equal(result.code, 'FORM_SMOKE_BLOCKED');
+		assert.equal(await page.getByLabel('Email').inputValue(), '');
+		assert.equal(await page.evaluate(() => fetch('/delayed').then(() => false, () => true)), true);
+		assert.deepEqual(requests, ['http://fixture.test/']);
+		assert.equal((await smoke.navigation({ links: ['Next'] })).samples[0].ok, true);
+		assert.equal(await page.evaluate(() => fetch('/fresh').then(response => response.ok)), true);
+		assert.deepEqual(requests, ['http://fixture.test/', 'http://fixture.test/next', 'http://fixture.test/', 'http://fixture.test/fresh']);
+	} finally {
+		await browser.close();
 	}
 });
 
