@@ -1,6 +1,10 @@
 # QASE Founder/SQA integration candidate
 
-Current release: `qase-founder-sqa-2026-11-10-coverage-r2`. UI: `20261110-1`.
+Current release: `qase-founder-sqa-2026-11-10-coverage-r3`. UI: `20261110-1`.
+
+SQA form smoke checks activate the native submit button with Enter to avoid
+repeated pointer timeouts in Windows Firefox. Browser tests check trusted
+validation and submit events alongside the existing HTTP isolation coverage.
 
 SQA uses a risk-prioritized browser-evidence work queue and paged requirement
 reads. Configured-provider and qualified modes retain the complete scope while

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "releaseId": "qase-founder-sqa-2026-11-10-coverage-r2",
+  "releaseId": "qase-founder-sqa-2026-11-10-coverage-r3",
   "files": [
     {
       "path": ".dockerignore",
@@ -92,11 +92,11 @@
     },
     {
       "path": "DEPLOYMENT_PROMPT.md",
-      "sha256": "382ade758d9583371cc38bd4104c5412d618337e07bb09eb17e4040dfd5f3125"
+      "sha256": "3f3d4d587cba73e2e1664c467b889c1c8f45e15c3d8fcf8559527d86227508f7"
     },
     {
       "path": "Dockerfile",
-      "sha256": "8e849c07174e4ae973bbe915ec577b747ece37e3ddc7aec1d598f3476a1aef21"
+      "sha256": "11a5fad648f5008af4de6f298ccfe06e695d525e5742c940e98f3a17411d6489"
     },
     {
       "path": "docs/auth-architecture-2026-09-10.md",
@@ -796,7 +796,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "2adfa949c088ad8c71abf0bf36fc2b658a13342157bd23a8feaee08a5e6ea62d"
+      "sha256": "692aa7a49693b7b15e28361fda31e6124ebae20b4329d0164d908f680274083a"
     },
     {
       "path": "public/renderHealth.js",
@@ -948,7 +948,7 @@
     },
     {
       "path": "RELEASE_NOTES.md",
-      "sha256": "0cb274250f5cd5b118870a60f867e5f0a4583ed284aff8b0e36421e572bcf5ab"
+      "sha256": "b1f3fc639e964daaac486afb273a5284fe8ab8fe76ef35184df6b81907a5c0c4"
     },
     {
       "path": "run-jev.command",
@@ -3064,7 +3064,7 @@
     },
     {
       "path": "server/sqaBrowserSmoke.js",
-      "sha256": "1466a07d76193b25950afd9615cc39afeaf9804da47a0cbd315802e79ec7aa5d"
+      "sha256": "bee89e7041aedfcdd0eabac4738240582f5fbda6cf6e0ab6fae22359e40c4d8d"
     },
     {
       "path": "server/sqaBrowserSmoke.test.js",
@@ -3120,7 +3120,7 @@
     },
     {
       "path": "server/sqaRuntime.integration.test.js",
-      "sha256": "ff372ecb6bbaf7f8e1c494e31ab6ab4fa67b733fbd5e6881c2f10f157a565fdc"
+      "sha256": "b6d506f591870baf6f0c43750638cf9f671eb78c0da83e9cbe56ba8aa693a851"
     },
     {
       "path": "server/sqaRuntime.js",
