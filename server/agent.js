@@ -183,7 +183,7 @@ function useBundledChromium() {
 }
 
 const BROWSER_TOOL_NAMES = [
-	'browser_open', 'browser_snapshot', 'browser_get_url', 'browser_wait', 'browser_screenshot',
+	'browser_open', 'browser_snapshot', 'browser_read_page', 'browser_get_url', 'browser_wait', 'browser_screenshot',
 	'browser_click', 'browser_hover', 'browser_fill', 'browser_check', 'browser_select',
 	'browser_type', 'browser_key', 'browser_scroll', 'browser_diagnostics', 'browser_dialog',
 	'browser_tabs', 'browser_new_tab', 'browser_select_tab', 'browser_close_tab',
@@ -868,7 +868,7 @@ async function constructRuntime(session, runStore) {
 		}
 		record.hybrid?.registerToolCatalog(registeredTools.map(tool => tool.name));
 		// Do not advertise blocked filesystem/shell tools or another mode's finalizer.
-		runtime.getToolDescriptions = () => isQualified||usesFounderDraft(session) ? '\nUse the supplied native tool schemas and only tools advertised for this mode.\n' : `\n\nAvailable browser and assessment tools:\n${registeredTools
+		runtime.getToolDescriptions = () => isQualified||usesFounderDraft(session)||session.mode==='sqa' ? '\nUse the supplied native tool schemas and only tools advertised for this mode.\n' : `\n\nAvailable browser and assessment tools:\n${registeredTools
 			.map(tool => `- ${tool.name}: ${tool.description}\n  Parameters: ${JSON.stringify(tool.parametersSchema)}`)
 			.join('\n')}\n`;
 		if(!isQualified&&usesFounderDraft(session)){

@@ -25,7 +25,7 @@ export function modeToolsForPhase(session, tools) {
  return tools;
 }
 
-const READ_ONLY_TOOLS=new Set(['browser_snapshot','browser_get_url','browser_screenshot','browser_diagnostics','mode_execution_progress','read_sqa_work_plan','classify_mode_observations']);
+const READ_ONLY_TOOLS=new Set(['browser_snapshot','browser_read_page','browser_get_url','browser_screenshot','browser_diagnostics','mode_execution_progress','read_sqa_work_plan','classify_mode_observations']);
 const MUTATING_ROUTE=/(?:^|\/)(?:log-?out|sign-?out|delete|remove|reset|purchase|checkout|payment|unsubscribe|destroy|revoke|deploy|publish)(?:\/|$)/i;
 const ASSET_ROUTE=/\.(?:pdf|zip|csv|json|xml|png|jpe?g|gif|svg|webp|mp[34]|webm|woff2?|exe|dmg)$/i;
 export const MODE_REASONING_STRATEGY = 'qualified-opus-jev-v1';

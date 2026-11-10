@@ -63,7 +63,13 @@ try{
 	assert.ok(session.founder.finalizedAt&&session.founder.report);
 	assert.deepEqual(founderDraftProgress(session).completed,FOUNDER_REPORT_SECTIONS);assert.equal(founderDraftProgress(session).intact,true);
 	assert.deepEqual(session.founder.observations,baseline.founder.observations);
-	for(const [section,value]of Object.entries(baseline.founder.reportDraft.input))assert.deepEqual(session.founder.reportDraft.input[section],value);
+	for(const [section,value]of Object.entries(baseline.founder.reportDraft.input)){
+		const restored=session.founder.reportDraft.input[section];
+		if(section==='recommendations'&&!founderDraftProgress(baseline).completed.includes(section)){
+			assert.ok(Array.isArray(restored)&&restored.length>=value.length,'Recovery discarded partial recommendations.');
+			assert.deepEqual(restored.slice(0,value.length),value,'Recovery changed a saved partial recommendation.');
+		}else assert.deepEqual(restored,value);
+	}
 	assert.equal(session.activities.filter(a=>a.toolName?.startsWith('browser_')).length,browserCount,'Recovery replayed browser work.');
 	assert.ok(session.tokenUsage.inputTokens>initialInput);assert.ok(session.todos.every(t=>t.status==='completed'));
 	const reloaded=JSON.parse(fs.readFileSync(checkpoint));assert.deepEqual(reloaded.founder.report,session.founder.report);assert.deepEqual(reloaded.tokenUsage,session.tokenUsage);

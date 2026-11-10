@@ -17,9 +17,9 @@ test('Quality launcher exposes an accessible recommended review with optional ad
 	assert.match(html, /id="sqa-selection-reasons"[^>]+aria-label="Why these controls are selected"/);
 	assert.doesNotMatch(html, /id="sqa-target-name"[^>]+required/);
 	for (const id of ['sqa-target-release', 'sqa-target-environment']) {
-		assert.match(html, new RegExp(`id="${id}"[^>]+required`));
+		assert.doesNotMatch(html, new RegExp(`id="${id}"[^>]+required`));
 	}
-	assert.match(html, /id="sqa-target-release"[^>]+placeholder="2026\.11\.2\+abc123"/);
+	assert.match(html, /id="sqa-target-release"[^>]+placeholder="Version, commit, or build ID"/);
 	assert.match(html, /id="sqa-catalog-retry"[^>]+hidden>Retry catalog/);
 	assert.match(html, /id="tab-sqa"[^>]+role="tab"[^>]+aria-controls="pane-sqa"/);
 	assert.match(html, /id="pane-sqa"[^>]+role="tabpanel"[^>]+aria-labelledby="tab-sqa"/);

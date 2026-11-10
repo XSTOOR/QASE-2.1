@@ -67,6 +67,12 @@ test('single and batch observations preserve the live qualified ledger without m
 	assert.equal(candidate.sqa.execution, execution);
 });
 
+test('SQA metadata can remain unknown without inventing a release or environment', () => {
+	const sqa = createSqaState({ authorizationConfirmed: true, target: { name: 'Public review' } });
+	assert.deepEqual(sqa.scope.target, { name: 'Public review' });
+	assert.throws(() => createSqaState({ authorizationConfirmed: true, target: { name: 'Public review', release: 2026 } }), /must be a string/);
+});
+
 test('SQA state requires explicit authorization and resolves the universal core', () => {
 	assert.throws(() => createSqaState({
 		profiles: ['core'],

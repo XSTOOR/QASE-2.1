@@ -37,6 +37,7 @@ import { createDeviceDrawer, chipLabel, RUNTIME_PROFILES } from './deviceDrawer.
 import { createQaMatrixResultsView } from './qaMatrixResultsView.js';
 import { createBugView } from './bugView.js';
 import { createActiveTestEnvironmentStore } from './activeTestEnvironment.js';
+import { defaultReviewEnvironment } from './reviewDefaults.js';
 import { createThemeStore, applyThemeToDocument } from './themePreference.js';
 import { createDevicePicker, createDeviceChipList, executionTypeText } from './devicePicker.js';
 import { createFavoritesStore, createRecentsStore, resolvePickerFocus, buildBrowserColumns, selectionDisplayString } from './deviceBrowserMatrix.js';
@@ -1002,6 +1003,19 @@ function renderAllTestOnBlocks() {
 function selectedEnvironmentForRun() {
 	const sel = activeTestEnvStore?.get?.();
 	return sel?.envId || '';
+}
+
+async function ensureReviewEnvironment() {
+	if (selectedEnvironmentForRun()) return;
+	await refreshDevicePickerData();
+	// A manual pick or boot hydration may have completed during the request.
+	if (selectedEnvironmentForRun()) return;
+	const env = defaultReviewEnvironment(matrixPickerData.environments, matrixPickerData.boardByEnvId);
+	if (!env) return;
+	activeTestEnvStore.setSelection(env);
+	devicePicker.hydrate(env);
+	renderAllTestOnBlocks();
+	renderLiveDeviceViewHeader(state.session ?? null, state.activeRuntimeEnvironment);
 }
 
 const DEVICE_LANDSCAPE_KEY = 'qase.deviceLandscape';
@@ -6261,8 +6275,6 @@ function syncSqaSubmitState() {
 	try {
 		if (!['http:', 'https:'].includes(new URL(sqaUi.targetUrl.value.trim()).protocol)) throw new TypeError();
 	} catch { missing.push('enter a complete HTTP or HTTPS target URL'); }
-	if (!sqaUi.targetRelease.value.trim()) missing.push('enter a release or build identifier');
-	if (!sqaUi.targetEnvironment.value.trim()) missing.push('name the environment');
 	if (!sqaUi.authorization.checked) missing.push('confirm testing permission');
 	const scopePreview = currentSqaScopePreview();
 	if (scopePreview?.requiresRationale && !sqaUi.scopeNotes.value.trim()) missing.push('explain the expanded scope in Review notes');
@@ -6313,6 +6325,7 @@ async function openSqaStart() {
 	sqaUi.form.reset();
 	applyStudioTarget(sqaUi.targetUrl);
 	if (sqaUi.customize) sqaUi.customize.open = false;
+	void ensureReviewEnvironment().then(() => { renderAllTestOnBlocks(); syncSqaSubmitState(); syncFounderSubmitState(); }).catch(() => {});
 	populateDeviceSelect(sqaUi.deviceSelect, pendingDeviceId());
 	sqaUi.environmentSelect && populateEnvironmentSelect(sqaUi.environmentSelect);
 	renderTestOn('sqa-test-on');
@@ -6363,8 +6376,8 @@ sqaUi.form.onsubmit = async event => {
 	}
 	const target = {
 		name: sqaUi.targetName.value.trim() || parsedTargetUrl.hostname,
-		release: sqaUi.targetRelease.value.trim(),
-		environment: sqaUi.targetEnvironment.value.trim()
+		...(sqaUi.targetRelease.value.trim() ? { release: sqaUi.targetRelease.value.trim() } : {}),
+		...(sqaUi.targetEnvironment.value.trim() ? { environment: sqaUi.targetEnvironment.value.trim() } : {})
 	};
 	if (!sqaUi.authorization.checked) {
 		setSqaFormError('Confirm testing authorization and the non-destructive boundary first.');
@@ -6529,6 +6542,7 @@ async function openFounderStart() {
 	setFounderFormError();
 	founderUi.form.reset();
 	$('founder-customize').open = false;
+	void ensureReviewEnvironment().then(() => { renderAllTestOnBlocks(); syncSqaSubmitState(); syncFounderSubmitState(); }).catch(() => {});
 	const studioContext = applyStudioTarget(founderUi.targetUrl);
 	if (studioContext && founderUi.targetName) founderUi.targetName.value = studioContext.project;
 	founderUi.detectedContext && (founderUi.detectedContext.hidden = true);

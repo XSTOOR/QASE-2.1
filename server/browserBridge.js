@@ -7,6 +7,7 @@ import { createBrowserPolicy, classifyDestructiveAction } from './browserPolicy.
 import { contextOptionsFor, getDeviceProfile, DEFAULT_DEVICE_ID } from './deviceProfiles.js';
 import { runMobileAudit } from './mobileAudit.js';
 import { inspectFormValidation } from './browserFormAudit.js';
+import { readPageContent } from './pageContent.js';
 import { runJevBrowserCheck } from './jevBrowserChecks.js';
 import { createQaInputIsolation } from './qaInputIsolation.js';
 import { createHybridAuthentication } from './hybridAuth.js';
@@ -1217,6 +1218,8 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 		}
 		return { success: false, code: 'SQA_SMOKE_UNKNOWN_ACTION', error: 'action must be accessibility, responsive, navigation, or form_validation.' };
 	};
+
+	bridge.readPageContent = input => readPageContent(currentPage(), input);
 
 	bridge.media = async (input = {}) => {
 		const actions = ['inspect', 'set_permission', 'probe', 'probe_camera', 'probe_screen_share', 'call_controls', 'meeting_controls', 'meeting_recovery'];

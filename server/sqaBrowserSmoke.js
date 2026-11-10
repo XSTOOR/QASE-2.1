@@ -171,6 +171,24 @@ async function safeSubmitter(submit, field, expectedUrl) {
 	}
 }
 
+/** Inspect common field constraints without firing input handlers or submitting. */
+async function sampleNativeTextConstraints(page) {
+	return page.evaluate(() => [...document.querySelectorAll('form input,form textarea')]
+		.filter(field => ['text', 'search', 'url', 'textarea'].includes(field.type)
+			&& field.willValidate && field.getClientRects().length && !field.value)
+		.slice(0, 8).map(field => {
+			const clone = field.cloneNode(false);
+			const label = field.getAttribute('aria-label') || [...(field.labels ?? [])].map(item => item.textContent).join(' ') || null;
+			const cases = [['empty', ''], ['sample_text', 'Qase sample idea'], ['cleared', '']].map(([name, value]) => {
+				clone.value = value;
+				return { name, valid: clone.validity.valid, valueMissing: clone.validity.valueMissing,
+					typeMismatch: clone.validity.typeMismatch, patternMismatch: clone.validity.patternMismatch };
+			});
+			return { label: label?.trim().slice(0, 120), type: field.type, required: field.required,
+				hasValidationConstraint: Boolean(field.required || field.pattern || field.type === 'url' || field.minLength > 0), cases };
+		}));
+}
+
 function isFragmentNavigation(from, to) {
 	return from.href !== to.href && Boolean(to.hash)
 		&& from.origin === to.origin && from.pathname === to.pathname && from.search === to.search;
@@ -354,6 +372,7 @@ export function createSqaBrowserSmoke(page, { protectInputs, navigate = work => 
 			}
 			const inspection = await inspectFormEligibility(page);
 			if (!suppliedField && inspection.eligibleForms === 0) {
+				const nativeConstraintSamples = await sampleNativeTextConstraints(page);
 				const { candidates: _candidates, ...inspectionSummary } = inspection;
 				const blockerReason = inspection.formsScanned === 0
 					? 'Deterministic form preflight found no forms on the current public page, so the bounded email validation workflow is unavailable.'
@@ -368,8 +387,12 @@ export function createSqaBrowserSmoke(page, { protectInputs, navigate = work => 
 					code: 'FORM_SMOKE_NO_ELIGIBLE_FORM',
 					blockerReason,
 					inspection: inspectionSummary,
+					nativeConstraintSamples,
+					validationRecoveryEstablished: false,
 					cases: [],
-					limitation: 'No form was submitted and no field value was read or changed.'
+					limitation: nativeConstraintSamples.length
+						? 'Text/search/URL/textarea constraints sampled on detached copies only; no original value was exposed or changed, no app handler was exercised and no form was submitted. Optional unconstrained text is not an invalid-input defect. Application validation/recovery remains unverified.'
+						: 'No form was submitted and no field value was read or changed.'
 				};
 			}
 			const selected = suppliedField

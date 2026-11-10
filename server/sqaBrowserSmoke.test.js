@@ -136,7 +136,24 @@ test('form smoke returns one deterministic blocker when no eligible email form e
 			rejectionCodes: []
 		});
 		assert.deepEqual(result.cases, []);
+		assert.equal(result.validationRecoveryEstablished, false);
+		assert.equal(result.nativeConstraintSamples.length, 1);
+		assert.equal(result.nativeConstraintSamples[0].hasValidationConstraint, false);
+		assert.ok(result.nativeConstraintSamples[0].cases.every(item => item.valid));
 		assert.equal(await page.getByLabel('Describe your idea').inputValue(), '');
+	});
+});
+
+test('text constraint fallback never fires original handlers or exposes prefilled values', async () => {
+	await withPage(`<form><label>Idea <textarea required oninput="window.edited=true"></textarea></label>
+		<label>Existing <input value="private customer value"></label><label>Password <input type="password"></label></form>`, async page => {
+		const result = await createSqaBrowserSmoke(page).formValidation();
+		assert.equal(result.nativeConstraintSamples.length, 1);
+		assert.equal(result.nativeConstraintSamples[0].cases[0].valueMissing, true);
+		assert.equal(result.nativeConstraintSamples[0].cases[1].valid, true);
+		assert.equal(await page.evaluate(() => Boolean(window.edited)), false);
+		assert.equal(await page.getByLabel('Idea').inputValue(), '');
+		assert.doesNotMatch(JSON.stringify(result), /private customer value/);
 	});
 });
 

@@ -58,8 +58,8 @@ function normalizeTarget(target) {
 	assertExactKeys(target, ['name', 'release', 'environment'], 'SQA assessment target');
 	return {
 		name: normalizeText(target.name, 'SQA target name', { required: true, maximum: 200 }),
-		release: normalizeText(target.release, 'SQA target release', { required: true, maximum: 200 }),
-		environment: normalizeText(target.environment, 'SQA target environment', { required: true, maximum: 100 })
+		...(normalizeText(target.release, 'SQA target release', { maximum: 200 }) ? { release: normalizeText(target.release, 'SQA target release', { maximum: 200 }) } : {}),
+		...(normalizeText(target.environment, 'SQA target environment', { maximum: 100 }) ? { environment: normalizeText(target.environment, 'SQA target environment', { maximum: 100 }) } : {})
 	};
 }
 

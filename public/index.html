@@ -9,7 +9,7 @@
 <title>QASE — Autonomous quality assurance</title>
 <script src="theme.js?v=20261015-11"></script>
 <script src="studioMode.js?v=20261014-6"></script>
-<link rel="stylesheet" href="styles.css?v=20261110-2">
+<link rel="stylesheet" href="styles.css?v=20261110-3">
 <link rel="stylesheet" href="bugsView.css?v=20261014-6">
 <link rel="stylesheet" href="studio-workspace.css?v=20261015-6">
 <link rel="stylesheet" href="studio-embed.css?v=20261108-2">
@@ -1197,22 +1197,6 @@
           <input id="sqa-target-url" name="targetUrl" type="url" required maxlength="2048" inputmode="url" autocomplete="url" placeholder="https://staging.example.com…">
           <small>Qase opens this URL and starts the recommended review.</small>
         </label>
-        <div class="field-row sqa-field-row sqa-build-fields">
-          <label class="field">
-            <span>Product name <small>(optional)</small></span>
-            <input id="sqa-target-name" name="targetName" maxlength="200" autocomplete="off" placeholder="Customer portal…">
-          </label>
-          <label class="field">
-            <span>Release or build identifier</span>
-            <input id="sqa-target-release" name="targetRelease" required maxlength="200" autocomplete="off" placeholder="2026.11.2+abc123">
-            <small>Use the deployed version, commit, or immutable build ID.</small>
-          </label>
-          <label class="field">
-            <span>Environment</span>
-            <input id="sqa-target-environment" name="targetEnvironment" required maxlength="100" autocomplete="off" placeholder="Local, staging, or production">
-            <small>Name the environment represented by the target URL.</small>
-          </label>
-        </div>
       </fieldset>
 
       <label class="check sqa-authorization">
@@ -1223,6 +1207,26 @@
       <details class="qa-customize sqa-customize" id="sqa-customize">
         <summary>Advanced options</summary>
         <div class="qa-customize-body sqa-customize-body">
+          <fieldset class="sqa-fieldset">
+            <legend>Product details <small>(optional)</small></legend>
+            <p>The review date is recorded automatically. Leave unknown details blank; Qase will not infer a release or deployment environment.</p>
+        <div class="field-row sqa-field-row sqa-build-fields">
+          <label class="field">
+            <span>Product name <small>(optional)</small></span>
+            <input id="sqa-target-name" name="targetName" maxlength="200" autocomplete="off" placeholder="Customer portal…">
+          </label>
+          <label class="field">
+            <span>Release or build identifier <small>(optional)</small></span>
+            <input id="sqa-target-release" name="targetRelease" maxlength="200" autocomplete="off" placeholder="Version, commit, or build ID">
+            <small>Use the deployed version, commit, or immutable build ID.</small>
+          </label>
+          <label class="field">
+            <span>Environment <small>(optional)</small></span>
+            <input id="sqa-target-environment" name="targetEnvironment" maxlength="100" autocomplete="off" placeholder="Not specified">
+            <small>Name the environment represented by the target URL.</small>
+          </label>
+        </div>
+          </fieldset>
           <fieldset class="sqa-fieldset" id="sqa-profiles-fieldset" disabled>
             <legend>Additional standards profiles</legend>
             <p>Add only profiles that apply to this product. The universal quality baseline is always included.</p>
@@ -1267,7 +1271,7 @@
             <span>Landscape orientation</span>
           </label>
         </div>
-        <small>The assessment executes on exactly this device, OS and browser.</small>
+        <small>A supported desktop profile is selected when available. Change it before starting. Simulated profiles do not certify a physical device or its native OS.</small>
       </fieldset>
 
       <div class="test-result" id="sqa-form-error" role="alert" aria-live="assertive"></div>
@@ -1405,7 +1409,7 @@
             <span>Landscape orientation</span>
           </label>
         </div>
-        <small>The review executes on exactly this device, OS and browser.</small>
+        <small>A supported desktop profile is selected when available. Change it before starting. Simulated profiles do not certify a physical device or its native OS.</small>
       </fieldset>
 
       <div class="test-result" id="founder-form-error" role="alert" aria-live="assertive"></div>
@@ -1761,6 +1765,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261110-2" type="module"></script>
+<script src="app.js?v=20261110-3" type="module"></script>
 </body>
 </html>

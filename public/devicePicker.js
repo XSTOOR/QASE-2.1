@@ -176,7 +176,7 @@ export function browsersForOS(card, osVersion) {
 
 /** Execution level display text, honest (from selection data only). */
 export function executionTypeText(selection) {
-	const level = selection?.executionType;
+	const level = String(selection?.executionType ?? '').toUpperCase();
 	if (level === 'REAL_DEVICE') return 'REAL DEVICE';
 	if (level === 'VIRTUAL_DEVICE') return 'VIRTUAL DEVICE';
 	if (level === 'SIMULATED') return 'SIMULATED';

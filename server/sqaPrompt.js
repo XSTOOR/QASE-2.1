@@ -94,7 +94,9 @@ claim whole-product compliance from sampled browser checks.
 
 ${targetUrl}
 ${currentLocation}
-Target: ${scope.target.name}; release: ${scope.target.release}; environment: ${scope.target.environment}.
+Target: ${scope.target.name}; release: ${scope.target.release ?? 'not specified'}; environment: ${scope.target.environment ?? 'not specified'}.
+Missing build identity or deployment environment is unknown metadata, not a target defect. Do not infer it from the year or target hostname.
+When form smoke returns nativeConstraintSamples with validationRecoveryEstablished=false, retain the useful partial evidence but do not claim application error recovery passed. Optional unconstrained text input is not a validation failure. Describe the exact missing oracle or safe workflow instead of a website defect.
 Profiles: ${scope.profiles.join(', ')}.
 Declared attributes: ${scope.attributes.join(', ') || 'none'}.
 Authorization was confirmed for non-destructive testing at ${scope.authorization.confirmedAt}.

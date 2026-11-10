@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-founder-sqa-2026-11-10-batching-r3",
-  "uiVersion": "20261110-2",
+  "releaseId": "qase-founder-sqa-2026-11-10-review-readiness-r1",
+  "uiVersion": "20261110-3",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Guarded configured-provider SQA smoke compositions with separately persisted and budget-counted SDK children, explicit result batches, revision-safe work queues and 77c58cc native form activation; export-only scope"
+  "source": "Optional SQA build/environment metadata, explicit supported desktop defaults for review launchers, bounded page-text evidence, scoped Founder absence claims, partial native text-form constraints and deduplicated SQA tool descriptions; export-only candidate"
 }

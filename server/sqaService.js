@@ -59,8 +59,8 @@ function target(input = {}) {
 	}
 	return {
 		name: text(input.name, 'SQA target name', 200, true),
-		release: text(input.release, 'SQA target release', 200, true),
-		environment: text(input.environment, 'SQA target environment', 100, true)
+		...(text(input.release, 'SQA target release', 200) ? { release: text(input.release, 'SQA target release', 200) } : {}),
+		...(text(input.environment, 'SQA target environment', 100) ? { environment: text(input.environment, 'SQA target environment', 100) } : {})
 	};
 }
 

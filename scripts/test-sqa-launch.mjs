@@ -38,6 +38,7 @@ try {
   }
   async function completeDetails() {
     await page.locator('#sqa-target-url').fill('https://example.test/');
+    await page.locator('#sqa-customize').evaluate(node => { node.open = true; });
     await page.locator('#sqa-target-release').fill('launch-regression');
     await page.locator('#sqa-target-environment').fill('local');
     await page.locator('#sqa-authorization').check();
@@ -45,8 +46,7 @@ try {
   await page.goto(runtime.base);
   await openSqa();
   await completeDetails();
-  assert.equal(await page.locator('#sqa-submit').isDisabled(), true);
-  assert.match(await page.locator('#sqa-launch-status').innerText(), /choose a device and browser/i);
+  // Explicit device selection remains available after a supported default.
   await page.locator('#sqa-start [data-test-on-change]').click();
   await page.locator('#mx-sidebar .mx-device-name').filter({ hasText: /^iPad \(10th Gen\)$/ }).first().click();
   await page.locator('#mx-columns').getByRole('group', { name: 'Edge versions', exact: true }).locator('.mx-version').first().click();
@@ -62,8 +62,8 @@ try {
   assert.match(await page.locator('#sqa-launch-status').innerText(), /HTTP or HTTPS/);
   await page.locator('#sqa-target-url').fill('https://example.test/');
   await page.locator('#sqa-target-release').fill('');
-  assert.equal(await page.locator('#sqa-submit').isDisabled(), true);
-  assert.match(await page.locator('#sqa-launch-status').innerText(), /release or build/);
+  await page.locator('#sqa-target-environment').fill('');
+  assert.equal(await page.locator('#sqa-submit').isDisabled(), false, 'Unknown release/environment must not block a review');
   await page.locator('#sqa-target-release').fill('launch-regression');
 
   const gate = new Promise(resolve => { releaseEnvironment = resolve; });
