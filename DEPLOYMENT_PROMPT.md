@@ -4,7 +4,7 @@ This is the operator runbook for the reviewed release targeting **https://qase.d
 
 ## Required release
 
-- Release ID: `qase-founder-sqa-2026-11-10-coverage-r3`.
+- Release ID: `qase-founder-sqa-2026-11-10-batching-r1`.
 - UI version: `20261110-1`, with an explicit return from the SQA device picker to the assessment form. The preceding [UI audit fixes](docs/ui-audit-fixes-2026-11-09.md) document the verdict, report, settings and account recovery changes already on the branch.
 - Source branch: `Push-SQA`. This release follows the picker repair at `64e43645ed4371eb8d97be5a4f0995b39fe61e92`. Pin the full SHA of the approved successor as `EXPECTED_SHA` and verify both GitHub workflows and the image against that exact SHA.
 - Release scope: configured-provider Founder/SQA with export-only Studio handoff. Leave the Studio destination and qualified Opus/JEV mode flags disabled until separately qualified. PostgreSQL deployments must apply migration **044** before accepting versioned Founder actions; it preserves legacy rows and enables forced tenant RLS. Local-store deployments do not run SQL migrations.

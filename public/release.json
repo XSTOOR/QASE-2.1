@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-founder-sqa-2026-11-10-coverage-r3",
+  "releaseId": "qase-founder-sqa-2026-11-10-batching-r1",
   "uiVersion": "20261110-1",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Combined 8229259 strict SQA smoke receipts, isolated form checks and device-picker fixes with revision-safe evidence work queues and reviewer artifact requests; export-only scope"
+  "source": "Guarded configured-provider SQA smoke compositions with separately persisted and budget-counted SDK children, explicit result batches, revision-safe work queues and 77c58cc native form activation; export-only scope"
 }
