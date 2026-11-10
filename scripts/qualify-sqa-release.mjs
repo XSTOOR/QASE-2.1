@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { parse } from 'dotenv';
 import { request } from 'playwright';
 import { createSqaTestServer } from './sqa-test-runtime.mjs';
+import { SQA_RELEASE_REPORT_CONTROL_IDS } from '../public/sqaEvidencePolicy.js';
 
 // Explicit opt-in: uses a real model, but only against this controlled fixture.
 const { values } = parseArgs({ options: {
@@ -112,6 +113,12 @@ try {
 	assert.equal(technical.length, 6);
 	if (externalTarget) assert.ok(technical.every(item => item.status !== 'not_assessed'), 'An external-target technical control was not assessed.');
 	else assert.ok(technical.every(item => item.status === 'pass'), 'A healthy fixture technical control did not pass; inspect the retained session.');
+	if (!externalTarget) for (const id of SQA_RELEASE_REPORT_CONTROL_IDS) {
+		const control = assessment.results.find(item => item.controlId === id);
+		assert.equal(control?.status, 'blocked', `${id}: a browser-only fixture cannot supply a full reviewed release report.`);
+		assert.ok(control.evidenceCoverage.requirements.every(item => !item.satisfied && item.owner === 'reviewer'), `${id}: partial browser activity must not hide a missing release report.`);
+	}
+	result.releaseReportBoundary = externalTarget ? 'not asserted for external artifacts' : 'passed';
 	const activities = finalSession.activities.filter(item => item.status === 'done' && item.toolName?.startsWith('browser_'));
 	const workflowActivities = finalSession.activities.filter(item => item.toolName === 'run_sqa_smoke_workflow');
 	result.smokeWorkflows = {

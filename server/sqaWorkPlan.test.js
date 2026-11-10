@@ -13,8 +13,14 @@ test('technical checks precede a bounded risk-prioritized browser queue without 
 	const sqa = state(), original = structuredClone(sqa);
 	const initial = buildSqaWorkPlan(sqa);
 	assert.deepEqual(initial.activeControls.map(c => c.id), SQA_TECHNICAL_CONTROL_IDS);
-	assert.equal(initial.pendingBrowserCount, 18);
-	assert.equal(initial.pendingReviewerOnlyCount, 12);
+	assert.equal(initial.pendingBrowserCount, 13);
+	assert.equal(initial.pendingReviewerOnlyCount, 17);
+	assert.equal(initial.reviewerRequests.length, 23);
+	for (const id of ['SQA-QUA-002', 'SQA-QUA-003', 'SQA-QUA-004', 'SQA-QUA-006', 'SQA-QUA-008']) {
+		assert.ok(initial.reviewerRequests.some(r => r.controlId === id));
+		assert.ok(!initial.pendingBrowserControls.some(c => c.id === id));
+		assert.ok(sqa.scope.applicableControlIds.includes(id), 'reviewer ownership cannot remove a scoped control');
+	}
 	assert.deepEqual(sqa, original);
 	sqa.observations = SQA_TECHNICAL_CONTROL_IDS.map(controlId => ({ controlId, status: 'blocked' }));
 	const next = buildSqaWorkPlan(sqa);

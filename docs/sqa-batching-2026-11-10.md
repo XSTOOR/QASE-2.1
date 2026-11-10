@@ -67,3 +67,30 @@ new permission or automatic verdict. The work guidance checks exact missing
 prerequisites before another browser action and batches honest blockers where
 the public fixture cannot satisfy a broader contract. Final live results and
 exact-source release qualification remain separate measured evidence.
+
+The next live trace exposed a correctness problem: the model labelled bounded
+accessible-name checks and clean diagnostics as full accessibility and security
+quality reports. A higher pass count from those claims is not a valid coverage
+gain. Release-report controls QUA-002/003/004/006/008 now retain internal browser
+activity bundles only as partial evidence. They cannot satisfy the complete
+report requirement or support an autonomous pass, including in qualified mode.
+The authorized reviewer path accepts the complete release report. Catalog
+objectives, evidence types and minimums are retained; the existing distinction
+between a smoke sample and a release report is enforced on the evidence source.
+
+New evaluated requirement snapshots identify reviewer ownership for these
+reports. The request register and UI use that saved owner. Older snapshots
+without the field retain their prior display semantics, and published
+assessments/evidence bundles are not rewritten. Regression cases reproduce
+correctly typed but insufficient internal samples, atomic batch rejection,
+positive reviewed-report acceptance and historical presentation fallback.
+Controlled live qualification explicitly rejects unsupported broad passes.
+
+These full release-report controls join the existing host reviewer closeout;
+the model does not need to invent browser workflows or enumerate missing
+reports for them. The core scope still contains all 30 controls: 13 require
+an agent browser decision and 17 have reviewer prerequisites. After the 13
+browser decisions, the host blocks any remaining reviewer prerequisites with
+their exact catalog requirement IDs and types. Useful partial observations
+can still be retained. A relevant verified counterexample can remain a failure
+without proving the complete passing contract.

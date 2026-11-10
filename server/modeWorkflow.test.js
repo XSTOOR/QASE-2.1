@@ -36,7 +36,8 @@ for (const profiles of [...Object.keys(SQA_PROFILES).map(profile => [profile]), 
 		];
 		for (const controlId of orderedControlIds) {
 			const control = getSqaControl(controlId);
-			const browserEligible = control.evidenceRequirements.every(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type));
+			const browserEligible = !['SQA-QUA-002', 'SQA-QUA-003', 'SQA-QUA-004', 'SQA-QUA-006', 'SQA-QUA-008'].includes(controlId)
+				&& control.evidenceRequirements.every(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type));
 			let input;
 			if (browserEligible) {
 				session.activities.push({ id: `check-${controlId}`, toolName: 'browser_snapshot', status: 'done', ts: Date.now(), summary: `Simulated successful ${controlId} browser check for deterministic contract validation.` });
@@ -45,7 +46,7 @@ for (const profiles of [...Object.keys(SQA_PROFILES).map(profile => [profile]), 
 				)) };
 				passed++;
 			} else {
-				input = { control_id: controlId, status: 'blocked', rationale: `Missing reviewed artifacts: ${control.evidenceRequirements.filter(requirement => !AGENT_EVIDENCE_TYPES.has(requirement.type)).map(requirement => requirement.type).join(', ')}.` };
+				input = { control_id: controlId, status: 'blocked', rationale: 'Missing reviewed artifacts: complete release verification reports or the required documentary prerequisites were not supplied.' };
 				blocked++;
 			}
 			const result = await record.run(input);

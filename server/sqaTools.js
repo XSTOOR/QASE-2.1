@@ -103,7 +103,7 @@ export function createSqaTools(session, runStore, options = {}) {
 
 	const recordControl = {
 		name: 'record_sqa_control',
-		description: 'Records one scoped SQA control observation, or an atomic controls batch of up to 12 closely related observations. Capture a control-specific browser check immediately before pass/fail and provide every required browser-eligible evidence type in evidence. New autonomous runs bind technical controls to matching typed host checks; broader evidence needs an explicitly tagged workflow. A blocked mixed control may omit unsupported browser evidence. After the final browser-eligible result, the host automatically closes pending reviewer-only prerequisites with catalog-derived missing-evidence reasons. Never invent evidence; the deterministic evaluator owns the verdict.',
+		description: 'Records one scoped SQA control observation, or an atomic controls batch of up to 12 closely related observations. Reuse matching saved host facts for the same declared oracle; capture only genuinely missing checks. Every control needs its own required evidence types. QUA-002/003/004/006/008 require reviewed release reports; browser activity bundles are partial evidence only, so record these controls blocked with precise prerequisites instead of claiming pass. New autonomous runs bind technical controls to matching typed host checks; broader evidence needs an explicitly tagged workflow. A blocked mixed control may omit unsupported browser evidence. After the final browser-eligible result, the host automatically closes pending reviewer-only prerequisites. Never invent evidence; the deterministic evaluator owns the verdict.',
 		category: 'sqa',
 		parametersSchema: {
 			type: 'object',

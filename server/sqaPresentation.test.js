@@ -12,6 +12,13 @@ const draft = {
 	observations: []
 };
 
+test('snapshot-owned release reports are reviewer gaps while older snapshots retain their original classification', () => {
+	const result = { controlId: 'SQA-QUA-006', status: 'blocked', automationLevel: 'agent_assisted', evidenceCoverage: { requirements: [{ type: 'security_report', satisfied: false, owner: 'reviewer' }] } };
+	assert.equal(groupSqaUnresolvedResults([result]).reviewer.length, 1);
+	const historical = structuredClone(result); delete historical.evidenceCoverage.requirements[0].owner;
+	assert.equal(groupSqaUnresolvedResults([historical]).automated.length, 1);
+});
+
 test('an evidence-empty SQA draft is ready rather than a final blocked verdict', () => {
 	const presentation = describeSqaLifecycle(draft, 'idle', 0);
 	assert.equal(presentation.phase, 'ready');

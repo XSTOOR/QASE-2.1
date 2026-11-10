@@ -13,7 +13,7 @@ export function sqaReportModel(assessment = {}) {
 				mandatory: result.mandatory, status: result.status,
 				id: requirement.id, type: requirement.type, minimum: requirement.minimum,
 				description: requirement.description,
-				owner: SQA_AGENT_CAPABLE_EVIDENCE_TYPES.includes(requirement.type) ? 'browser' : 'reviewer'
+					owner: ['browser', 'reviewer'].includes(requirement.owner) ? requirement.owner : (SQA_AGENT_CAPABLE_EVIDENCE_TYPES.includes(requirement.type) ? 'browser' : 'reviewer')
 			}))),
 		evidence: results.flatMap(result => (result.evidence ?? []).map((item, index) => ({
 			controlId: result.controlId, status: result.status, index: index + 1,

@@ -1,6 +1,6 @@
 # QASE Founder/SQA integration candidate
 
-Current release: `qase-founder-sqa-2026-11-10-batching-r2`. UI: `20261110-1`.
+Current release: `qase-founder-sqa-2026-11-10-batching-r3`. UI: `20261110-2`.
 
 Configured-provider SQA can compose diagnostics, keyboard/responsive checks,
 and navigation/form checks through two bounded SDK calls. Each child retains
@@ -16,6 +16,13 @@ navigation/form receipts after history compaction. Related controls can reuse
 those exact observations without input replay; the existing evaluator still
 owns the verdict. Missing thresholds, authorization, environments or release
 artifacts produce explicit prerequisite blockers, never substituted evidence.
+
+Performance, compatibility, full accessibility, security-quality and deployment
+controls require complete release reports. Internal browser activity bundles
+remain available as partial evidence but cannot satisfy those full contracts
+or produce an autonomous pass. New requirement snapshots retain reviewer
+ownership; older published snapshots keep their previous interpretation. The
+authorized evidence-review flow can accept complete release reports.
 
 SQA form smoke checks activate the native submit button with Enter to avoid
 repeated pointer timeouts in Windows Firefox. Browser tests check trusted

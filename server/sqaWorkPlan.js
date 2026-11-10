@@ -1,6 +1,7 @@
 import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
-import { AGENT_EVIDENCE_TYPES } from './sqaService.js';
+import { AGENT_EVIDENCE_TYPES, isAgentSqaControl } from './sqaService.js';
 import { sqaReportModel } from '../public/sqaReportModel.js';
+import { SQA_RELEASE_REPORT_CONTROL_IDS } from '../public/sqaEvidencePolicy.js';
 import { BROWSER_WORKFLOW_GUIDANCE } from './browserWorkflowPrompt.js';
 import { createHash } from 'node:crypto';
 
@@ -16,8 +17,8 @@ export function buildSqaWorkPlan(sqa) {
 	if (controls.some(control => !control)) throw new TypeError('SQA work plan requires known scoped controls.');
 	const recorded = new Map((sqa.observations ?? []).map(item => [item.controlId, item.status]));
 	const pending = controls.filter(control => !recorded.has(control.id) || recorded.get(control.id) === 'not_assessed');
-	const browser = control => control.evidenceRequirements.some(item => AGENT_EVIDENCE_TYPES.has(item.type));
-	const reviewer = control => control.evidenceRequirements.some(item => !AGENT_EVIDENCE_TYPES.has(item.type));
+	const browser = isAgentSqaControl;
+	const reviewer = control => SQA_RELEASE_REPORT_CONTROL_IDS.includes(control.id) || control.evidenceRequirements.some(item => !AGENT_EVIDENCE_TYPES.has(item.type));
 	const technical = SQA_TECHNICAL_CONTROL_IDS.map(id => pending.find(control => control.id === id)).filter(Boolean);
 	const other = pending.filter(control => browser(control) && !SQA_TECHNICAL_CONTROL_IDS.includes(control.id));
 	const browserOnly = other.filter(control => !reviewer(control)).sort(priority);
@@ -39,7 +40,8 @@ export function buildSqaWorkPlan(sqa) {
 	const results = sqa.assessment?.results ?? controls.map(control => ({
 		controlId: control.id, title: control.title, status: recorded.get(control.id) ?? 'not_assessed',
 		severity: control.severity, mandatory: control.mandatory,
-		evidenceCoverage: { requirements: control.evidenceRequirements.map(item => ({ ...item, actual: 0, satisfied: false })) }
+		evidenceCoverage: { requirements: control.evidenceRequirements.map(item => ({ ...item, actual: 0, satisfied: false,
+			...(SQA_RELEASE_REPORT_CONTROL_IDS.includes(control.id) ? { owner: 'reviewer' } : {}) })) }
 	}));
 	const plan = {
 		phase,
@@ -68,7 +70,7 @@ export function sqaWorkBrief(sqa) {
 	return `SQA work priority: ${plan.phase}. Pending browser controls: ${plan.pendingBrowserCount}; pending reviewer-only controls: ${plan.pendingReviewerOnlyCount}.
 Detailed active controls: ${JSON.stringify(active)}
 Remaining browser planning index: ${JSON.stringify(plan.planningIndex)}
-Reviewer artifact requests: ${plan.reviewerRequests.length}. Read mode_execution_progress only when the next workflow lacks needed contract detail. Do not prefetch the entire catalog or reviewer register before testing. Act on the active group and record supported results first. Further pages require the returned revision; restart at offset 0 after recording controls.
+Reviewer artifact requests: ${plan.reviewerRequests.length}. Full release reports require authorized review for ${SQA_RELEASE_REPORT_CONTROL_IDS.join(', ')}. Browser activity bundles support partial observations only for these objectives; record blocked until the complete report is supplied. Read mode_execution_progress only when the next workflow lacks needed contract detail. Do not prefetch the entire catalog or reviewer register before testing. Act on the active group and record supported results first. Further pages require the returned revision; restart at offset 0 after recording controls.
 The active window prioritizes detail, not authorized scope. Plan all relevant observed workflows. Reuse completed workflow evidence only when its control-specific host receipts match. Never replay completed work merely to refresh context. Closed or finalized runs cannot resume exploration through this queue.`;
 }
 

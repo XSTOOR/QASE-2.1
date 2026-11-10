@@ -15,7 +15,7 @@ import {
 	recordReviewerSqaObservation,
 	SQA_BROWSER_REVIEW_ATTRIBUTES
 } from './sqaService.js';
-import { SQA_CATALOG_VERSION, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
+import { SQA_CATALOG_VERSION, SQA_TECHNICAL_CONTROL_IDS, getSqaControl } from './sqaCatalog.js';
 import { clearSecrets, storeSecrets } from './secrets.js';
 
 const fixedNow = () => Date.parse('2026-08-15T00:00:00.000Z');
@@ -209,6 +209,31 @@ test('agent can use the evidence array for the consolidated reproducible-result 
 	assert.deepEqual(result.evidence.map(item => item.type), ['test_result']);
 });
 
+for (const id of ['SQA-QUA-002', 'SQA-QUA-003', 'SQA-QUA-004', 'SQA-QUA-006', 'SQA-QUA-008']) {
+	test(`${id} retains a browser sample as partial evidence and needs a reviewed full release report`, async () => {
+		const candidate = session(), runStore = store(), control = getSqaControl(id);
+		const evidence = control.evidenceRequirements.map(requirement => ({ type: requirement.type, summary: 'Only a bounded browser sample was performed.' }));
+		const before = structuredClone(candidate.sqa);
+		await assert.rejects(recordAgentSqaObservation(candidate, { control_id: id, status: 'pass', evidence }, runStore, fixedNow), /requires a reviewed release report/);
+		assert.deepEqual(candidate.sqa, before); assert.equal(runStore.commits.length, 0);
+		const partial = await recordAgentSqaObservation(candidate, { control_id: id, status: 'blocked', rationale: 'Complete release verification report not supplied.', evidence }, runStore, fixedNow);
+		assert.equal(partial.status, 'blocked');
+		assert.equal(partial.evidence.length, evidence.length, 'useful sampled observations remain available');
+		assert.ok(partial.evidenceCoverage.requirements.every(r => !r.satisfied && r.actual === 0 && r.owner === 'reviewer'));
+		const reviewed = await recordReviewerSqaObservation(candidate, { controlId: id, status: 'pass', rationale: 'The complete release report was reviewed against its baseline.', evidence: evidence.map(e => ({ ...e, reference: `artifact://release-reports/${id}` })) }, { role: 'owner' }, runStore, fixedNow);
+		assert.equal(reviewed.status, 'pass');
+	});
+}
+
+test('a misleading broad-assurance pass rolls back a mixed observation batch before any write', async () => {
+	const candidate = session(), runStore = store(), before = structuredClone(candidate.sqa);
+	await assert.rejects(recordAgentSqaObservations(candidate, [
+		{ control_id: 'SQA-QUA-001', status: 'pass', evidence: [{ type: 'test_result', summary: 'Declared local functional oracle matched.' }] },
+		{ control_id: 'SQA-QUA-006', status: 'pass', evidence: [{ type: 'security_report', summary: 'The console had no errors.' }] }
+	], runStore, fixedNow), /requires a reviewed release report/);
+	assert.deepEqual(candidate.sqa, before); assert.equal(runStore.commits.length, 0);
+});
+
 test('agent can atomically record a cohesive batch of control-specific browser results', async () => {
 	const candidate = session();
 	const runStore = store();
@@ -265,6 +290,26 @@ test('reviewer-only blockers can be recorded in one bounded batch', async () => 
 	assert.deepEqual(results.map(item => item.controlId), ['SQA-GOV-001', 'SQA-GOV-004']);
 	assert.equal(runStore.commits.length, 1);
 	assert.equal(runStore.commits[0].payload.batch, true);
+});
+
+test('full release reports close with reviewer prerequisites after the actual browser controls, preserving all scope', async () => {
+	const candidate = session(), runStore = store(), scopeBefore = [...candidate.sqa.scope.applicableControlIds];
+	const browser = pendingAgentSqaControlIds(candidate);
+	assert.equal(browser.length, 13);
+	const reportIds = ['SQA-QUA-002', 'SQA-QUA-003', 'SQA-QUA-004', 'SQA-QUA-006', 'SQA-QUA-008'];
+	assert.ok(reportIds.every(id => !browser.includes(id) && scopeBefore.includes(id)));
+	candidate.sqa.observations = browser.map(controlId => ({ controlId, status: 'blocked', rationale: 'Controlled sample only; missing complete release prerequisites.', evidence: [] }));
+	const closed = await closePendingReviewerSqaControlsAsBlocked(candidate, runStore, fixedNow);
+	assert.equal(closed.length, 17);
+	for (const id of reportIds) {
+		const item = closed.find(r => r.controlId === id);
+		assert.equal(item.status, 'blocked');
+		assert.match(item.rationale, new RegExp(getSqaControl(id).evidenceRequirements[0].id));
+	}
+	assert.deepEqual(candidate.sqa.scope.applicableControlIds, scopeBefore);
+	assert.equal(candidate.sqa.assessment.results.length, 30);
+	assert.equal(candidate.sqa.assessment.summary.not_assessed, 0);
+	assert.equal(runStore.commits.length, 1);
 });
 
 test('host reviewer closeout derives precise catalog blockers and commits atomically', async () => {

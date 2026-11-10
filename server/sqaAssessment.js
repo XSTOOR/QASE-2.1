@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { sqaReportModel } from '../public/sqaReportModel.js';
+import { SQA_RELEASE_REPORT_CONTROL_IDS, isSqaPartialReleaseEvidence } from '../public/sqaEvidencePolicy.js';
 import {
 	SQA_CATALOG,
 	SQA_EVIDENCE_TYPES,
@@ -165,14 +166,15 @@ function percentage(numerator, denominator) {
 
 function evidenceCoverage(control, evidenceItems) {
 	const requirements = control.evidenceRequirements.map(requirement => {
-		const actual = evidenceItems.filter(item => item.type === requirement.type).length;
+		const actual = evidenceItems.filter(item => item.type === requirement.type && !isSqaPartialReleaseEvidence(control.id, item)).length;
 		return {
 			id: requirement.id,
 			type: requirement.type,
 			minimum: requirement.minimum,
 			actual,
 			satisfied: actual >= requirement.minimum,
-			description: requirement.description
+			description: requirement.description,
+			...(SQA_RELEASE_REPORT_CONTROL_IDS.includes(control.id) ? { owner: 'reviewer' } : {})
 		};
 	});
 	const satisfied = requirements.filter(requirement => requirement.satisfied).length;
@@ -273,6 +275,9 @@ export function evaluateSqaAssessment(input, catalog = SQA_CATALOG) {
 		const evidence = evidenceCoverage(control, observation.evidence);
 		let status = observation.status;
 		const decisionNotes = [];
+		if (evidence.missing.length && observation.evidence.some(item => isSqaPartialReleaseEvidence(control.id, item))) {
+			decisionNotes.push('Browser activity bundles are retained as partial samples and do not satisfy the complete reviewed release report required for a pass.');
+		}
 		if (status === 'pass' && evidence.missing.length > 0) {
 			status = 'blocked';
 			decisionNotes.push(`Claimed pass lacks required evidence: ${evidence.missing.join(', ')}.`);
@@ -281,7 +286,8 @@ export function evaluateSqaAssessment(input, catalog = SQA_CATALOG) {
 		// complete pass contract. It must, however, match at least one evidence type
 		// defined for the control. Without this check, an arbitrary browser test_result
 		// could fail a documentary risk, approval, or regulatory control.
-		if (status === 'fail' && evidence.satisfied === 0) {
+		const relevantFailureEvidence = observation.evidence.some(item => control.evidenceRequirements.some(requirement => requirement.type === item.type));
+		if (status === 'fail' && !relevantFailureEvidence) {
 			status = 'blocked';
 			decisionNotes.push(observation.evidence.length === 0
 				? 'Claimed failure lacks a referenced evidence artifact.'

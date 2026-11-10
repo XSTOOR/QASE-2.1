@@ -5,6 +5,7 @@ import { redact } from './secrets.js';
 import { PublicInputError, publicInput } from './publicErrors.js';
 import { assertSqaSize, preserveSqaPublication } from './sqaHistory.js';
 import { evidenceDigest } from './sqaEvidence.js';
+import { SQA_RELEASE_REPORT_CONTROL_IDS } from '../public/sqaEvidencePolicy.js';
 import { publicationTodos } from './finalizationGuard.js';
 import { sqaExecutionBudget } from './sqaBrowserBudget.js';
 import { modeSqaEvidenceActivityIds,modeSqaHasFailedAssertions,modeDiscoveryRequired,modeExplorationReadiness } from './modeDiscovery.js';
@@ -18,6 +19,13 @@ const MAX_EVIDENCE_SUMMARY = 1_000;
 const MAX_AGENT_EVIDENCE_ITEMS = 10;
 const MAX_AGENT_OBSERVATION_BATCH = 12;
 const MAX_BLOCKER_BATCH = 50;
+
+/** Full release-report prerequisites belong to authorized review. Browser
+ * samples may still be retained for them without making them browser work. */
+export function isAgentSqaControl(control) {
+	return Boolean(control && !SQA_RELEASE_REPORT_CONTROL_IDS.includes(control.id)
+		&& control.evidenceRequirements.some(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type)));
+}
 
 /** Every SQA run created by this service is a browser assessment of a URL. */
 export const SQA_BROWSER_REVIEW_ATTRIBUTES = Object.freeze([
@@ -139,9 +147,7 @@ export function createSqaTodoPlan(sqa) {
 	if (controls.some(control => !control)) {
 		throw new TypeError('SQA todo planning found an unknown scoped control.');
 	}
-	const browserEligible = controls.filter(control => (
-		control.evidenceRequirements.some(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type))
-	));
+	const browserEligible = controls.filter(isAgentSqaControl);
 	const reviewerOnly = controls.length - browserEligible.length;
 	return [
 		{ text: 'Confirm the authorized target, assessment boundary, and representative workflows', status: 'pending' },
@@ -357,6 +363,9 @@ function normalizeAgentObservation(session, input, now, records) {
 		summary: item.summary ? redact(session.id, item.summary) : undefined
 	}));
 	if (status === 'pass') {
+		if (SQA_RELEASE_REPORT_CONTROL_IDS.includes(controlId)) {
+			throw new TypeError(`A pass for ${controlId} requires a reviewed release report. Browser smoke and activity bundles are partial evidence only. Record blocked with the missing prerequisite and any useful browser sample; supply the complete report through authorized review.`);
+		}
 		if(modeSqaHasFailedAssertions(session,controlId))throw new TypeError(`A pass for ${controlId} contradicts its failed matching host assertions. Investigate and record the actual failure or an evidenced blocker; model opinion cannot erase executed failures.`);
 		const required = new Map(control.evidenceRequirements.map(requirement => [requirement.type, requirement.minimum]));
 		for (const item of requestedEvidence) {
@@ -506,7 +515,7 @@ export async function recordAgentSqaBlockers(session, inputs, runStore, now = ()
 	}
 	const browserEligibleIds = observations
 		.map(item => getSqaControl(item.controlId))
-		.filter(control => control.evidenceRequirements.some(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type)))
+		.filter(isAgentSqaControl)
 		.map(control => control.id);
 	if (browserEligibleIds.length > 0) {
 		throw new TypeError(`SQA blocker batch is reviewer-only. Record browser-eligible controls with record_sqa_control: ${browserEligibleIds.join(', ')}.`);
@@ -538,15 +547,12 @@ function pendingControlIds(session) {
 
 /** Pending controls that still require a browser-backed agent decision. */
 export function pendingAgentSqaControlIds(session) {
-	return pendingControlIds(session).filter(controlId => (
-		getSqaControl(controlId)?.evidenceRequirements
-			.some(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type))
-	));
+	return pendingControlIds(session).filter(controlId => isAgentSqaControl(getSqaControl(controlId)));
 }
 
 function reviewerPrerequisiteRationale(control) {
 	const required = control.evidenceRequirements
-		.filter(requirement => !AGENT_EVIDENCE_TYPES.has(requirement.type))
+		.filter(requirement => SQA_RELEASE_REPORT_CONTROL_IDS.includes(control.id) || !AGENT_EVIDENCE_TYPES.has(requirement.type))
 		.map(requirement => `${requirement.type} (${requirement.id})`);
 	return `Reviewer-supplied evidence was not provided to this run: ${required.join(', ')}. This prerequisite remains blocked for qualified human review; no pass or fail is claimed.`;
 }
@@ -571,7 +577,7 @@ export async function closePendingReviewerSqaControlsAsBlocked(session, runStore
 	const next = cloneObservationState(previous);
 	const closed = reviewerControlIds.map(controlId => {
 		const control = getSqaControl(controlId);
-		if (!control || control.evidenceRequirements.some(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type))) {
+		if (!control || isAgentSqaControl(control)) {
 			throw new TypeError(`SQA control ${controlId} is not eligible for reviewer-only closeout.`);
 		}
 		return {

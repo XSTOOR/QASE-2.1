@@ -4,8 +4,8 @@ This is the operator runbook for the reviewed release targeting **https://qase.d
 
 ## Required release
 
-- Release ID: `qase-founder-sqa-2026-11-10-batching-r2`.
-- UI version: `20261110-1`, with an explicit return from the SQA device picker to the assessment form. The preceding [UI audit fixes](docs/ui-audit-fixes-2026-11-09.md) document the verdict, report, settings and account recovery changes already on the branch.
+- Release ID: `qase-founder-sqa-2026-11-10-batching-r3`.
+- UI version: `20261110-2`, with an explicit return from the SQA device picker to the assessment form. The preceding [UI audit fixes](docs/ui-audit-fixes-2026-11-09.md) document the verdict, report, settings and account recovery changes already on the branch.
 - Source branch: `Push-SQA`. This release follows the picker repair at `64e43645ed4371eb8d97be5a4f0995b39fe61e92`. Pin the full SHA of the approved successor as `EXPECTED_SHA` and verify both GitHub workflows and the image against that exact SHA.
 - Release scope: configured-provider Founder/SQA with export-only Studio handoff. Leave the Studio destination and qualified Opus/JEV mode flags disabled until separately qualified. PostgreSQL deployments must apply migration **044** before accepting versioned Founder actions; it preserves legacy rows and enables forced tenant RLS. Local-store deployments do not run SQL migrations.
 - The application root is the extracted folder containing `package.json`, `public/`, and `server/`. It is a Node.js Express application serving static ES modules, NOT a Next.js or Vite build. Do not deploy the parent workspace, an old `apps/` project, or a generated `dist/` directory.
@@ -231,7 +231,7 @@ This checks HTTPS health/readiness, the exact release ID, and SHA-256 for six pu
 In a clean browser, verify:
 
 1. TLS and canonical hostname; login, logout, account isolation, closed registration, and SMTP recovery. Unauthenticated `/api/sessions` must not return private runs. Production `/demo` must not expose test fixtures.
-2. Current QASE branding, status lights, readable buttons and responsive layout. Confirm `app.js?v=20261110-1` is served. Test hybrid-only setup, selected browser, pause/recovery, root entry/refresh staying on the run workspace, explicit Results/Back navigation and the stable selected-device preview.
+2. Current QASE branding, status lights, readable buttons and responsive layout. Confirm `app.js?v=20261110-2` is served. Test hybrid-only setup, selected browser, pause/recovery, root entry/refresh staying on the run workspace, explicit Results/Back navigation and the stable selected-device preview.
 3. With an authorized staging test account and an explicitly owned test target, run bounded QA, SQA, and Founder canaries. Confirm actual browser actions, live activity/SSE, questions/credential requests, persistence after refresh, stopping, and recorded evidence/report downloads. In hybrid, test secure-form consent, one approved sign-in, explicitly consented separate authentication API, rejected duplicate/unrelated writes, remembered Skip login, fresh signed-in observations and no replay after uncertain dispatch. Native-form username/password sign-in is supported; SSO/MFA and unapproved cross-origin sign-in are explicit limitations, not compatibility claims. Never use a production target for destructive tests, payments, signup spam, intrusive exploitation, or uncontrolled paid AI generation.
 4. Model requests actually succeed from the execution host. A ready API without gateway connectivity or browser executables is not acceptance.
 5. Agent streams stay live through the ingress/CDN. Disable proxy buffering and inappropriate caching for `/api/*` and SSE; do not impose a short execution/request timeout on live streams. The Caddy baseline uses `flush_interval -1`. Do not cache private API data.

@@ -21,10 +21,9 @@ export const SQA_AGENT_CAPABLE_EVIDENCE_TYPES = Object.freeze([
 
 const AGENT_CAPABLE_EVIDENCE = new Set(SQA_AGENT_CAPABLE_EVIDENCE_TYPES);
 
-function missingEvidenceTypes(result) {
+function missingEvidenceRequirements(result) {
 	return (result?.evidenceCoverage?.requirements ?? [])
-		.filter(requirement => !requirement?.satisfied && typeof requirement?.type === 'string')
-		.map(requirement => requirement.type);
+		.filter(requirement => !requirement?.satisfied && typeof requirement?.type === 'string');
 }
 
 export function isSqaBudgetStopResult(result) {
@@ -56,9 +55,9 @@ export function groupSqaUnresolvedResults(results = []) {
 			continue;
 		}
 
-		const missingTypes = missingEvidenceTypes(result);
-		const hasAgentEvidence = missingTypes.some(type => AGENT_CAPABLE_EVIDENCE.has(type));
-		const hasReviewerEvidence = missingTypes.some(type => !AGENT_CAPABLE_EVIDENCE.has(type));
+		const missing = missingEvidenceRequirements(result);
+		const hasAgentEvidence = missing.some(item => item.owner !== 'reviewer' && AGENT_CAPABLE_EVIDENCE.has(item.type));
+		const hasReviewerEvidence = missing.some(item => item.owner === 'reviewer' || !AGENT_CAPABLE_EVIDENCE.has(item.type));
 		if (result.automationLevel === 'manual' || (hasReviewerEvidence && !hasAgentEvidence)) {
 			groups.reviewer.push(result);
 		} else if (result.automationLevel === 'hybrid' || (hasAgentEvidence && hasReviewerEvidence)) {

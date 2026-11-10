@@ -1128,7 +1128,8 @@ test('deterministic fake-model SQA agent completes the real closeout path withou
 		for (const controlId of orderedControlIds) {
 			const control = getSqaControl(controlId);
 			const hasAgentEvidence = control.evidenceRequirements.some(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type));
-			const allEvidenceIsAgentEvidence = control.evidenceRequirements.every(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type));
+			const allEvidenceIsAgentEvidence = !['SQA-QUA-002', 'SQA-QUA-003', 'SQA-QUA-004', 'SQA-QUA-006', 'SQA-QUA-008'].includes(controlId)
+				&& control.evidenceRequirements.every(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type));
 			assert.equal(hasAgentEvidence, true);
 			const input = allEvidenceIsAgentEvidence ? {
 				control_id: controlId, status: 'pass',

@@ -1,8 +1,9 @@
 import { describeDeviceForPrompt } from './deviceProfiles.js';
 import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
-import { AGENT_EVIDENCE_TYPES } from './sqaService.js';
+import { AGENT_EVIDENCE_TYPES, isAgentSqaControl } from './sqaService.js';
 import { buildSqaWorkPlan } from './sqaWorkPlan.js';
 import { savedSqaSmokeContext } from './sqaSmokeWorkflow.js';
+import { SQA_RELEASE_REPORT_CONTROL_IDS } from '../public/sqaEvidencePolicy.js';
 import { countSqaBrowserActivities, countSqaBrowserActivitiesSinceControlCheckpoint, SQA_BROWSER_EVIDENCE_LIMIT, SQA_BROWSER_TOOL_BUDGET, SQA_BROWSER_WORKFLOW_CHECKPOINT, SQA_INPUT_TOKEN_BUDGET, SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD } from './sqaBrowserBudget.js';
 
 /** Evidence collection has ended; retain the actual control decisions and plan,
@@ -33,8 +34,9 @@ export function buildSqaContext(session, liveUrl) {
 	const observations = new Map((session.sqa?.observations ?? []).map(item => [item.controlId, item]));
 	const describeControl = id => {
 		const control = getSqaControl(id);
-		const eligible = control.evidenceRequirements.filter(item => AGENT_EVIDENCE_TYPES.has(item.type)).map(item => item.type);
-		const reviewerOnly = control.evidenceRequirements.filter(item => !AGENT_EVIDENCE_TYPES.has(item.type)).map(item => item.type);
+		const releaseReport = SQA_RELEASE_REPORT_CONTROL_IDS.includes(id);
+		const eligible = control.evidenceRequirements.filter(item => !releaseReport && AGENT_EVIDENCE_TYPES.has(item.type)).map(item => item.type);
+		const reviewerOnly = control.evidenceRequirements.filter(item => releaseReport || !AGENT_EVIDENCE_TYPES.has(item.type)).map(item => item.type);
 		const observation = observations.get(id);
 		const progress = observation ? `recorded=${observation.status}` : 'PENDING';
 		return `- ${control.id} [${progress}; ${control.severity}; ${control.automationLevel}; ${control.mandatory ? 'mandatory' : 'optional'}] ${control.title}. Browser-eligible evidence: ${eligible.join(', ') || 'none'}. Reviewer-only evidence: ${reviewerOnly.join(', ') || 'none'}.${SQA_TECHNICAL_CONTROL_IDS.includes(id) ? '' : ` Objective: ${control.objective}. Required counts: ${control.evidenceRequirements.map(r => `${r.type} >= ${r.minimum}`).join(', ')}.`}`;
@@ -47,7 +49,7 @@ export function buildSqaContext(session, liveUrl) {
 		// phase so the agent collects the useful partial evidence before recording
 		// the documentary gap. Automation level alone is therefore not a reliable
 		// way to decide execution order.
-		.filter(control => control.evidenceRequirements.some(item => AGENT_EVIDENCE_TYPES.has(item.type))
+		.filter(control => isAgentSqaControl(control)
 			&& !technicalIds.includes(control.id))
 		.map(control => control.id);
 	const browserFirstIds = [...technicalIds, ...otherBrowserFirstIds];
@@ -208,6 +210,12 @@ ${pendingTechnicalIds.length ? `3. Immediately after the initial snapshot, call 
    browser evidence may accompany a blocker, but cannot substitute for the
    missing contract. Reuse the completed local form sample for a matching
    declared functional oracle rather than repeating its fills and submit.
+   Full release reports for ${SQA_RELEASE_REPORT_CONTROL_IDS.join(', ')}
+   require authorized review. An autonomous browser run cannot pass these
+   controls from its activity bundles, even when the sample is defect-free.
+   Record a precise blocker and any useful partial evidence in the same batch;
+   do not retry completed smoke or convert four accessible-name assertions
+   into a full WCAG report, or clean diagnostics into security assurance.
 8. When every control has a defensible result, call finish_sqa_assessment. The
    host rejects incomplete plans, in-flight browser work, missing controls,
    incomplete pass evidence, and unresolved authentication scope. The host—not

@@ -63,6 +63,29 @@ test('complete evidence produces a deterministic pass and transparent framework 
 	assert.match(markdown, /## Limitations and assurance notice/);
 });
 
+test('browser activity bundles cannot stand in for complete release assurance reports, even with the right type', () => {
+	const ids = ['SQA-QUA-002', 'SQA-QUA-003', 'SQA-QUA-004', 'SQA-QUA-006', 'SQA-QUA-008'];
+	for (const control of resolveSqaScope().applicableControls.filter(c => ids.includes(c.id))) {
+		const observation = passingObservation(control);
+		observation.evidence.forEach(e => { e.reference = 'qase://runs/fixture/activities/snapshot/evidence/retained'; });
+		const original = structuredClone(observation);
+		const assessment = evaluateSqaAssessment(request({ observations: [observation] }));
+		const result = assessment.results.find(r => r.controlId === control.id);
+		assert.equal(result.status, 'blocked'); assert.equal(result.claimedStatus, 'pass');
+		assert.match(result.decisionNotes.join(' '), /partial samples.*reviewed release report/);
+		assert.ok(result.evidenceCoverage.requirements.every(r => r.actual === 0 && !r.satisfied && r.owner === 'reviewer'));
+		assert.equal(result.evidence.length, observation.evidence.length);
+		assert.deepEqual(observation, original);
+	}
+});
+
+test('a relevant failure remains conclusive even when its sample cannot prove a complete release pass', () => {
+	const assessment = evaluateSqaAssessment(request({ observations: [{ controlId: 'SQA-QUA-006', status: 'fail', rationale: 'A concrete release-relevant security counterexample was verified.', evidence: [{ type: 'security_report', reference: 'qase://runs/fixture/activities/verified-security-check/evidence/record', summary: 'Verified expected/actual security failure, limited to the observed counterexample.' }] }] }));
+	const result = assessment.results.find(r => r.controlId === 'SQA-QUA-006');
+	assert.equal(result.status, 'fail');
+	assert.equal(result.evidenceCoverage.satisfied, 0, 'a counterexample does not establish full passing report coverage');
+});
+
 test('claimed pass without its evidence contract is blocked, never silently passed', () => {
 	const control = resolveSqaScope().applicableControls[0];
 	const assessment = evaluateSqaAssessment(request({ observations: [{
