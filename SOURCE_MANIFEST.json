@@ -1220,7 +1220,7 @@
     },
     {
       "path": "scripts/test-ui-followup-browser.mjs",
-      "sha256": "c8cc77765b6fae1fec8ae4b4b57b7889700868229fc05ca3be5c07ccc613fe92"
+      "sha256": "e00b8c720faaa297b6820816cada32575f5a17e021e6f9b5abfe282c9943d79c"
     },
     {
       "path": "scripts/test-ui-responsive.mjs",
