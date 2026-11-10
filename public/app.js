@@ -1742,11 +1742,6 @@ function renderHeader() {
 			.join('\n');
 		el.tokenText.title = `${el.tokenText.title}\n${modelLines}`;
 	}
-=======
-	el.tokenText.classList.remove('is-pending');
-	el.tokenText.textContent = session.mode==='founder'?'Review plan':'Run progress';
-	el.tokenText.title = '';
->>>>>>> 77c58cc4d5c1a7e572b2b69db30767dd734eec67
 	// LIVE pill: only while the run is actively working.
 	el.livePill.hidden = session.status !== 'running';
 	renderMiniSummary();
