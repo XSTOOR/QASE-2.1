@@ -1,4 +1,4 @@
-import { guardFinalization } from './finalizationGuard.js';
+import { guardFinalization, isPublicationTodo } from './finalizationGuard.js';
 import { modeExplorationReadiness } from './modeReasoningRuntime.js';
 import {createFounderDraftTool,createFounderDraftBatchTool,resolveFounderDraft,usesFounderDraftBatch} from './founderReportDraft.js';
 import {
@@ -122,7 +122,7 @@ export function founderFinishReadiness(session, now = Date.now()) {
 	));
 	const incompleteTodos = (session.todos ?? []).filter(todo => (
 		todo.status !== 'completed'
-		&& !(todo.status === 'in_progress' && /\b(finish|publish)\b.*\b(founder|review|report)\b/i.test(todo.text ?? ''))
+		&& !isPublicationTodo(todo, 'founder')
 	));
 	const completedTodoText = (session.todos ?? []).filter(todo => todo.status === 'completed').map(todo => todo.text ?? '').join(' ');
 	const inventoryComplete = /\b(inventory|map)\b.{0,50}\b(route|surface|navigation|page)/i.test(completedTodoText)

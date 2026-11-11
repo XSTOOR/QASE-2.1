@@ -7,17 +7,24 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { parse } from 'dotenv';
-import { ensureRuntime, runTurn, deleteRunSnapshot, isFounderSynthesisReady } from '../server/agent.js';
-import { platformEnvironment } from '../server/platformEnvironment.js';
-import { getConfig, withUserConfiguration } from '../server/config.js';
-import { buildFounderReportMarkdown } from '../server/founderService.js';
-import { founderDraftProgress, FOUNDER_REPORT_SECTIONS, usesFounderDraft } from '../server/founderReportDraft.js';
-import { renderReportPdf } from '../server/reportPdf.js';
 
 const { values }=parseArgs({options:{'env-file':{type:'string'},checkpoint:{type:'string'},'output-dir':{type:'string'}}});
 assert.ok(values['env-file']&&values.checkpoint,'Supply an existing gateway env path and a controlled Founder checkpoint.');
 assert.notEqual(process.env.NODE_ENV,'production');
 const source=path.resolve(values.checkpoint),sourceBytes=fs.readFileSync(source);
+const environment=parse(fs.readFileSync(path.resolve(values['env-file']),'utf8'));
+const directory=path.resolve(values['output-dir']||'.');
+assert.ok(!fs.existsSync(directory),'Choose a fresh output directory; prior qualification evidence is immutable.');
+fs.mkdirSync(path.join(directory,'runtime'),{recursive:true});
+// Application stores capture cwd at import time. Never use the user's runtime
+// directory or delete a snapshot belonging to the original checkpoint.
+process.chdir(path.join(directory,'runtime'));
+const { ensureRuntime, runTurn, deleteRunSnapshot, isFounderSynthesisReady } = await import('../server/agent.js');
+const { platformEnvironment } = await import('../server/platformEnvironment.js');
+const { getConfig, withUserConfiguration } = await import('../server/config.js');
+const { buildFounderReportMarkdown } = await import('../server/founderService.js');
+const { founderDraftProgress, FOUNDER_REPORT_SECTIONS, usesFounderDraft } = await import('../server/founderReportDraft.js');
+const { renderReportPdf } = await import('../server/reportPdf.js');
 const session=JSON.parse(sourceBytes);
 assert.equal(session.mode,'founder');assert.equal(session.founder.scope.target.name,'Team practice fixture');
 assert.match(session.id,/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i);
@@ -28,8 +35,6 @@ assert.ok(['127.0.0.1','localhost'].includes(new URL(session.targetUrl).hostname
 assert.equal(session.founder.scope.access.decision,'public_only');assert.equal(session.secretNames?.length||0,0);
 assert.ok(usesFounderDraft(session)&&isFounderSynthesisReady(session)&&founderDraftProgress(session).intact);
 assert.ok(session.founder.reportDraft,'A saved section is required to qualify restart recovery.');
-const directory=path.resolve(values['output-dir']||'.');fs.mkdirSync(directory,{recursive:true});
-const environment=parse(fs.readFileSync(path.resolve(values['env-file']),'utf8'));
 const secrets=Object.entries(environment).filter(([key,value])=>/key|token|password|secret/i.test(key)&&value.length>=8).map(([,value])=>value);
 Object.assign(process.env,platformEnvironment(environment,{}),{NODE_ENV:'development',QASE_FOUNDER_REASONING_ENABLED:'false',QASE_ALLOW_PRIVATE_NETWORK:'true'});
 const settings=getConfig(),baseline=structuredClone(session),live={},events=[];
@@ -71,12 +76,12 @@ try{
 		}else assert.deepEqual(restored,value);
 	}
 	assert.equal(session.activities.filter(a=>a.toolName?.startsWith('browser_')).length,browserCount,'Recovery replayed browser work.');
-	assert.ok(session.tokenUsage.inputTokens>initialInput);assert.ok(session.todos.every(t=>t.status==='completed'));
+	assert.ok(founderDraftProgress(baseline).next ? session.tokenUsage.inputTokens>initialInput : session.tokenUsage.inputTokens===initialInput);assert.ok(session.todos.every(t=>t.status==='completed'));
 	const reloaded=JSON.parse(fs.readFileSync(checkpoint));assert.deepEqual(reloaded.founder.report,session.founder.report);assert.deepEqual(reloaded.tokenUsage,session.tokenUsage);
 	fs.writeFileSync(path.join(directory,'report.md'),buildFounderReportMarkdown(session));
 	const pdf=await renderReportPdf(session);assert.equal(pdf.subarray(0,4).toString(),'%PDF');fs.writeFileSync(path.join(directory,'report.pdf'),pdf);
 	assert.deepEqual(fs.readFileSync(source),sourceBytes,'The original checkpoint changed.');
-	Object.assign(result,{status:'passed',sections:founderDraftProgress(session).completed,recommendations:session.founder.report.recommendations.length,additionalInputTokens:session.tokenUsage.inputTokens-initialInput,tokenUsage:session.tokenUsage,browserReplay:false,savedSectionsPreserved:true,checkpointRestoration:'passed',exports:'passed'});
+	Object.assign(result,{status:'passed',sections:founderDraftProgress(session).completed,recommendations:session.founder.report.recommendations.length,additionalInputTokens:session.tokenUsage.inputTokens-initialInput,tokenUsage:session.tokenUsage,browserReplay:false,savedSectionsPreserved:true,checkpointRestoration:'passed',exports:'passed',hostPublication:session.activities.some(a=>a.toolName==='finish_founder_review'&&a.status==='done'&&a.id?.startsWith('founder-draft-publication-'))});
 }catch(error){result.status='failed';result.error=error.message;process.exitCode=1;save();}
 finally{
 	clearTimeout(timer);clearInterval(sampler);

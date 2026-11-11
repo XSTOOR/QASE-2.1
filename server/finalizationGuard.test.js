@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { guardFinalization } from './finalizationGuard.js';
+import { guardFinalization, isPublicationTodo, publicationTodos } from './finalizationGuard.js';
 import { createSqaState } from './sqaService.js';
 import { createSqaTools } from './sqaTools.js';
 import { createFounderTools } from './founderTools.js';
@@ -43,4 +43,28 @@ test('finalization guard releases its flight after thrown errors and rechecks ca
   await assert.rejects(tool.run({}),/Fixture failure/);
   const pending=tool.run({});cancelled=true;
   assert.equal((await pending).code,'RUN_CANCELLED');assert.equal(calls,1);
+});
+
+for (const [mode, tool] of [['sqa', 'finish_sqa_assessment'], ['founder', 'finish_founder_review']]) {
+  test(`${mode} literal publication task is recognized consistently without exempting technical work`, () => {
+    for (const text of [tool, `Call ${tool}`, `Call ${tool} to publish deterministic verdict`]) {
+      const todo = { text, status: 'in_progress' };
+      assert.equal(isPublicationTodo(todo, mode), true);
+      assert.equal(publicationTodos([todo], mode)[0].status, 'completed');
+      assert.equal(isPublicationTodo({ ...todo, status: 'pending' }, mode), false);
+    }
+    for (const text of [`Test login then call ${tool}`, `Call ${tool} after testing login`, 'Review browser diagnostics']) {
+      assert.equal(isPublicationTodo({ text, status: 'in_progress' }, mode), false);
+    }
+  });
+}
+
+test('SQA publishes the exact finalizer-named task seen in the live trace without a plan repair', async () => {
+  const session = { mode: 'sqa', activities: [], todos: [{ text: 'Call finish_sqa_assessment to publish deterministic verdict', status: 'in_progress' }],
+    sqa: createSqaState({ authorizationConfirmed: true, profiles: ['core'], attributes: ['web_application'], target: { name: 'Fixture' } }) };
+  session.sqa.scope.applicableControlIds = ['SQA-WEB-001'];
+  session.sqa.observations = [{ controlId: 'SQA-WEB-001', status: 'blocked', rationale: 'Fixture unavailable', evidence: [] }];
+  const result = await createSqaTools(session, { async commit() {} }).at(-1).run({});
+  assert.equal(result.published, true, result.error);
+  assert.equal(session.todos[0].status, 'completed');
 });

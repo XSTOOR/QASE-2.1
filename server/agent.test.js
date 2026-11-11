@@ -2,7 +2,7 @@ import './testWorkingDirectory.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { activityLabel, allowedToolNames, ensureRuntime, guardSqaBrowserTool, isFounderSynthesisReady, modelActivityTimeoutMs, prepareFounderSynthesis, prepareSqaContextContinuation, prepareSqaSynthesis, restoreWaitingSnapshot, runTurn, sqaAutomaticBudgetCloseoutInput, summariseResult, withModelActivityDeadline } from './agent.js';
+import { activityLabel, allowedToolNames, ensureRuntime, founderAutomaticPublicationInput, guardSqaBrowserTool, isFounderSynthesisReady, modelActivityTimeoutMs, prepareFounderSynthesis, prepareSqaContextContinuation, prepareSqaSynthesis, restoreWaitingSnapshot, runTurn, sqaAutomaticBudgetCloseoutInput, summariseResult, withModelActivityDeadline } from './agent.js';
 import { attachUsageCapture, createUsageLogger } from './usageCapture.js';
 import { createBrowserTools } from './browserTools.js';
 import { createFounderReviewTodos, FOUNDER_CATEGORY_IDS } from './founderService.js';
@@ -12,6 +12,10 @@ import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { AGENT_EVIDENCE_TYPES, createSqaState, createSqaTodoPlan } from './sqaService.js';
 import { createSqaTools } from './sqaTools.js';
 import { seedSqaSmokePassReceipts } from '../scripts/fixtures/sqa-smoke.mjs';
+
+import { createFounderTools } from './founderTools.js';
+import { FOUNDER_REPORT_SECTIONS, founderDraftProgress } from './founderReportDraft.js';
+import { createFounderReportFixture } from './founderReportFixture.js';
 
 function runtimeFixture(overrides = {}) {
 	const session = { id: randomUUID(), mode: 'qa', targetUrl: 'https://example.test', messages: [], activities: [], todos: [], findings: [], secretNames: [], ...overrides };
@@ -997,6 +1001,132 @@ for (const mode of ['qa', 'sqa', 'founder']) {
 		assert.equal(fixture.statuses.some(item => item.status === 'done'), false);
 	});
 }
+
+async function completeFounderDraftFixture({ omitLast = false, invalidSummary = false } = {}) {
+	const f = founderSynthesisFixture();
+	f.session.founder.scope.target = { name: 'Fixture', url: 'https://fixture.test/' };
+	f.session.founder.reportGeneration = { version: 1, protocol: 'section-draft-v1', evidenceHashVersion: 1 };
+	f.session.founder.observations.forEach((o, index) => { o.id = index ? `obs-${index}` : 'observed'; o.confidence = 'medium'; o.type = 'opportunity'; });
+	f.session.todos.at(-1).status = 'in_progress';
+	const payload = createFounderReportFixture().payload;
+	if (invalidSummary) payload.executive_summary = 'We reviewed the complete source code of this product.';
+	const tools = createFounderTools(f.session, f.store, { stagedReport: true, isCancelled: () => Boolean(f.record.controller?.signal.aborted) });
+	f.headless.options.tools = tools;
+	f.headless.toolsByName = new Map(tools.map(tool => [tool.name, tool]));
+	const draft = tools.find(t => t.name === 'draft_founder_report_section');
+	for (const section of FOUNDER_REPORT_SECTIONS) {
+		if (omitLast && section === 'metrics') break;
+		for (const value of section === 'recommendations' ? payload.recommendations.map(r => [r]) : [payload[section]]) {
+			const result = await draft.run({ section, value });
+			assert.equal(result.success, true, result.error);
+		}
+	}
+	return { ...f, draft, payload };
+}
+
+test('a complete intact Founder draft publishes on restart without another model call or evidence changes', async () => {
+	const f = await completeFounderDraftFixture();
+	f.session.tokenUsage = { inputTokens: 400000, outputTokens: 30000, totalTokens: 430000 };
+	const before = structuredClone(f.session);
+	let calls = 0;
+	f.record.runtime.run = async function* () { calls++; throw new Error('Provider unavailable'); };
+	await runTurn(f.session, { task: 'Continue' }, f.store);
+	assert.equal(calls, 0);
+	assert.equal(f.session.status, 'done', JSON.stringify(f.session.messages));
+	assert.ok(f.session.founder.report);
+	assert.deepEqual(f.session.founder.reportDraft, before.founder.reportDraft);
+	assert.deepEqual(f.session.founder.observations, before.founder.observations);
+	assert.deepEqual(f.session.tokenUsage, before.tokenUsage);
+	assert.ok(f.session.todos.every(t => t.status === 'completed'));
+	assert.equal(f.session.activities.at(-1).toolName, 'finish_founder_review');
+});
+
+test('the last Founder draft is durably saved and published before another provider response', async () => {
+	const f = await completeFounderDraftFixture({ omitLast: true });
+	let calls = 0;
+	f.record.runtime.run = async function* (_task, signal) {
+		calls++;
+		// The executor persists a result before the SDK emits the same event.
+		// Replaying an already saved section must not recreate an active row.
+		await f.record.onToolStart('draft_founder_report_section', { section: 'plan' }, 'saved-section');
+		const cached = await f.draft.run({ section: 'plan', value: f.payload.plan });
+		assert.equal(cached.success, true, cached.error);
+		const replay = { type: 'tool_result', toolName: 'draft_founder_report_section', toolCallId: 'saved-section', result: cached };
+		await f.record.onFounderDraftResult(replay);
+		yield replay;
+		assert.equal(f.session.activities.filter(a => a.id === 'saved-section').length, 1);
+		await f.record.onToolStart('draft_founder_report_section', { section: 'metrics' }, 'last-section');
+		const result = await f.draft.run({ section: 'metrics', value: f.payload.metrics });
+		assert.equal(result.success, true, result.error);
+		await f.record.onFounderDraftResult({ toolName: 'draft_founder_report_section', toolCallId: 'last-section', result });
+		assert.equal(signal.aborted, true, 'Only the model stream should stop after publication.');
+		assert.equal(f.record.controller.signal.aborted, false);
+		throw new Error('SDK prefetch observed the publication abort');
+	};
+	await runTurn(f.session, { task: 'Finish the remaining report section' }, f.store);
+	assert.equal(calls, 1);
+	assert.equal(f.session.status, 'done');
+	assert.equal(founderDraftProgress(f.session).next, null);
+	assert.equal(f.session.activities.filter(a => a.toolName === 'finish_founder_review').length, 1);
+	assert.equal(f.record.onFounderDraftResult, undefined);
+});
+
+test('Founder automatic publication requires intact complete content and every original readiness prerequisite', async () => {
+	const f = await completeFounderDraftFixture();
+	assert.deepEqual(founderAutomaticPublicationInput(f.session), { draft_revision: f.session.founder.reportDraft.revision });
+	for (const change of [
+		s => { delete s.founder.reportDraft.input.metrics; },
+		s => { s.founder.reportDraft.input.executive_summary = 'Tampered'; },
+		s => { s.founder.observations[0].summary = 'Changed evidence'; },
+		s => { s.todos[0].status = 'pending'; },
+		s => { s.activities.push({ toolName: 'browser_click', status: 'running', ts: Date.now() }); },
+		s => { s.founder.observations[0].title = 'Authentication required: cannot sign in'; },
+		s => { s.founder.execution = { routes: [], actions: [] }; }
+	]) {
+		const session = structuredClone(f.session); change(session);
+		assert.equal(founderAutomaticPublicationInput(session), undefined);
+	}
+});
+
+test('Founder publication storage failure retains the complete draft and stops without model retries', async () => {
+	const f = await completeFounderDraftFixture(), before = structuredClone(f.session.founder.reportDraft);
+	f.store.commit = async (_s, type) => { if (type === 'founder.finalized') throw new Error('Fixture disk failure'); };
+	let calls = 0;
+	f.record.runtime.run = async function* () { calls++; };
+	await runTurn(f.session, { task: 'Continue' }, f.store);
+	assert.equal(calls, 0); assert.equal(f.session.status, 'interrupted');
+	assert.equal(f.session.founder.finalizedAt, undefined);
+	assert.deepEqual(f.session.founder.reportDraft, before);
+	assert.equal(f.session.todos.at(-1).status, 'in_progress');
+});
+
+test('automatic Founder publication retains the original complete-report semantic validator', async () => {
+	const f = await completeFounderDraftFixture({ invalidSummary: true });
+	const draft = structuredClone(f.session.founder.reportDraft);
+	let calls = 0;
+	f.record.runtime.run = async function* () { calls++; };
+	await runTurn(f.session, { task: 'Continue' }, f.store);
+	assert.equal(calls, 0);
+	assert.equal(f.session.status, 'interrupted');
+	assert.equal(f.session.founder.finalizedAt, undefined);
+	assert.deepEqual(f.session.founder.reportDraft, draft);
+	assert.match(f.session.activities.at(-1).error, /not the complete source code/);
+});
+
+test('cancellation after the final Founder section prevents automatic publication', async () => {
+	const f = await completeFounderDraftFixture({ omitLast: true });
+	f.record.runtime.run = async function* () {
+		await f.record.onToolStart('draft_founder_report_section', { section: 'metrics' }, 'last-section');
+		const result = await f.draft.run({ section: 'metrics', value: f.payload.metrics });
+		f.record.userStopRequested = true; f.record.controller.abort();
+		await f.record.onFounderDraftResult({ toolName: 'draft_founder_report_section', toolCallId: 'last-section', result });
+		throw new Error('Stopped');
+	};
+	await runTurn(f.session, { task: 'Continue' }, f.store);
+	assert.equal(f.session.status, 'interrupted');
+	assert.equal(f.session.founder.finalizedAt, undefined);
+	assert.equal(founderDraftProgress(f.session).next, null);
+});
 
 test('Founder synthesis readiness retains every prerequisite and clears only the model transcript once', () => {
 	const fixture = founderSynthesisFixture();

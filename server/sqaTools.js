@@ -1,4 +1,4 @@
-import { guardFinalization } from './finalizationGuard.js';
+import { guardFinalization, isPublicationTodo } from './finalizationGuard.js';
 import { modeExplorationReadiness } from './modeReasoningRuntime.js';
 import {
 	AGENT_EVIDENCE_TYPES,
@@ -63,7 +63,7 @@ function finishReadiness(session, now = Date.now()) {
 	));
 	const incompleteTodos = (session.todos ?? []).filter(todo => (
 		todo.status !== 'completed'
-		&& !(todo.status === 'in_progress' && /\b(finish|publish)\b.*\b(SQA|assessment|report)\b/i.test(todo.text ?? ''))
+		&& !isPublicationTodo(todo, 'sqa')
 	));
 	const userScopeText = (session.messages ?? [])
 		.filter(message => message.role === 'user')

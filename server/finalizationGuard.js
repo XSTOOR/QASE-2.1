@@ -4,11 +4,21 @@ const publications = new WeakMap();
 
 // Only the report-publication task exempted by the mode's readiness check may
 // be completed by publication itself. Technical work keeps its own disposition.
-export function publicationTodos(todos, mode) {
+export function isPublicationTodo(todo, mode) {
+  if (todo?.status !== 'in_progress' || !['sqa', 'founder'].includes(mode)) return false;
   const pattern = mode === 'sqa'
     ? /\b(finish|publish)\b.*\b(SQA|assessment|report)\b/i
     : /\b(finish|publish)\b.*\b(founder|review|report)\b/i;
-  return todos?.map(todo => todo.status === 'in_progress' && pattern.test(todo.text ?? '')
+  const text = String(todo.text ?? '').trim();
+  const tool = mode === 'sqa' ? 'finish_sqa_assessment' : 'finish_founder_review';
+  // Accept the literal finalizer as a standalone publication instruction, not
+  // an arbitrary technical task that happens to mention its tool name.
+  const invocation = new RegExp('^(?:call\\s+)?`?' + tool + '`?(?:\\s+to\\s+publish\\s+(?:the\\s+)?(?:deterministic\\s+)?(?:verdict|assessment|review|report))?[.!]?$', 'i');
+  return pattern.test(text) || invocation.test(text);
+}
+
+export function publicationTodos(todos, mode) {
+  return todos?.map(todo => isPublicationTodo(todo, mode)
     ? { ...todo, status: 'completed' } : todo);
 }
 
