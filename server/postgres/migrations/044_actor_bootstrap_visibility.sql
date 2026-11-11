@@ -1,4 +1,4 @@
--- Qase PostgreSQL migration 043: trusted actor bootstrap visibility.
+-- Qase PostgreSQL migration 044: trusted actor bootstrap visibility.
 -- A newly inserted owner has no membership yet. INSERT ... RETURNING must
 -- see that owner's row without granting visibility to another tenant's users.
 -- Only host transaction-local trusted actor/tenant scope enables this clause.

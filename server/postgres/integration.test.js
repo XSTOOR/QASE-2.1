@@ -259,8 +259,10 @@ test(
 			assert.ok(path.basename(legacyDirectory).startsWith('qase-founder-upgrade-'));
 			await fs.rm(legacyDirectory, { recursive: true, force: true });
 		});
-		for (const migration of await loadMigrations()) if (migration.version < 44) await fs.copyFile(path.join(MIGRATIONS_DIRECTORY, migration.filename), path.join(legacyDirectory, migration.filename));
-		assert.equal((await runPostgresMigrations(migrationPool, { directory: legacyDirectory })).currentVersion, 43);
+		// Bootstrap requires migration 044; only the Founder action-state upgrade (045)
+		// is withheld while seeding the legacy Founder report.
+		for (const migration of await loadMigrations()) if (migration.version < 45) await fs.copyFile(path.join(MIGRATIONS_DIRECTORY, migration.filename), path.join(legacyDirectory, migration.filename));
+		assert.equal((await runPostgresMigrations(migrationPool, { directory: legacyDirectory })).currentVersion, 44);
 
 		tenantAPool = scopedPool(schema);
 		tenantBPool = scopedPool(schema);
@@ -284,8 +286,8 @@ test(
 		const legacyFounder = { schemaVersion: 1, ownerUserId: contextA.actorUserId, targetUrl: 'https://fixture.invalid/', recommendationSet: { setVersion: 1, generatedAt: '2026-11-07T00:00:00.000Z', recommendations: [{ id: 'legacy-rec', title: 'Preserve legacy work' }] }, selections: ['legacy-rec'] };
 		await tenantARepository.saveFounderProjectState(legacyFounder);
 		const upgrade = await runPostgresMigrations(migrationPool);
-		assert.deepEqual(upgrade.applied.map(item => item.version), [44]);
-		assert.deepEqual(await tenantARepository.getFounderProjectState(), legacyFounder, 'Migration 044 preserves the exact legacy selection and report.');
+		assert.deepEqual(upgrade.applied.map(item => item.version), [45]);
+		assert.deepEqual(await tenantARepository.getFounderProjectState(), legacyFounder, 'Migration 045 preserves the exact legacy selection and report.');
 
 		await t.test('Founder actions serialize across separate PostgreSQL replicas and preserve another report during delivery', { timeout: 30_000 }, async subtest => {
 			const replicaPool = scopedPool(schema);

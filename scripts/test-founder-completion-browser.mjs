@@ -62,6 +62,8 @@ try {
     assert.equal(await selected(page),'true',`${ordering} selects report`);
     assert.equal(await page.locator('#pane-report').isVisible(),true);
     await page.locator('#pane-report').getByText(report.executiveSummary,{exact:true}).waitFor();
+    await page.locator('#feedback-modal[open]').waitFor();
+    await page.locator('#feedback-close').click();
     await page.locator('#tab-activity').click();
     await emit(page,first); await emit(page,second);
     assert.equal(await selected(page),'false','Repeated completion preserves manual choice');

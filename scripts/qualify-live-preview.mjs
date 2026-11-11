@@ -113,6 +113,9 @@ try {
     assert.equal(new URL(page.url()).hash, routeBefore);
     assert.equal(await page.locator('body').getAttribute('data-workspace-view'), workspaceBefore);
     assert.equal(await page.locator('[role="tab"][aria-selected="true"]').first().getAttribute('id'), tabBefore);
+    // The combined release prompts for optional feedback once per run.
+    // Dismiss through its real UI before exercising the results controls.
+    if (width === 1440) await page.locator('#feedback-close').click();
     if (width === 390) {
       await page.locator('.workspace-mobile-nav button[data-workspace-view="results"]').click();
       await page.waitForURL(`**/#/runs/${session.id}/results`);

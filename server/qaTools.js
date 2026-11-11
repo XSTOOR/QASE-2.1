@@ -264,8 +264,18 @@ const finishReport = {
 			if (session.mode === 'sqa' || session.mode === 'founder') {
 				return { success: false, error: 'finish_qa_report is available only in QA mode. Use this mode\'s dedicated finalization tool.' };
 			}
-			if (!validInput(input) || !VERDICTS.includes(input.verdict) || !hasText(input.summary)) {
-				return { success: false, error: 'finish_qa_report requires a valid verdict and a nonempty summary string.' };
+			// #17997: one actionable error per failure cause — the old generic
+			// "requires a valid verdict and a nonempty summary" hid the real
+			// reason (bad verdict enum vs empty summary vs bad shape) and sent
+			// agents into retry loops during budget closeout.
+			if (!validInput(input)) {
+				return { success: false, error: 'finish_qa_report requires an object with a verdict and a summary.' };
+			}
+			if (!VERDICTS.includes(input.verdict)) {
+				return { success: false, error: `finish_qa_report verdict "${String(input.verdict)}" is not one of the allowed values: ${VERDICTS.join(', ')}. pass is only correct when no defects were found AND coverage is complete — use pass_with_issues when defects exist, partial when coverage is incomplete.` };
+			}
+			if (!hasText(input.summary)) {
+				return { success: false, error: 'finish_qa_report requires a nonempty summary string describing what was tested and the site\'s state.' };
 			}
 			if (session.qaExecutionMode === 'hybrid') {
 				try { input = validateHybridReport(session, input); }

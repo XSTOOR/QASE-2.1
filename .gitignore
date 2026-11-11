@@ -58,3 +58,8 @@ userDocs/image_73eed07c.png
 # #16228: local-only scratch (user screenshots, extracted browsers)
 userDocs/
 .local-browsers/
+
+# Local deploy artifacts: nested clone, backup bundles, canary screenshots
+QASE-hybrid-*/
+deploy-backups/
+/*.jpg

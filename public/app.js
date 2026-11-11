@@ -5,6 +5,7 @@ import { evidenceInspectButton, renderSqaTraceability } from './sqaEvidenceView.
 import { previewCollapsed } from './previewLayout.js';
 import { renderProbeIds, hasInteractiveSurface } from './renderHealth.js';
 import { renderMatrixPicker } from './matrixPicker.js';
+import { normalizeSingleSelection, singleSelection, preferredConfiguration } from './singleRunSelection.js';
 import { preferredResultTab } from './runPresentation.js';
 import { runCardDetails } from './runCard.js';
 import { renderResultsOverview, resultsOverviewModel } from './resultsOverview.js';
@@ -19,12 +20,8 @@ import {
 	sanitizeSelection,
 	isSelectable,
 	isValidTargetUrl,
-	MATRIX_BATCH_SIZE,
-	planBatches,
-	batchKeyFor,
 	fetchQaConfigurations,
 	fetchConfigurationIndex,
-	deviceKeyOf,
 	createSelectionState,
 	computeExplicitSelection,
 	createSelectionStore
@@ -35,6 +32,8 @@ import { createBulkRunView } from './bulkRunView.js';
 import { createAnalyticsView } from './analyticsView.js';
 import { createDeviceDrawer, chipLabel, RUNTIME_PROFILES } from './deviceDrawer.js';
 import { createQaMatrixResultsView } from './qaMatrixResultsView.js';
+import { firstMatrixSessionId } from './matrixLaunch.js';
+import { createRunStartupView } from './runStartupView.js';
 import { createBugView } from './bugView.js';
 import { createActiveTestEnvironmentStore } from './activeTestEnvironment.js';
 import { defaultReviewEnvironment } from './reviewDefaults.js';
@@ -253,6 +252,7 @@ const state = {
 	founderCatalogPromise: undefined,
 	qaTestCatalog: undefined,
 	qaTestCatalogPromise: undefined,
+	qaTestCatalogFailed: false,
 	/** Live reasoning for the current turn. Never kept once the agent replies. */
 	thinking: { text: '', action: '' },
 	runTimer: { interval: undefined, startedAt: undefined, endedAt: undefined },
@@ -421,6 +421,10 @@ const founderView = createFounderView({
 	onClearSelection: () => founderSaveSelections([]),
 	onSendToStudio: founderSendToStudio,
 	onExportHandoff: founderExportHandoff,
+	onProvideFeedback: () => openFeedbackModal(),
+	getFeedbackRating: () => state.runRatings.get(state.sessionId)
+		?? (state.feedback.existingLoadedFor === state.sessionId ? state.feedback.existing : undefined),
+	renderReportFeedbackSection,
 	onReloadSelection: () => founderActions.load({ force: true }),
 	onRetrySelection: founderActions.retrySelection,
 	onContinue: founderContinue,
@@ -453,7 +457,6 @@ function founderSaveSelections(ids) { return founderActions.select(ids); }
 function founderSendToStudio() { return founderActions.send(); }
 function founderExportHandoff(mode) { return founderActions.export(mode); }
 const renderFounder = founderView.render;
-const renderFounderReportTab = founderView.renderReportTab;
 
 const founderProgressRequests=new Map(),founderContinueRequests=new Map();
 let founderProgressTimer;
@@ -626,8 +629,15 @@ function renderRunsEmptyState() {
 }
 
 async function refreshRuns() {
-	const runs = await api('/sessions').catch(() => []);
-	if (runs.length === 0) {
+	const [runs, matrices] = await Promise.all([
+		api('/sessions').catch(() => []),
+		api('/matrix-runs').catch(() => ({ runs: [] }))
+	]);
+	// Keep accepted work discoverable before its first child session exists.
+	const queued = (matrices.runs ?? []).filter(run => ['pending', 'running'].includes(run.status)
+		&& (run.statusCounts?.QUEUED || run.statusCounts?.PENDING)
+		&& !runs.some(session => session.matrixRunId === run.id));
+	if (runs.length === 0 && queued.length === 0) {
 		renderRunsEmptyState();
 		state.timer.runLiveTimers.clear();
 		return;
@@ -635,8 +645,28 @@ async function refreshRuns() {
 	// Rating badges: the current user's own feedback for the visible runs.
 	// One request, matched client-side; failures just skip the badges.
 	void loadRunRatingBadges(runs);
-	el.runList.replaceChildren(...runs.map(renderRun));
+	el.runList.replaceChildren(...queued.map(renderQueuedRun), ...runs.map(renderRun));
 	filterRunHistory();
+}
+
+function renderQueuedRun(run) {
+	const row = document.createElement('div');
+	row.className = 'run-row';
+	row.setAttribute('role', 'listitem');
+	const button = document.createElement('button');
+	button.type = 'button';
+	button.className = 'run';
+	button.setAttribute('aria-label', `${run.targetUrl || run.title} · Queued`);
+	button.onclick = () => void pageRouter.navigate({ name: 'matrix-run', runId: run.id });
+	const title = document.createElement('div');
+	title.className = 'run-title';
+	title.textContent = run.targetUrl ? hostOf(run.targetUrl) : run.title;
+	const status = document.createElement('div');
+	status.className = 'run-meta';
+	status.textContent = 'Queued · Waiting for a browser';
+	button.append(title, status);
+	row.append(button);
+	return row;
 }
 
 function filterRunHistory() {
@@ -1687,14 +1717,44 @@ function renderHeader() {
 			else el.composerInput.focus();
 		};
 	}
-	// Customer-facing progress stays simple. Model usage remains in Run details.
+	// #17934: the header chip carries the LIVE token usage for every mode
+	// (Founder, QA, QA Run, SQA) — restored after the UI rebuild dropped it.
+	// session.tokenUsage is server-authoritative (SSE 'usage' events, fed by
+	// the gateway's own usage reports); nothing here fabricates values: no
+	// usage events yet → explicit pending/absent state, never a fake 0.
 	const hasRun = Boolean(state.sessionId && (session.targetUrl || session.title));
 	document.body.dataset.hasRun = String(hasRun);
 	el.statusChip.hidden = !hasRun;
 	el.runSummary.hidden = !hasRun;
-	el.tokenText.classList.remove('is-pending');
-	el.tokenText.textContent = session.mode==='founder'?'Review plan':'Run progress';
-	el.tokenText.title = '';
+	const usageSummary = tokenSummaryText(session?.tokenUsage);
+	if (usageSummary) {
+		// Authoritative counts exist — show them.
+		el.tokenText.classList.remove('is-pending');
+		el.tokenText.textContent = usageSummary;
+		el.tokenText.title = session?.tokenUsage?.estimated === true
+			? 'Estimated from the model gateway (authoritative billing usage not yet reported).'
+			: 'Token usage reported by the model gateway.';
+	} else if (session?.status === 'running') {
+		// Run in flight, no usage event yet — pending, not zero.
+		el.tokenText.classList.add('is-pending');
+		el.tokenText.textContent = 'Tokens: awaiting usage report…';
+		el.tokenText.title = 'The model gateway has not reported usage for this run yet.';
+	} else {
+		el.tokenText.classList.remove('is-pending');
+		el.tokenText.textContent = 'Token usage unavailable';
+		el.tokenText.title = 'No token usage was reported for this run.';
+	}
+	// #17934: per-model attribution in the tooltip (e.g. primary agent vs
+	// JEV classification) — the breakdown comes from authoritative usage
+	// events carrying the model that spent them.
+	const perModel = session?.tokenUsage?.byModel;
+	if (usageSummary && perModel && Object.keys(perModel).length > 0) {
+		const modelLines = Object.entries(perModel)
+			.sort((a, b) => (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens))
+			.map(([model, u]) => `${model}: ${formatTokens(u.inputTokens ?? 0)} in · ${formatTokens(u.outputTokens ?? 0)} out`)
+			.join('\n');
+		el.tokenText.title = `${el.tokenText.title}\n${modelLines}`;
+	}
 	// LIVE pill: only while the run is actively working.
 	el.livePill.hidden = session.status !== 'running';
 	renderMiniSummary();
@@ -1812,6 +1872,10 @@ function setStatus(status) {
 	const stoppedByUser = status === 'interrupted' && state.session?.statusDetail === 'Stopped by user.';
 	const displayStatus = runPresentationStatus(state.session);
 	el.statusChip.dataset.status = displayStatus;
+	// Presentational hook only (#16650 follow-up): lets the dark-theme CSS
+	// style the user-stopped state (red) distinctly from a paused run
+	// (amber) — both share data-status="interrupted". No behavior change.
+	el.statusChip.dataset.stopped = stoppedByUser ? 'true' : 'false';
 	el.statusChip.textContent = stopping ? 'Stopping…' : status === 'awaiting_input'
 		? 'waiting for you'
 		: status === 'running' ? (['reconnecting', 'syncing'].includes(state.streamConnection) ? 'Reconnecting…' : 'Running')
@@ -2003,6 +2067,7 @@ function showRunningQaPlan() {
 	activateDetailTab($('tab-plan'));
 }
 
+
 function syncStageCollapse(status) {
 	// Status events must not undo an explicit user choice during a live run.
 	renderStageCollapse();
@@ -2191,6 +2256,15 @@ const FEEDBACK_CATEGORIES = [
 
 /** A run accepts feedback only once it has reached a terminal state. */
 const FEEDBACK_TERMINAL_STATUSES = new Set(['done', 'error']);
+let feedbackLoadGeneration = 0;
+
+/**
+ * #16655 — Run ids already auto-prompted for feedback this browser session.
+ * Module-level: a full page reload clears it (a refresh never re-nags),
+ * while SPA navigation keeps it — one run prompts at most once per browser
+ * session, and the Provide Feedback button remains available afterwards.
+ */
+const feedbackAutoPrompted = new Set();
 
 /** Spec rating semantics for the star tooltips. */
 const FEEDBACK_STAR_LABELS = {
@@ -2202,10 +2276,9 @@ const FEEDBACK_STAR_LABELS = {
 };
 
 function feedbackEligible(session) {
-	// Feedback applies to QA runs and SQA assessments once they finish;
-	// Founder reviews keep their own completion flow without feedback.
-	return Boolean(session?.id) && session.mode !== 'founder'
-		&& FEEDBACK_TERMINAL_STATUSES.has(session.status);
+	// Feedback applies to QA runs, SQA assessments, and Founder reviews
+	// once they finish — every mode shares one feedback flow (#16653).
+	return Boolean(session?.id) && FEEDBACK_TERMINAL_STATUSES.has(session.status);
 }
 
 /**
@@ -2216,18 +2289,58 @@ function feedbackEligible(session) {
 async function syncFeedbackForSession(session) {
 	if (!session?.id) return;
 	const runId = session.id;
-	state.feedback.existing = undefined;
-	state.feedback.existingLoadedFor = runId;
+	const generation = ++feedbackLoadGeneration;
+	let record;
 	try {
-		state.feedback.existing = await api(`/sessions/${runId}/feedback`);
+		record = await api(`/sessions/${runId}/feedback`);
 	} catch {
-		state.feedback.existing = null;
+		return; // An unavailable read is not proof that feedback does not exist.
 	}
+	if (generation !== feedbackLoadGeneration || state.sessionId !== runId) return;
+	state.feedback.existing = record;
+	state.feedback.existingLoadedFor = runId;
 	if (state.feedback.runId === runId) applyFeedbackSubmittedState();
 	// Report section (and View/Provide button) follow the synced record.
 	if (state.sessionId === runId) renderReport();
 	// Feedback is an explicit report action. Background synchronization must
 	// never interrupt result review or cover a new-run/account destination.
+}
+
+/**
+ * #16655 — Auto pop-up after completion (all modes). Fires once per run per
+ * browser session, only on the terminal event itself, only for the run the
+ * user is actually viewing, and only when the completion view was rendered
+ * here (this handler runs in the SSE status branch that just called
+ * renderReport / showCompletedFounderReport / renderSqa). Runs that
+ * complete while the user is elsewhere keep the Provide Feedback button as
+ * the entry point — no interrupting unrelated work. `openFeedbackModal`
+ * re-checks the server's existing record, so an already-submitted run (or a
+ * submit racing on another tab) lands in View mode rather than a duplicate.
+ */
+async function maybeAutoPromptFeedback(session) {
+	if (!session?.id || !feedbackEligible(session)) return;
+	if (feedbackAutoPrompted.has(session.id)) return;
+	if (state.sessionId !== session.id) return;
+	if (el.feedbackModal.open || state.feedback.submitting) return;
+	feedbackAutoPrompted.add(session.id);
+	try {
+		if (!state.feedback.existing && state.feedback.existingLoadedFor !== session.id) {
+			try {
+				state.feedback.existing = await api(`/sessions/${session.id}/feedback`);
+			} catch {
+				state.feedback.existing = null;
+			}
+			state.feedback.existingLoadedFor = session.id;
+		}
+		// Submitted (possibly while we were waiting) → show state, no prompt.
+		if (state.feedback.existing) {
+			applyFeedbackSubmittedState();
+			return;
+		}
+		await openFeedbackModal();
+	} catch {
+		// Never block the completion view on the prompt.
+	}
 }
 
 /**
@@ -2238,20 +2351,27 @@ async function syncFeedbackForSession(session) {
 async function openFeedbackModal() {
 	const session = state.session;
 	if (!feedbackEligible(session)) return;
+	const generation = ++feedbackLoadGeneration;
 	state.feedback.runId = session.id;
 	state.feedback.rating = 0;
 	state.feedback.editing = false;
 	// Existing submission for THIS run (and user) is server-owned truth: it
 	// decides submitted-vs-blank mode. Cached while the modal stays on the
 	// same run, re-fetched whenever a new run opens the modal.
-	if (!state.feedback.existing && state.feedback.existingLoadedFor !== session.id) {
+	if (state.feedback.existingLoadedFor !== session.id) {
+		state.feedback.existing = undefined;
 		try {
-			state.feedback.existing = await api(`/sessions/${session.id}/feedback`);
+			const record = await api(`/sessions/${session.id}/feedback`);
+			if (generation !== feedbackLoadGeneration || state.sessionId !== session.id) return;
+			state.feedback.existing = record;
 		} catch {
-			state.feedback.existing = null;
+			state.feedback.existingLoadedFor = undefined;
+			toast('Could not load feedback for this run. Please try again.', 'bad');
+			return;
 		}
 		state.feedback.existingLoadedFor = session.id;
 	}
+	if (state.sessionId !== session.id) return;
 	el.feedbackError.textContent = '';
 	el.feedbackSuccess.textContent = '';
 	const failed = session.status === 'error';
@@ -2273,7 +2393,8 @@ async function openFeedbackModal() {
 	const duration = Number.isFinite(session.completedAt) && Number.isFinite(session.startedAt)
 		? formatClock((session.completedAt - session.startedAt - (Number.isFinite(session.pausedSeconds) ? session.pausedSeconds * 1000 : 0)) / 1000)
 		: null;
-	const bits = [`Test Run: ${session.id.slice(0, 8)}`];
+	const modeLabel = session.mode === 'sqa' ? 'SQA Review' : session.mode === 'founder' ? 'Founder Review' : 'Test Run';
+	const bits = [`${modeLabel}: ${session.id.slice(0, 8)}`];
 	if (session.targetUrl) bits.push(String(session.targetUrl));
 	bits.push(failed ? 'Status: Failed' : 'Status: Completed');
 	if (duration) bits.push(`Duration: ${duration}`);
@@ -2412,6 +2533,15 @@ function closeFeedbackModal() {
 async function submitFeedback(event) {
 	event.preventDefault();
 	if (state.feedback.submitting) return;
+	const feedbackRunId = state.feedback.runId;
+	if (feedbackRunId !== state.session?.id || !feedbackEligible(state.session)) {
+		el.feedbackError.textContent = 'Open feedback from the test you want to review. Your draft has not been submitted.';
+		return;
+	}
+	if (state.feedback.existing?.runId && state.feedback.existing.runId !== feedbackRunId) {
+		el.feedbackError.textContent = 'Reload feedback for the selected test before saving.';
+		return;
+	}
 	if (state.feedback.existing && !state.feedback.editing) return;
 	const rating = state.feedback.rating;
 	if (!rating) {
@@ -2431,6 +2561,9 @@ async function submitFeedback(event) {
 				method: 'PUT',
 				body: JSON.stringify({ rating, category, comments, improvement })
 			});
+			if (state.sessionId !== feedbackRunId || state.feedback.runId !== feedbackRunId) return;
+			feedbackLoadGeneration++;
+			state.feedback.existingLoadedFor = feedbackRunId;
 			state.feedback.existing = record;
 			state.feedback.editing = false;
 			applyFeedbackSubmittedState();
@@ -2440,8 +2573,11 @@ async function submitFeedback(event) {
 		} else {
 			const record = await api('/feedback', {
 				method: 'POST',
-				body: JSON.stringify({ runId: state.session.id, rating, category, comments, improvement })
+				body: JSON.stringify({ runId: feedbackRunId, rating, category, comments, improvement })
 			});
+			if (state.sessionId !== feedbackRunId || state.feedback.runId !== feedbackRunId) return;
+			feedbackLoadGeneration++;
+			state.feedback.existingLoadedFor = feedbackRunId;
 			state.feedback.existing = record;
 			state.feedback.editing = false;
 			// Truthful outcome line: the server now reports whether the
@@ -2473,6 +2609,17 @@ async function submitFeedback(event) {
 		// Retry keeps every entered field — only the button returns to idle.
 		el.feedbackError.textContent = `${error.message} Your feedback was kept — please try again.`;
 		el.feedbackSubmit.textContent = state.feedback.editing ? 'Retry save' : 'Retry submit';
+		if (error.status === 409 && !state.feedback.editing) {
+			try {
+				const existing = await api(`/sessions/${feedbackRunId}/feedback`);
+				if (existing && state.feedback.runId === feedbackRunId) {
+					state.feedback.existing = existing;
+					state.feedback.editing = true;
+					applyFeedbackSubmittedState();
+					el.feedbackError.textContent = 'Feedback was already saved. Your current draft is preserved; choose Save changes to update it.';
+				}
+			} catch { /* retain the draft and the original retry message */ }
+		}
 	} finally {
 		state.feedback.submitting = false;
 		updateFeedbackSubmitEnabled();
@@ -3596,7 +3743,7 @@ function renderCoverageSelection(session) {
 
 function renderReport() {
 	if (state.session?.mode === 'founder') {
-		renderFounderReportTab();
+		renderFounder();
 		return;
 	}
 	founderView.clearReport();
@@ -3611,12 +3758,30 @@ function renderReport() {
 		const hybrid = renderHybridQa(state.session, document); if (hybrid) el.reportView.prepend(hybrid);
 		return;
 	}
-	const hybrid = renderHybridQa(state.session, document); if (hybrid) el.reportView.append(hybrid);
-	el.reportView.append(renderResultsOverview(state.session, {
+	const hybrid = renderHybridQa(state.session, document); if (hybrid) el.reportView.append(hybrid);	el.reportView.append(renderResultsOverview(state.session, {
 		document,
 		onFindings: () => activateDetailTab($('tab-findings'), true),
 		onWorkspace: () => { void pageRouter.navigate({ name: 'run', runId: state.sessionId }); }
 	}));
+	// #17934: final token consumption on the completed report — the run's
+	// authoritative accumulated usage, per model where reported.
+	const finalUsage = tokenSummaryText(state.session.tokenUsage);
+	if (finalUsage) {
+		const usageRow = document.createElement('div');
+		usageRow.className = 'sqa-tokens';
+		usageRow.textContent = `Total model usage for this run: ${finalUsage}`;
+		usageRow.title = state.session.tokenUsage.estimated === true
+			? 'Estimated from the model gateway (authoritative usage not reported).'
+			: 'Token usage reported by the model gateway.';
+		const perModel = state.session.tokenUsage.byModel;
+		if (perModel && Object.keys(perModel).length > 0) {
+			usageRow.title += '\n' + Object.entries(perModel)
+				.sort((a, b) => (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens))
+				.map(([model, u]) => `${model}: ${formatTokens(u.inputTokens ?? 0)} in · ${formatTokens(u.outputTokens ?? 0)} out`)
+				.join('\n');
+		}
+		el.reportView.append(usageRow);
+	}
 
 	/* Export report (UI Fix Phase 1): JSON download of the finished report —
 	 * presented once, inside the Report tab workspace. */
@@ -4001,7 +4166,7 @@ function renderFeedback() {
  * and description for THIS run. Scoped by run id — another run's feedback can
  * never render here. Rendered with textContent only (XSS-safe).
  */
-function renderReportFeedbackSection(record) {
+function renderReportFeedbackSection(record, container = el.reportView) {
 	if (!record) return;
 	const section = document.createElement('section');
 	section.className = 'report-feedback';
@@ -4046,7 +4211,7 @@ function renderReportFeedbackSection(record) {
 	meta.textContent = `Submitted By: ${submittedBy}${submittedOn ? ` · Submitted On: ${submittedOn}` : ''}`;
 
 	section.append(heading, stars, description, ...(improvement.childNodes.length ? [improvement] : []), meta);
-	el.reportView.append(section);
+	container.append(section);
 }
 
 function renderSqaReportTab() {
@@ -4168,6 +4333,34 @@ function renderSqa() {
 	if(executionNotice)el.sqaView.append(executionNotice);
 	const lifecycle = describeSqaLifecycle(sqa, state.session.status, state.session.activities?.length ?? 0);
 	el.countSqa.textContent = lifecycle.badge;
+
+	// #17934: live token usage row for SQA Mode — same authoritative source
+	// (SSE 'usage' → session.tokenUsage) as the header chip. Includes the
+	// per-model breakdown so JEV vs primary-model spend is visible (#17936).
+	const sqaTokens = document.createElement('div');
+	sqaTokens.className = 'sqa-tokens';
+	const usageSummary = tokenSummaryText(state.session.tokenUsage);
+	if (usageSummary) {
+		sqaTokens.textContent = `Model usage: ${usageSummary}`;
+		sqaTokens.title = state.session.tokenUsage.estimated === true
+			? 'Estimated from the model gateway (authoritative usage not yet reported).'
+			: 'Token usage reported by the model gateway.';
+		const perModel = state.session.tokenUsage.byModel;
+		if (perModel && Object.keys(perModel).length > 0) {
+			const modelLines = Object.entries(perModel)
+				.sort((a, b) => (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens))
+				.map(([model, u]) => `${model}: ${formatTokens(u.inputTokens ?? 0)} in · ${formatTokens(u.outputTokens ?? 0)} out`)
+				.join('\n');
+			sqaTokens.title = `${sqaTokens.title}\n${modelLines}`;
+		}
+	} else if (state.session.status === 'running') {
+		sqaTokens.textContent = 'Tokens: awaiting usage report…';
+		sqaTokens.title = 'The model gateway has not reported usage for this run yet.';
+	} else {
+		sqaTokens.textContent = 'Token usage unavailable';
+		sqaTokens.title = 'No token usage was reported for this run.';
+	}
+	el.sqaView.append(sqaTokens);
 
 	const notice = document.createElement('aside');
 	notice.className = 'sqa-notice';
@@ -5033,7 +5226,8 @@ function handleEvent(event) {
 			renderQuestion();
 			break;
 
-		case 'status':
+		case 'status': {
+			const previousStatus = session.status;
 			session.statusDetail = event.detail || undefined;
 			setStatus(event.status);
 			if (event.status === 'running' && typeof session.runStartedAt !== 'number') {
@@ -5062,12 +5256,20 @@ function handleEvent(event) {
 				renderFounder();
 				renderReport();
 				showCompletedFounderReport();
+				if (FEEDBACK_TERMINAL_STATUSES.has(session.status)) {
+					void syncFeedbackForSession(session);
+					if (previousStatus !== event.status) void maybeAutoPromptFeedback(session);
+				}
 			}
 		if (event.status !== 'running') {
 			void refreshRuns();
-			if (FEEDBACK_TERMINAL_STATUSES.has(event.status) && feedbackEligible(session)) {
+			if (session.mode !== 'founder' && FEEDBACK_TERMINAL_STATUSES.has(event.status) && feedbackEligible(session)) {
 				renderReport();
+				// Completion refreshes results without changing the user-selected tab.
 				void syncFeedbackForSession(session);
+				// #16655: auto pop-up once per run per browser session, after
+				// the completion view renders (QA + SQA share this branch).
+				if (previousStatus !== event.status) void maybeAutoPromptFeedback(session);
 			}
 		}
 			if (event.detail && event.status === 'error') {
@@ -5080,6 +5282,8 @@ function handleEvent(event) {
 				renderLiveDeviceViewHeader(session, state.activeRuntimeEnvironment);
 			}
 			break;
+
+		}
 
 		case 'browser':
 			if (event.browser?.url) {
@@ -5168,14 +5372,15 @@ let qaJourneySelectionMode = (() => {
 let qaJourneyCustomSelection;
 
 function qaFocusedSelection() {
-	const available = qaMatrixState.index.filter(isSelectable);
-	const row = focusedBrowserConfiguration(available, qaUi.executionMode?.value === 'hybrid');
-	if (!row) return createSelectionState();
-	const deviceKey = deviceKeyOf(row);
-	return createSelectionState({
-		deviceKeys: [deviceKey], browserFamilies: [row.browserCode],
-		deselectedEnvIds: available.filter(item => deviceKeyOf(item) === deviceKey && item.browserCode === row.browserCode && item.envId !== row.envId).map(item => item.envId)
-	});
+	const hybrid = qaUi.executionMode?.value === 'hybrid';
+	if (hybrid) {
+		const available = qaMatrixState.index.filter(isSelectable);
+		const row = focusedBrowserConfiguration(available, true);
+		if (!row) return createSelectionState();
+		return singleSelection(qaMatrixState.index, row);
+	}
+	return singleSelection(qaMatrixState.index, preferredConfiguration(qaMatrixState.index.filter(item =>
+		isSelectable(item) && item.browserCode === 'chrome' && item.deviceType === 'desktop')));
 }
 
 function syncJourneyPreset() {
@@ -5259,7 +5464,7 @@ async function loadQaMatrixCatalog() {
 		qaMatrixState.index = index;
 		// Pipeline Phase 1: the explicit selection store initializes against
 		// the fresh index (first load migrates legacy deselections).
-		qaMatrixState.selection = qaSelectionStore.get();
+		qaMatrixState.selection = normalizeSingleSelection(index, qaSelectionStore.get());
 		if (qaJourneySelectionMode === 'quick') {
 			qaJourneyCustomSelection ??= qaFocusedSelection();
 			qaMatrixState.selection = qaFocusedSelection();
@@ -5296,12 +5501,13 @@ async function loadQaMatrixCatalog() {
  * does not participate: scoping narrows what is rendered, never what runs.
  */
 function qaMatrixEffectiveSelection() {
-	return computeExplicitSelection(qaMatrixState.index, qaMatrixState.selection);
+	return computeExplicitSelection(qaMatrixState.index, normalizeSingleSelection(qaMatrixState.index, qaMatrixState.selection));
 }
 
 /** Apply a selection-state change, re-derive, persist, re-render. */
 function qaMatrixApplySelection(nextState, fromPreset = false) {
 	setQaFormError();
+	nextState = normalizeSingleSelection(qaMatrixState.index, nextState);
 	if (!fromPreset) { qaJourneySelectionMode = 'custom'; qaJourneyCustomSelection = nextState; }
 	syncJourneyPreset();
 	qaMatrixState.selection = nextState;
@@ -5318,6 +5524,7 @@ function qaMatrixApplySelection(nextState, fromPreset = false) {
 function qaMatrixRender() {
 	const matrix = qaUi.matrix;
 	if (!matrix.browsers || !matrix.devices || !matrix.summary) return;
+	if (matrix.fieldset) matrix.fieldset.hidden = qaJourneySelectionMode === 'quick';
 	qaMatrixState.picker ??= { category: '', platform: '', selectedOnly: false, limit: 10, reviewOpen: false };
 	renderMatrixPicker({ document, hosts: matrix, index: qaMatrixState.index,
 		families: qaMatrixState.browserFamilies, selection: qaMatrixState.selection,
@@ -5391,7 +5598,7 @@ function syncQaSubmitState() {
 	// selection gate — any non-empty selection is startable (Phase 2 batches).
 	const urlValid = !qaUi.dialog?.open || isValidTargetUrl(qaUi.targetUrl?.value);
 	const selectedCount = qaMatrixState.selectedEnvIds.length;
-	const matrixReady = !qaUi.dialog?.open || selectedCount > 0;
+	const matrixReady = qaJourneySelectionMode === 'quick' || !qaUi.dialog?.open || selectedCount === 1;
 	// DEV merge: security tests require the explicit authorization checkbox
 	// before Start unlocks. withinCap is deliberately NOT part of the gate —
 	// Pipeline Phase 1: the 2,000 limit is a per-batch EXECUTION limit and
@@ -5425,15 +5632,26 @@ function qaLaunchBlockedReason() {
 	if (qaSecuritySelected() && !qaUi.securityAuthorized?.checked) {
 		return 'Confirm that you are authorized to test this site.';
 	}
+	if (qaJourneySelectionMode === 'quick') {
+		// Quick mode hides the matrix, so its derived focused selection must
+		// still satisfy the hybrid one-browser contract before the review step
+		// claims readiness. Legacy quick mode always runs on the platform's
+		// automatic browser and needs no catalog check here.
+		if (qaUi.executionMode?.value !== 'hybrid') return null;
+		if (qaMatrixState.fetchState === 'loading') return 'Loading browsers and devices…';
+		if (qaMatrixState.fetchState === 'error') return 'Browsers and devices could not be loaded. Retry the browser list.';
+		try { hybridLaunchOptions({ config: state.config, mode: 'hybrid', envIds: sanitizeSelection(qaMatrixState.index, qaMatrixEffectiveSelection()), configurations: qaMatrixState.index }); }
+		catch (error) { return error.message; }
+		return null;
+	}
 	if (qaMatrixState.fetchState === 'loading') return 'Loading browsers and devices…';
 	if (qaMatrixState.fetchState === 'error') return 'Browsers and devices could not be loaded. Open Customize and retry.';
 	const configurations = qaMatrixState.selectedEnvIds.length;
-	if (configurations === 0) return 'Select at least one browser and one device.';
+	if (configurations !== 1) return 'Choose one browser and one device.';
+	// One exact environment; versions never expand into additional runs.
+	// Hybrid still runs exactly one browser; validate its specific needs too.
 	try { hybridLaunchOptions({ config: state.config, mode: qaUi.executionMode?.value, envIds: qaMatrixState.selectedEnvIds, configurations: qaMatrixState.index }); }
 	catch (error) { return error.message; }
-	// Pipeline Phase 1/2: oversized selections are NOT blocked — they run as
-	// sequential idempotent batches under one parent run (MATRIX_BATCH_SIZE
-	// is a per-batch execution limit). No over-cap reason here.
 	return null;
 }
 
@@ -5450,19 +5668,15 @@ function syncQaSelectionSummary() {
 		return;
 	}
 	const checks = qaUi.selectedTests.size;
+	if (qaJourneySelectionMode === 'quick') {
+		summary.textContent = `${checks} checks · Chrome on the default desktop · One test run. No setup required.`;
+		return;
+	}
 	const configurations = qaMatrixState.selectedEnvIds.length;
 	const loading = qaMatrixState.fetchState === 'loading';
-	// Pipeline Phase 2: oversized selections batch on submit — the compact
-	// summary explains the batching instead of demanding a narrower selection.
+	const selected = qaMatrixState.index.find(row => qaMatrixState.selectedEnvIds.includes(row.envId));
 	const detail = loading ? 'Loading browsers and devices…'
-		: configurations === 0 ? 'Select at least one browser and one device.'
-		: qaMatrixState.selection.mode === 'perBrowser'
-			? configurations > MATRIX_BATCH_SIZE
-				? `${configurations.toLocaleString()} browser-device pair configuration${configurations === 1 ? '' : 's'} · will run as ${Math.ceil(configurations / MATRIX_BATCH_SIZE)} batches, one browser at a time`
-				: `${configurations.toLocaleString()} browser × device pair configuration${configurations === 1 ? '' : 's'} selected · runs one at a time`
-			: configurations > MATRIX_BATCH_SIZE
-				? `${configurations.toLocaleString()} configurations selected · will run as ${Math.ceil(configurations / MATRIX_BATCH_SIZE)} batches, one browser at a time`
-				: `${configurations.toLocaleString()} browser configuration${configurations === 1 ? '' : 's'} selected · runs one at a time`;
+		: selected ? `${selected.browser || selected.browserCode} · ${selected.device} · One test run` : 'Choose one browser and one device.';
 	summary.textContent = blockedReason
 		? `${checks} check${checks === 1 ? '' : 's'} selected · ${blockedReason}`
 		: `${checks} check${checks === 1 ? '' : 's'} selected · ${detail}`;
@@ -5630,13 +5844,38 @@ async function loadQaTestCatalog() {
 					throw new Error('The standard test catalog response is invalid.');
 				}
 				state.qaTestCatalog = catalog;
+				state.qaTestCatalogFailed = false;
 				return catalog;
+			})
+			.catch(error => {
+				// #17933: record the failure so the Coverage step explains a
+				// dead catalog HONESTLY ("could not be loaded") instead of a
+				// misleading permanent "Loading available checks…" that keeps
+				// the Review Test Run button disabled with no way forward.
+				state.qaTestCatalogFailed = true;
+				throw error;
 			})
 			.finally(() => {
 				state.qaTestCatalogPromise = undefined;
 			});
 	}
 	return state.qaTestCatalogPromise;
+}
+
+/** #17933: explicit retry for a failed catalog load — re-runs the fetch,
+ *  repaints the catalog, and re-syncs the journey gates. */
+function retryQaTestCatalog() {
+	state.qaTestCatalogFailed = false;
+	return loadQaTestCatalog()
+		.then(catalog => {
+			paintQaTestCatalog(catalog);
+			setQaFormError();
+			syncQaSubmitState();
+		})
+		.catch(error => {
+			setQaFormError(error instanceof Error ? error.message : String(error));
+			syncQaSubmitState();
+		});
 }
 
 /** The built-in deliberately-broken demo site, when this instance serves one. */
@@ -5692,27 +5931,48 @@ async function openQaStart() {
 
 function showQaStartPage() {
 	if (!qaUi.dialog) return;
-	qaJourney ??= createQaJourney({ document, changed: syncQaSubmitState, getState: () => ({
+	qaJourneySelectionMode = 'quick';
+	syncJourneyPreset();
+	qaJourney ??= createQaJourney({ document, changed: syncQaSubmitState, onBlocked: reason => {
+		// #17933: a blocked advance must never be silent. The journey writes
+		// the footer hint; we ALSO surface it on the form error element with
+		// a retry action when the catalog fetch failed.
+		if (state.qaTestCatalogFailed) {
+			setQaFormError('The standard checks could not be loaded. Close this window and try again, or reload the page.');
+			return;
+		}
+		setQaFormError(reason);
+	}, getState: () => ({
 		config: { ...state.config, model: qaLauncherModeLabel(qaUi.executionMode?.value, state.config) },
 		checks: qaUi.selectedTests.size,
-		configurations: qaMatrixState.selectedEnvIds.length,
+		automatic: qaJourneySelectionMode === 'quick',
+		configurations: qaJourneySelectionMode === 'quick' ? 1 : qaMatrixState.selectedEnvIds.length,
+		environmentLabel: (() => { const row = qaMatrixState.index.find(r => qaMatrixState.selectedEnvIds.includes(r.envId)); return row ? `${row.browser || row.browserCode} · ${row.device} · 1 run` : null; })(),
 		browserLabel: qaMatrixState.selectedEnvIds.length === 1 ? qaBrowserStatus({ fetchState: qaMatrixState.fetchState, configurations: qaMatrixState.index,
 			envIds: qaMatrixState.selectedEnvIds, mode: qaUi.executionMode?.value, config: state.config }).title : null,
 		busy: qaUi.submit.dataset.busy === 'true',
 		blocked: qaLaunchBlockedReason(),
-		coverageBlocked: !state.qaTestCatalog ? 'Loading available checks…'
+		coverageBlocked: !state.qaTestCatalog ? (state.qaTestCatalogFailed ? 'The standard checks could not be loaded. Retry, then continue.' : 'Loading available checks…')
 			: !qaUi.selectedTests.size ? 'Choose at least one check to continue.'
 			: qaSecuritySelected() && !qaUi.securityAuthorized?.checked ? 'Confirm security testing authorization below.'
+			: qaJourneySelectionMode !== 'quick' ? null
+			: qaUi.executionMode?.value !== 'hybrid' ? null
 			: qaMatrixState.fetchState === 'loading' ? 'Loading browsers and devices…'
-			: qaMatrixState.fetchState === 'error' ? 'The device catalog could not load. Open customization and retry.'
-			: !qaMatrixState.selectedEnvIds.length ? 'Choose at least one available browser and device.' : null
+			: qaMatrixState.fetchState === 'error' ? 'The device catalog could not load. Retry the browser list.'
+			: qaLaunchBlockedReason() ?? null
 	}) });
 	setQaFormError();
 	const draft = { url: qaUi.targetUrl.value, goal: $('qa-goal').value };
+	// #17933: form.reset() would silently wipe the user's check selection
+	// (the checkboxes live inside this form) — snapshot and restore them so
+	// coverage configuration persists across dialog re-opens and steps.
+	const draftChecks = [...qaUi.selectedTests];
 	qaUi.form.reset();
 	const selectedMode = $('qa-selected-agent'); if (selectedMode) selectedMode.textContent = qaLauncherModeLabel(qaUi.executionMode?.value, state.config);
 	if (draft.url) qaUi.targetUrl.value = draft.url;
 	if (draft.goal) $('qa-goal').value = draft.goal;
+	for (const input of qaSelectableInputs()) input.checked = draftChecks.includes(input.value);
+	refreshQaSelection();
 	// Studio context prefill first, then the matrix top bar's target URL wins
 	// if set (M4 #14423): applied AFTER reset() so it survives it.
 	applyStudioTarget(qaUi.targetUrl);
@@ -5770,10 +6030,24 @@ function showQaStartPage() {
 		.then(paintQaTestCatalog)
 		.catch(error => {
 			qaUi.testsState.hidden = false;
-			qaUi.testsState.textContent = 'The standard test catalog could not be loaded.';
+			// #17933: actionable recovery — a Retry button replaces the dead
+			// "close this window" advice, and re-syncs the journey gates.
+			qaUi.testsState.replaceChildren();
+			const message = document.createElement('span');
+			message.textContent = 'The standard test catalog could not be loaded. ';
+			const retry = document.createElement('button');
+			retry.type = 'button';
+			retry.className = 'link-btn';
+			retry.textContent = 'Retry loading checks';
+			retry.addEventListener('click', () => {
+				qaUi.testsState.textContent = 'Retrying…';
+				qaUi.testsState.hidden = false;
+				void retryQaTestCatalog();
+			});
+			qaUi.testsState.append(message, retry);
 			setQaFormError(error instanceof Error ? error.message : String(error));
 			$('qa-customize').open = true;
-			$('qa-selection-summary').textContent = 'Checks could not be loaded. Close this window and try again.';
+			$('qa-selection-summary').textContent = 'Checks could not be loaded. Retry above.';
 			syncQaSubmitState();
 		});
 }
@@ -5786,34 +6060,7 @@ function closeQaStart({ updateRoute = true } = {}) {
 	if (qaUi.dialog?.open) qaUi.dialog.close();
 }
 
-function firstMatrixSessionId(run) {
-	const items = Array.isArray(run?.items) ? run.items : [];
-	return items.find(item => item?.sessionId && item.status === 'RUNNING')?.sessionId
-		?? items.find(item => item?.sessionId)?.sessionId
-		?? null;
-}
 
-/** A matrix run is created before its first underlying QA session. Wait for
- * that real session so the product can select it and enter the shared running
- * workspace. A bounded fallback leaves slow/blocked matrices on their honest
- * status board instead of inventing a run. */
-async function waitForFirstMatrixSession(createdRun, { timeoutMs = 15_000, pollMs = 250 } = {}) {
-	let run = createdRun;
-	const deadline = Date.now() + timeoutMs;
-	for (;;) {
-		const sessionId = firstMatrixSessionId(run);
-		if (sessionId) return sessionId;
-		if (!run?.id || Date.now() >= deadline || ['done', 'error', 'cancelled'].includes(run?.status)) return null;
-		await new Promise(resolve => window.setTimeout(resolve, pollMs));
-		try {
-			const payload = await api(`/matrix-runs/${encodeURIComponent(run.id)}`);
-			run = payload?.run ?? payload;
-		} catch {
-			// Creation already succeeded. A transient status-read failure should
-			// not misreport the create request as failed or allow a duplicate.
-		}
-	}
-}
 
 if (qaUi.dialog) {
 	$('qa-browser-status-action')?.addEventListener('click', async event => {
@@ -5848,7 +6095,8 @@ if (qaUi.dialog) {
 		qaJourneySelectionMode = 'custom';
 		if (qaJourneyCustomSelection) qaMatrixApplySelection(qaJourneyCustomSelection, true);
 		syncJourneyPreset();
-		$('qa-customize').open = true;
+		qaMatrixRender();
+		$('qa-customize').open = false;
 	});
 	for (const control of [qaUi.deviceSelect, qaUi.engineOptions, qaUi.scopeOptions]) {
 		control?.addEventListener('change', syncQaSelectionSummary);
@@ -5954,8 +6202,6 @@ if (qaUi.dialog) {
 			qaUi.securityAuthorized?.focus();
 			return;
 		}
-		const device = activeTestEnvStore?.get?.()?.device || pendingDeviceId();
-		const deviceLandscape = (qaUi.deviceLandscape?.checked) === true;
 		const scopeValues = selectedQaScopeValues();
 		const scopeMessage = buildQaKickoffMessage(scopeValues);
 		if (scopeMessage === null && Array.isArray(scopeValues) && scopeValues.length === 0) {
@@ -5963,31 +6209,42 @@ if (qaUi.dialog) {
 			$('qa-customize').open = true;
 			return;
 		}
+		const device = activeTestEnvStore?.get?.()?.device || pendingDeviceId();
+		const deviceLandscape = (qaUi.deviceLandscape?.checked) === true;
 		const goal = $('qa-goal')?.value.trim();
 		const kickoffText = [targetUrl, scopeMessage, goal ? `User focus for this run: ${goal}` : ''].filter(Boolean).join('\n');
 		// QA matrix (#15013): the run set is the selected device–OS–browser–version
 		// configurations. At least one configuration must be selected and validated.
-		if (qaMatrixState.selectedEnvIds.length === 0) {
+		const automatic = qaJourneySelectionMode === 'quick';
+		const hybridRequested = qaUi.executionMode?.value === 'hybrid';
+		if (!automatic && qaMatrixState.selectedEnvIds.length === 0) {
 			setQaFormError('Select at least one browser configuration.');
 			$('qa-customize').open = true;
 			return;
 		}
-		const selectedEnvIds = sanitizeSelection(qaMatrixState.index, qaMatrixState.selectedEnvIds);
-		if (selectedEnvIds.length === 0) {
+		// Quick mode carries a DERIVED focused selection (qaFocusedSelection ran
+		// when the catalog loaded); hybrid needs that one exact environment to
+		// attach qaExecutionMode + environmentId. Legacy quick mode still submits
+		// browserMode automatic with no env list.
+		const selectedEnvIds = automatic
+			? (hybridRequested ? sanitizeSelection(qaMatrixState.index, qaMatrixEffectiveSelection()) : [])
+			: sanitizeSelection(qaMatrixState.index, qaMatrixState.selectedEnvIds);
+		if (hybridRequested && selectedEnvIds.length !== 1) {
+			setQaFormError('For hybrid testing, choose Focused check with one browser configuration. Multi-browser hybrid dispatch is not enabled.');
+			$('qa-customize').open = true;
+			return;
+		}
+		if (!automatic && selectedEnvIds.length !== 1) {
 			setQaFormError('The selected configurations are no longer available. Reload the catalog and pick again.');
 			return;
 		}
-		// Pipeline Phase 2: selections larger than one batch (2,000) are
-		// submitted as a PARENT run + sequential idempotent BATCH POSTs —
-		// never one giant payload. Selections ≤ 2,000 take the single-run
-		// path unchanged. Batch creation is sequential with visible progress
-		// and a network failure mid-sequence leaves earlier batches intact;
-		// re-submitting reproduces the same batchKeys so the server returns
-		// the existing batches (idempotent — zero duplicate jobs).
+		// Exactly one request and one item. No parent runs, batches or version fan-out.
 		qaUi.submit.dataset.busy = 'true';
 		qaUi.submit.disabled = true;
 		qaUi.submit.textContent = 'Starting…';
 		try {
+			// Hybrid QA: when hybrid mode is selected and qualified, the run goes
+			// through /api/sessions with qaExecutionMode hybrid (one browser).
 			const hybridOptions = hybridLaunchOptions({ config: state.config, mode: qaUi.executionMode?.value, envIds: selectedEnvIds, configurations: qaMatrixState.index });
 			if (hybridOptions) {
 				await createQaRun({ targetUrl, device, deviceLandscape, selectedTests, securityAuthorization, kickoffText,
@@ -5999,90 +6256,26 @@ if (qaUi.dialog) {
 				else if (qaUi.compliance?.checked) { await openSqaStart(); sqaUi.targetUrl.value = targetUrl; }
 				return;
 			}
-			// Phase 3 (#14937): one matrix run carries EVERY selected
-			// configuration as an item — queued with controlled concurrency,
-			// progress/cancel/retry on the server. No silent reduction to a
-			// representative subset, no client-side per-engine fan-out.
-			const batches = planBatches(selectedEnvIds);
-			let matrixRun;
-			if (batches.length <= 1) {
-				matrixRun = await api('/qa-matrix-runs', {
-					method: 'POST',
-					body: JSON.stringify({
-						targetUrl,
-						configurationEnvIds: selectedEnvIds,
-						kickoffText,
-						selectedTests,
-						securityAuthorization,
-						scopeSelection: scopeValues,
-						testCaseId: qaUi._testCaseId
-					})
-				});
-			} else {
-				// Parent first (plan metadata only, no configurations).
-				const parent = await api('/qa-matrix-runs', {
-					method: 'POST',
-					body: JSON.stringify({
-						kind: 'parent',
-						targetUrl,
-						kickoffText,
-						selectedTests,
-						securityAuthorization,
-						scopeSelection: scopeValues,
-						totalPlanned: selectedEnvIds.length
-					})
-				});
-				// Sequential batches, each with a stable idempotency key.
-				for (let index = 0; index < batches.length; index += 1) {
-					qaUi.submit.textContent = `Creating batch ${index + 1}/${batches.length}…`;
-					const key = await batchKeyFor(parent.id, batches[index]);
-					await api('/qa-matrix-runs', {
-						method: 'POST',
-						body: JSON.stringify({
-							parentId: parent.id,
-							batchKey: key,
-							batchIndex: index,
-							targetUrl,
-							configurationEnvIds: batches[index],
-							kickoffText,
-							selectedTests,
-							securityAuthorization,
-							scopeSelection: scopeValues
-						})
-					});
-				}
-				matrixRun = parent;
+			// Legacy/single-browser path: exactly one request and one item.
+			// No parent runs, batches or version fan-out.
+			const matrixRun = await apiWithTimeout('/qa-matrix-runs', 20000, {
+				method: 'POST',
+				body: JSON.stringify({
+					browserMode: automatic ? 'automatic' : 'custom', targetUrl,
+					configurationEnvIds: selectedEnvIds, kickoffText, selectedTests,
+					securityAuthorization, scopeSelection: scopeValues, testCaseId: qaUi._testCaseId
+				})
+			});
+			if (!matrixRun.reused) {
+				qaUi.targetUrl.value = '';
+				$('qa-goal').value = '';
 			}
-			qaUi.targetUrl.value = '';
-			$('qa-goal').value = '';
 			closeQaStart({ updateRoute: false });
 			void markOnboarded();
-			// DEV merge (#15622): wait briefly for the first execution session so
-			// the customer lands on a live session when one appears promptly; the
-			// matrix run stays authoritative when no session shows up in time —
-			// honest status over a fabricated "running" view.
-			const createdSessionId = await waitForFirstMatrixSession(matrixRun);
-			if (createdSessionId) {
-				await selectSession(createdSessionId);
-				toast(`QA run started — ${selectedEnvIds.length.toLocaleString()} browser configuration${selectedEnvIds.length === 1 ? '' : 's'} queued to run one at a time${batches.length > 1 ? ` across ${batches.length} batches` : ''}.`);
-			} else {
-				// #16159: no session appeared inside the wait window — the run
-				// is queued behind other executions (one browser at a time).
-				// Don't leave the user staring at the previous run: tell them
-				// plainly where their run is and keep watching in the
-				// background; the moment the first session exists, open it.
-				toast(`QA run started — ${selectedEnvIds.length.toLocaleString()} configuration${selectedEnvIds.length === 1 ? '' : 's'} queued. Browsers execute as capacity frees up; this run opens automatically when its first browser starts.`);
-				void refreshRuns();
-				void (async () => {
-					const sessionId = await waitForFirstMatrixSession(matrixRun, { timeoutMs: 10 * 60_000, pollMs: 2_000 });
-					if (sessionId) await selectSession(sessionId).catch(() => undefined);
-				})();
-			}
-			// #16159: the queued-configurations popup no longer opens after
-			// launch. selectSession above already lands the user in the live
-			// run workspace; the results board stays reachable from the run
-			// list / Open-session flows. A modal covering the live view made
-			// every multi-config run LOOK stuck at "Queued".
+			// Persist the accepted test immediately, before its session is allocated.
+			await pageRouter.navigate({ name: 'matrix-run', runId: matrixRun.id });
+			void refreshRuns();
+			toast(matrixRun.reused ? 'Opened your existing test. No additional run was created.' : 'Starting one test on your selected browser and device.');
 			// Optional follow-on flows: the QA run is already underway; each
 			// checked option opens the existing dialog prefilled with the same
 			// target for the user to confirm — nothing starts automatically.
@@ -6762,6 +6955,18 @@ function paintConfig(config) {
 	state.config = config;
 	const modeField = $('qa-execution-mode-field');
 	if (modeField) modeField.dataset.state = config.hybridQa?.available ? 'ready' : 'attention';
+	// The launcher's execution mode ships as "hybrid" in the markup. When the
+	// server reports hybrid QA unavailable (feature flag off / qualification
+	// missing), keeping mode=hybrid wedges the launcher gate permanently —
+	// "Review test run" never enables because hybridLaunchOptions() rejects the
+	// mode on every gate check, with no way for the user to proceed. Fall back
+	// to legacy single-model QA, matching the server's own
+	// selectQaExecutionMode(undefined) default when hybrid is disabled. The
+	// run then takes the /api/qa-matrix-runs path. A user who explicitly chose
+	// a mode is never overridden — this only corrects the uncorrected default.
+	if (qaUi.executionMode && qaUi.executionMode.value === 'hybrid' && !config.hybridQa?.enabled) {
+		qaUi.executionMode.value = 'legacy';
+	}
 	const hybridStatus = $('qa-hybrid-availability');
 	if (hybridStatus) hybridStatus.textContent = hybridAvailabilityMessage(config);
 	const selectedAgent = $('qa-selected-agent'); if (selectedAgent) selectedAgent.textContent = qaLauncherModeLabel(qaUi.executionMode?.value, config);
@@ -7011,14 +7216,25 @@ function renderResultsPageHeader() {
 async function applyPageRoute(route) {
 	if (!workspaceBooted || !el.authGate?.hidden) return;
 	document.body.dataset.page = route.name;
+	const workspace = document.querySelector('.app');
+	if (route.name === 'matrix-run') { workspace?.setAttribute('inert', ''); workspace?.setAttribute('aria-hidden', 'true'); }
+	else { workspace?.removeAttribute('inert'); workspace?.removeAttribute('aria-hidden'); }
 	$('tab-report').textContent = route.name === 'results' ? 'Overview' : 'Report';
 	document.body.dataset.pageLoading = 'true';
 	document.querySelector('.app')?.setAttribute('aria-busy', 'true');
 	if (route.name !== 'new-run') closePageDialog(qaUi.dialog);
 	if (route.name !== 'account') closePageDialog(profileDialog);
+	if (route.name !== 'matrix-run') closeQaMatrixRunDialog({ updateRoute: false });
+	if (route.name !== 'matrix-run') runStartupView?.stop();
 	if (route.name !== 'bugs' && state.bugsViewOpen) setBugsViewOpen(false);
 
 	try {
+		if (route.name === 'matrix-run') {
+			setPageRouteNotice('Loading your queued test run…');
+			void runStartupView?.load(route.runId);
+			document.title = 'Starting your test — QASE';
+			return;
+		}
 		if (route.name === 'new-run') {
 			setPageRouteNotice('Preparing test setup…');
 			showQaStartPage();
@@ -7751,34 +7967,53 @@ const analyticsView = $('analytics') ? createAnalyticsView({
 
 /* ── QA matrix run results board (#14942 Phase 4) ──────────────────── */
 
+const runStartupView = $('run-startup-page') ? createRunStartupView({
+	container: $('run-startup-page'),
+	api: (path, options) => apiWithTimeout(path, 15000, options),
+	openSession: sessionId => void pageRouter.navigate({ name: 'run', runId: sessionId }, { replace: true }).catch(fail),
+	back: () => void pageRouter.navigate({ name: 'runs' }),
+	details: openQaMatrixRunDialog
+}) : null;
+
 const qaMatrixResultsView = $('qa-matrix-run-dialog') ? createQaMatrixResultsView({
 	container: $('qa-matrix-run-body'),
 	api,
 	selectSession: async (sessionId) => {
-		closeQaMatrixRunDialog();
+		closeQaMatrixRunDialog({ updateRoute: false });
 		await selectSession(sessionId).catch(fail);
 	},
 	toast,
-	onRunFinished: () => {}
+	onRunFinished: () => {},
+	onRunUpdated: run => {
+		const route = pageRouter.current();
+		if (route.name !== 'matrix-run' || route.runId !== run.id) return;
+		const sessionId = firstMatrixSessionId(run);
+		// The startup page owns automatic handoff. This is an explicit diagnostics view.
+	}
 }) : null;
 
 /** Open the results board for a QA matrix run (live updates until terminal). */
 function openQaMatrixRunDialog(matrixRunId) {
 	const dialog = $('qa-matrix-run-dialog');
 	if (!dialog || !qaMatrixResultsView || !matrixRunId) return;
-	dialog.showModal();
+	if (!dialog.open) dialog.showModal();
 	void qaMatrixResultsView.load(matrixRunId);
 }
 
-function closeQaMatrixRunDialog() {
+function closeQaMatrixRunDialog({ updateRoute = false } = {}) {
 	const dialog = $('qa-matrix-run-dialog');
 	if (dialog?.open) dialog.close();
 	qaMatrixResultsView?.stop();
+	if (updateRoute && pageRouter.current().name === 'matrix-run') void pageRouter.navigate({ name: 'runs' }, { replace: true });
 }
 
 if ($('qa-matrix-run-close')) {
 	$('qa-matrix-run-close').onclick = closeQaMatrixRunDialog;
 }
+$('qa-matrix-run-dialog')?.addEventListener('cancel', event => {
+	event.preventDefault();
+	closeQaMatrixRunDialog();
+});
 // The view renders its own Cancel-run button (it knows live run status).
 
 /* ── Phase 11: run-target dialog + quick actions + presets ────────── */

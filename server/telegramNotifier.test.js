@@ -146,6 +146,9 @@ test('buildFeedbackMessage emits the exact agreed format', () => {
 		'',
 		'A new user feedback has been submitted after completion of a QASE testing task.',
 		'',
+		'🧪 Testing Mode: Test Mode',
+		'📁 Project: QASE',
+		'',
 		'⭐ Rating: 5/5',
 		'',
 		'📝 User Feedback:',
@@ -159,6 +162,17 @@ test('buildFeedbackMessage emits the exact agreed format', () => {
 	'👤 Submitted By: QA User',
 	'🕒 Submitted On: 08-Oct-2026 03:30 AM IST'
 ].join('\n'));
+});
+
+test('#16656 testing mode line labels every mode; project line honours context override', () => {
+	const base = { ...CONTEXT, submittedAt: CONTEXT.submittedAt };
+	assert.match(buildFeedbackMessage(FEEDBACK, { ...base, mode: 'qa' }), /🧪 Testing Mode: Test Mode/);
+	assert.match(buildFeedbackMessage(FEEDBACK, { ...base, mode: 'sqa' }), /🧪 Testing Mode: SQA Mode/);
+	assert.match(buildFeedbackMessage(FEEDBACK, { ...base, mode: 'founder' }), /🧪 Testing Mode: Founder Mode/);
+	assert.match(buildFeedbackMessage(FEEDBACK, { ...base, mode: undefined }), /🧪 Testing Mode: Unknown/);
+	assert.match(buildFeedbackMessage(FEEDBACK, { ...base, projectName: 'Acme Portal' }), /📁 Project: Acme Portal/);
+	// The mode line is ALWAYS present, independent of the run title.
+	assert.match(buildFeedbackMessage(FEEDBACK, { ...base, title: undefined }), /🧪 Testing Mode: Test Mode/);
 });
 
 test('buildFeedbackMessage omits target URL and falls back to mode label when context lacks them', () => {

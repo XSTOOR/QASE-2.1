@@ -92,6 +92,7 @@ function finishReadiness(session, now = Date.now()) {
 }
 
 export function createSqaTools(session, runStore, options = {}) {
+	const { jevVerifier } = options;
 	async function automaticReviewerCloseout() {
 		const pendingBrowserControlIds = pendingAgentSqaControlIds(session);
 		if (pendingBrowserControlIds.length > 0) {
@@ -160,11 +161,32 @@ export function createSqaTools(session, runStore, options = {}) {
 					if (hasSingleFields) {
 						throw new TypeError('Use either controls or the single-control fields, not both.');
 					}
-					requireTechnicalControlsFirst(session, Array.isArray(input.controls)
-						? input.controls.map(item => item?.control_id)
-						: []);
-					const results = await recordAgentSqaObservations(session, input.controls, runStore);
-					const reviewerCloseout = await automaticReviewerCloseout();
+				const batchInput = Array.isArray(input.controls) ? input.controls : [];
+				requireTechnicalControlsFirst(session, Array.isArray(input.controls)
+					? input.controls.map(item => item?.control_id)
+					: []);
+				const results = await recordAgentSqaObservations(session, input.controls, runStore);
+				// #17936/#17997: batch pass decisions must receive the same
+				// bounded, advisory JEV verification as single-control ones —
+				// otherwise agents that batch observations (the common case)
+				// silently bypass the verifier. The verifier's own call budget
+				// keeps this bounded.
+				const jev = [];
+				if (jevVerifier) {
+					for (let i = 0; i < results.length; i++) {
+						const result = results[i];
+						const source = batchInput[i];
+						if (result?.status !== 'pass' || !result?.controlId) continue;
+						const verification = await jevVerifier.verify({
+							controlId: result.controlId,
+							status: 'pass',
+							rationale: source?.rationale ?? '',
+							evidence: source?.evidence ?? []
+						}).catch(() => null);
+						if (verification?.challenge) jev.push({ control_id: result.controlId, jev_verification: verification.challenge });
+					}
+				}
+				const reviewerCloseout = await automaticReviewerCloseout();
 					return {
 						success: true,
 						recorded: results.map(result => `${result.controlId}: ${result.status}`),
@@ -175,11 +197,26 @@ export function createSqaTools(session, runStore, options = {}) {
 							decision_notes: result.decisionNotes,
 							evidence_coverage: result.evidenceCoverage
 						})),
+						...(jev.length ? { jev_verifications: jev } : {}),
 						reviewer_closeout: reviewerCloseout
 					};
 				}
 				requireTechnicalControlsFirst(session, [input?.control_id]);
 				const result = await recordAgentSqaObservation(session, input, runStore);
+				// #17936: bounded, advisory JEV verification of pass decisions.
+				// A challenge is SURFACED to the agent (never auto-flips the
+				// result); the primary agent and deterministic evaluator keep
+				// full control of the assessment.
+				let jev = undefined;
+				if (jevVerifier && result?.status === 'pass' && result?.controlId) {
+					const verification = await jevVerifier.verify({
+						controlId: result.controlId,
+						status: 'pass',
+						rationale: input?.rationale ?? '',
+						evidence: input?.evidence ?? []
+					}).catch(() => null);
+					if (verification?.challenge) jev = verification.challenge;
+				}
 				const reviewerCloseout = await automaticReviewerCloseout();
 				return {
 					success: true,
@@ -188,6 +225,7 @@ export function createSqaTools(session, runStore, options = {}) {
 					status: result.status,
 					decision_notes: result.decisionNotes,
 					evidence_coverage: result.evidenceCoverage,
+					...(jev ? { jev_verification: jev } : {}),
 					reviewer_closeout: reviewerCloseout
 				};
 			} catch (error) {

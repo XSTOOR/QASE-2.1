@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-founder-sqa-2026-11-10-review-readiness-r1",
-  "uiVersion": "20261110-3",
+  "releaseId": "qase-2026-11-11-founder-sqa-combined-r2",
+  "uiVersion": "20261111-1",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Optional SQA build/environment metadata, explicit supported desktop defaults for review launchers, bounded page-text evidence, scoped Founder absence claims, partial native text-form constraints and deduplicated SQA tool descriptions; export-only candidate"
+  "source": "Combined release 6f5c804 with Push-SQA 9259aaf, including SQA saved-evidence recovery and Founder draft publication"
 }

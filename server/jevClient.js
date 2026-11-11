@@ -75,7 +75,12 @@ async function boundedJson(response) {
 }
 
 export function createJevClient(configuration, { fetchImpl = fetch, timeoutMs = 60000, onUsage } = {}) {
-  const settings = { baseUrl: JEV_ENDPOINT, model: JEV_MODEL, ...configuration };
+  // Explicit `undefined` values in configuration must NOT override the defaults —
+  // spreading `{ baseUrl: JEV_ENDPOINT, ...{ baseUrl: undefined } }` yields
+  // undefined, which turned into fetch(undefined) → ERR_INVALID_URL → the SQA
+  // verifier's "JEV_CONNECTION_FAILED" (#17997). Drop undefined keys instead.
+  const defined = Object.fromEntries(Object.entries(configuration ?? {}).filter(([, value]) => value !== undefined));
+  const settings = { baseUrl: JEV_ENDPOINT, model: JEV_MODEL, ...defined };
   validateJevConfiguration(settings);
   return {
     async decide(state, questions, { signal, sessionId, onDispatch, onUsageReceipt } = {}) {

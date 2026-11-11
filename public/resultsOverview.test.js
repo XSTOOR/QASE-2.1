@@ -35,7 +35,16 @@ test('report data renders as text and focused layouts retain workspace access', 
 
 test('results review never automatically opens a rating prompt, including deep links', () => {
 	const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
-	const sync = app.slice(app.indexOf('async function syncFeedbackForSession'), app.indexOf('async function openFeedbackModal'));
+	const sync = app.slice(app.indexOf('async function syncFeedbackForSession'), app.indexOf('async function maybeAutoPromptFeedback'));
 	assert.doesNotMatch(sync, /openFeedbackModal\(\)/);
 	assert.match(app, /provideFeedback\.onclick = \(\) => openFeedbackModal\(\)/);
+	// #16655: background sync still must not open the modal — but the
+	// terminal-event auto prompt (maybeAutoPromptFeedback) is a deliberate,
+	// once-per-run-per-browser-session affordance after a run completes
+	// here, not an interruption of results review or deep links.
+	const promptStart = app.indexOf('async function maybeAutoPromptFeedback');
+	const promptEnd = app.indexOf('\n}', promptStart);
+	const promptBody = app.slice(promptStart, promptEnd);
+	assert.match(promptBody, /state\.sessionId !== session\.id/, 'prompt only fires for the run being viewed');
+	assert.match(promptBody, /feedbackAutoPrompted\.has\(session\.id\)/, 'prompt fires once per run');
 });

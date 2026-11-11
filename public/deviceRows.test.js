@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { pickerHarness } from './matrixPickerHarness.js';
 
 /* #15969 Phase 2 — device selector: platform tabs + one-click rows.
  * Source-assertion suite (the launcher is a browser script), plus unit
@@ -13,30 +14,21 @@ const [app, styles, html] = await Promise.all([
 ]);
 
 const picker = await readFile(new URL('./matrixPicker.js', import.meta.url), 'utf8');
-test("device rows and individual cells use native accessible checkboxes", () => {
-	assert.ok(picker.includes("input.type = 'checkbox'"), "input.type = 'checkbox'");
-	assert.ok(picker.includes("input.indeterminate"), "input.indeterminate");
-	assert.ok(picker.includes("All selected browsers on"), "All selected browsers on");
-	assert.ok(picker.includes("changeMatrixPairs(index, selection, [[device.key, family.code]], checked)"), "changeMatrixPairs(index, selection, [[device.key, family.code]], checked)");
+test('device controls have an explicit selected state and replace rather than accumulate', () => {
+	const h = pickerHarness(); h.click('device-Google|android|Pixel 9'); assert.deepEqual(h.ids(), ['phone']);
+	assert.equal(h.get('device-Google|android|Pixel 9').attributes['aria-pressed'], 'true');
+	h.click('device-Microsoft|windows|Desktop'); assert.deepEqual(h.ids(), ['desktop']);
 });
-
-test("device compatibility appears in a semantic table with OS metadata", () => {
-	assert.ok(picker.includes("el('table', 'mp-table')"), "el('table', 'mp-table')");
-	assert.ok(picker.includes("deviceCell.scope = 'row'"), "deviceCell.scope = 'row'");
-	assert.ok(picker.includes("device.manufacturer"), "device.manufacturer");
-	assert.ok(picker.includes("Filter operating system"), "Filter operating system");
+test('device labels retain manufacturer and OS without browser versions', () => {
+	const h = pickerHarness(); assert.match(h.text(h.hosts.devices), /Google.*mobile|Google.*Phone/);
+	assert.doesNotMatch(h.text(h.hosts.devices), /151|100/);
 });
-
-test("unavailable cells are disabled with the catalog explanation", () => {
-	assert.ok(picker.includes("input.disabled = available.length === 0"), "input.disabled = available.length === 0");
-	assert.ok(picker.includes("availabilityReason"), "availabilityReason");
-	assert.ok(picker.includes("This combination is unavailable."), "This combination is unavailable.");
+test('unavailable devices are not selectable or presented as supported', () => {
+	const h = pickerHarness(); assert.equal(h.nodes().some(n => n.dataset.pickerFocus === 'device-Microsoft|windows|Phone'), false);
 });
-
-test("large device catalogs are progressively disclosed without capping execution", () => {
-	assert.ok(picker.includes("filtered.slice(0, view.limit)"), "filtered.slice(0, view.limit)");
-	assert.ok(picker.includes("Show 10 more devices"), "Show 10 more devices");
-	assert.ok(picker.includes("computeExplicitSelection(index, selection)"), "computeExplicitSelection(index, selection)");
+test('device filtering never clears the selected environment summary', () => {
+	const h = pickerHarness(); h.search('no matching device');
+	assert.match(h.text(h.hosts.summary), /Desktop/); assert.deepEqual(h.ids(), ['desktop']);
 });
 
 /* deviceListFromWindow — model unit tests (pure, no DOM). */

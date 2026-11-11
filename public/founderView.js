@@ -9,6 +9,7 @@ import {
 	groupFounderObservations,
 	resolveFounderQuickWins
 } from './founderPresentation.js';
+import { tokenSummaryText } from './uiPrimitives.js';
 
 /**
  * Create the Founder Mode presentation surface.
@@ -30,6 +31,9 @@ export function createFounderView({
 	onClearSelection,
 	onSendToStudio,
 	onExportHandoff,
+	onProvideFeedback,
+	getFeedbackRating,
+	renderReportFeedbackSection,
 	onReloadSelection,
 	onRetrySelection,
 	onContinue,
@@ -173,13 +177,14 @@ export function createFounderView({
 
 	function renderFounderHero(scope, lifecycle) {
 		const target = scope.target ?? {};
+		const session = getSession();
 		const node = doc.createElement('section');
 		node.className = 'founder-hero';
 		const eyebrow = doc.createElement('span');
 		eyebrow.className = 'founder-eyebrow';
 		eyebrow.textContent = 'Founder Mode // evidence-led product review';
 		const title = doc.createElement('h2');
-		title.textContent = target.name ?? getSession()?.title ?? 'Founder review';
+		title.textContent = target.name ?? session?.title ?? 'Founder review';
 		const detail = doc.createElement('p');
 		detail.textContent = lifecycle.detail;
 		const status = doc.createElement('span');
@@ -187,6 +192,33 @@ export function createFounderView({
 		status.dataset.status = lifecycle.status;
 		status.textContent = lifecycle.label;
 		node.append(eyebrow, title, detail, status);
+		// #17934: live token usage row. Values come from the server's usage
+		// events only — no report yet shows an explicit pending/unavailable
+		// state, never a fabricated zero.
+		const usage = session?.tokenUsage;
+		const tokens = doc.createElement('span');
+		tokens.className = 'founder-tokens';
+		if (tokenSummaryText(usage)) {
+			tokens.textContent = tokenSummaryText(usage);
+			tokens.title = usage.estimated === true
+				? 'Estimated from the model gateway (authoritative usage not yet reported).'
+				: 'Token usage reported by the model gateway.';
+			const perModel = usage.byModel;
+			if (perModel && Object.keys(perModel).length > 0) {
+				const modelLines = Object.entries(perModel)
+					.sort((a, b) => (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens))
+					.map(([model, u]) => `${model}: ${u.inputTokens ?? 0} in · ${u.outputTokens ?? 0} out`)
+					.join('\n');
+				tokens.title = `${tokens.title}\n${modelLines}`;
+			}
+		} else if (session?.status === 'running') {
+			tokens.textContent = 'Tokens: awaiting usage report…';
+			tokens.title = 'The model gateway has not reported usage for this run yet.';
+		} else {
+			tokens.textContent = 'Token usage unavailable';
+			tokens.title = 'No token usage was reported for this run.';
+		}
+		node.append(tokens);
 		return node;
 	}
 
@@ -602,7 +634,19 @@ export function createFounderView({
 			try { await downloadReportPdf('qase-founder-review.pdf'); }
 			catch (error) { exportError(error); }
 		};
-		actions.append(download, copy, pdf);
+
+		// Completed Founder reviews share the feedback flow with QA/SQA
+		// (#16653): Provide/View label mirrors the SQA report actions.
+		const feedback = doc.createElement('button');
+		feedback.className = 'btn btn-ghost btn-sm';
+		feedback.type = 'button';
+		const rated = getFeedbackRating?.();
+		feedback.textContent = rated ? 'View Feedback' : 'Provide Feedback';
+		feedback.title = rated
+			? 'View your submitted feedback for this review.'
+			: 'Rate this Founder review experience and tell us how it went.';
+		feedback.onclick = () => onProvideFeedback?.();
+		actions.append(download, copy, pdf, feedback);
 		return actions;
 	}
 
@@ -638,6 +682,9 @@ export function createFounderView({
 			renderFounderMetrics(report),
 			renderFounderBoundary(report)
 		);
+		// USER FEEDBACK section — the submitter's own feedback for THIS review,
+		// same rendering and run-scoping as the QA/SQA reports (#16653).
+		renderReportFeedbackSection?.(getFeedbackRating?.(), container);
 	}
 
 	/** Saved project state card: restored recommendations with selection UI. */
@@ -800,10 +847,10 @@ export function createFounderView({
 		const founder = session.founder ?? {};
 		const scope = founder.scope ?? {};
 		const report = founder.report;
-		const lifecycle = describeFounderLifecycle(founder, session.status, session.activities?.length ?? 0,session.founderProgress);
+		const lifecycle = describeFounderLifecycle(founder, session.status, session.activities?.length ?? 0, session.founderProgress, session);
 		elements.countFounder.textContent = lifecycle.badge;
 		handoff=handoffOverride??getProjectState?.()?.handoff;
-		const signature=founderViewSignature({scope,observations:founder.observations,report,finalizedAt:founder.finalizedAt,lifecycle,categories:getCatalog()?.categories,projectSet:report?undefined:getProjectState?.()?.recommendationSet});
+		const signature=founderViewSignature({scope,observations:founder.observations,report,finalizedAt:founder.finalizedAt,lifecycle,categories:getCatalog()?.categories,projectSet:report?undefined:getProjectState?.()?.recommendationSet,feedback:report?(getFeedbackRating?.()??null):undefined});
 		reader.update(elements.founderView,session,signature,()=>{
 		surface=elements.founderView;traceIndex=0;surface.dataset.founderRun=session.id;delete surface.dataset.founderSelection;
 		elements.founderView.append(renderFounderHero(scope, lifecycle), renderFounderScope(scope));
@@ -845,8 +892,8 @@ export function createFounderView({
 		evidenceView.sync(session);handoff=handoffOverride??getProjectState?.()?.handoff;
 		const founder = session?.founder ?? {};
 		const report = founder.report;
-		const lifecycle = describeFounderLifecycle(founder, session?.status, session?.activities?.length ?? 0,session?.founderProgress);
-		const signature=founderViewSignature({scope:founder.scope,observations:founder.observations,report,finalizedAt:founder.finalizedAt,lifecycle,categories:getCatalog()?.categories});
+		const lifecycle = describeFounderLifecycle(founder, session?.status, session?.activities?.length ?? 0, session?.founderProgress, session);
+		const signature=founderViewSignature({scope:founder.scope,observations:founder.observations,report,finalizedAt:founder.finalizedAt,lifecycle,categories:getCatalog()?.categories,feedback:report?(getFeedbackRating?.()??null):undefined});
 		reader.update(elements.reportView,session,signature,()=>{
 		surface=elements.reportView;traceIndex=0;surface.dataset.founderRun=session.id;delete surface.dataset.founderSelection;
 		if (!founder.finalizedAt || !report) {

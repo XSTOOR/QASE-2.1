@@ -1,0 +1,242 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Qase Public Read API",
+    "version": "2.0.0",
+    "description": "Read-only public API over QASE test runs, findings, and reports. Every GET requires a long-lived bearer token except /public/v1/health. Collections return records under `data` with an integer `total` (matching rows ignoring paging). All timestamps are ISO 8601 UTC."
+  },
+  "servers": [{ "url": "https://qase.drytis.com" }],
+  "security": [{ "bearerAuth": [] }],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Long-lived, read-only API token (QASE_PUBLIC_API_TOKEN). Send as Authorization: Bearer <token>."
+      }
+    },
+    "schemas": {
+      "Health": {
+        "type": "object",
+        "required": ["ok"],
+        "properties": {
+          "ok": { "type": "boolean", "description": "Service is up." },
+          "serverNow": { "type": "string", "format": "date-time", "description": "Server clock, ISO 8601 UTC." }
+        }
+      },
+      "RunSummary": {
+        "type": "object",
+        "required": ["id", "title", "status", "mode"],
+        "properties": {
+          "id": { "type": "string", "description": "Stable run id (UUID)." },
+          "title": { "type": "string", "description": "Human-readable run title, e.g. target URL, device, and browser." },
+          "status": { "type": "string", "enum": ["idle", "running", "done", "error", "interrupted", "awaiting_input"], "description": "Run lifecycle status." },
+          "mode": { "type": "string", "enum": ["qa", "sqa", "founder"], "description": "Run mode: qa (functional test run), sqa (assessment), founder (founder review)." },
+          "targetUrl": { "type": "string", "description": "URL the run tested. Null for runs without a target." },
+          "device": { "type": "string", "description": "Device profile name used for the run (e.g. desktop, pixel_10, macbook_air_m3)." },
+          "engine": { "type": "string", "description": "Browser engine used (e.g. chromium, firefox, webkit)." },
+          "createdAt": { "type": "string", "format": "date-time", "nullable": true, "description": "When the run was created, ISO 8601 UTC." },
+          "updatedAt": { "type": "string", "format": "date-time", "nullable": true, "description": "Last activity on the run, ISO 8601 UTC." },
+          "startedAt": { "type": "string", "format": "date-time", "nullable": true, "description": "When execution started; null if never started." },
+          "completedAt": { "type": "string", "format": "date-time", "nullable": true, "description": "When execution finished; null while running or interrupted." },
+          "findingCount": { "type": "integer", "description": "Number of findings (defects) recorded for this run." },
+          "reportVerdict": { "type": "string", "enum": ["pass", "pass_with_issues", "fail", "blocked"], "nullable": true, "description": "Overall report verdict; null when no report exists yet." }
+        }
+      },
+      "RunList": {
+        "type": "object",
+        "required": ["data", "total"],
+        "properties": {
+          "data": { "type": "array", "items": { "$ref": "#/components/schemas/RunSummary" } },
+          "total": { "type": "integer", "description": "Total matching runs, ignoring paging." },
+          "page": { "type": "integer", "description": "Current page (1-based)." },
+          "page_size": { "type": "integer", "description": "Records per page." },
+          "serverNow": { "type": "string", "format": "date-time", "description": "Server clock, ISO 8601 UTC." }
+        }
+      },
+      "Finding": {
+        "type": "object",
+        "required": ["id", "title", "severity"],
+        "properties": {
+          "id": { "type": "string", "description": "Stable finding id (UUID)." },
+          "ts": { "type": "string", "format": "date-time", "nullable": true, "description": "When the finding was recorded, ISO 8601 UTC." },
+          "title": { "type": "string", "description": "One-line human-readable defect title." },
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"], "description": "Defect severity." },
+          "category": { "type": "string", "description": "Defect category, e.g. auth, navigation, layout." },
+          "url": { "type": "string", "description": "Page URL where the defect was observed." },
+          "steps": { "type": "array", "items": { "type": "string" }, "description": "Ordered reproduction steps (max 12)." },
+          "expected": { "type": "string", "description": "Expected behavior." },
+          "actual": { "type": "string", "description": "Observed behavior." },
+          "evidence": { "type": "string", "description": "Evidence summary (screenshot/log reference)." },
+          "status": { "type": "string", "enum": ["open", "in_progress", "fixed", "wont_fix"], "description": "Remediation status." }
+        }
+      },
+      "FindingList": {
+        "type": "object",
+        "required": ["data", "total"],
+        "properties": {
+          "data": { "type": "array", "items": { "$ref": "#/components/schemas/Finding" } },
+          "total": { "type": "integer", "description": "Total matching findings for this run, ignoring paging." },
+          "page": { "type": "integer", "description": "Current page (1-based)." },
+          "page_size": { "type": "integer", "description": "Records per page." },
+          "serverNow": { "type": "string", "format": "date-time", "description": "Server clock, ISO 8601 UTC." }
+        }
+      },
+      "ReportSummary": {
+        "type": "object",
+        "nullable": true,
+        "description": "Structured verdict of a run's report; null when no report exists.",
+        "properties": {
+          "ts": { "type": "string", "format": "date-time", "nullable": true, "description": "When the report was produced, ISO 8601 UTC." },
+          "verdict": { "type": "string", "enum": ["pass", "pass_with_issues", "fail", "blocked"], "description": "Overall verdict." },
+          "summary": { "type": "string", "description": "Prose summary of what was checked." },
+          "covered": { "type": "array", "items": { "type": "string" }, "description": "Behaviors verified as working (max 25)." },
+          "notCovered": { "type": "array", "items": { "type": "string" }, "description": "Behaviors not tested in this run (max 25)." },
+          "recommendations": { "type": "array", "items": { "type": "string" }, "description": "Recommended follow-ups (max 25)." }
+        }
+      },
+      "RunDetail": {
+        "type": "object",
+        "description": "A single run with its full findings list and report summary.",
+        "allOf": [
+          { "$ref": "#/components/schemas/RunSummary" },
+          {
+            "type": "object",
+            "properties": {
+              "findings": { "type": "array", "items": { "$ref": "#/components/schemas/Finding" }, "description": "All findings for this run." },
+              "report": { "$ref": "#/components/schemas/ReportSummary" },
+              "serverNow": { "type": "string", "format": "date-time", "description": "Server clock, ISO 8601 UTC." }
+            }
+          }
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string", "description": "Machine-readable code, e.g. public_api_401." },
+              "message": { "type": "string", "description": "Human-readable message." },
+              "retryable": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/public/v1/health": {
+      "get": {
+        "operationId": "health",
+        "summary": "Liveness check; no token required.",
+        "tags": ["Meta"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Health" } }
+            }
+          }
+        }
+      }
+    },
+    "/public/v1/runs": {
+      "get": {
+        "operationId": "list_runs",
+        "summary": "Test runs, filterable by status, mode, device, and creation date.",
+        "tags": ["Runs"],
+        "parameters": [
+          { "name": "status", "in": "query", "description": "Only runs in this lifecycle status.", "schema": { "type": "string", "enum": ["idle", "running", "done", "error", "interrupted", "awaiting_input"] } },
+          { "name": "mode", "in": "query", "description": "Only runs in this mode.", "schema": { "type": "string", "enum": ["qa", "sqa", "founder"] } },
+          { "name": "device", "in": "query", "description": "Only runs on this device profile name (exact match).", "schema": { "type": "string" } },
+          { "name": "from", "in": "query", "description": "createdAt >= this date (inclusive, UTC).", "schema": { "type": "string", "format": "date" } },
+          { "name": "to", "in": "query", "description": "createdAt <= this date (inclusive end of day, UTC).", "schema": { "type": "string", "format": "date" } },
+          { "name": "page", "in": "query", "description": "Page number, 1-based.", "schema": { "type": "integer", "default": 1, "minimum": 1 } },
+          { "name": "page_size", "in": "query", "description": "Runs per page.", "schema": { "type": "integer", "default": 25, "minimum": 1, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/RunList" } }
+            }
+          },
+          "400": { "description": "Invalid filter or paging value.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Missing or wrong bearer token.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "503": { "description": "Public API not configured on this deployment.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/public/v1/runs/{id}": {
+      "get": {
+        "operationId": "get_run",
+        "summary": "One run by id, including its findings and report summary.",
+        "tags": ["Runs"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "description": "Run id (UUID).", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/RunDetail" } }
+            }
+          },
+          "401": { "description": "Missing or wrong bearer token.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "No such run.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "503": { "description": "Public API not configured on this deployment.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/public/v1/runs/{id}/findings": {
+      "get": {
+        "operationId": "list_run_findings",
+        "summary": "Findings (defects) for a run, filterable by severity and remediation status.",
+        "tags": ["Findings"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "description": "Run id (UUID).", "schema": { "type": "string" } },
+          { "name": "severity", "in": "query", "description": "Only findings at this severity.", "schema": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] } },
+          { "name": "status", "in": "query", "description": "Only findings in this remediation status.", "schema": { "type": "string", "enum": ["open", "in_progress", "fixed", "wont_fix"] } },
+          { "name": "page", "in": "query", "description": "Page number, 1-based.", "schema": { "type": "integer", "default": 1, "minimum": 1 } },
+          { "name": "page_size", "in": "query", "description": "Findings per page.", "schema": { "type": "integer", "default": 25, "minimum": 1, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/FindingList" } }
+            }
+          },
+          "400": { "description": "Invalid filter or paging value.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Missing or wrong bearer token.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "No such run.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "503": { "description": "Public API not configured on this deployment.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/public/v1/runs/{id}/report.md": {
+      "get": {
+        "operationId": "get_run_report",
+        "summary": "The finalized markdown report for a run.",
+        "tags": ["Runs"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "description": "Run id (UUID).", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Markdown report body.",
+            "content": {
+              "text/markdown": { "schema": { "type": "string" } }
+            }
+          },
+          "401": { "description": "Missing or wrong bearer token.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "No such run.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "Run has no finalized report yet.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "503": { "description": "Public API not configured on this deployment.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    }
+  }
+}

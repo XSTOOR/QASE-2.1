@@ -75,6 +75,7 @@ try{
   assert.equal(await page.locator(`#${mode}-submit`).isDisabled(),true);
   await page.locator(`#${mode}-target-url`).fill(targetUrl);
   if(mode==='sqa'){
+   await page.locator('#sqa-customize > summary').click();
    await page.locator('#sqa-target-release').fill('integration-fixture');
    await page.locator('#sqa-target-environment').fill('isolated local fixture');
   }

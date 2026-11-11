@@ -20,6 +20,7 @@ export function createPostgresFeedbackRepository({ pool, tenantContext }) {
 			id: record.id,
 			runId: record.run_id,
 			submittedBy: record.submitted_by_user_id ?? undefined,
+			mode: record.mode ?? 'qa',
 			targetUrl: record.target_url ?? undefined,
 			runStatus: record.run_status ?? undefined,
 			durationSeconds: record.duration_seconds === null ? undefined : Number(record.duration_seconds),
@@ -48,8 +49,8 @@ export function createPostgresFeedbackRepository({ pool, tenantContext }) {
 			`INSERT INTO qa_run_feedback (
 				id, organization_id, project_id, run_id, submitted_by_user_id,
 				target_url, run_status, duration_seconds, rating, category,
-				comments, improvement, status
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'new')
+				comments, improvement, mode, status
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'new')
 			RETURNING *`,
 			[
 				id, tenant.organizationId, tenant.projectId, runId, submittedBy ?? null,
@@ -57,7 +58,9 @@ export function createPostgresFeedbackRepository({ pool, tenantContext }) {
 				typeof context?.runStatus === 'string' ? context.runStatus : null,
 				Number.isFinite(context?.durationSeconds) ? context.durationSeconds : null,
 				normalized.rating, normalized.category, normalized.comments,
-				normalized.improvement ?? null
+				normalized.improvement ?? null,
+				// #16656 — testing mode from run context; legacy default 'qa'.
+				typeof context?.mode === 'string' && context.mode.trim() !== '' ? context.mode.trim() : 'qa'
 			]
 		);
 		return feedbackRow(rows[0]);

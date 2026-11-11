@@ -16,7 +16,7 @@ for (const mismatchedVersion of [false, true]) test(`actual Chromium identity is
 		async snapshot() { return { elements: [] }; }, async getDiagnostics() { return {}; },
 		async locator(page) { return page.locator('body'); }, async fill() {}, async typeText() {}, async suspend() {}, async restoreSession() {}
 	};
-	const environment = { envId: 'integration-mac-chrome', platform: 'macos', device: 'iMac test profile', os: 'macOS', browserCode: 'chrome', browserVersion: '151', deviceType: 'desktop', executionProvider: 'local', emulation: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false } };
+	const environment = { envId: 'integration-mac-chrome', platform: 'macos', device: 'iMac test profile', os: 'macOS', browserCode: 'chrome', browserVersion: browser.version(), deviceType: 'desktop', executionProvider: 'local', emulation: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false } };
 	const session = { id: 'runtime-finalization-integration', mode: 'qa', environmentSnapshot: environment, findings: [{ severity: 'medium' }], todos: [{ text: 'Observe browser', status: 'completed' }], activities: [{ toolName: 'browser_snapshot', status: 'done' }] };
 	const store = { async commit() {}, publish() {}, subscribe() { return () => {}; } };
 	let bridge;
@@ -24,7 +24,6 @@ for (const mismatchedVersion of [false, true]) test(`actual Chromium identity is
 		// This fixture exercises a simulated profile on the installed bundled
 		// engine. Host Chrome auto-updates are a separate registry contract;
 		// selecting one implicitly made this test depend on the CI host image.
-		environment.browserVersion = browser.version();
 		bridge = await attachBrowserBridge(session, service, store, { environment, execution: { mode: 'emulated', executionEngine: 'chromium', brandedExecutablePath: null } });
 		await service.ensurePage();
 		assert.equal(session.runtimeFacts, undefined, 'reproduces lazy capture before finalization');

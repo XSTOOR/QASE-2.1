@@ -9,16 +9,17 @@
 <title>QASE — Autonomous quality assurance</title>
 <script src="theme.js?v=20261015-11"></script>
 <script src="studioMode.js?v=20261014-6"></script>
-<link rel="stylesheet" href="styles.css?v=20261110-3">
+<link rel="stylesheet" href="styles.css?v=20261111-1">
 <link rel="stylesheet" href="bugsView.css?v=20261014-6">
 <link rel="stylesheet" href="studio-workspace.css?v=20261015-6">
 <link rel="stylesheet" href="studio-embed.css?v=20261108-2">
 <link rel="stylesheet" href="journey.css?v=20261015-4">
-<link rel="stylesheet" href="matrixPicker.css?v=20261015-5">
+<link rel="stylesheet" href="matrixPicker.css?v=20261016-3">
 <link rel="stylesheet" href="resultsPage.css?v=20261015-8">
 <link rel="stylesheet" href="brand.css?v=20261027-1">
 <link rel="stylesheet" href="runCard.css?v=20261015-17">
 <link rel="stylesheet" href="auth.css?v=20261109-1">
+<link rel="stylesheet" href="runStartup.css?v=20261016-1">
 <link rel="stylesheet" href="founderReader.css?v=20261108-2">
 <link rel="stylesheet" href="reportReadability.css?v=20261109-1">
 <link rel="icon" type="image/svg+xml" href="qase-mark.svg">
@@ -490,16 +491,20 @@
          live INSIDE the right execution panel — sticky tab bar, scrollable
          active pane, never a page footer. -->
     <nav class="tabs" id="tabs" role="tablist" aria-label="Run details">
-      <button class="tab is-active" id="tab-activity" data-tab="activity" role="tab" aria-selected="true" aria-controls="pane-activity">Activity</button>
-      <button class="tab" id="tab-plan" data-tab="plan" role="tab" aria-selected="false" aria-controls="pane-plan" tabindex="-1">Plan <span class="count" id="count-plan"></span></button>
+      <!-- Activity and Plan positions swapped (ticket #16631): Plan now
+           appears first, Activity second — order-only change, tab switching
+           is DOM-order driven so keyboard/arrow navigation follows the new
+           order automatically. -->
+      <button class="tab is-active" id="tab-plan" data-tab="plan" role="tab" aria-selected="true" aria-controls="pane-plan">Plan <span class="count" id="count-plan"></span></button>
+      <button class="tab" id="tab-activity" data-tab="activity" role="tab" aria-selected="false" aria-controls="pane-activity" tabindex="-1">Activity</button>
       <button class="tab" id="tab-findings" data-tab="findings" role="tab" aria-selected="false" aria-controls="pane-findings" tabindex="-1">Findings <span class="count" id="count-findings"></span></button>
       <button class="tab" id="tab-report" data-tab="report" role="tab" aria-selected="false" aria-controls="pane-report" tabindex="-1">Report</button>
       <button class="tab tab-sqa" id="tab-sqa" data-tab="sqa" role="tab" aria-selected="false" aria-controls="pane-sqa" tabindex="-1" hidden>Quality <span class="count" id="count-sqa"></span></button>
       <button class="tab tab-founder" id="tab-founder" data-tab="founder" role="tab" aria-selected="false" aria-controls="pane-founder" tabindex="-1" hidden>Founder <span class="count" id="count-founder"></span></button>
     </nav>
     <div class="tab-body">
-      <section class="tab-pane is-active" id="pane-activity" data-pane="activity" role="tabpanel" aria-labelledby="tab-activity"><div class="feed" id="activity-feed" role="list" aria-live="polite" aria-relevant="additions text"></div></section>
-      <section class="tab-pane" id="pane-plan" data-pane="plan" role="tabpanel" aria-labelledby="tab-plan"><div class="feed" id="plan-list" role="list"></div></section>
+      <section class="tab-pane is-active" id="pane-plan" data-pane="plan" role="tabpanel" aria-labelledby="tab-plan"><div class="feed" id="plan-list" role="list"></div></section>
+      <section class="tab-pane" id="pane-activity" data-pane="activity" role="tabpanel" aria-labelledby="tab-activity"><div class="feed" id="activity-feed" role="list" aria-live="polite" aria-relevant="additions text"></div></section>
       <section class="tab-pane" id="pane-findings" data-pane="findings" role="tabpanel" aria-labelledby="tab-findings"><div class="feed" id="findings-list" role="list"></div></section>
       <section class="tab-pane" id="pane-bugs" data-pane="bugs" role="tabpanel" aria-label="Bugs"><div class="feed" id="bugs-list" role="list"><div class="feed-empty">No bugs detected yet — use Report bug on a run with findings.</div></div></section>
       <section class="tab-pane" id="pane-report" data-pane="report" role="tabpanel" aria-labelledby="tab-report"><div class="feed" id="report-view"></div></section>
@@ -942,7 +947,7 @@
         <small>Tests eligible empty fields with safe sample values, including invalid inputs. Forms are not submitted. Add expected copy or a design reference for content and visual checks.</small>
         <small>Choose one browser configuration. Existing runs keep their original execution mode.</small>
       </section>
-      <div class="journey-presets" role="group" aria-label="Browser coverage size"><button type="button" id="journey-focused" aria-pressed="true"><strong>Focused check <span>Recommended</span></strong><small>One available browser. A manageable first run.</small></button><button type="button" id="journey-custom" aria-pressed="false"><strong>Custom coverage</strong><small>Choose browsers, devices, and versions.</small></button></div>
+      <div class="journey-presets" role="group" aria-label="Test environment"><button type="button" id="journey-focused" aria-pressed="true"><strong>Let QASE choose <span>Recommended</span></strong><small>Chrome on one default desktop. One test run, no setup.</small></button><button type="button" id="journey-custom" aria-pressed="false"><strong>Choose my own</strong><small>Choose one browser and one compatible device.</small></button></div>
       <section class="qa-browser-status" id="qa-browser-status" data-state="loading" aria-label="Browser for this run" aria-live="polite" aria-atomic="true">
         <div class="qa-browser-status-copy"><p class="qa-browser-status-label">BROWSER FOR THIS RUN <span id="qa-browser-status-badge">Checking</span></p>
           <h3 id="qa-browser-status-title" tabindex="-1">Finding your browser…</h3>
@@ -950,6 +955,25 @@
         </div>
         <button class="btn btn-ghost btn-sm" id="qa-browser-status-action" type="button" hidden>Change browser</button>
       </section>
+      <fieldset class="qa-engine-fieldset qa-matrix-fieldset" id="qa-matrix-fieldset" hidden>
+        <legend>Browsers &amp; devices</legend>
+        <div class="qa-matrix-state" id="qa-matrix-state" role="status" aria-live="polite">Loading device &amp; browser catalog…</div>
+        <div class="qa-matrix" id="qa-matrix-root" hidden>
+          <div class="qa-matrix-filters">
+            <label for="qa-matrix-search" class="mp-search-label">Find a device</label>
+            <input class="qa-matrix-search" id="qa-matrix-search" type="search" placeholder="Search device name, brand or operating system…" autocomplete="off" aria-label="Search compatible devices">
+          </div>
+          <div class="qa-matrix-body">
+            <div class="qa-matrix-browsers" id="qa-matrix-browsers"></div>
+            <div class="qa-matrix-devices" id="qa-matrix-devices"></div>
+          </div>
+          <div class="qa-matrix-summary" id="qa-matrix-summary" aria-live="polite"></div>
+        </div>
+        <div class="qa-matrix-error" id="qa-matrix-error" hidden>
+          <span id="qa-matrix-error-text"></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="qa-matrix-retry">Retry</button>
+        </div>
+      </fieldset>
       <section class="qa-recommended" aria-labelledby="qa-recommended-title">
         <h3 id="qa-recommended-title">Recommended checks are selected</h3>
         <p>Check forms, navigation, layout and accessibility. Customize the coverage for your website below.</p>
@@ -957,7 +981,7 @@
       </section>
       <div class="journey-benefits"><span>Forms &amp; validation</span><span>Navigation &amp; links</span><span>Layout &amp; accessibility</span></div>
       <details class="qa-customize" id="qa-customize">
-        <summary>Customize devices, browsers and checks</summary>
+        <summary>Customize checks</summary>
         <div class="qa-customize-body">
       <fieldset class="qa-device-fieldset test-on-fieldset" hidden>
         <legend>Test on</legend>
@@ -978,25 +1002,6 @@
           </div>
         </details>
       </fieldset>
-      <fieldset class="qa-engine-fieldset qa-matrix-fieldset" id="qa-matrix-fieldset">
-        <legend>Browsers &amp; devices</legend>
-        <div class="qa-matrix-state" id="qa-matrix-state" role="status" aria-live="polite">Loading device &amp; browser catalog…</div>
-        <div class="qa-matrix" id="qa-matrix-root" hidden>
-          <div class="qa-matrix-filters">
-            <label for="qa-matrix-search" class="mp-search-label">Find a device</label>
-            <input class="qa-matrix-search" id="qa-matrix-search" type="search" placeholder="Search devices, operating systems or browser versions…" autocomplete="off" aria-label="Search devices and configurations">
-          </div>
-          <div class="qa-matrix-body">
-            <div class="qa-matrix-browsers" id="qa-matrix-browsers"></div>
-            <div class="qa-matrix-devices" id="qa-matrix-devices"></div>
-          </div>
-          <div class="qa-matrix-summary" id="qa-matrix-summary" aria-live="polite"></div>
-        </div>
-        <div class="qa-matrix-error" id="qa-matrix-error" hidden>
-          <span id="qa-matrix-error-text"></span>
-          <button type="button" class="btn btn-ghost btn-sm" id="qa-matrix-retry">Retry</button>
-        </div>
-      </fieldset>
       <fieldset class="qa-scope-fieldset">
         <legend>Coverage selection</legend>
         <div class="coverage-heading">Supported Coverage</div>
@@ -1015,9 +1020,9 @@
               <label class="check"><input class="qa-scope" type="checkbox" value="mobile-layout" checked title="mobile layout using an emulated phone viewport"><span>Mobile layout</span></label>
               <label class="check"><input class="qa-scope" type="checkbox" value="ui-consistency" checked title="UI consistency: buttons, fonts, colors, spacing, forms, cards, navigation consistent across pages"><span>UI consistency</span></label>
               <label class="check"><input class="qa-scope" type="checkbox" value="content-validation" checked title="content validation: text, labels, headings, messages, placeholders correct, readable, properly presented"><span>Content &amp; text validation</span></label>
-              <div class="scope-browser-row" title="Browser compatibility follows the browser engines selected below — every checked engine runs the site.">
-                <span class="check"><input class="qa-browser-inline" type="checkbox" checked disabled aria-label="Browser compatibility is controlled by the browser engines selection"><span>Browser compatibility</span></span>
-                <small>driven by the browser engines below</small>
+              <div class="scope-browser-row" title="Checks run on the single browser and device selected for this test.">
+                <span class="check"><input class="qa-browser-inline" type="checkbox" checked disabled aria-label="Check behavior on the selected browser"><span>Selected browser behavior</span></span>
+                <small>uses your selected test environment</small>
               </div>
             </div>
           </div>
@@ -1541,6 +1546,7 @@
 
 <!-- QA matrix run results board (#14942 Phase 4): per-configuration results,
      evidence and totals for the launcher's matrix runs. -->
+<section id="run-startup-page" class="startup-page" aria-labelledby="startup-title" hidden></section>
 <dialog class="modal" id="qa-matrix-run-dialog" aria-labelledby="qa-matrix-run-title">
   <div class="modal-inner qmr-modal-inner">
     <header class="modal-head">
@@ -1765,6 +1771,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261110-3" type="module"></script>
+<script src="app.js?v=20261111-1" type="module"></script>
 </body>
 </html>

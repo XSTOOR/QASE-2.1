@@ -16,7 +16,7 @@ const runtimeDirectory = path.join(directory, `runtime-${Date.now()}`);
 const runtime = await createSqaTestServer(runtimeDirectory, { authRequired: true });
 const checks = [], errors = [], unexpectedMutations = [], externalRequests = [];
 let browser, page, owner, stranger, anonymous, selectionGate, releaseSelection, evidenceGate, releaseEvidence;
-let selectionRequests = 0, evidenceRequests = 0, failEvidence = false;
+let selectionRequests = 0, evidenceRequests = 0, failEvidence = false, savedFeedback;
 
 
 const source = values['session-file'] ? JSON.parse(await fs.readFile(path.resolve(values['session-file']), 'utf8')) : await createFounderBrowserFixture();
@@ -98,6 +98,7 @@ try {
       if (evidenceGate) await evidenceGate;
     }
     if (pathname === '/api/config') return route.fulfill({ json: { provider: 'custom', model: 'reader-fixture', ready: true, hasApiKey: true, providers: ['custom'] } });
+    if (savedFeedback && pathname === `/api/sessions/${first.id}/feedback`) return route.fulfill({ json: savedFeedback });
     return route.continue();
   });
   await open(first);
@@ -125,7 +126,12 @@ try {
   await emit({ type: 'status', status: 'done' });
   await emit({ type: 'founder.finalized', report: first.founder.report });
   await settled();
-  assert.ok(await page.evaluate(() => window.readerBox === document.querySelector('#report-view [data-recommendation-id]') && document.activeElement === window.readerBox && window.readerBox.checked));
+  assert.deepEqual(await page.evaluate(() => ({
+    sameControl: window.readerBox === document.querySelector('#report-view [data-recommendation-id]'),
+    focused: document.activeElement === window.readerBox,
+    checked: window.readerBox.checked,
+    feedbackOpen: document.querySelector('#feedback-modal').open
+  })), { sameControl: true, focused: true, checked: true, feedbackOpen: false });
   assert.ok(Math.abs((await readingState()).top - position.top) <= 2);
   assert.ok(await criteria.evaluate(node => node.open)); assert.equal(await assumptions.evaluate(node => node.open), false);
   assert.equal(selectionRequests, 1);
@@ -221,6 +227,17 @@ try {
   }
   await page.screenshot({ path: path.join(directory, 'evidence-mobile.png') });
   checks.push('Desktop light/dark and 390px mobile render without horizontal overflow; navigation and evidence targets are at least 44px.');
+  await page.keyboard.press('Escape');
+  savedFeedback = { runId: first.id, rating: 4, comments: 'Saved Founder fixture feedback.', submittedAt: Date.now() };
+  await emit({ type: 'status', status: 'done' });
+  await root().getByRole('button', { name: 'View Feedback', exact: true }).waitFor();
+  for (const container of [root(), page.locator('#founder-view')]) {
+    const feedback = container.getByRole('region', { name: 'User feedback', includeHidden: true });
+    assert.equal(await feedback.count(), 1);
+    assert.match(await feedback.textContent(), /Saved Founder fixture feedback/);
+  }
+  assert.equal(await page.locator('#feedback-modal').evaluate(modal => modal.open), false);
+  checks.push('Saved feedback refreshes both Founder report views once, without opening a modal for a repeated status.');
   assert.deepEqual(errors, []); assert.deepEqual(unexpectedMutations, []); assert.deepEqual(externalRequests, []);
   assert.equal(JSON.stringify(source), originalSource, 'Source report must stay unchanged.');
   const result = { status: 'passed', source: values['session-file'] ? 'Recorded completed Founder session (read-only replay)' : 'Synthetic report validated through the original Founder publisher', modelCalls: 0, selectionRequests, evidenceRequests, checks, pageErrors: errors, unexpectedMutations, externalRequests };

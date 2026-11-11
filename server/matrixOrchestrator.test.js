@@ -484,6 +484,58 @@ test('pre-launch hang (#16159 review WARN-1): a startSession resolving AFTER the
 	}
 });
 
+test('runtime initialization timeout aborts late startup and releases the queue', async () => {
+	process.env.QASE_MATRIX_PRELAUNCH_TIMEOUT_S = '1';
+	try {
+		const runs = runsFixture();
+		const { service } = matrixFixture({ items: [{}, { id: 'item-after-startup' }] });
+		const hooks = hooksFor(runs, null);
+		let calls = 0;
+		let lateSignal;
+		let release;
+		hooks.sendTask = async (session, _run, { signal }) => {
+			if (++calls === 1) {
+				lateSignal = signal;
+				await new Promise(resolve => { release = resolve; });
+				if (signal.aborted) return;
+				assert.fail('Timed-out initialization must not start a late model turn');
+			}
+			runs.finish(session.id, { status: 'done', report: { verdict: 'pass' } });
+		};
+		const orchestrator = createMatrixOrchestrator({ runs, matrix: service }, hooks);
+		orchestrator.start('matrix-test');
+		await new Promise(resolve => setTimeout(resolve, 2500));
+		const { items } = await service.get();
+		assert.equal(items[0].status, 'ERROR');
+		assert.match(items[0].error, /Agent initialization did not complete/);
+		assert.equal(lateSignal.aborted, true);
+		assert.equal(items[1].status, 'PASSED', 'another configuration can acquire the slot');
+		release();
+		await new Promise(resolve => setTimeout(resolve, 20));
+	} finally { delete process.env.QASE_MATRIX_PRELAUNCH_TIMEOUT_S; }
+});
+
+test('automatic browser selection is applied inside execution and persists the actual fallback profile', async () => {
+	const runs = runsFixture();
+	const { service, stored } = matrixFixture({ items: [{}] });
+	stored.browserSelection = { mode: 'automatic' };
+	const hooks = hooksFor(runs, null);
+	let selected = 0;
+	hooks.selectAutomaticEnvironment = async () => {
+		selected++;
+		return { environment: { envId: 'chosen-firefox', profileId: 'chosen-profile', platform: 'windows', device: 'Desktop', deviceType: 'desktop', browserCode: 'firefox', browser: 'Firefox', browserVersion: 'test' }, selection: { mode: 'automatic', phase: 'verified' } };
+	};
+	const realStart = hooks.startSession;
+	hooks.startSession = async (run, item) => { assert.equal(item.environmentId, 'chosen-firefox'); const session = await realStart(run, item); runs.finish(session.id, { status: 'done', report: { verdict: 'pass' } }); return session; };
+	const orchestrator = createMatrixOrchestrator({ runs, matrix: service }, hooks);
+	assert.equal(selected, 0);
+	orchestrator.start('matrix-test');
+	await new Promise(resolve => setTimeout(resolve, 200));
+	const run = await service.get();
+	assert.equal(selected, 1); assert.equal(run.items[0].browserCode, 'firefox');
+	assert.equal(run.items[0].profileId, 'chosen-profile'); assert.equal(run.items[0].status, 'PASSED');
+});
+
 test('statusCounts tallies the full honest vocabulary', () => {
 	const counts = statusCounts([
 		{ status: 'PASSED' }, { status: 'PASSED' }, { status: 'FAILED' },

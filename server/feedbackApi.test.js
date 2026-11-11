@@ -6,7 +6,11 @@ import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 // Isolated CWD so the local feedback store never touches real instance data.
+// Restored in after() — under --test-isolation=none later suites read files
+// relative to CWD and would otherwise see ENOENT.
+const originalCwd = process.cwd();
 process.chdir(fs.mkdtempSync(path.join(os.tmpdir(), 'qase-feedback-api-')));
+test.after(async () => { process.chdir(originalCwd); });
 
 const { createApplication } = await import('../server/app.js');
 const { createLocalApplicationServices } = await import('../server/localServices.js');

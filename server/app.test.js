@@ -17,7 +17,7 @@ import path from 'node:path';
 import { withUserConfiguration } from './config.js';
 import { profileIdentity, REQUIRED_CAPABILITIES, HYBRID_SDK_VERSION } from './hybridConfig.js';
 
-const TEST_TENANT = Object.freeze({
+export const TEST_TENANT = Object.freeze({
 	organizationId: '55c15025-8ef4-4ce8-8ad5-4562f33f1852',
 	projectId: 'f2964599-fb3a-4c4e-acec-ee84d74fab55',
 	actorUserId: '9e2fb678-423e-41a0-ae19-e9cae143c606',
@@ -81,7 +81,7 @@ function createMemoryFeedbackService() {
 	};
 }
 
-function createMemoryServices(options = {}) {
+export function createMemoryServices(options = {}) {
 	const sessions = new Map();
 	const live = new Map();
 	const vaults = new Map();

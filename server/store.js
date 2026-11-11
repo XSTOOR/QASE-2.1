@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { normalizeFounderState } from './founderService.js';
+import { invalidTransition, recordLifecyclePhase } from './runLifecycle.js';
 import { normalizePendingSqaState } from './sqaService.js';
 import { DEFAULT_DEVICE_ID, isDeviceId } from './deviceProfiles.js';
 import { isEngineId } from './browserEngines.js';
@@ -608,9 +609,22 @@ export function updateActivity(session, id, patch) {
 }
 
 export function setStatus(session, status, detail, { durable = false } = {}) {
+	// #17932: server-authoritative lifecycle. Invalid transitions (notably
+	// any move out of a terminal state except an explicit resume) are
+	// rejected and logged instead of silently overwriting the run's history.
+	const invalid = invalidTransition(session.status, status);
+	if (invalid) {
+		console.warn(JSON.stringify({
+			event: 'run_status_transition_rejected', runId: session.id,
+			from: session.status, to: status,
+			reason: invalid, ts: new Date().toISOString()
+		}));
+		return;
+	}
 	applyStatusTiming(session, status);
 	session.status = status;
 	session.statusDetail = detail || undefined;
+	recordLifecyclePhase(session, status, detail);
 	// Compatibility aliases: keep the Phase-4 UI timer / analytics fields in
 	// lockstep with the server-authoritative timing fields above.
 	if (session.startedAt !== undefined && typeof session.runStartedAt !== 'number') {

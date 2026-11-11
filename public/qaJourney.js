@@ -10,7 +10,7 @@ export function normalizeWebsite(value) {
 	} catch { return ''; }
 }
 
-export function createQaJourney({ document, getState, changed }) {
+export function createQaJourney({ document, getState, changed, onBlocked }) {
 	const $ = id => document.getElementById(id);
 	const form = $('qa-form');
 	const target = $('qa-target-url');
@@ -27,9 +27,24 @@ export function createQaJourney({ document, getState, changed }) {
 	};
 	function go(next, validate = true) {
 		if (next > step && validate) {
-			if (!normalize()) { target.reportValidity(); target.focus(); return; }
+			if (!normalize()) {
+				// #17933: the URL input lives on panel 0; if the user is on a
+				// later step the validity bubble renders invisibly. Jump back
+				// to the Website panel so the error is seen, then report it.
+				if (step !== 0) go(0, false);
+				target.reportValidity(); target.focus();
+				return;
+			}
 			const blocked = getState().coverageBlocked || getState().blocked;
-			if (next > 1 && blocked) { $('journey-footer-hint').textContent = blocked; return; }
+			if (next > 1 && blocked) {
+				// #17933: never a silent dead click. The footer hint carries
+				// the reason; onBlocked also surfaces it on the form error
+				// element (visible on every step) and can offer a retry.
+				$('journey-footer-hint').textContent = blocked;
+				lastAnnouncement = blocked;
+				try { onBlocked?.(blocked); } catch { /* UI callback must not break navigation */ }
+				return;
+			}
 		}
 		step = Math.max(0, Math.min(2, next));
 		panels.forEach((panel, index) => { panel.hidden = index !== step; });
@@ -56,7 +71,8 @@ export function createQaJourney({ document, getState, changed }) {
 		$('qa-submit').disabled = Boolean(state.busy || !ready || blocked);
 		$('journey-review-url').textContent = normalizeWebsite(target.value) || 'Add a website';
 		$('journey-review-checks').textContent = `${state.checks} selected`;
-		$('journey-review-devices').textContent = state.browserLabel || `${state.configurations.toLocaleString()} separate ${state.configurations === 1 ? 'run' : 'runs'}`;
+		$('journey-review-devices').textContent = state.automatic ? 'Chrome · Default desktop · 1 run'
+			: state.browserLabel || state.environmentLabel || 'Choose one browser and one device';
 		$('journey-review-model').textContent = state.config?.model || 'Provided by Qase';
 		const writes = $('qa-allow-test-writes');
 		if ($('journey-review-access')) $('journey-review-access').textContent = writes?.checked ? 'Reads, local input checks and marked test records (up to 10 submissions)' : 'Reads and local input checks; no test-record submissions';
@@ -71,6 +87,12 @@ export function createQaJourney({ document, getState, changed }) {
 			: !ready ? 'Qase’s model service is unavailable. Please try again later or contact support. Your test setup is preserved.' : state.blocked || 'Everything is ready. Start when you are.';
 		if (reason !== lastAnnouncement) { $('journey-footer-hint').textContent = reason; lastAnnouncement = reason; }
 		$('journey-next').disabled = Boolean(state.busy) || (step === 1 && Boolean(blocked));
+		// #17933: a disabled Review Test Run button always carries its reason
+		// in the live footer hint — disabled never means unexplained.
+		if (step === 1 && blocked && !state.busy && reason !== blocked) {
+			$('journey-footer-hint').textContent = blocked;
+			lastAnnouncement = blocked;
+		}
 		$('journey-back').disabled = Boolean(state.busy);
 		steps.forEach(button => { button.disabled = Boolean(state.busy); });
 	}

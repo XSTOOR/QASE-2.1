@@ -1,4 +1,4 @@
--- Qase PostgreSQL migration 044: versioned Founder actions and tenant RLS.
+-- Qase PostgreSQL migration 045: versioned Founder actions and tenant RLS.
 -- Forward-only: preserve the legacy row and previously applied checksums.
 
 ALTER TABLE founder_project_state DROP CONSTRAINT founder_project_state_shape;

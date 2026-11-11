@@ -226,7 +226,18 @@ const POINTER_ACTIONS = {
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 export async function attachBrowserBridge(session, service, runStore, options = {}) {
-	const policy = options.policy ?? createBrowserPolicy({ getTargetUrl: () => session.targetUrl });
+	// #17989: run-scoped authorization survives bridge rebuilds and process
+	// restarts by persisting on the session record. Only RUN-SCOPED grants
+	// (explicit "without asking again" approvals) persist — bounded grants stay
+	// in-memory exactly as before.
+	const policy = options.policy ?? createBrowserPolicy({
+		getTargetUrl: () => session.targetUrl,
+		getBrowserActionGrant: () => session.browserActionGrant ?? null,
+		setBrowserActionGrant: grant => {
+			if (grant === null) session.browserActionGrant = undefined;
+			else session.browserActionGrant = { ...grant };
+		}
+	});
 	const deviceId = options.device ?? session.device ?? DEFAULT_DEVICE_ID;
 	const deviceLandscape = options.deviceLandscape ?? session.deviceLandscape === true;
 	const deviceProfile = getDeviceProfile(deviceId);

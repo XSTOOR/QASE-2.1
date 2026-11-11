@@ -571,6 +571,9 @@ function buildFounderBody(session) {
 	if (report.caveat) {
 		parts.push('<section class="boundary"><h2>Important boundary</h2>' + paragraphs(report.caveat) + '</section>');
 	}
+	// User feedback section — same embed as the QA/SQA reports (#16654),
+	// only when the submitter left feedback for this run (session.userFeedback).
+	parts.push(feedbackSectionHtml(session));
 	return parts.join('');
 }
 

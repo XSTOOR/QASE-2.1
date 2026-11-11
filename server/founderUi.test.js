@@ -97,8 +97,8 @@ test('Founder result rendering is safe, mode-scoped, and covers the full decisio
 
 test('the generic Report tab renders the finalized Founder brief and live finalization updates it', () => {
 	const reportRenderer = app.slice(app.indexOf('function renderReport()'), app.indexOf('function renderSqaReportTab()'));
-	assert.match(reportRenderer, /if \(state\.session\?\.mode === 'founder'\) \{\s*renderFounderReportTab\(\);\s*return;/);
-	assert.match(app, /const renderFounderReportTab = founderView\.renderReportTab/);
+	assert.match(reportRenderer, /if \(state\.session\?\.mode === 'founder'\) \{\s*renderFounder\(\);\s*return;/);
+	assert.match(founderView, /renderReportTab\(\);\s*\}\s*function renderReportTab\(\)/);
 	assert.match(founderView, /function renderReportTab\(\)/);
 	assert.match(founderView, /if \(!founder\.finalizedAt \|\| !report\)/);
 	assert.match(founderView, /appendFounderCompletedReport\(elements\.reportView, founder, report\)/);
