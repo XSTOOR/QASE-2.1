@@ -9,7 +9,9 @@ const PRIMARY_STEPS = [...SAMPLE_STEPS, ['browser_qa_check', { action: 'accessib
 
 function pageTextKey(result) {
 	if (result?.success !== true || typeof result.text !== 'string' || !Number.isInteger(result.totalCharacters)) return undefined;
-	return canonicalModeHash([result.title, result.text, result.totalCharacters, result.complete]);
+	const sample = [result.title, result.text, result.totalCharacters, result.complete];
+	if (result.tokenRateExcerpts?.length) sample.push(result.tokenRateExcerpts);
+	return canonicalModeHash(sample);
 }
 
 /** Use only receipts whose original browser activities still exist in this run. */

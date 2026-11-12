@@ -22,8 +22,12 @@ export async function rememberFounderEvidence(session,runStore,{toolName,activit
  if(!founderInvestigationIntact(session))throw new Error('Saved Founder investigation facts changed. Review the checkpoint before continuing.');
  const source=result.inventory||result,url=publicUrl(source.url||currentUrl);if(!url)return false;
  const text=String(source.bodyText||source.text||(source.elements||[]).map(e=>e.text||e.name||e.label||'').filter(Boolean).join('\n')).slice(0,2200);
+ const textCoverage=toolName==='browser_read_page'&&Number.isInteger(source.offset)&&Number.isInteger(source.totalCharacters)
+  ?{offset:source.offset,nextOffset:source.nextOffset,totalCharacters:source.totalCharacters}:undefined;
+ const tokenRateExcerpts=textCoverage&&Array.isArray(source.tokenRateExcerpts)?source.tokenRateExcerpts.slice(0,6).map(excerpt=>String(excerpt).slice(0,180)):undefined;
  const assertions=Array.isArray(result.assertions)?result.assertions.map(a=>({check:String(a.check||a.name||'').slice(0,160),outcome:a.outcome,expected:String(a.expected||'').slice(0,220),actual:String(a.actual||'').slice(0,220)})).slice(0,12):undefined;
  const entry=redact(session.id,{activityId,tool:toolName,url,title:String(source.title||'').slice(0,200),text,
+  textCoverage,tokenRateExcerpts,
   action:activity.input?.action,selector:activity.input?.selector?.slice(0,200),expected:publicUrl(activity.input?.expected),assertions,
   limitations:Array.isArray(result.limitations)?result.limitations.slice(0,4).map(item=>String(item).slice(0,180)):typeof result.limitations==='string'?result.limitations.slice(0,500):undefined,
   ...(Array.isArray(result.console)?{consoleErrors:result.console.filter(e=>/error|assert/i.test(e.level||e.type||'')).length}:{}),
@@ -54,7 +58,9 @@ function observedPageFacts(session){
    const key=JSON.stringify([entry.tool,entry.action,entry.selector,entry.expected,Boolean(failed)]);
    checks.delete(key);checks.set(key,entry);
   }
+  const read=all.findLast(entry=>entry.textCoverage);
   return {url,title:latest?.title,activityId:latest?.activityId,observedText:latest?.text.slice(0,1100),
+   ...(read&&{pageRead:{activityId:read.activityId,...read.textCoverage,tokenRateExcerpts:read.tokenRateExcerpts}}),
    ...(earlier&&earlier.text!==latest?.text?{earlierState:{activityId:earlier.activityId,text:earlier.text.slice(0,700)}}:{}),
    checks:[...checks.values()].slice(-12).map(e=>({activityId:e.activityId,tool:e.tool,action:e.action,selector:e.selector,expected:e.expected,assertions:e.assertions?.slice(0,2).map(a=>({check:a.check.slice(0,100),outcome:a.outcome,expected:a.expected.slice(0,120),actual:a.actual.slice(0,160)})),consoleErrors:e.consoleErrors,networkFailures:e.networkFailures,limitations:e.limitations}))};
  });
@@ -99,7 +105,8 @@ export function firstFounderObservationCheckpoint(session) {
  if (read?.toolName !== 'browser_read_page' || read.status !== 'done') return undefined;
  const page = founder.investigationCheckpoint?.entries.find(entry => entry.activityId === read.id && entry.text);
  if (!page) return undefined;
- return { reviewId: session.activities[reviewIndex].id, page: { activityId: page.activityId, url: page.url, title: page.title, text: page.text } };
+ return { reviewId: session.activities[reviewIndex].id, page: { activityId: page.activityId, url: page.url, title: page.title,
+  text: page.text,...(page.textCoverage&&{textCoverage:page.textCoverage,tokenRateExcerpts:page.tokenRateExcerpts}) } };
 }
 
 /** Use each completed public page and post-interaction sample once as a write boundary. */

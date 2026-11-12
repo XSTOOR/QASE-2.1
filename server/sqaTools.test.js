@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createSqaState, recordSqaSmokeActivity } from './sqaService.js';
 import { createSqaTools, finishReadiness } from './sqaTools.js';
-import { SQA_INPUT_TOKEN_BUDGET, SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD } from './sqaBrowserBudget.js';
+import { guardSqaBrowserTool, SQA_INPUT_TOKEN_BUDGET, SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD } from './sqaBrowserBudget.js';
 
 const fixedNow = () => Date.parse('2026-08-17T00:00:00.000Z');
 
@@ -46,6 +46,9 @@ test('SQA tool contract supports multi-evidence observations and bounded blocker
 	assert.ok(record.parametersSchema.properties.evidence.items.properties.type.enum.includes('test_result'));
 	assert.equal(record.parametersSchema.properties.evidence.items.properties.type.enum.includes('risk_register'), false);
 	assert.equal(record.parametersSchema.properties.controls.maxItems, 12);
+	assert.equal(record.parametersSchema.properties.evidence.items.properties.summary.maxLength, 1000);
+	assert.equal(record.parametersSchema.properties.controls.items.properties.evidence.items.properties.summary.maxLength, 1000);
+	assert.equal(record.parametersSchema.properties.evidence_summary.maxLength, 1000);
 	assert.deepEqual(record.parametersSchema.required, []);
 	assert.deepEqual(blockers.parametersSchema.required, ['close_remaining']);
 	assert.deepEqual(blockers.parametersSchema.properties.close_remaining.enum, [true]);
@@ -239,17 +242,55 @@ test('authentication-blocked representative scope requires a user decision befor
 	assert.deepEqual(finishReadiness(candidate, fixedNow()).authBlockedControlIds, []);
 });
 
-test('a confirmed finding prevents publication until every linked control is failed', async () => {
-	const candidate = session();
-	const tools = createSqaTools(candidate, store());
-	const record = tools.find(tool => tool.name === 'record_sqa_control');
-	const finish = tools.find(tool => tool.name === 'finish_sqa_assessment');
-	const formResult = {
+function observedFormResult() {
+	return {
 		success: true, action: 'form_validation', eligible: true,
 		cases: ['empty', 'invalid_email', 'valid_email', 'invalid_after_valid'].map(name => ({
 			name, validity: { valid: name === 'valid_email' }, submissionBlocked: name !== 'valid_email', feedbackChanged: name === 'valid_email'
 		}))
 	};
+}
+
+test('an oversized summary can be corrected from saved form evidence without replaying the browser after reload', async () => {
+	const candidate = session();
+	candidate.sqa.scope.applicableControlIds = ['SQA-WEB-003'];
+	let browserCalls = 0;
+	const tool = {
+		name: 'browser_sqa_smoke',
+		async run() {
+			browserCalls++;
+			const result = observedFormResult();
+			await addSmokeResult(candidate, 'saved-form', result);
+			return result;
+		}
+	};
+	const input = { action: 'form_validation' };
+	const smoke = guardSqaBrowserTool(tool, candidate);
+	assert.equal((await smoke.run(input, {})).success, true);
+	const record = createSqaTools(candidate, store()).find(tool => tool.name === 'record_sqa_control');
+	const submit = summary => record.run({ controls: [{
+		control_id: 'SQA-WEB-003', status: 'pass', evidence: [{ type: 'test_result', summary }]
+	}] });
+	const longSummary = 'x'.repeat(1001);
+	assert.match((await submit(longSummary)).error, /cannot exceed 1000 characters/);
+	assert.equal(candidate.sqa.observations.length, 0);
+	assert.equal((await smoke.run(input, {})).code, 'SQA_CONTROL_RESULT_REQUIRED');
+	assert.equal((await submit(longSummary.slice(0, 1000))).success, true);
+	assert.match(candidate.sqa.observations[0].evidence[0].reference, /activities\/saved-form\/evidence\//);
+
+	const reloaded = JSON.parse(JSON.stringify(candidate));
+	const replay = await guardSqaBrowserTool(tool, reloaded).run(input, {});
+	assert.equal(replay.code, 'SQA_SMOKE_ALREADY_COMPLETED');
+	assert.equal(replay.activity_id, 'saved-form');
+	assert.equal(browserCalls, 1);
+});
+
+test('a confirmed finding prevents publication until every linked control is failed', async () => {
+	const candidate = session();
+	const tools = createSqaTools(candidate, store());
+	const record = tools.find(tool => tool.name === 'record_sqa_control');
+	const finish = tools.find(tool => tool.name === 'finish_sqa_assessment');
+	const formResult = observedFormResult();
 	await addSmokeResult(candidate, 'form-pass', formResult);
 	assert.equal((await record.run({
 		control_id: 'SQA-WEB-003',

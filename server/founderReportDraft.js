@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 import {redact} from './secrets.js';
 import {assertNoNumericPromise} from './founderSchema.js';
 import {canonicalModeHash} from './modeIntegrity.js';
+import { assertFounderPricingClaims } from './founderPricingEvidence.js';
 
 export const FOUNDER_DRAFT_PROTOCOL='section-draft-v1';
 export const FOUNDER_REPORT_SECTIONS=['executive_summary','icp','positioning','monetization','recommendations','marketing','sales','risks','quick_wins','plan','metrics'];
@@ -180,6 +181,7 @@ export function createFounderDraftTool(session,runStore,schema,{isCancelled=()=>
     }
     const allowed=sectionSchema(session,schema,input.section);
     validate(value,appendRecommendation?{...allowed,minItems:1,maxItems:1}:allowed,input.section);
+    assertFounderPricingClaims(session,value);
     const ids=new Set(session.founder.observations.map(o=>o.id));
     const evidenceCheck=(node)=>{
      if(!node||typeof node!=='object')return;

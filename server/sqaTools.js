@@ -2,6 +2,7 @@ import { guardFinalization, isPublicationTodo } from './finalizationGuard.js';
 import { modeExplorationReadiness } from './modeReasoningRuntime.js';
 import {
 	AGENT_EVIDENCE_TYPES,
+	MAX_EVIDENCE_SUMMARY,
 	closePendingReviewerSqaControlsAsBlocked,
 	closePendingSqaControlsAsBlocked,
 	finishSqaAssessment,
@@ -20,6 +21,11 @@ import {
 } from './sqaBrowserBudget.js';
 
 const AGENT_EVIDENCE_TYPE_VALUES = [...AGENT_EVIDENCE_TYPES];
+const EVIDENCE_SUMMARY_SCHEMA = {
+	type: 'string',
+	maxLength: MAX_EVIDENCE_SUMMARY,
+	description: `Control-specific factual summary, at most ${MAX_EVIDENCE_SUMMARY} characters. Omit credentials, personal data, and cookies. If too long, shorten it and resubmit using the same saved browser evidence.`
+};
 const PUBLIC_ONLY_SCOPE = /\b(public[- ]only|anonymous[- ]only|unauthenticated[- ]only|login[- ]only|auth(?:entication)? surface only|continue without (?:credentials|sign[- ]?in))\b/i;
 const AUTH_BLOCKED = /\b(behind authentication|authentication (?:is )?required|requires? (?:authentication|credentials|sign[- ]?in)|unauthenticated|no (?:login )?credentials?|cannot sign in|login (?:is )?required)\b/i;
 
@@ -124,7 +130,7 @@ export function createSqaTools(session, runStore, options = {}) {
 									type: 'object',
 									properties: {
 										type: { type: 'string', enum: AGENT_EVIDENCE_TYPE_VALUES },
-										summary: { type: 'string', description: 'Control-specific factual summary; never include credentials, personal data, or cookies.' }
+										summary: EVIDENCE_SUMMARY_SCHEMA
 									},
 									required: ['type']
 								}
@@ -143,13 +149,13 @@ export function createSqaTools(session, runStore, options = {}) {
 						type: 'object',
 						properties: {
 							type: { type: 'string', enum: AGENT_EVIDENCE_TYPE_VALUES },
-							summary: { type: 'string', description: 'Short factual description; never include credentials, personal data, or cookies.' }
+							summary: EVIDENCE_SUMMARY_SCHEMA
 						},
 						required: ['type']
 					}
 				},
 				evidence_type: { type: 'string', enum: AGENT_EVIDENCE_TYPE_VALUES, description: 'Compatibility field for a single evidence item; do not combine with evidence.' },
-				evidence_summary: { type: 'string', description: 'Compatibility summary paired with evidence_type.' }
+				evidence_summary: { ...EVIDENCE_SUMMARY_SCHEMA, description: `Compatibility summary paired with evidence_type. ${EVIDENCE_SUMMARY_SCHEMA.description}` }
 			},
 			required: []
 		},

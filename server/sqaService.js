@@ -15,7 +15,7 @@ const AGENT_EVIDENCE_TYPES = new Set([
 ]);
 const STATUS = new Set(['pass', 'fail', 'blocked', 'not_assessed']);
 const MAX_RATIONALE = 2_000;
-const MAX_EVIDENCE_SUMMARY = 1_000;
+export const MAX_EVIDENCE_SUMMARY = 1_000;
 const MAX_AGENT_EVIDENCE_ITEMS = 10;
 const MAX_AGENT_OBSERVATION_BATCH = 12;
 const MAX_BLOCKER_BATCH = 50;

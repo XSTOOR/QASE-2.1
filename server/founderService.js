@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { founderEvidenceDigest } from './founderEvidence.js';
 import { completedFounderPageReviews, FOUNDER_PAGE_REVIEW } from './founderPageReview.js';
 import { FOUNDER_FORM_REVIEW } from './founderFormReview.js';
+import { assertFounderPricingClaims } from './founderPricingEvidence.js';
 import {
 	assertPlainObject,
 	boundedStrings,
@@ -318,7 +319,7 @@ function normalizeFounderObservation(session, input, timestamp) {
 	const type = boundedText(input.type, 'Founder observation type', 30, { required: true });
 	if (!observationTypes.has(type)) throw new TypeError('Founder observation type is invalid.');
 	const observedAt = new Date(timestamp).toISOString();
-	return redact(session.id, {
+	const observation = redact(session.id, {
 		id: randomUUID(),
 		category: founderCategory(input.category),
 		type,
@@ -328,6 +329,8 @@ function normalizeFounderObservation(session, input, timestamp) {
 		evidence: evidenceBundle(session, input.evidence_activity_ids ?? input.evidenceActivityIds, timestamp),
 		createdAt: observedAt
 	});
+	assertFounderPricingClaims(session, [observation.title, observation.summary]);
+	return observation;
 }
 
 /**
@@ -412,6 +415,7 @@ export async function finishFounderReview(session, input, runStore, now = () => 
 	}
 	const generatedAt = new Date(now()).toISOString();
 	const safeInput = redact(session.id, input);
+	assertFounderPricingClaims(session, safeInput);
 	const serialized = JSON.stringify(safeInput);
 	if (/\b(reviewed|read|audited|analyzed)\b.{0,40}\b(?:the )?(?:complete|entire|full)\b.{0,20}\b(?:source|source code|codebase|repository|project files)\b/i.test(serialized)) {
 		throw new TypeError('Founder Mode reviewed browser-accessible product surfaces, not the complete source code or repository. State that boundary explicitly.');

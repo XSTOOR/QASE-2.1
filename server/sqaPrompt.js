@@ -1,6 +1,6 @@
 import { describeDeviceForPrompt } from './deviceProfiles.js';
 import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
-import { AGENT_EVIDENCE_TYPES, isAgentSqaControl } from './sqaService.js';
+import { AGENT_EVIDENCE_TYPES, MAX_EVIDENCE_SUMMARY, isAgentSqaControl } from './sqaService.js';
 import { buildSqaWorkPlan } from './sqaWorkPlan.js';
 import { savedSqaSmokeContext } from './sqaSmokeWorkflow.js';
 import { SQA_RELEASE_REPORT_CONTROL_IDS } from '../public/sqaEvidencePolicy.js';
@@ -121,6 +121,9 @@ ${scope.scopeNotes ? `Scope notes: ${scope.scopeNotes}` : ''}
    type in the evidence array. Never pass from an absent, generic, or unrelated
    browser activity. If a required reviewer-only type is unavailable, the full
    assurance control remains blocked even when its technical sample succeeds.
+   Keep each evidence summary at or below ${MAX_EVIDENCE_SUMMARY} characters. If a
+   summary is rejected for length, shorten and resubmit it using the same saved
+   browser evidence. Do not rerun the check to fix the summary.
 5. Report confirmed product defects separately with report_finding and include
    every scoped control_id whose objective the defect disproves. Record each
    linked control as fail with matching browser evidence; a linked control can

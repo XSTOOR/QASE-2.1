@@ -139,6 +139,11 @@ test('SQA workflow gate stops form retries until interaction controls are record
 		{ controlId: 'SQA-WEB-003', status: 'blocked' }
 	);
 	assert.equal(sqaWorkflowGate(candidate, 'browser_snapshot', {}), undefined);
+	assert.equal(sqaWorkflowGate(candidate, 'browser_sqa_smoke', { action: 'form_validation' }).code,
+		'SQA_SMOKE_ALREADY_COMPLETED');
+	assert.equal(sqaWorkflowGate(candidate, 'browser_sqa_smoke', {
+		action: 'form_validation', field_label: 'Work email', submit_name: 'Preview'
+	}), undefined, 'a distinct form sample is not a replay of the saved arguments');
 });
 
 test('SQA workflow gate is enforced before the browser driver is invoked', async () => {

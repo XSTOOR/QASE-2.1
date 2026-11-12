@@ -1,3 +1,6 @@
+import { isDeepStrictEqual } from 'node:util';
+import { redact } from './secrets.js';
+
 const DEFAULT_SQA_BROWSER_TOOL_BUDGET = 120;
 // A normal SQA browser workflow is deliberately capped at four actions. Start
 // the next workflow from durable host state as soon as that checkpoint is
@@ -121,16 +124,17 @@ function pendingControlIds(session, controlIds) {
 	));
 }
 
-function smokeWorkflowCompleted(session, action) {
+function completedSmokeActivity(session, action, exactInput) {
 	const summaryPrefix = {
 		accessibility: 'Accessibility smoke:',
 		responsive: 'Responsive smoke:',
 		navigation: 'Navigation smoke:',
 		form_validation: 'Form smoke'
 	}[action];
-	return (session?.activities ?? []).some(activity => (
+	return (session?.activities ?? []).findLast(activity => (
 		activity?.toolName === 'browser_sqa_smoke'
 		&& activity.input?.action === action
+		&& (exactInput === undefined || isDeepStrictEqual(activity.input, exactInput))
 		&& (activity.status === 'done'
 			|| (activity.status === 'failed' && String(activity.summary ?? '').startsWith(summaryPrefix)))
 	));
@@ -169,8 +173,8 @@ export function sqaWorkflowGate(session, toolName, input) {
 	if (session?.mode !== 'sqa' || !String(toolName ?? '').startsWith('browser_')) return undefined;
 
 	const pendingPresentation = pendingControlIds(session, SQA_PRESENTATION_WORKFLOW_CONTROLS);
-	const accessibilityComplete = smokeWorkflowCompleted(session, 'accessibility');
-	const responsiveComplete = smokeWorkflowCompleted(session, 'responsive');
+	const accessibilityComplete = completedSmokeActivity(session, 'accessibility');
+	const responsiveComplete = completedSmokeActivity(session, 'responsive');
 	if (pendingPresentation.length > 0 && responsiveComplete) {
 		return requireControlWrite(pendingPresentation, 'accessibility and responsive');
 	}
@@ -180,8 +184,8 @@ export function sqaWorkflowGate(session, toolName, input) {
 	}
 
 	const pendingInteraction = pendingControlIds(session, SQA_INTERACTION_WORKFLOW_CONTROLS);
-	const navigationComplete = smokeWorkflowCompleted(session, 'navigation');
-	const formComplete = smokeWorkflowCompleted(session, 'form_validation');
+	const navigationComplete = completedSmokeActivity(session, 'navigation');
+	const formComplete = completedSmokeActivity(session, 'form_validation');
 	if (pendingInteraction.includes('SQA-WEB-003') && formComplete) {
 		const readyToRecord = navigationComplete
 			? pendingInteraction
@@ -194,6 +198,20 @@ export function sqaWorkflowGate(session, toolName, input) {
 	}
 	if (navigationComplete && pendingInteraction.includes('SQA-WEB-002')) {
 		return requireControlWrite(pendingInteraction.filter(controlId => controlId === 'SQA-WEB-002'), 'navigation');
+	}
+	if (toolName === 'browser_sqa_smoke' && input?.action) {
+		// Tool inputs are stored redacted. Compare against that same representation
+		// so the guard also works when the run is reloaded.
+		const savedInput = session.id ? redact(session.id, input) : input;
+		const saved = completedSmokeActivity(session, input.action, savedInput);
+		if (saved) {
+			return {
+				success: false,
+				code: 'SQA_SMOKE_ALREADY_COMPLETED',
+				activity_id: saved.id,
+				error: `This ${input.action} smoke check already has a saved result. Reuse its evidence for matching controls and continue the remaining checks.`
+			};
+		}
 	}
 	return undefined;
 }
