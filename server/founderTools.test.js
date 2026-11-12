@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createFounderState, FOUNDER_CATEGORY_IDS, recordFounderPublicOnlyDecision } from './founderService.js';
-import { createFounderTools, founderFinishReadiness, founderReportToolSchema } from './founderTools.js';
+import { createFounderTools, founderFinishReadiness, founderReportToolSchema, projectFounderObservationTool } from './founderTools.js';
 import { founderDraftProgress } from './founderReportDraft.js';
 
 const now = Date.parse('2026-08-18T00:00:00.000Z');
@@ -52,6 +52,30 @@ test('a running report batch can save its sections, while a concurrent browser a
  const revision=candidate.founder.reportDraft.revision;candidate.activities.push({id:'active',toolName:'browser_click',status:'running',ts:Date.now()});
  const blocked=await createFounderTools(candidate,{async commit(){}},{stagedReport:true}).find(t=>t.name==='draft_founder_report_section').run({section:'monetization',value:{model:'Hypothesis',value_metric:'Practicing teams',packages:['Pilot'],pricing_presentation:'Pilot scope',next_tests:['Interview users'],...proof}});
  assert.equal(blocked.success,false);assert.match(blocked.error,/prerequisites/);assert.equal(candidate.founder.reportDraft.revision,revision);
+});
+
+test('configured observation requests expose only completed browser IDs and save bounded batches atomically', async () => {
+	const candidate = session();
+	candidate.founder.reportGeneration = { version: 1, protocol: 'section-draft-v1', evidenceHashVersion: 1 };
+	candidate.activities.push(
+		{ id: 'pending', toolName: 'browser_snapshot', status: 'running' },
+		{ id: 'failed', toolName: 'browser_click', status: 'failed' },
+		{ id: 'reused', toolName: 'browser_founder_review', status: 'done', founderPageReviewReused: 'old' }
+	);
+	let writes = 0;
+	const [tool] = createFounderTools(candidate, { async commit() { writes++; } });
+	const { parametersSchema } = projectFounderObservationTool(tool, candidate);
+	const batch = parametersSchema.properties.observations;
+	assert.equal(batch.maxItems, 6);
+	assert.ok(batch.items.required.includes('evidence_activity_ids'));
+	assert.deepEqual(batch.items.properties.evidence_activity_ids.items.enum, ['open', 'snap', 'diag']);
+	assert.equal(projectFounderObservationTool(tool, candidate, { maxItems: 1 }).parametersSchema.properties.observations.maxItems, 1);
+	const item = { category: 'product_clarity', type: 'strength', title: 'Clear hero', summary: 'The hero states a concrete outcome.', confidence: 'high', evidence_activity_ids: ['snap'] };
+	assert.equal((await tool.run({ observations: Array(7).fill(item) })).success, false);
+	assert.equal((await tool.run({ observations: [item, { ...item, evidence_activity_ids: ['pending'] }] })).success, false);
+	assert.equal(writes, 0);
+	assert.equal((await tool.run({ observations: [item] })).success, true);
+	assert.equal(writes, 1);
 });
 
 test('Founder finalization readiness requires category, workflow, diagnostics, context, and auth decisions', () => {

@@ -1,9 +1,9 @@
 // #17934 — shared token accounting UI: chip text, pending/unavailable states,
-// per-model attribution, dedupe on rollback.
+// and per-model attribution.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { usageChipText, tokenSummaryText, miniSummaryText } from './uiPrimitives.js';
-import { applyUsage, subtractUsage } from '../server/usageCapture.js';
+import { applyUsage } from '../server/usageCapture.js';
 
 test('header chip renders real usage with in/out/total', () => {
 	const usage = applyUsage(undefined, { model: 'z-ai/glm-5.2', inputTokens: 4_760_000, outputTokens: 27_200 });
@@ -39,16 +39,13 @@ test('per-model attribution separates JEV from the primary model', () => {
 	assert.equal(usage.totalTokens, 18_340);
 });
 
-test('retry/resume dedupe: a superseded estimate is rolled back exactly once', () => {
-	let usage;
-	// Estimate committed live for call A on model P...
-	usage = applyUsage(usage, { model: 'P', inputTokens: 1_000, outputTokens: 100, estimated: true, callId: 'A' });
-	// ...then the REAL report for the same call arrives.
-	usage = subtractUsage(usage, { model: 'P', inputTokens: 1_000, outputTokens: 100 });
-	usage = applyUsage(usage, { model: 'P', inputTokens: 1_200, outputTokens: 150, callId: 'A' });
-	assert.equal(usage.inputTokens, 1_200, 'estimate replaced by the real report, not added on top');
-	assert.equal(usage.byModel.P.inputTokens, 1_200);
-	assert.equal(usage.totalTokens, 1_350);
+test('a verified receipt leaves the estimated marker when another call was estimated', () => {
+	let usage = applyUsage(undefined, { model: 'primary', inputTokens: 1000, outputTokens: 100, estimated: true });
+	usage = applyUsage(usage, { model: 'verifier', inputTokens: 200, outputTokens: 50 });
+	assert.equal(usage.inputTokens, 1200);
+	assert.equal(usage.byModel.primary.inputTokens, 1000);
+	assert.equal(usage.totalTokens, 1350);
+	assert.match(tokenSummaryText(usage), /^~/);
 });
 
 test('usageChipText composes a compact chip with context percentage', () => {

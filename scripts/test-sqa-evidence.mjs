@@ -22,6 +22,12 @@ await seedSqaSmokePassReceipts(session);
 for (const controlId of SQA_TECHNICAL_CONTROL_IDS) {
 	await recordAgentSqaObservation(session, { control_id: controlId, status: 'pass', evidence: getSqaControl(controlId).evidenceRequirements.flatMap(requirement => Array.from({ length: requirement.minimum }, () => ({ type: requirement.type, summary: `Synthetic ${controlId} rendering fixture; no product behavior is claimed. <script>window.evidenceInjection = true</script>` }))) }, { async commit() {} });
 }
+const reviewControl = 'SQA-QUA-005';
+await recordAgentSqaObservation(session, {
+	control_id: reviewControl, status: 'blocked', rationale: 'The restoration record is required.',
+	evidence_type: 'test_result', evidence_summary: 'Controlled browser recovery sample.'
+}, { async commit() {} });
+const originalBrowserEvidence = session.sqa.observations.find(item => item.controlId === reviewControl).evidence[0];
 // Explicit negative fixtures: unavailable legacy bundle and tampered retained bytes.
 const legacyDigest = session.sqa.observations.find(item => item.controlId === 'SQA-WEB-002').evidence[0].digest;
 delete session.sqa.evidenceRecords[legacyDigest];
@@ -42,9 +48,37 @@ try {
 		await route.fulfill({ status: 503, json: { error: 'Model turns are disabled in evidence acceptance.' } });
 	});
 	const errors = []; page.on('pageerror', error => errors.push(error.message));
-	await page.goto(`${base}/#/runs/${session.id}`);
+	await page.goto(`${base}/#/runs/${session.id}/results`);
+	await page.waitForFunction(title => document.body.dataset.page === 'results' && !document.body.dataset.pageLoading
+		&& document.getElementById('results-page-title').title === title, session.title);
 	await page.locator('#tab-sqa').click();
 	const view = page.locator('#sqa-view');
+	const assertOutcome = async container => {
+		const overview = container.locator('.sqa-outcome-split');
+		try {
+			await overview.getByRole('heading', { name: 'Browser checks', exact: true }).waitFor({ timeout: 5000 });
+		} catch (error) {
+			await page.screenshot({ path: path.join(directory, 'sqa-outcome-failure.png') });
+			throw new Error(`SQA overview heading was unavailable. Page errors: ${errors.join('; ') || 'none'}.`, { cause: error });
+		}
+		await overview.getByText('The automated web checks all passed.', { exact: true }).waitFor();
+		await overview.getByRole('heading', { name: 'Reviewer evidence', exact: true }).waitFor();
+		await overview.getByText(/controls need evidence from a reviewer\./).waitFor();
+		const target = container.locator('.sqa-unresolved-group[data-kind="reviewer"]');
+		const evidence = target.locator('.sqa-unresolved').filter({ hasText: 'SQA-GOV-001' }).getByRole('list', { name: 'Missing evidence' });
+		await evidence.getByText('Risk Register', { exact: true }).waitFor();
+		await evidence.getByText(/Reviewer evidence \(0 of 1 supplied\)/).waitFor();
+		const action = overview.getByRole('button', { name: 'View required evidence', exact: true });
+		await action.focus();
+		await page.keyboard.press('Enter');
+		assert.equal(await target.evaluate(element => document.activeElement === element), true);
+		return overview;
+	};
+	const overview = await assertOutcome(view);
+	await overview.screenshot({ path: path.join(directory, 'sqa-outcomes-desktop.png') });
+	await page.locator('#tab-report').click();
+	await assertOutcome(page.locator('#report-view'));
+	await page.locator('#tab-sqa').click();
 	assert.equal(await view.evaluate(element => Boolean(element.querySelector('.sqa-technical').compareDocumentPosition(element.querySelector('.sqa-review-panel')) & Node.DOCUMENT_POSITION_FOLLOWING)), true);
 	for (const [controlId, label] of [['SQA-WEB-001', 'Digest verified'], ['SQA-WEB-002', 'Original bundle unavailable'], ['SQA-WEB-003', 'Digest mismatch']]) {
 		const control = view.locator('.sqa-control').filter({ has: page.locator('summary code', { hasText: controlId }) });
@@ -64,15 +98,21 @@ try {
 	await panel.getByText('Review inbox', { exact: true }).click();
 	await panel.getByRole('button', { name: 'Refresh review inbox' }).click();
 	await panel.getByRole('button', { name: /Phase 9 evidence fixture/ }).waitFor();
+	await page.locator('#tab-report').click();
+	await page.locator('#report-view').getByRole('button', { name: `Review evidence for ${reviewControl}`, exact: true }).click();
+	assert.equal(await panel.getByLabel('Review request or reopening reason').evaluate(element => element === document.activeElement), true);
 	await panel.getByLabel('Review request or reopening reason').fill('I am reviewing the current release evidence.');
 	await panel.getByRole('button', { name: 'Open review draft' }).click();
 	await panel.getByText('Review draft — unpublished', { exact: true }).waitFor();
 	assert.equal((await page.request.get(`${base}/api/sessions/${session.id}/report.md?version=1`)).status(), 200);
-	await panel.getByLabel('Control', { exact: true }).selectOption('SQA-GOV-001');
+	assert.equal(await panel.getByLabel('Control', { exact: true }).inputValue(), reviewControl);
+	await panel.getByText('1 browser evidence record will be kept with this decision.', { exact: true }).waitFor();
+	assert.equal(await panel.getByLabel('Document reference or URL').count(), 1);
 	await panel.getByLabel('Decision', { exact: true }).selectOption('pass');
-	await panel.getByLabel('Reason for this decision').fill('Approved release risk baseline reviewed.');
-	await panel.getByLabel('Document reference or URL').fill('artifact://quality/phase-9/risk-register');
-	await panel.getByLabel('What this evidence demonstrates').fill('Approved risks and mitigations for this release.');
+	await panel.getByLabel('Reason for this decision').fill('The restoration evidence was reviewed.');
+	await panel.getByLabel('Document reference or URL').fill('artifact://quality/phase-9/restore-proof');
+	await panel.getByLabel('What this evidence demonstrates').fill('Reviewed restoration outcome for this release.');
+	await panel.locator('.sqa-review-evidence').screenshot({ path: path.join(directory, 'review-evidence-editor.png') });
 	let releaseDuplicate;
 	const duplicateRelease = new Promise(resolve => { releaseDuplicate = resolve; });
 	await page.route(`${base}/api/sessions/${session.id}`, async route => {
@@ -83,23 +123,26 @@ try {
 	});
 	await panel.getByRole('button', { name: 'Save control decision' }).click();
 	await page.waitForFunction(() => document.querySelector('.sqa-review-panel')?.dataset.reviewRevision === '3');
-	await panel.getByLabel('Publication reason').fill('Risk evidence reviewed. Remaining documentary prerequisites are explicit.');
+	await panel.getByLabel('Publication reason').fill('Restoration evidence reviewed. Remaining prerequisites are explicit.');
 	releaseDuplicate();
 	await page.unrouteAll({ behavior: 'wait' });
-	assert.equal(await panel.getByLabel('Publication reason').inputValue(), 'Risk evidence reviewed. Remaining documentary prerequisites are explicit.');
+	assert.equal(await panel.getByLabel('Publication reason').inputValue(), 'Restoration evidence reviewed. Remaining prerequisites are explicit.');
 	await panel.getByRole('button', { name: 'Publish reviewed version' }).click();
 	await panel.getByText('Reviewed version published', { exact: true }).waitFor();
-	const inspectedDocument = await (await page.request.get(`${base}/api/sessions/${session.id}/sqa/evidence/SQA-GOV-001/1`)).json();
+	const inspectedDocument = await (await page.request.get(`${base}/api/sessions/${session.id}/sqa/evidence/${reviewControl}/2`)).json();
 	assert.equal(inspectedDocument.integrity, 'external_unverified');
+	const retainedBrowserEvidence = await (await page.request.get(`${base}/api/sessions/${session.id}/sqa/evidence/${reviewControl}/1`)).json();
+	assert.equal(retainedBrowserEvidence.integrity, 'verified');
 	await panel.getByText('Published versions', { exact: true }).click();
 	await panel.getByRole('button', { name: 'Load published versions' }).click();
 	await panel.getByText(/Version 2 —/).waitFor();
 	await panel.getByRole('button', { name: 'Compare with current assessment' }).first().click();
-	await panel.getByText('SQA-GOV-001: blocked → pass (evidence changed) (reason changed)', { exact: true }).waitFor();
+	await panel.getByText(`${reviewControl}: blocked → pass (evidence changed) (reason changed)`, { exact: true }).waitFor();
 	await page.screenshot({ path: path.join(directory, 'review-desktop.png'), fullPage: true });
 	await page.setViewportSize({ width: 390, height: 844 });
-	await page.locator('[data-workspace-view="results"]').click();
 	await page.locator('#tab-sqa').click();
+	assert.ok(await overview.evaluate(element => element.scrollWidth - element.clientWidth <= 1), 'Outcome summary overflows on mobile.');
+	await overview.screenshot({ path: path.join(directory, 'sqa-outcomes-mobile.png') });
 	await panel.scrollIntoViewIfNeeded();
 	assert.ok(await panel.evaluate(element => element.scrollWidth - element.clientWidth <= 1), 'Reviewer panel overflows on mobile.');
 	await view.locator('.sqa-control').filter({ has: page.locator('summary code', { hasText: 'SQA-WEB-001' }) }).locator('summary').click();
@@ -114,7 +157,9 @@ try {
 	const final = await (await page.request.get(`${base}/api/sessions/${session.id}`)).json();
 	assert.equal(final.sqa.publishedVersions.length, 2);
 	assert.equal(final.sqa.publishedVersions[0].assessment.assessmentSha256, originalSha);
-	assert.equal(final.sqa.assessment.results.find(item => item.controlId === 'SQA-GOV-001').status, 'pass');
+	const reviewed = final.sqa.assessment.results.find(item => item.controlId === reviewControl);
+	assert.equal(reviewed.status, 'pass');
+	assert.deepEqual(reviewed.evidence[0], originalBrowserEvidence);
 	assert.deepEqual(errors, []);
 	await stop(); await start();
 	await page.reload();

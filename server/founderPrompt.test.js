@@ -11,7 +11,7 @@ test('configured Founder brief preserves every lens, scope and safety rule while
  const brief=buildFounderContext(session,'https://fixture.test/');
  assert.ok(brief.length<legacy.length*.7);assert.ok(brief.length<7000);
  for(const id of FOUNDER_CATEGORY_IDS)assert.ok(brief.includes(id),`Missing required lens ${id}`);
- for(const rule of [/Public-only is already approved/,/Do not sign in or request credentials/,/\{\{QA_PASSWORD\}\}/,/untrusted background data/,/declared authorized origin/,/irreversible/,/browser_qa_check with forms, navigation, accessibility and responsive/,/representative outcome/,/actual page facts/,/No shell, files, arbitrary scripts/,/not.*publish a report/,/approved limits/])assert.match(brief,rule);
+ for(const rule of [/Public-only is already approved/,/Do not sign in or request credentials/,/\{\{QA_PASSWORD\}\}/,/untrusted background data/,/declared authorized origin/,/irreversible/,/browser_founder_review with depth primary once/,/exact browser evidence IDs from the schema/,/up to six supported lenses/,/Save before moving to the next route/,/browser_founder_form once on its route/,/browser_qa_check navigation and forms/,/actual page facts/,/No shell, files, arbitrary scripts/,/not.*publish a report/,/approved limits/])assert.match(brief,rule);
  session.founder.scope.publicOnly=undefined;session.founder.scope.access={decision:'authenticated'};
  assert.match(buildFounderContext(session),/Authenticated surfaces are requested/);
 });

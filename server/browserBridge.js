@@ -33,6 +33,7 @@ import {
 import { browserstackCredentials, connectBrowserstack, environmentEmulationOptions, resolveExecution } from './browserstackProvider.js';
 import { createInteractionApi } from './interactionApi.js';
 import { createSqaBrowserSmoke } from './sqaBrowserSmoke.js';
+import { runFounderFormReview } from './founderFormReview.js';
 import {
 	userAgentFor,
 	resolveExecutionLevel,
@@ -1231,6 +1232,32 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 	};
 
 	bridge.readPageContent = input => readPageContent(currentPage(), input);
+
+	bridge.founderFormReview = async (input, { signal, saveCase }) => {
+		const scope = session.founder?.scope;
+		const page = currentPage();
+		if (session.mode !== 'founder' || scope?.authorization?.confirmed !== true || scope.access?.decision !== 'public_only'
+			|| !page || bridge.execution.provider !== 'local' || !service.browser) {
+			return { success: false, code: 'FOUNDER_FORM_SCOPE_UNAVAILABLE', error: 'The isolated form check requires an open, authorized public page on a local browser.' };
+		}
+		const url = page.url();
+		if (!/^https?:\/\//i.test(url) || new URL(url).origin !== new URL(scope.target.url).origin) {
+			return { success: false, code: 'FOUNDER_FORM_ORIGIN_UNAVAILABLE', error: 'Open the form on the approved Founder origin first.' };
+		}
+		const decision = await policy.evaluateNavigation(url);
+		if (!decision.allowed) return policy.asBlockedResult(decision);
+		if (bridge.qaOperationActive) return { success: false, code: 'FOUNDER_FORM_BUSY', error: 'A browser check is already running.' };
+		bridge.qaOperationActive = true;
+		try {
+			return await runFounderFormReview({
+				...input, browser: service.browser, url, contextOptions: emulationOptions, saveCase,
+				signal: signal ?? activeAbortSignal,
+				permitRead: async (target, topLevel) => (await policy.evaluateRequest(target, { topLevel })).allowed
+			});
+		} finally {
+			bridge.qaOperationActive = false;
+		}
+	};
 
 	bridge.media = async (input = {}) => {
 		const actions = ['inspect', 'set_permission', 'probe', 'probe_camera', 'probe_screen_share', 'call_controls', 'meeting_controls', 'meeting_recovery'];

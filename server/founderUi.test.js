@@ -134,13 +134,12 @@ test('Phase 4 — selection controls gate an explicit send; selection alone neve
 });
 
 test('Phase 4 — honest handoff states: pending, succeeded with reference, failed keeps selections, unavailable fallback', () => {
-	assert.match(founderView, /function renderHandoffStatus\(\)/);
-	assert.match(founderView, /founder-handoff-\$\{handoff\.status\}/);
-	assert.match(founderView, /handoff\.status === 'pending'/);
-	assert.match(founderView, /handoff\.status === 'succeeded'/);
-	assert.match(founderView, /handoff\.status === 'failed'/);
-	assert.match(founderView, /handoff\.status === 'unavailable'/);
-	assert.match(founderView, /Reference: \$\{handoff\.reference\}/);
+	assert.match(founderView, /Waiting for automatic Studio delivery/);
+	assert.match(founderView, /Sending recommendations to Studio/);
+	assert.match(founderView, /Studio reference \$\{handoff\.reference\}/);
+	assert.match(founderView, /Studio delivery could not be confirmed/);
+	assert.match(founderView, /Retry delivery/);
+	assert.match(founderView, /Studio delivery is not configured/);
 	assert.match(founderView, /'Copy requirements'/);
 	assert.match(founderView, /'Download requirements'/);
 	assert.match(app, /onExportHandoff: founderExportHandoff/);

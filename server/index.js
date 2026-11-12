@@ -149,7 +149,8 @@ const { app, demoEnabled } = createApplication({
 	drytisDelivery: drytisIntegration ? {
 		deliveryClient: drytisIntegration.deliveryClient,
 		ticketsTarget: drytisIntegration.ticketsTarget,
-		founderHandoffTarget: drytisIntegration.founderHandoffTarget
+		founderHandoffTarget: drytisIntegration.founderHandoffTarget,
+		automaticFounderHandoff: drytisIntegration.automaticFounderHandoff
 	} : undefined,
 	isDraining: () => shuttingDown
 });

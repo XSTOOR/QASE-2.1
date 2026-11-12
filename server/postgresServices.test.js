@@ -152,7 +152,9 @@ test('create, save, and delete await repository durability before visible public
 	await flushAsyncStart();
 	assert.ok(creatingSession);
 	const events = [];
+	const globalEvents = [];
 	const unsubscribe = services.events.subscribe(creatingSession.id, event => events.push(event));
+	const unsubscribeGlobal = services.events.subscribeGlobal((id, event) => globalEvents.push([id, event]));
 	assert.equal(events.length, 0);
 	assert.equal(await services.runs.get(creatingSession.id), undefined);
 
@@ -169,11 +171,13 @@ test('create, save, and delete await repository durability before visible public
 	const statusPromise = services.runs.setStatus(created, 'running', 'Started');
 	await flushAsyncStart();
 	assert.equal(events.length, 1, 'save event must wait for repository commit');
+	assert.equal(globalEvents.length, 1, 'global subscribers must also wait for repository commit');
 	saveGate.resolve({ version: 2, updatedAt: 202 });
 	await statusPromise;
 	assert.equal(created.updatedAt, 202);
 	assert.equal(events.length, 2);
 	assert.equal(events.at(-1).type, 'status');
+	assert.deepEqual(globalEvents, events.map(event => [created.id, event]));
 
 	let deleteSettled = false;
 	const deletePromise = services.runs.delete(created.id);
@@ -196,6 +200,7 @@ test('create, save, and delete await repository durability before visible public
 		options: { status: 'completed', actorType: 'system', referenceId: 'request/test-1' }
 	}]);
 	unsubscribe();
+	unsubscribeGlobal();
 });
 
 test('failed save restores the last committed aggregate and publishes nothing', async () => {

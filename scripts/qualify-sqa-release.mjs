@@ -93,11 +93,15 @@ try {
 	await json('POST', `/sessions/${sessionId}/message`, { text: instruction });
 	const started = Date.now();
 	let progress;
+	let lastInputTokens = 0;
 	while (Date.now() - started < timeoutMs) {
 		const current = await json('GET', `/sessions/${sessionId}`);
 		const next = JSON.stringify({ status: current.status, observations: current.sqa?.observations?.length ?? 0, activities: current.activities?.length ?? 0, inputTokens: current.tokenUsage?.inputTokens ?? 0, finalized: Boolean(current.sqa?.finalizedAt) });
 		if (progress !== next) { console.log(next); progress = next; }
-		assert.ok((current.tokenUsage?.inputTokens ?? 0) <= 550_000, 'Qualification exceeded its input-token acceptance ceiling.');
+		const inputTokens = current.tokenUsage?.inputTokens ?? 0;
+		assert.ok(inputTokens >= lastInputTokens, 'Accumulated input usage decreased during the run.');
+		assert.ok(inputTokens <= 550_000, 'Qualification exceeded its input-token acceptance ceiling.');
+		lastInputTokens = inputTokens;
 		if (current.pendingQuestion) throw new Error('Live SQA unexpectedly requires clarification for the declared account-free fixture.');
 		if (current.sqa?.finalizedAt && current.status === 'done' && !current.running) { finalSession = current; break; }
 		if (['error', 'interrupted', 'awaiting_input'].includes(current.status) && !current.running) throw new Error(`Live SQA ended as ${current.status}.`);
@@ -143,6 +147,12 @@ try {
 		assert.ok(completed, `Missing ${action} smoke activity.`);
 	}
 	assert.ok(finalSession.tokenUsage?.totalTokens > 0, 'The live run must retain model usage.');
+	const usage = finalSession.tokenUsage;
+	const modelUsage = Object.values(usage.byModel ?? {});
+	for (const field of ['inputTokens', 'outputTokens']) {
+		assert.equal(usage[field], modelUsage.reduce((sum, model) => sum + model[field], 0), `The ${field} total must match the model breakdown.`);
+	}
+	assert.equal(usage.totalTokens, usage.inputTokens + usage.outputTokens);
 	let evidenceCount = 0;
 	for (const control of assessment.results) {
 		if (control.status === 'pass') assert.deepEqual(control.evidenceCoverage.missing, []);
@@ -167,9 +177,10 @@ try {
 	await signIn();
 	const reloaded = await json('GET', `/sessions/${sessionId}`);
 	assert.equal(reloaded.sqa.assessment.assessmentSha256, assessment.assessmentSha256);
+	assert.deepEqual(reloaded.tokenUsage, usage);
 	assert.equal((await json('GET', `/sessions/${sessionId}/sqa/evidence/${technical[0].controlId}/1?version=1`)).integrity, 'verified');
 	for (const extension of ['md', 'pdf']) assert.equal((await api.get(`/api/sessions/${sessionId}/report.${extension}?version=1`)).status(), 200);
-	Object.assign(result, { status: 'passed', sessionId, assessmentId: assessment.assessmentId, assessmentSha256: assessment.assessmentSha256, counts: assessment.summary, technicalSummary: assessment.technicalSummary, evidenceVerified: evidenceCount, browserActivities: activities.length, tokenUsage: finalSession.tokenUsage, historicalExports: 'passed', restartPersistence: 'passed', crossAccountIsolation: 'passed', hybridIsolation: 'passed' });
+	Object.assign(result, { status: 'passed', sessionId, assessmentId: assessment.assessmentId, assessmentSha256: assessment.assessmentSha256, counts: assessment.summary, technicalSummary: assessment.technicalSummary, evidenceVerified: evidenceCount, browserActivities: activities.length, tokenUsage: usage, tokenAccounting: 'passed', historicalExports: 'passed', restartPersistence: 'passed', crossAccountIsolation: 'passed', hybridIsolation: 'passed' });
 } catch (error) {
 	result.status = 'failed'; result.error = error.message; result.sessionId = sessionId; process.exitCode = 1;
 	if (sessionId && api) {

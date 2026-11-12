@@ -7,6 +7,7 @@ import {
 	FOUNDER_OBSERVATION_TYPES,
 	finishFounderReview,
 	founderCoverage,
+	founderObservationEvidenceChoices,
 	hasFounderPublicOnlyDecision,
 	recordFounderObservations
 } from './founderService.js';
@@ -15,6 +16,8 @@ const PUBLIC_ONLY_SCOPE = /\b(public[- ]only|anonymous[- ]only|unauthenticated[-
 const CONTEXT_INFERENCE_DECISION = /\b(infer|make (?:reasonable )?assumptions?|assumption-led|unknown|not sure|use what (?:is|you can see)|derive from the (?:site|product))\b/i;
 const AUTH_GATE = /(?:\b(blocked|cannot|could not|unable|inaccessible|requires?|required|behind|gated?)\b.{0,80}\b(authentication|authenticated|credentials?|sign[- ]?in|log[- ]?in|login)\b|\b(authentication|authenticated|credentials?|sign[- ]?in|log[- ]?in|login)\b.{0,80}\b(blocked|cannot|unable|required|needed|unavailable|gated?)\b)/i;
 const EXTERNAL_ORIGIN_BOUNDARY = /\b(?:different|external|separate|third[- ]party|cross[- ]origin|out[- ]of[- ]scope)\b.{0,80}\b(?:domain|host|origin|site|destination)\b|\b(?:outside|beyond)\b.{0,80}\b(?:declared|authorized|allowed|target)\b.{0,40}\b(?:origin|scope|site)\b|browser safety blocked top-level navigation/i;
+
+export const FOUNDER_OBSERVATION_BATCH_LIMIT = 6;
 
 function observationSchema(compact=false) {
 	return {
@@ -26,6 +29,33 @@ function observationSchema(compact=false) {
 			confidence: { type: 'string', enum: FOUNDER_LEVELS },
 			evidence_activity_ids: { type: 'array', minItems: 1, maxItems: 12, items: { type: 'string' }, description: 'Optional exact completed browser activity IDs. Omit to bind the latest bounded browser evidence.' }
 		}, required: ['category', 'type', 'title', 'summary', 'confidence']
+	};
+}
+
+export function projectFounderObservationTool(tool, session, { maxItems = FOUNDER_OBSERVATION_BATCH_LIMIT } = {}) {
+	const ids = founderObservationEvidenceChoices(session).map(activity => String(activity.id));
+	if (!ids.length) return undefined;
+	const batch = tool.parametersSchema.properties.observations;
+	const item = batch.items;
+	const evidence = item.properties.evidence_activity_ids;
+	return {
+		...tool,
+		description: 'Save a small batch of evidence-backed Founder observations. Select completed browser activity IDs from the schema for each item. State unobserved boundaries explicitly.',
+		parametersSchema: {
+			type: 'object', additionalProperties: false, required: ['observations'],
+			properties: {
+				observations: {
+					...batch, maxItems,
+					items: {
+						...item, required: [...item.required, 'evidence_activity_ids'],
+						properties: { ...item.properties, evidence_activity_ids: {
+							...evidence, description: 'Exact completed browser activities supporting this item.',
+							items: { ...evidence.items, enum: ids }
+						} }
+					}
+				}
+			}
+		}
 	};
 }
 
@@ -177,7 +207,7 @@ export function createFounderTools(session, runStore, options = {}) {
 			type: 'object', properties: {
 				...observationSchema(compact).properties,
 				observations: {
-					type: 'array', minItems: 1, maxItems: FOUNDER_CATEGORY_IDS.length,
+					type: 'array', minItems: 1, maxItems: compact ? FOUNDER_OBSERVATION_BATCH_LIMIT : FOUNDER_CATEGORY_IDS.length,
 					items: observationSchema(compact),
 					description: 'Preferred form: a bounded batch of independently evidence-bound observations. If supplied, top-level single-observation fields are ignored.'
 				}
@@ -186,7 +216,13 @@ export function createFounderTools(session, runStore, options = {}) {
 		async run(input) {
 			try {
 				const requested = Array.isArray(input?.observations) ? input.observations : [input];
+				if (compact && requested.length > FOUNDER_OBSERVATION_BATCH_LIMIT) {
+					throw new TypeError(`Save up to ${FOUNDER_OBSERVATION_BATCH_LIMIT} Founder observations per batch. Earlier observations are retained.`);
+				}
 				if(compact&&requested.some(item=>typeof item?.title==='string'&&item.title.length>120||typeof item?.summary==='string'&&item.summary.length>600))throw new TypeError('Keep observation titles within 120 characters and summaries within 600 characters. Reference browser receipts for details; use explicit not-observed boundaries.');
+				if (compact && requested.some(item => !Array.isArray(item?.evidence_activity_ids ?? item?.evidenceActivityIds))) {
+					throw new TypeError('Select the completed browser evidence IDs supporting each observation.');
+				}
 				const observations = await recordFounderObservations(session, requested, runStore);
 				return {
 					success: true,

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { founderInvestigationCheckpoint,projectFounderMessages,rememberFounderEvidence,founderInvestigationIntact } from './founderInvestigation.js';
+import { firstFounderObservationCheckpoint,founderObservationCheckpoint,founderInvestigationCheckpoint,projectFounderMessages,rememberFounderEvidence,founderInvestigationIntact } from './founderInvestigation.js';
 
 const fixture=()=>({id:'projection-fixture',mode:'founder',founder:{reportGeneration:{version:1,protocol:'section-draft-v1'},scope:{categories:['product_clarity','activation'],access:{decision:'public_only'},contextDecision:{mode:'assumptions'}},observations:[{id:'observed',category:'product_clarity',title:'Observed heading',summary:'The fixture names the product.',evidence:[{activityId:'a-1'}]}]},todos:[{text:'Map routes',status:'completed'},{text:'Exercise workflow',status:'in_progress'}],activities:[{id:'a-1',status:'done',toolName:'browser_open',input:{url:'https://fixture.test/docs?private=value#fragment'},summary:'Opened documentation'}],tokenUsage:{inputTokens:40000,outputTokens:2000}});
 
@@ -103,4 +103,44 @@ test('check limitations retain their actual meaning in saved facts and inference
  await rememberFounderEvidence(session,store,{toolName:'browser_qa_check',activityId:'forms-limits',result:{success:true,url:'https://fixture.test/',assertions:[{check:'forms',outcome:'pass'}],limitations}});
  assert.equal(session.founder.investigationCheckpoint.entries[0].limitations,limitations);
  const restored=JSON.parse(JSON.stringify(session));assert.ok(JSON.stringify(founderInvestigationCheckpoint(restored)).includes(limitations));
+});
+
+test('first Founder observation uses durable primary-page text and yields after an attempt', async () => {
+	const session = fixture();
+	session.founder.observations = [];
+	session.activities.push(
+		{ id: 'primary', toolName: 'browser_founder_review', input: { depth: 'primary' }, status: 'done' },
+		{ id: 'snapshot', toolName: 'browser_snapshot', status: 'done' },
+		{ id: 'text', toolName: 'browser_read_page', status: 'done' }
+	);
+	assert.equal(firstFounderObservationCheckpoint(session), undefined);
+	await rememberFounderEvidence(session, { async commit() {} }, {
+		activityId: 'text', toolName: 'browser_read_page',
+		result: { success: true, title: 'Fixture', text: 'Product description', url: 'https://fixture.test/' }
+	});
+	assert.deepEqual(firstFounderObservationCheckpoint(session), {
+		reviewId: 'primary', page: { activityId: 'text', url: 'https://fixture.test/', title: 'Fixture', text: 'Product description' }
+	});
+	session.founder.scope.access.decision = 'authenticated';
+	assert.equal(firstFounderObservationCheckpoint(session), undefined);
+	session.founder.scope.access.decision = 'public_only';
+	session.activities.push({ id: 'attempt', toolName: 'record_founder_observation', status: 'failed' });
+	assert.equal(firstFounderObservationCheckpoint(session), undefined);
+});
+
+test('post-interaction checkpoint requires a saved outcome and diagnostics and yields after a write attempt', () => {
+	const session = fixture();
+	session.activities.push(
+		{ id: 'click', toolName: 'browser_click', status: 'done' },
+		{ id: 'snapshot', toolName: 'browser_snapshot', status: 'done' },
+		{ id: 'diagnostics', toolName: 'browser_diagnostics', status: 'running' }
+	);
+	assert.equal(founderObservationCheckpoint(session), undefined);
+	session.activities.at(-1).status = 'done';
+	assert.deepEqual(founderObservationCheckpoint(session), { id: 'diagnostics', kind: 'workflow', evidenceIds: ['click', 'snapshot', 'diagnostics'] });
+	session.pendingQuestion = { text: 'Check user scope' };
+	assert.equal(founderObservationCheckpoint(session), undefined);
+	delete session.pendingQuestion;
+	session.activities.push({ id: 'observation', toolName: 'record_founder_observation', status: 'failed' });
+	assert.equal(founderObservationCheckpoint(session), undefined);
 });

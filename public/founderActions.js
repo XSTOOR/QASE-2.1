@@ -16,7 +16,10 @@ export function createFounderActionController({ api, getSession, onChange, onExp
   function notify(entry) {
     if (entry?.key !== key(getSession())) return;
     onChange?.(); cancel(poll); poll = undefined;
-    if (!entry.sending && !entry.error && entry.state?.handoff?.status === 'pending' && !entry.state.leaseExpired) poll = schedule(() => { void load({ force: true, quiet: true }); }, 2000);
+    const state = entry.state;
+    const waiting = state?.handoff?.status === 'pending' && !state.leaseExpired
+      || state?.automaticHandoff && !state.handoff && !state.handoffStartOverdue;
+    if (!entry.loading && !entry.sending && !entry.error && waiting) poll = schedule(() => { void load({ force: true, quiet: true }); }, 2000);
   }
   async function fetchState(entry, sequence) {
     const completed = entry.session.founder?.finalizedAt && entry.session.founder?.report;
@@ -27,16 +30,29 @@ export function createFounderActionController({ api, getSession, onChange, onExp
     entry.state = result?.state ?? null; entry.initialized = true;
   }
   async function load({ force = false, quiet = false } = {}) {
-    const entry = current(); if (!entry || entry.saving || entry.sending || entry.exporting || entry.loading || entry.initialized && !force) return;
+    const entry = current(); if (!entry || entry.saving || entry.sending || entry.exporting || entry.initialized && !force) return;
+    if (entry.loading) { if (force) entry.refreshRequested = true; return; }
     const sequence = ++entry.sequence; entry.loading = true;
     if (!quiet) entry.error = undefined;
     notify(entry);
-    try { await fetchState(entry, sequence); }
+    try {
+      await fetchState(entry, sequence);
+      if (entry.sequence === sequence && entry.lastAction === 'load') entry.error = undefined;
+    }
     catch (error) { if (entry.sequence === sequence) { entry.error = error.message; entry.lastAction = 'load'; } }
-    finally { if (entry.sequence === sequence) { entry.loading = false; notify(entry); } }
+    finally {
+      if (entry.sequence === sequence) {
+        entry.loading = false;
+        notify(entry);
+        if (entry.refreshRequested) {
+          entry.refreshRequested = false;
+          if (entry.key === key(getSession())) void load({ force: true, quiet: true });
+        }
+      }
+    }
   }
   async function select(ids) {
-    const entry = current(); if (!bound(entry) || unreconciled(entry) || entry.loading || entry.saving || entry.sending || entry.exporting || entry.state.handoff?.status === 'pending') return;
+    const entry = current(); if (!bound(entry) || unreconciled(entry) || entry.loading || entry.saving || entry.sending || entry.exporting || entry.state.automaticHandoff || entry.state.handoff?.status === 'pending') return;
     const sequence = ++entry.sequence; entry.saving = true; entry.error = undefined; entry.failedSelection = undefined; notify(entry);
     try {
       const result = await request('/founder/state/selections', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body(entry, ids)) });

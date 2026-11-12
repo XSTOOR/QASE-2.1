@@ -5,7 +5,7 @@ import { redact } from './secrets.js';
 import { PublicInputError, publicInput } from './publicErrors.js';
 import { assertSqaSize, preserveSqaPublication } from './sqaHistory.js';
 import { evidenceDigest } from './sqaEvidence.js';
-import { SQA_RELEASE_REPORT_CONTROL_IDS } from '../public/sqaEvidencePolicy.js';
+import { isSqaInternalEvidence, SQA_RELEASE_REPORT_CONTROL_IDS } from '../public/sqaEvidencePolicy.js';
 import { publicationTodos } from './finalizationGuard.js';
 import { sqaExecutionBudget } from './sqaBrowserBudget.js';
 import { modeSqaEvidenceActivityIds,modeSqaHasFailedAssertions,modeDiscoveryRequired,modeExplorationReadiness } from './modeDiscovery.js';
@@ -696,13 +696,16 @@ export async function finishSqaAssessment(session, runStore, now = () => Date.no
  * its authority, licence, scope, and retention. The deterministic evaluator
  * still downgrades unsupported pass/fail claims.
  */
-export async function recordReviewerSqaObservation(session, observation, reviewer, runStore, now = () => Date.now()) {
+export async function recordReviewerSqaObservation(session, observation, reviewer, runStore, now = () => Date.now(), { reviewerDocuments = false } = {}) {
 	if (session?.mode !== 'sqa' || !session.sqa) {
 		throw new PublicInputError('This run is not an SQA assessment.');
 	}
 	if (!reviewer || !['owner', 'admin'].includes(reviewer.role)) throw new PublicInputError('An owner or administrator reviewer is required.', 403);
 	const reviewedAt = new Date(now()).toISOString();
 	const previous = session.sqa;
+	if (reviewerDocuments && (previous.finalizedAt || previous.review?.status !== 'in_review')) {
+		throw new PublicInputError('Open a review draft before saving reviewer documents.', 409);
+	}
 	let workingSqa = structuredClone(previous);
 	workingSqa.publishedVersions = preserveSqaPublication(previous);
 	if (workingSqa.scope?.catalogVersion !== SQA_CATALOG.catalogVersion) {
@@ -717,9 +720,30 @@ export async function recordReviewerSqaObservation(session, observation, reviewe
 	// Reviewer references and summaries can still accidentally contain a value
 	// already held in the run vault. Scrub the complete structured observation
 	// before validation, hashing, persistence, and publication.
-	const safeObservation = redact(session.id, observation);
+	let safeObservation = redact(session.id, observation);
 	const controlId = publicInput(() => text(safeObservation?.controlId, 'SQA control ID', 32, true));
 	const index = candidate.findIndex(item => item.controlId === controlId);
+	if (reviewerDocuments) {
+		const existing = candidate[index]?.evidence ?? [];
+		const incoming = safeObservation.evidence ?? [];
+		if (!Array.isArray(incoming) || incoming.length > 100 || incoming.some(item => !item || typeof item !== 'object' || Array.isArray(item))) {
+			throw new PublicInputError('Provide up to 100 reviewer document references.');
+		}
+		if (incoming.some(isSqaInternalEvidence)) throw new PublicInputError('Qase browser evidence can only be supplied by the saved run.');
+		const seen = new Set();
+		const documents = incoming.map(item => {
+			const reference = publicInput(() => text(item.reference, 'Document reference', 512, true));
+			const key = JSON.stringify([item.type, reference]);
+			if (seen.has(key)) throw new PublicInputError('Use each document reference only once per evidence type.');
+			seen.add(key);
+			const summary = typeof item.summary === 'string' ? item.summary.trim() : undefined;
+			const prior = existing.find(saved => saved.type === item.type && saved.reference === reference
+				&& (saved.summary ?? '') === (summary ?? '') && saved.digest === item.digest);
+			return prior ? { ...item, reference, collectedAt: prior.collectedAt }
+				: { ...item, reference, collectedAt: reviewedAt };
+		});
+		safeObservation = { ...safeObservation, evidence: [...existing.filter(isSqaInternalEvidence), ...documents] };
+	}
 	if (index >= 0) candidate[index] = safeObservation;
 	else candidate.push(safeObservation);
 	const assessment = publicInput(() => evaluateSqaAssessment({

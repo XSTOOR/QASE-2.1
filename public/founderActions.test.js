@@ -27,6 +27,24 @@ test('a late load or write from another run cannot replace the visible report se
   f.session = session('a'); assert.deepEqual(f.controller.snapshot().state.selections, ['rec-1']);
 });
 
+test('a delivery update during the initial read refreshes the saved receipt without submitting anything', async () => {
+  const pendingRead = deferred(), receiptRead = deferred(), requests = [];
+  const f = fixture(async (path, options) => {
+    requests.push({ path, method: options.method });
+    return requests.length === 1 ? pendingRead.promise : receiptRead.promise;
+  });
+  const opening = f.controller.load();
+  await f.controller.load({ force: true });
+  pendingRead.resolve({ state: { ...saved('a'), automaticHandoff: true } });
+  await opening;
+  assert.equal(requests.length, 2);
+  receiptRead.resolve({ state: { ...saved('a'), automaticHandoff: true, revision: 2, handoff: { status: 'succeeded', reference: 'studio-job' } } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.controller.snapshot().state.handoff.reference, 'studio-job');
+  await f.controller.select(['rec-1']);
+  assert.ok(requests.every(({ path, method }) => path === '/founder/state?runId=a' && method === undefined));
+});
+
 test('pending saves and sends are synchronous guards; selection changes never deliver', async () => {
   const saveGate = deferred(), sendGate = deferred(), calls = []; let state = saved('a');
   const f = fixture(async (path, options = {}) => {

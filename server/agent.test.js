@@ -139,7 +139,7 @@ test('a turn harvests provider token usage into the run and persists it once', a
 	assert.ok(usageCommits.length >= 1, 'usage committed at least once');
 	assert.deepEqual(usageCommits.at(-1).payload.usage, session.tokenUsage, 'last usage commit carries the final totals');
 
-	// A real provider report on a later turn supersedes estimates.
+	// A real provider report on a later turn adds to the earlier estimate.
 	record.turnUsage.reports.push({ inputTokens: 500, outputTokens: 50, totalTokens: 550, cachedInputTokens: 5 });
 	record.turnUsage.estimates.length = 0;
 	record.runtime.run = async function* () {
@@ -147,7 +147,7 @@ test('a turn harvests provider token usage into the run and persists it once', a
 	};
 	await runTurn(session, { task: 'More tokens' }, store);
 	assert.equal(session.tokenUsage.inputTokens, 1500, 'totals accumulate across turns');
-	assert.equal(session.tokenUsage.estimated, false, 'real report supersedes estimate');
+	assert.equal(session.tokenUsage.estimated, true, 'an earlier estimated call remains marked');
 	release();
 });
 
@@ -268,33 +268,34 @@ test('usage ledger survives auto-continuation turns — replayed reports are not
 	assert.equal(session.tokenUsage.outputTokens, 1300);
 	assert.equal(session.tokenUsage.totalTokens, 7000);
 });
-test('an estimate commits live and is rolled back when a real report supersedes it', async () => {
+test('exact SQA verifier receipts cannot erase primary model estimates in the same run', async () => {
 	const { session, record, store } = runtimeFixture();
-	// Only estimates this turn: the chars/4 fallback used by providers that
-	// send no in-stream usage. They commit live, exactly like real reports.
+	const service = { logProviderReportedUsage() {}, logProviderTiming() {} };
+	const release = attachUsageCapture(service, { estimateMissing: true, onUsage: usage => record.onUsageHarvested(usage) });
 	record.runtime.run = async function* () {
-		record.onUsageHarvested({ inputTokens: 1000, outputTokens: 200, estimated: true });
-		session.report = { ts: 789, verdict: 'fail', summary: 'Tested.' };
-		yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true } };
-	};
-	await runTurn(session, { task: 'Estimate only' }, store);
-	assert.equal(session.status, 'done');
-	assert.equal(session.tokenUsage.inputTokens, 1000, 'estimate applied when no real report');
-	assert.equal(session.tokenUsage.estimated, true);
-
-	// A real report for the same call supersedes the committed estimate: the
-	// estimate is rolled back before the real value is applied.
-	record.runtime.run = async function* () {
-		record.onUsageHarvested({ inputTokens: 1000, outputTokens: 200, estimated: true });
-		record.onUsageHarvested({ inputTokens: 700, outputTokens: 300, callId: 'call-real', estimated: false });
+		service.logProviderTiming('complete', { model: 'primary', estimatedInputTokens: 1000 }, 0, 1, 800);
+		record.onUsageHarvested({ model: 'jev-1.13', inputTokens: 70, outputTokens: 30, callId: 'verifier-1' });
+		yield { type: 'chat_text', content: 'Working through the evidence.' };
+		service.logProviderTiming('complete', { model: 'primary', estimatedInputTokens: 1200 }, 0, 1, 320);
+		record.onUsageHarvested({ model: 'jev-1.13', inputTokens: 50, outputTokens: 10, callId: 'verifier-2' });
+		record.onUsageHarvested({ model: 'jev-1.13', inputTokens: 50, outputTokens: 10, callId: 'verifier-2' });
+		const exact = { model: 'primary', estimatedInputTokens: 1500 };
+		service.logProviderReportedUsage(exact, { inputTokens: 1400, outputTokens: 100 });
+		service.logProviderTiming('complete', exact, 0, 1, 450);
 		session.report = { ts: 790, verdict: 'fail', summary: 'Tested again.' };
 		yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true } };
 	};
-	await runTurn(session, { task: 'Real follows' }, store);
-	assert.equal(session.status, 'done');
-	assert.equal(session.tokenUsage.inputTokens, 1700, 'estimate rolled back, real report added once');
-	assert.equal(session.tokenUsage.outputTokens, 500);
-	assert.equal(session.tokenUsage.estimated, false);
+	try {
+		await runTurn(session, { task: 'Count mixed usage' }, store);
+		assert.equal(session.status, 'done');
+		assert.equal(session.tokenUsage.inputTokens, 3720);
+		assert.equal(session.tokenUsage.outputTokens, 420);
+		assert.equal(session.tokenUsage.estimated, true);
+		assert.deepEqual(session.tokenUsage.byModel, {
+			primary: { inputTokens: 3600, outputTokens: 380 },
+			'jev-1.13': { inputTokens: 120, outputTokens: 40 }
+		});
+	} finally { release(); }
 });
 
 test('each mode exposes only its own finalizer and browser capabilities', () => {
@@ -304,6 +305,8 @@ test('each mode exposes only its own finalizer and browser capabilities', () => 
 		assert.equal(names.has('browser_test_meeting_link'), true);
 		assert.equal(names.has('browser_sqa_smoke'), mode === 'sqa');
 		assert.equal(names.has('run_sqa_smoke_workflow'), mode === 'sqa');
+		assert.equal(names.has('browser_founder_review'), false, 'Only configured Founder draft runs receive the composed tool.');
+		assert.equal(names.has('browser_founder_form'), false, 'Only configured Founder draft runs receive the isolated form tool.');
 		assert.equal(names.has('run_command'), false);
 		assert.deepEqual([...names].filter(name => name.startsWith('finish_')), [finalizer]);
 		assert.equal(names.has('report_finding'), mode !== 'founder');
@@ -391,6 +394,8 @@ test('the real configured-provider SDK persists the new Founder report protocol 
   try{
    assert.equal(commits[0].type,'founder.report_protocol');assert.equal(commits[0].generation.protocol,'section-draft-v1');
    const tools=record.runtime.headlessRuntime.getTools();assert.ok(tools.some(t=>t.name==='draft_founder_report_section'));
+   assert.ok(tools.some(t=>t.name==='browser_founder_review'));
+   assert.ok(tools.some(t=>t.name==='browser_founder_form'));
    assert.deepEqual(tools.find(t=>t.name==='finish_founder_review').parametersSchema.required,['draft_revision']);
    assert.doesNotMatch(record.runtime.getToolDescriptions(),/- finish_founder_review:/,'The unbounded native report schema must not be copied into exploration context.');
    assert.ok(record.runtime.getToolDescriptions().length<1000,'Native tool schemas must not be duplicated in the system context.');

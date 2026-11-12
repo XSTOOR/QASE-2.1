@@ -262,18 +262,30 @@ export function createApplication(options = {}) {
 		backend: founderProjectState,
 		deliveryClient: drytisDelivery?.founderHandoffTarget ? drytisDelivery.deliveryClient : undefined,
 		target: drytisDelivery?.founderHandoffTarget,
+		automaticFounderHandoff: drytisDelivery?.automaticFounderHandoff,
 		projectId: services.tenantContext?.projectId
 	}) : undefined;
 	app.locals.qaseFounderHandoff = founderActions;
+	if (drytisDelivery?.automaticFounderHandoff && (!founderActions
+		|| typeof services.events.subscribeGlobal !== 'function'
+		|| typeof services.runs.getAny !== 'function' || typeof services.runs.publish !== 'function')) {
+		throw new TypeError('Automatic Founder handoff requires durable Founder state and a global run event stream.');
+	}
 	if (typeof services.events.subscribeGlobal === 'function' && founderProjectState) {
-		services.events.subscribeGlobal(async (sessionId, event) => {
+		services.events.subscribeGlobal((sessionId, event) => {
 			if (event?.type !== 'founder.finalized') return;
-			try {
-				const session = await services.runs.getAny?.(sessionId);
-				if (session) await founderActions.publish(session);
-			} catch (error) {
-				logger?.error?.('founder.project-state.persist-failed', { errorName: error?.name, reason: sanitizeErrorDetail(error, 200) });
-			}
+			const work = (async () => {
+				try {
+					const session = await services.runs.getAny?.(sessionId);
+					if (!session) return;
+					const result = await founderActions.publish(session);
+					if (result?.state.automaticHandoff) services.runs.publish(session, 'founder.handoff');
+				} catch (error) {
+					logger?.error?.('founder.project-state.persist-failed', { errorName: error?.name, reason: sanitizeErrorDetail(error, 200) });
+				}
+			})();
+			activeTurns.add(work);
+			void work.finally(() => activeTurns.delete(work));
 		});
 	}
 	// Telegram feedback notifications: built once, disabled/invalid → undefined.
@@ -2091,6 +2103,9 @@ export function createApplication(options = {}) {
 			});
 			session.mode = 'founder';
 			session.founder = founder;
+			if (drytisDelivery?.automaticFounderHandoff && ['owner', 'admin', 'developer'].includes(request.auth?.role)) {
+				founder.automaticStudioHandoff = true;
+			}
 			session.todos = createFounderReviewTodos();
 			session.device = device;
 			session.deviceLandscape = deviceLandscape;
@@ -2212,11 +2227,17 @@ export function createApplication(options = {}) {
 
 	app.post('/api/sessions/:id/sqa/observations', (request, response) => withSqaReview(request, response, async session => {
 			if (request.body?.observation || session.sqa.reviewRevision) assertSqaReviewRevision(session.sqa, request.body?.expectedRevision);
+			const evidenceMode = request.body?.evidenceMode;
+			if (evidenceMode !== undefined && (evidenceMode !== 'reviewer_documents' || !request.body?.observation)) {
+				throw new PublicInputError('Unsupported reviewer evidence mode.');
+			}
 			const result = await recordReviewerSqaObservation(
 				session,
 				request.body?.observation ?? request.body ?? {},
 				request.auth ?? {},
-				services.runs
+				services.runs,
+				undefined,
+				{ reviewerDocuments: evidenceMode === 'reviewer_documents' }
 			);
 			response.json({ result, assessment: session.sqa.assessment, sqa: session.sqa });
 	}));

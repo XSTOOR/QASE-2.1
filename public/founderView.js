@@ -201,7 +201,7 @@ export function createFounderView({
 		if (tokenSummaryText(usage)) {
 			tokens.textContent = tokenSummaryText(usage);
 			tokens.title = usage.estimated === true
-				? 'Estimated from the model gateway (authoritative usage not yet reported).'
+				? 'Includes estimates for model calls with incomplete usage reporting.'
 				: 'Token usage reported by the model gateway.';
 			const perModel = usage.byModel;
 			if (perModel && Object.keys(perModel).length > 0) {
@@ -741,8 +741,7 @@ export function createFounderView({
 		send.className = 'btn btn-primary';
 		send.textContent = 'Send to Studio';
 		send.dataset.role = 'send-to-studio';
-		// Nothing selected or a handoff already in flight → send is disabled.
-		// Selection alone never triggers a delivery; only this button does.
+		// Manual delivery requires a saved selection and an idle handoff.
 		const pending = handoff?.status === 'pending';
 		send.disabled = selections.size === 0 || pending;
 		send.title = pending ? 'A handoff is already in progress.'
@@ -768,31 +767,39 @@ export function createFounderView({
 		try{await work();}catch(error){fail?.(error);}finally{selectionWork.delete(key);if(scopeKey()===key)syncSelections(true);}
 	}
 	function handoffSlot(){const slot=doc.createElement('div');slot.dataset.founderHandoff='true';slot.dataset.founderFocus='handoff-status';slot.tabIndex=-1;slot.setAttribute('aria-live','polite');return slot;}
-	function selectionBlocked(){const action=getActionStatus();return selectionWork.has(scopeKey())||action.loading||action.saving||action.sending||action.exporting||action.error&&action.lastAction==='load'||!action.bound||getProjectState?.()?.handoff?.status==='pending';}
+	function selectionBlocked(){const action=getActionStatus(),saved=getProjectState?.();return selectionWork.has(scopeKey())||action.loading||action.saving||action.sending||action.exporting||action.error&&action.lastAction==='load'||!action.bound||saved?.automaticHandoff||saved?.handoff?.status==='pending';}
 	function syncSelections(force=false){
 		const action=getActionStatus(),saved=getProjectState?.(),selected=new Set(saved?.selections??[]),pending=selectionWork.has(scopeKey())||action.saving,locked=selectionBlocked();
+		const automatic=saved?.automaticHandoff??(getSession()?.founder?.automaticStudioHandoff===true);
 		for(const root of [elements.founderView,elements.reportView]){
 			if(root.dataset.founderRun!==getSession()?.id)continue;
 			const signature=JSON.stringify([...selected].sort());
 			for(const box of root.querySelectorAll('input[data-recommendation-id]')){
 				if(force||root.dataset.founderSelection!==signature)box.checked=selected.has(box.dataset.recommendationId);
+				box.hidden=automatic;
 				box.setAttribute('aria-disabled',String(Boolean(locked)));
 			}
 			root.dataset.founderSelection=signature;
 			for(const bar of root.querySelectorAll('[data-founder-recommendation-ids]')){
 				const ids=JSON.parse(bar.dataset.founderRecommendationIds),count=ids.filter(id=>selected.has(id)).length;
-				bar.querySelector('[data-role="selection-count"]').textContent=action.loading?'Loading saved selection…':pending?'Saving selection…':`${count} of ${ids.length} selected`;
-				for(const button of bar.querySelectorAll('[data-founder-selection-action]'))button.setAttribute('aria-disabled',String(Boolean(locked)));
+				const countLabel=bar.querySelector('[data-role="selection-count"]');
+				countLabel.hidden=automatic&&!count;
+				countLabel.textContent=automatic?`${count} selected automatically`:action.loading?'Loading saved selection…':pending?'Saving selection…':`${count} of ${ids.length} selected`;
+				for(const button of bar.querySelectorAll('[data-founder-selection-action]')){
+					button.hidden=automatic;
+					button.setAttribute('aria-disabled',String(Boolean(locked)));
+				}
 				const sent=handoff?.status==='succeeded'&&JSON.stringify(handoff.selectedRecommendationIds)===JSON.stringify(ids.filter(id=>selected.has(id)));
 				const send=bar.querySelector('[data-role="send-to-studio"]');
+				send.hidden=automatic;
 				send.disabled=!action.bound||saved?.deliveryConfigured===false||action.loading||pending||action.sending||action.exporting||action.error&&action.lastAction==='load'||count===0||handoff?.status==='pending'&&!saved?.leaseExpired||sent;
 				send.textContent=action.sending?'Sending to Studio…':sent?'Sent to Studio':saved?.deliveryConfigured===false?'Studio unavailable':saved?.leaseExpired?'Retry unconfirmed delivery':'Send to Studio';
 				send.title=send.disabled?(sent?'Studio already accepted this selection.':pending?'Saving selection…':handoff?.status==='pending'?'A handoff is already in progress.':'Load and select recommendations from this report.'):'Send the saved selection to Studio.';
 				for(const button of bar.querySelectorAll('[data-founder-export]'))button.disabled=!action.bound||action.loading||pending||action.sending||action.exporting||Boolean(action.error&&action.lastAction==='load')||count===0;
 			}
 			for(const slot of root.querySelectorAll('[data-founder-handoff]')){
-				const signature=JSON.stringify([handoff??null,action.error,action.notice,action.loading,action.saving,action.sending,action.exporting,action.canRetrySelection,action.bound,saved?.leaseExpired,saved?.selections,saved?.deliveryConfigured]);if(slot.dataset.signature===signature)continue;slot.dataset.signature=signature;
-				const focused=slot.contains(doc.activeElement),status=renderHandoffStatus(),feedback=renderActionFeedback(action);slot.replaceChildren(...[feedback,status].filter(Boolean));if(focused&&slot.childElementCount)slot.focus({preventScroll:true});
+				const signature=JSON.stringify([handoff??null,action.error,action.notice,action.loading,action.saving,action.sending,action.exporting,action.canRetrySelection,action.bound,saved?.leaseExpired,saved?.handoffStartOverdue,saved?.selections,saved?.deliveryConfigured,automatic]);if(slot.dataset.signature===signature)continue;slot.dataset.signature=signature;
+				const focused=slot.contains(doc.activeElement),status=renderHandoffStatus(saved,automatic),feedback=renderActionFeedback(action);slot.replaceChildren(...[feedback,status].filter(Boolean));if(focused&&slot.childElementCount)slot.focus({preventScroll:true});
 				reader.restoreLayout(root);
 			}
 		}
@@ -809,28 +816,34 @@ export function createFounderView({
 	}
 
 	/** Handoff status line: honest pending / succeeded / failed / unavailable. */
-	function renderHandoffStatus() {
-		if (!handoff) return undefined;
+	function renderHandoffStatus(saved, automatic) {
+		if (!handoff && !automatic) return undefined;
+		const status = handoff?.status ?? (saved?.handoffStartOverdue?'failed':'pending');
 		const node = doc.createElement('p');
-		node.className = `founder-handoff-status founder-handoff-${handoff.status}`;
+		node.className = `founder-handoff-status founder-handoff-${status}`;
 		node.dataset.role = 'handoff-status';
-		if (handoff.status === 'pending') {
-			node.textContent = getProjectState?.()?.leaseExpired?'Delivery confirmation is overdue. Retry uses the same delivery key; your saved selection is retained.':'Sending to Studio… your saved selection is locked while delivery is pending.';
-		} else if (handoff.status === 'succeeded') {
-			const reference = handoff.reference ? ` Reference: ${handoff.reference}.` : '';
-			node.textContent = `Studio accepted ${handoff.selectedRecommendationIds?.length ?? 0} recommendation(s).${reference}`;
-		} else if (handoff.status === 'failed') {
-			node.textContent = handoff.message ?? 'The Studio handoff did not complete. Your selections were kept — try sending again.';
+		if (!handoff) {
+			node.textContent = saved?.handoffStartOverdue?'Automatic Studio delivery did not start.':'Waiting for automatic Studio delivery.';
+		} else if (status === 'pending') {
+			node.textContent = saved?.leaseExpired?'Delivery confirmation is overdue. Retry uses the same delivery key.':automatic?'Sending recommendations to Studio…':'Sending to Studio… your saved selection is locked while delivery is pending.';
+		} else if (status === 'succeeded') {
+			const count = handoff.selectedRecommendationIds?.length ?? 0;
+			const reference = handoff.reference ? ` Studio reference ${handoff.reference}.` : '';
+			node.textContent = `Studio accepted ${count} ${count===1?'recommendation':'recommendations'}.${reference}`;
+		} else if (status === 'failed') {
+			node.textContent = handoff.message ?? 'Studio delivery could not be confirmed. Your selection is saved.';
+		} else if (status === 'unavailable') {
+			node.textContent = handoff.message ?? 'Drytis Studio delivery is not configured on this instance.';
+			node.textContent += ' Use Copy requirements or Download requirements. No build was started.';
+		}
+		if (status === 'failed' || (automatic && saved?.leaseExpired)) {
 			const retry = doc.createElement('button');
 			retry.type = 'button';
 			retry.className = 'btn btn-ghost';
 			retry.textContent = 'Retry delivery';
 			retry.onclick = () => onSendToStudio?.();
-			const action=getActionStatus();retry.disabled=action.loading||action.saving||action.sending||action.exporting||JSON.stringify(getProjectState?.()?.selections)!==JSON.stringify(handoff.selectedRecommendationIds);
+			const action=getActionStatus();retry.disabled=!saved?.deliveryConfigured||!action.bound||action.loading||action.saving||action.sending||action.exporting||(handoff&&JSON.stringify(saved?.selections)!==JSON.stringify(handoff.selectedRecommendationIds));
 			node.append(' ', retry);
-		} else if (handoff.status === 'unavailable') {
-			node.textContent = handoff.message ?? 'Drytis Studio delivery is not configured on this instance.';
-			node.textContent += ' Use Copy requirements or Download requirements. No build was started.';
 		}
 		return node;
 	}

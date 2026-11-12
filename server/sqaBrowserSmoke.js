@@ -56,7 +56,7 @@ function focusKey(item) {
 	return [item.tag, item.id, item.role, item.type, item.name].map(value => value ?? '').join('|');
 }
 
-async function statusSignals(page) {
+export async function statusSignals(page) {
 	return page.evaluate(() => [...document.querySelectorAll('[role="status"],[role="alert"],output')]
 		.filter(element => {
 			const rect = element.getBoundingClientRect();
@@ -71,7 +71,7 @@ async function statusSignals(page) {
 		.slice(0, 3));
 }
 
-async function validityState(field) {
+export async function validityState(field) {
 	return field.evaluate(element => ({
 		valid: element.validity.valid,
 		required: Boolean(element.required),
@@ -152,7 +152,7 @@ async function inspectFormEligibility(page) {
 	});
 }
 
-async function safeSubmitter(submit, field, expectedUrl) {
+export async function safeSubmitter(submit, field, expectedUrl) {
 	const element = await field.elementHandle({ timeout: 3_000 });
 	try {
 		return await submit.evaluate((button, { field, expectedUrl }) => {

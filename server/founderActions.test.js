@@ -14,6 +14,72 @@ function fixture(options = {}) {
 const input = (state, ids = state.selections) => ({ runId: state.runId, reviewKey: state.reviewKey, expectedRevision: state.revision, selectedRecommendationIds: ids });
 const conflict = error => error.status === 409;
 
+test('automatic publication sends the full finalized set once and never sends an older unmarked report', async () => {
+  const calls = [];
+  const f = fixture({ automaticFounderHandoff: true, target: '/studio', deliveryClient: { async deliver(target, payload) {
+    calls.push({ target, payload });
+    return { status: 202, body: { jobId: 'automatic-job' } };
+  } } });
+  const previous = report('previous'), run = report();
+  run.founder.automaticStudioHandoff = true;
+  run.founder.scope.target.url = 'https://example.test/page?session=fixture-private#fragment';
+  await f.service.publish(previous);
+  assert.equal((await f.service.read(previous)).automaticHandoff, false);
+  assert.equal((await f.service.read(run)).automaticHandoff, true);
+  assert.equal(calls.length, 0);
+  await Promise.all([f.service.publish(run), f.service.publish(run)]);
+  const saved = await f.service.read(run);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].target, '/studio');
+  assert.equal(calls[0].payload.targetUrl, 'https://example.test/page');
+  assert.deepEqual(calls[0].payload.ordered, ['rec-1', 'rec-2']);
+  assert.deepEqual(saved.selections, calls[0].payload.ordered);
+  assert.equal(saved.handoff.status, 'succeeded');
+  assert.equal(saved.handoff.reference, 'automatic-job');
+  await assert.rejects(f.service.select(run, input(saved, ['rec-1'])), error => error.code === 'automatic_handoff');
+  assert.equal((await f.service.send(run, input(saved))).deduplicated, true);
+  assert.equal(calls.length, 1);
+});
+
+test('automatic delivery needs a reference and explicit retry reuses its signed intent', async () => {
+  const calls = [];
+  const f = fixture({ automaticFounderHandoff: true, target: '/studio', deliveryClient: { async deliver(_target, payload, options) {
+    calls.push({ payload, key: options.idempotencyKey });
+    return calls.length === 1 ? { status: 202 } : { status: 202, reference: 'reconciled-job' };
+  } } });
+  const run = report();
+  run.founder.automaticStudioHandoff = true;
+  assert.equal((await f.service.publish(run)).ok, false);
+  await f.service.publish(run);
+  assert.equal(calls.length, 1);
+  const failed = await f.service.read(run);
+  assert.equal(failed.handoff.status, 'failed');
+  await f.service.send(run, input(failed));
+  assert.equal((await f.service.read(run)).handoff.reference, 'reconciled-job');
+  assert.deepEqual(calls[0], calls[1]);
+});
+
+test('a missed publication event allows an explicit recovery of the full selection after the start grace period', async () => {
+  let calls = 0;
+  const f = fixture({ automaticFounderHandoff: true, target: '/studio', deliveryClient: { async deliver() {
+    calls++; return { status: 202, reference: 'recovered-job' };
+  } } });
+  const run = report();
+  run.founder.finalizedAt = '2026-11-08T01:00:00Z';
+  run.founder.automaticStudioHandoff = true;
+  const initial = await f.service.read(run);
+  assert.equal(initial.handoffStartOverdue, false);
+  await assert.rejects(f.service.send(run, input(initial, ['rec-1', 'rec-2'])), error => error.code === 'selection_not_saved');
+  f.advance(31_000);
+  const overdue = await f.service.read(run);
+  assert.equal(overdue.handoffStartOverdue, true);
+  assert.deepEqual(overdue.selections, ['rec-1', 'rec-2']);
+  assert.equal(calls, 0);
+  await Promise.all([f.service.send(run, input(overdue)), f.service.publish(run)]);
+  assert.equal((await f.service.read(run)).handoff.reference, 'recovered-job');
+  assert.equal(calls, 1);
+});
+
 test('selections bind to report content, run and owner even when IDs and schema versions repeat', async () => {
   const f = fixture(), a = report(), b = report('run-b'), other = report('run-c', 'other-owner');
   await f.service.publish(a);

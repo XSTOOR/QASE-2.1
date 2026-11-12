@@ -1,4 +1,4 @@
-import { describeSqaLifecycle, groupSqaUnresolvedResults } from './sqaPresentation.js';
+import { describeSqaLifecycle, groupSqaUnresolvedResults, sqaMissingEvidenceRequirements } from './sqaPresentation.js';
 import { renderSqaReviewPanel } from './sqaReviewView.js';
 import { sqaReportModel } from './sqaReportModel.js';
 import { evidenceInspectButton, renderSqaTraceability } from './sqaEvidenceView.js';
@@ -246,6 +246,7 @@ const state = {
 	cursorTimer: undefined,
 	sqaCatalog: undefined,
 	sqaCatalogPromise: undefined,
+	sqaReviewSelection: undefined,
 	founderCatalog: undefined,
 	founderProjectState: null,
 	founderHandoffPayload: null,
@@ -3771,7 +3772,7 @@ function renderReport() {
 		usageRow.className = 'sqa-tokens';
 		usageRow.textContent = `Total model usage for this run: ${finalUsage}`;
 		usageRow.title = state.session.tokenUsage.estimated === true
-			? 'Estimated from the model gateway (authoritative usage not reported).'
+			? 'Includes estimates for model calls with incomplete usage reporting.'
 			: 'Token usage reported by the model gateway.';
 		const perModel = state.session.tokenUsage.byModel;
 		if (perModel && Object.keys(perModel).length > 0) {
@@ -4235,14 +4236,11 @@ function renderSqaReportTab() {
 		?? 'This scoped engineering assessment is not legal advice, regulatory approval, accreditation, an audit opinion, or certification.';
 	notice.append(noticeTitle, noticeText);
 
-	el.reportView.append(notice);
-	if (assessment.technicalSummary) el.reportView.append(renderSqaTechnicalSummary(assessment.technicalSummary));
+	const groups = groupSqaUnresolvedResults(assessment.results);
+	const unresolved = renderSqaUnresolved(groups);
+	el.reportView.append(renderSqaVerdict(assessment, lifecycle), renderSqaOutcomeSummary(assessment, groups, unresolved), renderSqaReportActions(), notice, unresolved);
+	el.reportView.append(renderSqaCoverage(assessment));
 	if (assessment.executionBudget) el.reportView.append(renderSqaExecutionBudget(assessment.executionBudget));
-	el.reportView.append(renderSqaFailures(assessment), renderSqaVerdict(assessment, lifecycle), renderSqaReportActions());
-	el.reportView.append(
-		renderSqaUnresolved(assessment),
-		renderSqaCoverage(assessment)
-	);
 	el.reportView.append(
 		renderSqaControls(assessment.results ?? []),
 		renderSqaTraceability(sqaReportModel(assessment), { runId: state.session.id, api }),
@@ -4343,7 +4341,7 @@ function renderSqa() {
 	if (usageSummary) {
 		sqaTokens.textContent = `Model usage: ${usageSummary}`;
 		sqaTokens.title = state.session.tokenUsage.estimated === true
-			? 'Estimated from the model gateway (authoritative usage not yet reported).'
+			? 'Includes estimates for model calls with incomplete usage reporting.'
 			: 'Token usage reported by the model gateway.';
 		const perModel = state.session.tokenUsage.byModel;
 		if (perModel && Object.keys(perModel).length > 0) {
@@ -4370,23 +4368,26 @@ function renderSqa() {
 	noticeText.textContent = assessment?.disclaimer ?? scope.disclaimer
 		?? 'This scoped engineering assessment is not legal advice, regulatory approval, accreditation, an audit opinion, or certification.';
 	notice.append(noticeTitle, noticeText);
-	el.sqaView.append(notice);
-
-	if (assessment?.technicalSummary) el.sqaView.append(renderSqaTechnicalSummary(assessment.technicalSummary));
-	if (assessment?.executionBudget) el.sqaView.append(renderSqaExecutionBudget(assessment.executionBudget));
-	if (assessment) el.sqaView.append(renderSqaFailures(assessment));
+	const groups = assessment ? groupSqaUnresolvedResults(assessment.results) : undefined;
+	const unresolved = groups ? renderSqaUnresolved(groups) : undefined;
 	el.sqaView.append(renderSqaVerdict(assessment, lifecycle));
+	if (assessment && lifecycle.phase !== 'ready') el.sqaView.append(renderSqaOutcomeSummary(assessment, groups, unresolved));
+	el.sqaView.append(notice);
 	el.sqaView.append(renderSqaReviewPanel({
 		session: state.session,
 		role: state.user?.role,
+		selectedControlId: state.sqaReviewSelection?.runId === sqaReviewRunId ? state.sqaReviewSelection.controlId : undefined,
+		onSelectControl: controlId => { state.sqaReviewSelection = { runId: sqaReviewRunId, controlId }; },
 		api,
 		selectRun: id => selectSession(id),
-		refresh: async sqa => {
+		refresh: async (sqa, { focusControl = false } = {}) => {
 			if (state.session?.id !== sqaReviewRunId) return;
-			if (sqa.reviewRevision !== undefined && sqa.reviewRevision <= (state.session.sqa?.reviewRevision ?? 0)) return;
-			state.session.sqa = sqa;
-			renderSqa(); renderReport(); renderHeader();
-			void refreshRuns();
+			if (sqa.reviewRevision === undefined || sqa.reviewRevision > (state.session.sqa?.reviewRevision ?? 0)) {
+				state.session.sqa = sqa;
+				renderSqa(); renderReport(); renderHeader();
+				void refreshRuns();
+			}
+			if (focusControl && el.sqaTab.classList.contains('is-active')) focusSqaReviewControl();
 		},
 		downloadMarkdown: async (url, filename) => {
 			const text = await apiText(url);
@@ -4411,8 +4412,9 @@ function renderSqa() {
 	if (!assessment) return;
 
 	if (lifecycle.finalized) el.sqaView.append(renderSqaReportActions());
-	el.sqaView.append(renderSqaUnresolved(assessment));
+	el.sqaView.append(unresolved);
 	el.sqaView.append(renderSqaCoverage(assessment));
+	if (assessment.executionBudget) el.sqaView.append(renderSqaExecutionBudget(assessment.executionBudget));
 	el.sqaView.append(renderSqaControls(assessment.results ?? []));
 	el.sqaView.append(renderSqaTraceability(sqaReportModel(assessment), { runId: state.session.id, api }));
 	el.sqaView.append(renderSqaSources(assessment.frameworkCoverage ?? []));
@@ -4528,14 +4530,6 @@ function renderSqaReportActions() {
 	return actionGroup;
 }
 
-function renderSqaFailures(assessment) {
-	const failures = sqaReportModel(assessment).failures;
-	const section = sqaSection('Evidence-backed control failures', 'Recorded failures are separate from missing reviewer evidence.');
-	if (!failures.length) section.append(sqaLabeledText('Result', 'No evidence-backed control failures were recorded.'));
-	for (const failure of failures) section.append(sqaLabeledText(`${failure.controlId} — ${failure.title}`, failure.rationale ?? 'Remediate and retest this control.'));
-	return section;
-}
-
 function renderSqaVerdict(assessment, lifecycle) {
 	const node = document.createElement('section');
 	node.className = 'sqa-verdict';
@@ -4555,13 +4549,17 @@ function renderSqaVerdict(assessment, lifecycle) {
 	const detail = document.createElement('p');
 	if (lifecycle.finalized && assessment) {
 		if (lifecycle.evidenceIncomplete) {
-			detail.textContent = `Deterministic verdict: Blocked. No control failures were recorded; ${lifecycle.evidenceGapCount} reviewer or mixed-evidence control${lifecycle.evidenceGapCount === 1 ? '' : 's'} remain incomplete.`;
+			detail.textContent = 'The assessment remains blocked while required evidence is pending.';
+		} else if (lifecycle.status === 'blocked' && lifecycle.evidenceGapCount) {
+			detail.textContent = 'Some controls remain unresolved. See the browser results and required reviewer evidence below.';
 		} else {
 			const gates = assessment.gates ?? [];
 			const passed = gates.filter(gate => gate.status === 'pass').length;
 			const risk = assessment.risk?.level ? ` Residual risk: ${humanizeSqaId(assessment.risk.level)}.` : '';
 			detail.textContent = `${passed}/${gates.length} decision gates passed.${risk}`;
 		}
+	} else if (lifecycle.detail) {
+		detail.textContent = lifecycle.detail;
 	} else if (lifecycle.phase === 'ready') {
 		detail.textContent = 'The scope is saved. Testing has not started and no final verdict exists yet.';
 	} else if (lifecycle.phase === 'waiting') {
@@ -4578,15 +4576,54 @@ function renderSqaVerdict(assessment, lifecycle) {
 	return node;
 }
 
+function renderSqaOutcomeSummary(assessment, groups, unresolved) {
+	const summary = document.createElement('div');
+	summary.className = 'sqa-outcome-split';
+	summary.append(renderSqaTechnicalSummary(assessment.technicalSummary));
+
+	const count = groups.reviewer.length + groups.mixed.length;
+	const copy = count === 1 ? '1 control needs evidence from a reviewer.'
+		: count > 1 ? `${count} controls need evidence from a reviewer.`
+		: 'No outstanding reviewer evidence is listed.';
+	const reviewer = sqaSection('Reviewer evidence', copy);
+	reviewer.classList.add('sqa-reviewer-summary');
+	if (count > 0) {
+		const content = document.createElement('div');
+		content.className = 'sqa-reviewer-summary-content';
+		if (groups.mixed.length) {
+			const mixed = document.createElement('p');
+			mixed.textContent = groups.mixed.length === 1 ? '1 of these controls also needs browser evidence.'
+				: `${groups.mixed.length} of these controls also need browser evidence.`;
+			content.append(mixed);
+		}
+		const target = unresolved.querySelector('[data-kind="reviewer"]') ?? unresolved.querySelector('[data-kind="mixed"]');
+		const button = document.createElement('button');
+		button.className = 'btn btn-ghost btn-sm';
+		button.type = 'button';
+		button.textContent = 'View required evidence';
+		button.addEventListener('click', () => {
+			target.focus({ preventScroll: true });
+			target.scrollIntoView({ block: 'start' });
+		});
+		content.append(button);
+		reviewer.append(content);
+	}
+	summary.append(reviewer);
+	return summary;
+}
+
 function renderSqaTechnicalSummary(summary) {
 	const applicable = Number(summary?.applicableControls) || 0;
 	const verdict = summary?.verdict ?? 'not_applicable';
 	const meta = SQA_RESULT_META[verdict] ?? { label: humanizeSqaId(verdict), mark: '•' };
 	const node = sqaSection(
-		'Automated web checks',
-		applicable ? `${applicable} controlled-browser check${applicable === 1 ? '' : 's'} evaluated separately from reviewer evidence.` : 'No automated web checks applied to this scope.'
+		'Browser checks',
+		!summary ? 'This assessment has no saved browser check summary.'
+			: applicable ? `${applicable} automated web check${applicable === 1 ? '' : 's'} in scope.`
+			: 'No automated web checks applied to this scope.'
 	);
 	node.classList.add('sqa-technical');
+	if (!summary || !applicable) return node;
 
 	const summaryRow = document.createElement('div');
 	summaryRow.className = 'sqa-technical-summary';
@@ -4596,7 +4633,7 @@ function renderSqaTechnicalSummary(summary) {
 	status.textContent = meta.label;
 	const copy = document.createElement('p');
 	copy.textContent = verdict === 'pass'
-		? 'All applicable browser checks completed successfully.'
+		? 'The automated web checks all passed.'
 		: verdict === 'fail'
 			? 'At least one automated browser check produced an evidence-backed failure.'
 			: verdict === 'blocked'
@@ -4729,13 +4766,43 @@ function renderSqaMetric(label, value) {
 	return card;
 }
 
-function renderSqaUnresolved(assessment) {
-	const unresolved = (assessment.results ?? []).filter(result => result.status !== 'pass');
-	const groups = groupSqaUnresolvedResults(assessment.results);
-	const evidenceGaps = groups.reviewer.length + groups.mixed.length;
-	const node = sqaSection('Failures and evidence gaps', `${groups.failures.length} failed · ${groups.budget.length} stopped by budget · ${evidenceGaps} reviewer/mixed evidence gaps · ${groups.automated.length} automated incomplete`);
+function focusSqaReviewControl(controlId) {
+	const panel = el.sqaView.querySelector('.sqa-review-panel');
+	const control = panel?.querySelector('[data-sqa-review-control]');
+	if (control) {
+		if (controlId && control.value !== controlId && [...control.options].some(option => option.value === controlId)) {
+			control.value = controlId;
+			control.dispatchEvent(new Event('change'));
+		}
+		control.focus();
+	} else {
+		panel?.querySelector('[data-sqa-review-reason]')?.focus();
+	}
+}
 
-	if (unresolved.length === 0) {
+function renderSqaUnresolved(groups) {
+	const session = state.session;
+	const canReview = ['owner', 'admin'].includes(state.user?.role)
+		&& !['running', 'queued', 'awaiting_input'].includes(session?.status)
+		&& (session?.sqa?.finalizedAt || session?.sqa?.review?.status === 'in_review');
+	const reviewControl = canReview ? controlId => {
+		if (state.session?.id !== session.id) return;
+		state.sqaReviewSelection = { runId: session.id, controlId };
+		activateDetailTab(el.sqaTab);
+		focusSqaReviewControl(controlId);
+	} : undefined;
+	const evidenceGaps = groups.reviewer.length + groups.mixed.length;
+	const failures = groups.failures.length;
+	const browserGaps = groups.automated.length;
+	const counts = [
+		`${failures} confirmed control failure${failures === 1 ? '' : 's'}`,
+		evidenceGaps && `${evidenceGaps} ${evidenceGaps === 1 ? 'control needs' : 'controls need'} reviewer evidence`,
+		browserGaps && `${browserGaps} browser check${browserGaps === 1 ? '' : 's'} incomplete`,
+		groups.budget.length && `${groups.budget.length} stopped by the run limit`
+	].filter(Boolean);
+	const node = sqaSection('Failures and evidence gaps', `${counts.join('. ')}.`);
+
+	if (!Object.values(groups).some(results => results.length)) {
 		const empty = document.createElement('p');
 		empty.className = 'sqa-section-empty';
 		empty.textContent = 'No unresolved controls in this assessment.';
@@ -4747,10 +4814,10 @@ function renderSqaUnresolved(assessment) {
 	list.className = 'sqa-unresolved-groups';
 	for (const group of [
 		{ title: 'Confirmed failures', description: 'Evidence-backed control failures that affect the product verdict.', results: groups.failures, kind: 'failures' },
-		{ title: 'Stopped early: budget reached', description: 'The safety budget ended this run before these checks completed. Saved results remain valid; rerun after the execution-efficiency fix to complete this coverage.', results: groups.budget, kind: 'budget' },
-		{ title: 'Reviewer evidence required', description: 'Documents, approvals, records, or independent review must be supplied by an authorized reviewer.', results: groups.reviewer, kind: 'reviewer' },
-		{ title: 'Mixed evidence incomplete', description: 'This control combines browser-observable checks with external reviewer artifacts.', results: groups.mixed, kind: 'mixed' },
-		{ title: 'Automated check blocked / not run', description: 'The controlled browser check did not complete or lacks agent-capable technical evidence.', results: groups.automated, kind: 'automated' }
+		{ title: 'Reviewer evidence needed', description: 'An authorized reviewer needs to provide the listed documents or records.', results: groups.reviewer, kind: 'reviewer' },
+		{ title: 'Browser and reviewer evidence needed', description: 'These controls need browser evidence and reviewer records.', results: groups.mixed, kind: 'mixed' },
+		{ title: 'Browser checks incomplete', description: 'These checks could not finish or need additional browser evidence.', results: groups.automated, kind: 'automated' },
+		{ title: 'Stopped by the run limit', description: 'The run reached its budget before these checks finished. The report retains the evidence already collected.', results: groups.budget, kind: 'budget' }
 	]) {
 		if (!group.results.length) continue;
 		const section = document.createElement('section');
@@ -4758,12 +4825,16 @@ function renderSqaUnresolved(assessment) {
 		section.dataset.kind = group.kind;
 		const heading = document.createElement('h4');
 		heading.textContent = `${group.title} (${group.results.length})`;
+		if (group.kind === 'reviewer' || group.kind === 'mixed') {
+			section.tabIndex = -1;
+			section.setAttribute('aria-label', heading.textContent);
+		}
 		const description = document.createElement('p');
 		description.className = 'sqa-unresolved-group-description';
 		description.textContent = group.description;
 		const rows = document.createElement('div');
 		rows.className = 'sqa-unresolved-list';
-		for (const result of group.results) rows.append(renderSqaUnresolvedRow(result));
+		for (const result of group.results) rows.append(renderSqaUnresolvedRow(result, group.kind, reviewControl));
 		section.append(heading, description, rows);
 		list.append(section);
 	}
@@ -4771,7 +4842,7 @@ function renderSqaUnresolved(assessment) {
 	return node;
 }
 
-function renderSqaUnresolvedRow(result) {
+function renderSqaUnresolvedRow(result, kind, reviewControl) {
 	const row = document.createElement('div');
 	row.className = 'sqa-unresolved';
 	row.dataset.status = result.status;
@@ -4781,11 +4852,43 @@ function renderSqaUnresolvedRow(result) {
 	const body = document.createElement('div');
 	const title = document.createElement('strong');
 	title.textContent = `${result.controlId} · ${result.title}`;
-	const reason = document.createElement('p');
+	const requirements = ['reviewer', 'mixed', 'automated'].includes(kind) ? sqaMissingEvidenceRequirements(result) : [];
 	const missing = result.evidenceCoverage?.missing ?? [];
-	reason.textContent = result.decisionNotes?.[0] ?? result.rationale
-		?? (missing.length ? `Missing evidence: ${missing.join(', ')}.` : 'A conclusive evidence-backed result is not available.');
-	body.append(title, reason);
+	body.append(title);
+	const explanation = result.decisionNotes?.[0] ?? result.rationale
+		?? (!requirements.length ? (missing.length ? `Missing evidence: ${missing.join(', ')}.` : 'A conclusive evidence-backed result is not available.') : undefined);
+	if (explanation) {
+		const reason = document.createElement('p');
+		reason.textContent = explanation;
+		body.append(reason);
+	}
+	if (requirements.length) {
+		const list = document.createElement('ul');
+		list.className = 'sqa-missing-evidence';
+		list.setAttribute('aria-label', 'Missing evidence');
+		for (const requirement of requirements) {
+			const item = document.createElement('li');
+			const label = document.createElement('span');
+			label.textContent = humanizeSqaId(requirement.type);
+			const detail = document.createElement('p');
+			const owner = requirement.owner === 'reviewer' ? 'Reviewer evidence' : 'Browser evidence';
+			const count = Number.isFinite(requirement.actual) && Number.isFinite(requirement.minimum)
+				? ` (${requirement.actual} of ${requirement.minimum} supplied)` : '';
+			detail.textContent = `${owner}${count}.${requirement.description ? ` ${requirement.description}` : ''}`;
+			item.append(label, detail);
+			list.append(item);
+		}
+		body.append(list);
+	}
+	if (reviewControl && ['reviewer', 'mixed'].includes(kind)) {
+		const action = document.createElement('button');
+		action.type = 'button';
+		action.className = 'btn btn-ghost btn-sm sqa-review-control-action';
+		action.textContent = 'Review this control';
+		action.setAttribute('aria-label', `Review evidence for ${result.controlId}`);
+		action.addEventListener('click', () => reviewControl(result.controlId));
+		body.append(action);
+	}
 	row.append(status, body);
 	return row;
 }
@@ -5215,6 +5318,9 @@ function handleEvent(event) {
 			showCompletedFounderReport();
 			void refreshRuns();
 			toast('Founder brief published.', 'good');
+			break;
+		case 'founder.handoff':
+			void founderActions.load({ force: true });
 			break;
 
 		case 'context':

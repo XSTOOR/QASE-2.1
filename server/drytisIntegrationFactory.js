@@ -3,7 +3,8 @@ import { createDrytisIntegrationConfig } from './drytisIntegrationConfig.js';
 import {
 	createDrytisDeliveryClient,
 	createDrytisRequestVerifier,
-	createMemoryDrytisNonceStore
+	createMemoryDrytisNonceStore,
+	resolveDrytisDeliveryTarget
 } from './drytisTransport.js';
 import { createPostgresDrytisNonceStore } from './postgres/drytisNonceStore.js';
 
@@ -22,7 +23,17 @@ export function drytisIntegrationEnabled(environment = process.env) {
  */
 export function createConfiguredDrytisIntegration(options = {}) {
 	const environment = options.environment ?? process.env;
-	if (!drytisIntegrationEnabled(environment)) return undefined;
+	const autoSetting = String(environment.QASE_DRYTIS_FOUNDER_AUTO_HANDOFF ?? '').trim().toLowerCase();
+	if (autoSetting && autoSetting !== 'true' && autoSetting !== 'false') {
+		throw new TypeError('QASE_DRYTIS_FOUNDER_AUTO_HANDOFF must be true or false.');
+	}
+	const automaticFounderHandoff = autoSetting === 'true';
+	const enabled = drytisIntegrationEnabled(environment);
+	const founderHandoffTarget = String(environment.QASE_DRYTIS_FOUNDER_HANDOFF_PATH ?? '').trim() || undefined;
+	if (automaticFounderHandoff && (!enabled || !founderHandoffTarget)) {
+		throw new TypeError('Automatic Founder handoff requires Drytis integration and an explicit Studio handoff path.');
+	}
+	if (!enabled) return undefined;
 	const services = options.services;
 	const tenantContext = options.tenantContext;
 	if (!services || !tenantContext) {
@@ -34,6 +45,7 @@ export function createConfiguredDrytisIntegration(options = {}) {
 	}
 
 	const config = (options.createConfig ?? createDrytisIntegrationConfig)(environment);
+	if (automaticFounderHandoff) resolveDrytisDeliveryTarget(config, founderHandoffTarget);
 	const nonceStore = options.nonceStore ?? (options.pool
 		? (options.createPostgresNonceStore ?? createPostgresDrytisNonceStore)({
 			pool: options.pool,
@@ -45,7 +57,6 @@ export function createConfiguredDrytisIntegration(options = {}) {
 	const ticketsTarget = String(environment.QASE_DRYTIS_TICKETS_PATH ?? '').trim() || undefined;
 	// Founder Mode → Studio handoff target (Phase 4). Explicit opt-in only:
 	// founder payloads are never silently delivered to the QA tickets target.
-	const founderHandoffTarget = String(environment.QASE_DRYTIS_FOUNDER_HANDOFF_PATH ?? '').trim() || undefined;
 	const deliveryClient = (deliveryTarget || ticketsTarget || founderHandoffTarget)
 		? (options.createDeliveryClient ?? createDrytisDeliveryClient)({ config })
 		: undefined;
@@ -63,6 +74,7 @@ export function createConfiguredDrytisIntegration(options = {}) {
 	return Object.freeze({
 		api, config, nonceStore, deliveryClient, deliveryTarget,
 		ticketsTarget: deliveryClient ? resolvedTicketsTarget : undefined,
-		founderHandoffTarget: deliveryClient ? founderHandoffTarget : undefined
+		founderHandoffTarget: deliveryClient ? founderHandoffTarget : undefined,
+		automaticFounderHandoff
 	});
 }

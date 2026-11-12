@@ -1,3 +1,5 @@
+import { isSqaInternalEvidence, isSqaPartialReleaseEvidence } from './sqaEvidencePolicy.js';
+
 let fieldSequence = 0;
 
 function node(tag, text, className) {
@@ -16,7 +18,7 @@ export function compareSqaVersions(before, after) {
 	});
 }
 
-export function renderSqaReviewPanel({ session, role, api, refresh, selectRun, downloadMarkdown }) {
+export function renderSqaReviewPanel({ session, role, api, refresh, selectRun, downloadMarkdown, selectedControlId, onSelectControl }) {
 	const sqa = session.sqa;
 	const section = node('section', '', 'sqa-section sqa-review-panel');
 	section.setAttribute('aria-label', 'Human evidence review');
@@ -59,11 +61,12 @@ export function renderSqaReviewPanel({ session, role, api, refresh, selectRun, d
 	};
 	const change = async (action, reason) => {
 		const response = await api(`${prefix}/review/${action}`, { method: 'POST', body: JSON.stringify({ expectedRevision: revision, reason }) });
-		await refresh(response.sqa);
+		await refresh(response.sqa, { focusControl: action === 'reopen' });
 	};
 	if (idle && sqa.finalizedAt && sqa.assessment) {
 		const form = node('form', '', 'sqa-review-form');
 		const reason = field(form, 'Review request or reopening reason', 'textarea');
+		reason.dataset.sqaReviewReason = '';
 		reason.required = true;
 		reason.maxLength = 2000;
 		if (sqa.review?.status !== 'requested') button('Request review', async () => { if (form.reportValidity()) await change('request', reason.value); }, form);
@@ -75,11 +78,13 @@ export function renderSqaReviewPanel({ session, role, api, refresh, selectRun, d
 		const form = node('form', '', 'sqa-review-form');
 		form.append(node('h4', 'Record a control decision'));
 		const controls = field(form, 'Control', 'select');
+		controls.dataset.sqaReviewControl = '';
 		for (const result of sqa.assessment?.results ?? []) {
 			const option = node('option', `${result.controlId} — ${result.title}`);
 			option.value = result.controlId;
 			controls.append(option);
 		}
+		if ([...controls.options].some(option => option.value === selectedControlId)) controls.value = selectedControlId;
 		const decision = field(form, 'Decision', 'select');
 		for (const value of ['blocked', 'pass', 'fail']) { const option = node('option', value); option.value = value; decision.append(option); }
 		const rationale = field(form, 'Reason for this decision', 'textarea');
@@ -88,36 +93,59 @@ export function renderSqaReviewPanel({ session, role, api, refresh, selectRun, d
 		const evidence = node('div', '', 'sqa-review-evidence');
 		let evidenceInputs = [];
 		const syncEvidenceRequired = () => {
-			for (const item of evidenceInputs) item.reference.required = decision.value === 'pass';
+			for (const item of evidenceInputs) item.reference.required = decision.value === 'pass' && item.neededForPass;
 		};
 		decision.onchange = syncEvidenceRequired;
 		const paintEvidence = () => {
-			evidence.replaceChildren(node('p', 'Reference documents you have reviewed for this release. Documents remain in their source system.'));
+			evidence.replaceChildren(node('p', 'Add references to documents you reviewed for this release. The files stay in their source system.'));
 			evidenceInputs = [];
 			const result = sqa.assessment.results.find(item => item.controlId === controls.value);
+			if (!result) return;
+			decision.value = ['pass', 'fail', 'blocked'].includes(result.status) ? result.status : 'blocked';
 			rationale.value = result?.rationale ?? '';
-			for (const requirement of result?.evidenceCoverage?.requirements ?? []) {
-				for (let index = 0; index < requirement.minimum; index++) {
+			const browser = (result.evidence ?? []).filter(isSqaInternalEvidence);
+			const documents = (result.evidence ?? []).filter(item => !isSqaInternalEvidence(item));
+			if (browser.length) {
+				evidence.append(node('p', `${browser.length} browser evidence record${browser.length === 1 ? '' : 's'} will be kept with this decision.`, 'sqa-review-retained'));
+			}
+			if (result.claimedStatus && result.claimedStatus !== result.status && result.decisionNotes?.length) {
+				evidence.append(node('p', result.decisionNotes[0], 'sqa-review-retained'));
+			}
+			const requirements = new Map();
+			for (const item of result.evidenceCoverage?.requirements ?? []) {
+				if ((requirements.get(item.type)?.minimum ?? 0) < item.minimum) requirements.set(item.type, item);
+			}
+			for (const item of documents) if (!requirements.has(item.type)) requirements.set(item.type, { type: item.type, minimum: 0 });
+			for (const requirement of requirements.values()) {
+				const retained = browser.filter(item => item.type === requirement.type && !isSqaPartialReleaseEvidence(result.controlId, item)).length;
+				const required = Math.max(0, requirement.minimum - retained);
+				const existing = documents.filter(item => item.type === requirement.type);
+				for (let index = 0; index < Math.max(required, existing.length); index++) {
 					const row = node('fieldset');
 					row.append(node('legend', requirement.type.replaceAll('_', ' ')));
+					if (index === 0 && requirement.description) row.append(node('p', requirement.description));
 					const reference = field(row, 'Document reference or URL'); reference.maxLength = 512;
 					const summary = field(row, 'What this evidence demonstrates', 'textarea'); summary.maxLength = 1000;
 					const digest = field(row, 'SHA-256 digest (optional)'); digest.pattern = 'sha256:[a-f0-9]{64}';
-					const existing = (result.evidence ?? []).filter(item => item.type === requirement.type)[index];
-					if (existing) { reference.value = existing.reference; summary.value = existing.summary ?? ''; digest.value = existing.digest ?? ''; }
-					evidenceInputs.push({ type: requirement.type, reference, summary, digest });
+					const saved = existing[index];
+					if (saved) { reference.value = saved.reference; summary.value = saved.summary ?? ''; digest.value = saved.digest ?? ''; }
+					evidenceInputs.push({ type: requirement.type, reference, summary, digest, neededForPass: index < required });
 					evidence.append(row);
 				}
 			}
 			syncEvidenceRequired();
 		};
-		controls.onchange = paintEvidence;
+		controls.onchange = () => {
+			onSelectControl?.(controls.value);
+			paintEvidence();
+		};
 		paintEvidence();
 		form.append(evidence);
 		button('Save control decision', async () => {
 			if (!form.reportValidity()) return;
-			const items = evidenceInputs.filter(item => item.reference.value.trim()).map(item => ({ type: item.type, reference: item.reference.value.trim(), summary: item.summary.value.trim(), collectedAt: new Date().toISOString(), ...(item.digest.value.trim() ? { digest: item.digest.value.trim() } : {}) }));
-			const result = await api(`${prefix}/observations`, { method: 'POST', body: JSON.stringify({ expectedRevision: revision, observation: { controlId: controls.value, status: decision.value, rationale: rationale.value, evidence: items } }) });
+			onSelectControl?.(controls.value);
+			const items = evidenceInputs.filter(item => item.reference.value.trim()).map(item => ({ type: item.type, reference: item.reference.value.trim(), summary: item.summary.value.trim(), ...(item.digest.value.trim() ? { digest: item.digest.value.trim() } : {}) }));
+			const result = await api(`${prefix}/observations`, { method: 'POST', body: JSON.stringify({ expectedRevision: revision, evidenceMode: 'reviewer_documents', observation: { controlId: controls.value, status: decision.value, rationale: rationale.value, evidence: items } }) });
 			await refresh(result.sqa);
 		}, form);
 		form.onsubmit = event => event.preventDefault();

@@ -8,7 +8,7 @@ import { createLocalApplicationServices } from '../server/localServices.js';
 import { createTenantContext } from '../server/tenancy.js';
 import { createInstanceAccess } from '../server/instanceAccess.js';
 import { createDrytisIntegrationConfig } from '../server/drytisIntegrationConfig.js';
-import { createDrytisDeliveryClient, DRYTIS_OUTBOUND_HEADERS } from '../server/drytisTransport.js';
+import { createDrytisDeliveryClient, DRYTIS_OUTBOUND_HEADERS, signDrytisRequest } from '../server/drytisTransport.js';
 import { createFounderBrowserFixture } from './founder-browser-fixture.mjs';
 import { isolatedSqaEnvironment } from './sqa-test-runtime.mjs';
 
@@ -26,20 +26,28 @@ let modelCalls = 0, failNextSave = false, saveGate, deliveryGate, failNextDelive
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
 const transportConfig = createDrytisIntegrationConfig({ QASE_DRYTIS_API_ORIGIN: 'https://studio.fixture.test', QASE_DRYTIS_ALLOWED_ORIGINS: 'https://studio.fixture.test', QASE_DRYTIS_HMAC_KEY: randomBytes(32).toString('base64url') });
 const deliveryClient = createDrytisDeliveryClient({ config: transportConfig, fetchImpl: async (url, options) => {
-  assert.equal(new URL(url).origin, 'https://studio.fixture.test');
-  const call = { body: Buffer.from(options.body).toString('utf8'), key: options.headers[DRYTIS_OUTBOUND_HEADERS.idempotencyKey], signed: Boolean(options.headers[DRYTIS_OUTBOUND_HEADERS.signature]) };
+  const destination = new URL(url), headers = DRYTIS_OUTBOUND_HEADERS;
+  assert.equal(destination.origin, 'https://studio.fixture.test');
+  const signature = signDrytisRequest({
+    signingKey: transportConfig.signingKey, signer: 'qase', method: options.method,
+    requestTarget: destination.pathname + destination.search, body: Buffer.from(options.body),
+    timestamp: options.headers[headers.timestamp], nonce: options.headers[headers.nonce],
+    idempotencyKey: options.headers[headers.idempotencyKey], correlationId: options.headers[headers.correlationId]
+  });
+  const call = { body: Buffer.from(options.body).toString('utf8'), key: options.headers[headers.idempotencyKey], signed: options.headers[headers.signature] === signature };
+  assert.ok(call.signed);
   deliveries.push(call); if (deliveryGate) await deliveryGate.promise;
   if (failNextDelivery) { failNextDelivery = false; return new Response(JSON.stringify({ error: 'Controlled receiver unavailable' }), { status: 503, headers: { 'Content-Type': 'application/json' } }); }
   return new Response(JSON.stringify({ accepted: true, jobId: `fixture-job-${deliveries.length}` }), { status: 202, headers: { 'Content-Type': 'application/json' } });
 } });
-async function start(configured = true) {
+async function start(configured = true, automaticFounderHandoff = false) {
   services = createLocalApplicationServices({ tenantContext: tenant, authFile: path.join(runtimeDirectory,'.qase','auth.json') }); await services.runs.load();
   services.tenantContext = tenant;
   services.configuration.getPublic = () => ({ provider: 'custom', model: 'fixture', ready: true, hasApiKey: true, providers: ['custom'] });
   services.agent.runTurn = async () => { modelCalls++; throw new Error('Model calls forbidden in action acceptance.'); };
   services.agent.ensureRuntime = services.agent.runTurn;
   application = createApplication({ services, tenantContext: tenant, authRequired: true, environment: isolatedSqaEnvironment(), access: createInstanceAccess({ tenantContext: tenant }),
-    drytisDelivery: configured ? { deliveryClient, founderHandoffTarget: '/handoff' } : undefined });
+    drytisDelivery: configured ? { deliveryClient, founderHandoffTarget: '/handoff', automaticFounderHandoff } : undefined });
   server = await new Promise(resolve => { const candidate = application.app.listen(port, '127.0.0.1', () => resolve(candidate)); });
   port = server.address().port; base = `http://127.0.0.1:${port}`;
 }
@@ -177,6 +185,42 @@ try {
   for (const label of ['Copy requirements','Download requirements']) assert.ok((await root().getByRole('button', { name: label }).boundingBox()).height >= 44);
   await page.screenshot({ path: path.join(output, 'mobile-actions.png') });
   await page.setViewportSize({ width: 1440, height: 1000 }); await root().getByRole('button',{name:'Download requirements'}).scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(output, 'desktop-actions.png') });
+
+  await stop(); await start(true, true);
+  const launched = await api(owner, '/founder/sessions', 'POST', {
+    authorizationConfirmed: true, target: { name: 'Automatic Studio fixture', url: 'https://fixture.test/' }
+  });
+  assert.equal(launched.status(), 201);
+  const run = await services.runs.getAny((await launched.json()).id);
+  assert.equal(run.founder.automaticStudioHandoff, true);
+  assert.equal(deliveries.length, 4);
+  const finished = await createFounderBrowserFixture();
+  run.founder = { ...finished.founder, automaticStudioHandoff: run.founder.automaticStudioHandoff };
+  Object.assign(run, { status: 'done', targetUrl: finished.targetUrl, activities: finished.activities, todos: finished.todos });
+  const autoIds = run.founder.report.recommendations.map(item => item.id);
+  deliveryGate = deferred();
+  await services.runs.commit(run, 'founder.finalized', { report: run.founder.report });
+  services.runs.publish(run, 'founder.finalized', { report: run.founder.report });
+  await page.goto(`${base}/#/runs/${run.id}`);
+  await root().locator('.founder-report-navigation').waitFor();
+  await root().getByText('Sending recommendations to Studio…', { exact: true }).waitFor();
+  assert.equal(await root().locator('input[data-recommendation-id]:visible').count(), 0);
+  assert.equal(await root().locator('[data-founder-selection-action]:visible').count(), 0);
+  assert.equal(await root().locator('[data-role="send-to-studio"]:visible').count(), 0);
+  assert.equal(deliveries.length, 5);
+  assert.deepEqual(JSON.parse(deliveries.at(-1).body).ordered, autoIds);
+  assert.equal(JSON.parse(deliveries.at(-1).body).sourceRunId, run.id);
+  deliveryGate.resolve(); deliveryGate = undefined;
+  await root().getByText(new RegExp(`Studio accepted ${autoIds.length} recommendations.*fixture-job-5`)).waitFor();
+  assert.ok(await root().getByRole('button', { name: 'Download requirements' }).isEnabled());
+  await page.reload();
+  await root().getByText(/Studio reference fixture-job-5/).waitFor();
+  assert.equal(deliveries.length, 5);
+  assert.equal((await state(run)).handoff.reference, 'fixture-job-5');
+  await root().getByRole('button', { name: 'Download requirements' }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, 'automatic-studio.png') });
+  checks.push('An operator-launched Founder review sends every finalized recommendation automatically, deduplicates replay, hides manual selection and send controls, and shows the signed receiver reference after reload.');
+
   assert.deepEqual(errors, []); assert.deepEqual(unexpected, []); assert.equal(modelCalls, 0);
   assert.equal(await authFingerprint(),originalAuthFingerprint,'The integration checkout authentication file must remain unchanged.');
   const result = { status: 'passed', checks, modelCalls, deliveries: deliveries.length, receiver: 'Controlled fetch for the real HMAC signing client; no external Studio request', pageErrors: errors, unexpectedMutations: unexpected };

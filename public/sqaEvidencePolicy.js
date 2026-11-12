@@ -8,3 +8,7 @@ export function isSqaPartialReleaseEvidence(controlId, evidence) {
 	return SQA_RELEASE_REPORT_CONTROL_IDS.includes(controlId)
 		&& /^qase:\/\/runs\/[^/]+\/activities\//i.test(evidence?.reference ?? '');
 }
+
+export function isSqaInternalEvidence(evidence) {
+	return typeof evidence?.reference === 'string' && /^qase:/i.test(evidence.reference.trim());
+}

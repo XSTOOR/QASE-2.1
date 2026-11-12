@@ -9,6 +9,7 @@ import { parse } from 'dotenv';
 import { request } from 'playwright';
 import { createSqaTestServer } from './sqa-test-runtime.mjs';
 import { FOUNDER_CATEGORY_IDS } from '../server/founderService.js';
+import { FOUNDER_FORM_CASE } from '../server/founderFormReview.js';
 import { founderDraftProgress, FOUNDER_DRAFT_PROTOCOL, FOUNDER_REPORT_SECTIONS } from '../server/founderReportDraft.js';
 
 // Explicit live-model opt-in, isolated account/state and a disposable target.
@@ -125,7 +126,10 @@ try{
 	}
 	const browser=finalSession.activities.filter(a=>a.toolName?.startsWith('browser_')&&a.status==='done');
 	assert.ok(browser.some(a=>a.toolName==='browser_diagnostics'));
-	assert.ok(browser.some(a=>['browser_fill','browser_click','browser_key'].includes(a.toolName)||a.toolName==='browser_qa_check'&&a.input?.action==='forms'),'Representative workflow was not executed.');
+	const localCases = browser.filter(activity => activity.toolName === FOUNDER_FORM_CASE).map(activity => activity.founderFormCase);
+	const groupedForm = localCases.some(item => item?.name === 'invalid' && item.validity?.valid === false && !item.networkBlocked)
+		&& localCases.some(item => item?.name === 'valid' && item.validity?.valid === true && !item.networkBlocked && item.feedback?.some(signal => signal.text === 'Local task saved'));
+	assert.ok(groupedForm || browser.some(a=>['browser_fill','browser_click','browser_key'].includes(a.toolName)||a.toolName==='browser_qa_check'&&a.input?.action==='forms'),'Representative workflow was not executed.');
 	assert.equal(writes,0,'The fixture received an unexpected HTTP mutation.');
 	for(const extension of ['md','pdf']){
 		const response=await api.get(`/api/sessions/${sessionId}/report.${extension}`);assert.equal(response.status(),200);
@@ -145,7 +149,7 @@ try{
 		assert.equal((await stranger.post('/api/auth/register',{data:{...account,email:`other-${Date.now()}@local.example`}})).status(),201);
 		for(const route of [`/sessions/${sessionId}`,`/sessions/${sessionId}/report.md`,`/sessions/${sessionId}/report.pdf`])assert.equal((await stranger.get(`/api${route}`)).status(),404);
 	}finally{await stranger.dispose();}
-	Object.assign(result,{status:'passed',sessionId,observations:finalSession.founder.observations.length,sections:founderDraftProgress(finalSession).completed,recommendations:finalSession.founder.report.recommendations.length,browserActivities:browser.length,tokenUsage:finalSession.tokenUsage,exports:'passed',restartPersistence:'passed',crossAccountIsolation:'passed',fixtureWrites:writes});
+	Object.assign(result,{status:'passed',sessionId,observations:finalSession.founder.observations.length,sections:founderDraftProgress(finalSession).completed,recommendations:finalSession.founder.report.recommendations.length,browserActivities:browser.length,groupedForm,tokenUsage:finalSession.tokenUsage,exports:'passed',restartPersistence:'passed',crossAccountIsolation:'passed',fixtureWrites:writes});
 }catch(error){
 	result.status='failed';result.error=error.message;result.sessionId=sessionId;process.exitCode=1;
 	if(sessionId&&api){

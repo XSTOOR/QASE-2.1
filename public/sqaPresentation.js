@@ -21,9 +21,14 @@ export const SQA_AGENT_CAPABLE_EVIDENCE_TYPES = Object.freeze([
 
 const AGENT_CAPABLE_EVIDENCE = new Set(SQA_AGENT_CAPABLE_EVIDENCE_TYPES);
 
-function missingEvidenceRequirements(result) {
+export function sqaMissingEvidenceRequirements(result) {
 	return (result?.evidenceCoverage?.requirements ?? [])
-		.filter(requirement => !requirement?.satisfied && typeof requirement?.type === 'string');
+		.filter(requirement => !requirement?.satisfied && typeof requirement?.type === 'string')
+		.map(requirement => ({
+			...requirement,
+			owner: ['browser', 'reviewer'].includes(requirement.owner) ? requirement.owner
+				: result.automationLevel === 'manual' || !AGENT_CAPABLE_EVIDENCE.has(requirement.type) ? 'reviewer' : 'browser'
+		}));
 }
 
 export function isSqaBudgetStopResult(result) {
@@ -55,12 +60,12 @@ export function groupSqaUnresolvedResults(results = []) {
 			continue;
 		}
 
-		const missing = missingEvidenceRequirements(result);
-		const hasAgentEvidence = missing.some(item => item.owner !== 'reviewer' && AGENT_CAPABLE_EVIDENCE.has(item.type));
-		const hasReviewerEvidence = missing.some(item => item.owner === 'reviewer' || !AGENT_CAPABLE_EVIDENCE.has(item.type));
+		const missing = sqaMissingEvidenceRequirements(result);
+		const hasAgentEvidence = missing.some(item => item.owner === 'browser');
+		const hasReviewerEvidence = missing.some(item => item.owner === 'reviewer');
 		if (result.automationLevel === 'manual' || (hasReviewerEvidence && !hasAgentEvidence)) {
 			groups.reviewer.push(result);
-		} else if (result.automationLevel === 'hybrid' || (hasAgentEvidence && hasReviewerEvidence)) {
+		} else if ((hasAgentEvidence && hasReviewerEvidence) || (result.automationLevel === 'hybrid' && !missing.length)) {
 			groups.mixed.push(result);
 		} else {
 			groups.automated.push(result);
@@ -88,14 +93,17 @@ export function describeSqaLifecycle(sqa = {}, runStatus = 'idle', activityCount
 			mark: '•'
 		};
 		const groups = groupSqaUnresolvedResults(assessment?.results);
-		const hasFailure = groups.failures.length > 0 || Number(assessment?.summary?.fail) > 0;
+		const hasFailure = groups.failures.length > 0 || Number(assessment?.summary?.fail) > 0 || assessment?.technicalSummary?.verdict === 'fail';
+		const browserIncomplete = groups.automated.length > 0 || groups.budget.length > 0 || assessment?.technicalSummary?.verdict === 'blocked';
 		const evidenceGapCount = groups.reviewer.length + groups.mixed.length;
 		const evidenceIncomplete = status === 'blocked'
 			&& !hasFailure
-			&& groups.automated.length === 0
+			&& !browserIncomplete
 			&& evidenceGapCount > 0;
 		const presentation = evidenceIncomplete
-			? { label: 'Evidence incomplete', mark: '!', badge: 'evidence incomplete' }
+			? groups.mixed.length > 0
+				? { label: 'More evidence needed', mark: '!', badge: 'evidence needed' }
+				: { label: 'Reviewer evidence needed', mark: '!', badge: 'reviewer evidence' }
 			: { ...result, badge: result.label.toLowerCase() };
 		return {
 			phase: 'finalized',
@@ -104,7 +112,7 @@ export function describeSqaLifecycle(sqa = {}, runStatus = 'idle', activityCount
 			rawVerdict: status,
 			evidenceIncomplete,
 			evidenceGapCount,
-			eyebrow: 'Final deterministic verdict',
+			eyebrow: 'Assessment outcome',
 			...presentation
 		};
 	}

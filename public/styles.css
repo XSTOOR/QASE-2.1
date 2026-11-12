@@ -10,10 +10,14 @@
 .sqa-traceability article { overflow-wrap: anywhere; }
 .sqa-traceability summary { cursor: pointer; }
 
-.sqa-review-panel { display: grid; gap: 12px; }
+.sqa-review-panel { display: grid; gap: 12px; padding: 14px; font-family: var(--font-ui, inherit); }
+.sqa-section.sqa-review-panel > h3::before { content: none; }
 .sqa-review-panel h3, .sqa-review-panel h4, .sqa-review-panel p { margin: 0; }
 .sqa-review-form, .sqa-review-evidence { display: grid; gap: 12px; }
 .sqa-review-form { border-top: 1px solid var(--border); padding-top: 16px; }
+.sqa-review-form > button { justify-self: start; }
+.sqa-review-panel .sqa-review-retained { padding: 8px 12px; border-inline-start: 2px solid var(--border-strong); background: var(--surface-2); }
+.sqa-review-control-action { margin-top: 8px; }
 .sqa-review-field { display: grid; gap: 6px; min-width: 0; font-size: 12px; }
 .sqa-review-field input, .sqa-review-field select, .sqa-review-field textarea { width: 100%; min-width: 0; box-sizing: border-box; padding: 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel-chat); font: inherit; }
 .sqa-review-field textarea { min-height: 76px; resize: vertical; }
@@ -7826,6 +7830,38 @@ background: rgba(47, 91, 234, 0.075);  box-shadow: none;
   padding: 0 10px 10px;
 }
 
+.sqa-outcome-split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 255px), 1fr));
+  gap: 10px;
+  min-width: 0;
+  font-family: var(--font-ui, inherit);
+}
+
+.sqa-outcome-split .sqa-section > header {
+  display: grid;
+  gap: 3px;
+  justify-items: start;
+}
+
+.sqa-outcome-split .sqa-section > header h3::before {
+  content: none;
+}
+
+.sqa-reviewer-summary-content {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+
+.sqa-reviewer-summary-content p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .sqa-technical-summary {
   display: grid;
   grid-template-columns: 76px minmax(0, 1fr);
@@ -7885,6 +7921,27 @@ background: rgba(47, 91, 234, 0.075);  box-shadow: none;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.01);
+}
+
+.sqa-unresolved-group[tabindex]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.sqa-missing-evidence {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding-inline-start: 18px;
+}
+
+.sqa-missing-evidence li {
+  padding-inline-start: 2px;
+  color: var(--text-secondary);
+}
+
+.sqa-missing-evidence li > span {
+  font-weight: 650;
 }
 
 .sqa-unresolved-group > h4 {

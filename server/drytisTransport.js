@@ -244,7 +244,7 @@ export function createMemoryDrytisNonceStore({ now = Date.now, maxEntries = 10_0
 	});
 }
 
-function outboundTarget(config, value) {
+export function resolveDrytisDeliveryTarget(config, value) {
 	if (typeof value !== 'string' || value.length === 0 || value.length > 8192) {
 		throw new DrytisTransportError('The Drytis delivery target is invalid.', { code: 'invalid_delivery', status: 400 });
 	}
@@ -337,7 +337,7 @@ export function createDrytisDeliveryClient({
 
 	return Object.freeze({
 		async deliver(target, payload, { idempotencyKey, correlationId } = {}) {
-			const url = outboundTarget(config, target);
+			const url = resolveDrytisDeliveryTarget(config, target);
 			const requestTarget = `${url.pathname}${url.search}`;
 			const body = jsonBytes(payload, config.maxRequestBytes);
 			const timestamp = String(Math.floor(Number(now()) / 1000));

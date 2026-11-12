@@ -17,6 +17,7 @@ import {
 } from './sqaService.js';
 import { SQA_CATALOG_VERSION, SQA_TECHNICAL_CONTROL_IDS, getSqaControl } from './sqaCatalog.js';
 import { clearSecrets, storeSecrets } from './secrets.js';
+import { inspectSqaEvidence } from './sqaEvidence.js';
 
 const fixedNow = () => Date.parse('2026-08-15T00:00:00.000Z');
 
@@ -456,4 +457,32 @@ test('agent and reviewer evidence never persist values held in the run credentia
 	} finally {
 		clearSecrets(candidate.id);
 	}
+});
+
+test('reviewer document saves preserve browser evidence and reject fabricated or duplicate references', async () => {
+	const candidate = session();
+	const runStore = store();
+	const controlId = 'SQA-QUA-005';
+	await recordAgentSqaObservation(candidate, {
+		control_id: controlId, status: 'blocked', rationale: 'A restoration record remains required.',
+		evidence_type: 'test_result', evidence_summary: 'Retained browser sample.'
+	}, runStore, fixedNow);
+	const original = candidate.sqa.observations.find(item => item.controlId === controlId).evidence[0];
+	const document = { type: 'operational_record', reference: 'artifact://quality/restore-proof', summary: 'Reviewed restoration record.' };
+	const observation = { controlId, status: 'pass', rationale: 'Restore evidence reviewed.', evidence: [document] };
+	const write = (input, role = 'admin', now = fixedNow) => recordReviewerSqaObservation(candidate, input, { role }, runStore, now, { reviewerDocuments: true });
+	await assert.rejects(write(observation), /open a review draft/i);
+	candidate.sqa.review = { status: 'in_review' };
+	await assert.rejects(write(observation, 'developer'), /owner or administrator/i);
+	const before = candidate.sqa;
+	await assert.rejects(write({ ...observation, evidence: [original, document] }), /saved run/i);
+	await assert.rejects(write({ ...observation, evidence: [document, document] }), /only once/i);
+	assert.equal(candidate.sqa, before);
+	const saved = await write(observation);
+	assert.equal(saved.status, 'pass');
+	assert.deepEqual(saved.evidence[0], original);
+	assert.equal(inspectSqaEvidence(candidate, controlId, 1).integrity, 'verified');
+	const later = await write(observation, 'owner', () => fixedNow() + 1000);
+	assert.deepEqual(later.evidence, saved.evidence);
+	assert.equal(candidate.sqa.reviewerAttestations.at(-1).role, 'owner');
 });

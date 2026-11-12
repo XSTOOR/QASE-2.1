@@ -55,16 +55,18 @@ test('SQA frontend uses the authenticated API contract and safe DOM construction
 	assert.match(app, /function renderSqaExecutionBudget\(budget\)/);
 	assert.match(app, /'Browser actions remaining'/);
 	assert.match(app, /'Tokens before closeout'/);
-	assert.match(app, /'Automated web checks'/);
-	assert.match(app, /'Reviewer evidence required'/);
-	assert.match(app, /'Mixed evidence incomplete'/);
-	assert.match(app, /'Automated check blocked \/ not run'/);
-	assert.match(app, /'Stopped early: budget reached'/);
-	assert.match(app, /Deterministic verdict: Blocked\. No control failures were recorded/);
+	assert.match(app, /'Browser checks'/);
+	assert.match(app, /'Reviewer evidence needed'/);
+	assert.match(app, /'Browser and reviewer evidence needed'/);
+	assert.match(app, /'Browser checks incomplete'/);
+	assert.match(app, /'Stopped by the run limit'/);
+	assert.match(app, /'View required evidence'/);
+	assert.match(app, /The assessment remains blocked while required evidence is pending/);
 	assert.match(app, /encrypted locally for this run and deleted when the run ends/i);
 	assert.doesNotMatch(app, /Held in this server's memory only/);
 	assert.match(styles, /\.sqa-technical-summary/);
 	assert.match(styles, /\.sqa-unresolved-group/);
+	assert.match(styles, /\.sqa-outcome-split/);
 	assert.match(styles, /\.sqa-selection-reasons/);
 });
 

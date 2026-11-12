@@ -14,15 +14,17 @@ import { createQaTools } from './qaTools.js';
 import { captureRuntimeFacts } from './runtimeCapture.js';
 import { buildQaChatReport } from './report.js';
 import { buildFounderContext, buildFounderSynthesisContext } from './founderPrompt.js';
-import { createFounderTools, founderFinishReadiness,founderReportToolSchema } from './founderTools.js';
+import { createFounderTools, founderFinishReadiness, founderReportToolSchema, projectFounderObservationTool } from './founderTools.js';
 import { createFounderReviewTodos } from './founderService.js';
+import { createFounderPageReview, FOUNDER_PAGE_REVIEW } from './founderPageReview.js';
+import { createFounderFormTool, FOUNDER_FORM_CASE, FOUNDER_FORM_REVIEW } from './founderFormReview.js';
 import { buildSqaContext, buildSqaSynthesisContext } from './sqaPrompt.js';
 import { createSqaTools, finishReadiness as sqaFinishReadiness } from './sqaTools.js';
 import { createSqaSmokeWorkflow } from './sqaSmokeWorkflow.js';
 import { recordSqaSmokeActivity } from './sqaService.js';
 import { modeExplorationReadiness } from './modeReasoningRuntime.js';
 import {buildModeExecutionContext} from './modeReasoningContext.js';
-import {projectFounderMessages,rememberFounderEvidence} from './founderInvestigation.js';
+import { founderObservationCheckpoint, projectFounderMessages, rememberFounderEvidence } from './founderInvestigation.js';
 import {founderDraftProgress,usesFounderDraft,usesFounderDraftBatch,initializeFounderReportGeneration,founderDraftTools} from './founderReportDraft.js';
 import { isCredentialQuestion } from '../public/questionPresentation.js';
 import { clearSecrets, redact, secretNames } from './secrets.js';
@@ -35,7 +37,7 @@ import {
 	SQA_INPUT_TOKEN_CLOSEOUT_THRESHOLD
 } from './sqaBrowserBudget.js';
 import { guardSecurityPayloadTool } from './securityPayloadBudget.js';
-import { applyUsage, attachUsageCapture, createEmptyOutputGuard, createUsageLedger, createUsageLogger, subtractUsage } from './usageCapture.js';
+import { applyUsage, attachUsageCapture, createEmptyOutputGuard, createUsageLedger, createUsageLogger } from './usageCapture.js';
 import { installJevRuntime } from './jevRuntime.js';
 import { hybridEnabled, hybridProfile, loadQualification } from './hybridConfig.js';
 import { createHybridRuntime, hybridRegressionSuggestions } from './hybridQaRuntime.js';
@@ -494,6 +496,8 @@ const ACTIVITY_LABELS = {
 	browser_wait: 'Waited',
 	browser_screenshot: 'Captured screenshot',
 	browser_diagnostics: 'Checked console and network',
+	[FOUNDER_PAGE_REVIEW]: 'Reviewed the Founder page',
+	[FOUNDER_FORM_REVIEW]: 'Checked public form behavior',
 	browser_qa_check: 'Executed QA scenario',
 	browser_qa_scenario: 'Executed bounded scenario',
 	qa_route_frontier: 'Reviewed observed route coverage',
@@ -701,6 +705,10 @@ async function constructRuntime(session, runStore) {
 	}
 	if(usesFounderDraft(session))allowedTools.add('draft_founder_report_section');
 	if(usesFounderDraftBatch(session))allowedTools.add('draft_founder_report_batch');
+	if (!isQualified && session.founder?.reportGeneration && usesFounderDraft(session)) {
+		allowedTools.add(FOUNDER_PAGE_REVIEW);
+		allowedTools.add(FOUNDER_FORM_REVIEW);
+	}
 	if (isModeReasoning) for (const name of ['mode_discover_application','mode_read_discovery','mode_plan_work','mode_run_workflow','mode_start_workflow','mode_close_workflow','mode_test_surface','mode_execute_steps','mode_verify_recovery','mode_load_tools','classify_mode_observations', 'mode_execution_progress',...(session.mode==='founder'?['draft_founder_report_section']:[])]) allowedTools.add(name);
 	if (isHybrid) allowedTools.add('browser_authenticate');
 	if (isHybrid) for (const name of ['qa_discover_application','qa_read_discovery','qa_work_schedule','qa_investigate_scenario','qa_plan_scenarios', 'qa_start_scenario', 'qa_close_scenario', 'qa_assert_snapshot', 'qa_assert_diagnostics', 'qa_ledger', 'qa_read_evidence', 'browser_qa_scenario', 'qa_route_frontier', 'qa_test_routes', 'qa_load_tools', 'classify_qa_observations', 'rank_qa_candidates']) allowedTools.add(name);
@@ -740,16 +748,9 @@ async function constructRuntime(session, runStore) {
 		azureApiVersion: settings.apiVersion || undefined
 	});
 
-	// Legacy token usage capture. The SDK never forwards provider usage to the agent
-	// stream, so two instance-level hooks harvest it: a wrapper on
-	// logProviderReportedUsage that sees the real normalized usage for every
-	// provider before the SDK drops it, and a logger that parses the SDK's
-	// stage=complete line for chars/4 estimates (the fallback when a provider
-	// reports no usage in-stream). Both fail safe — if SDK internals move, no
-	// usage is recorded and runs are unaffected. The ledger stamps every
-	// harvested call with a unique id and drops duplicates, so the same report
-	// can never be counted twice however many times it surfaces. Hybrid instead
-	// uses validated, call-ID keyed transport receipts and never these estimates.
+	// Collect one receipt per SDK stream, using that stream's estimate when
+	// the provider omits usage. Qualified execution uses validated receipts
+	// from its own transport.
 	const turnUsage = { reports: [], estimates: [] };
 	const usageLedger = createUsageLedger();
 	const harvestUsage = (usage, estimated) => {
@@ -760,9 +761,7 @@ async function constructRuntime(session, runStore) {
 		// moment it lands; the per-call commit below fires from the stream loop.
 		record.onUsageHarvested?.(tracked, estimated);
 	};
-	const usageLogger = createUsageLogger({
-		onEstimate: usage => { if (!isQualified) harvestUsage(usage, true); }
-	});
+	const usageLogger = createUsageLogger();
 	record.turnUsage = turnUsage;
 	if (isHybrid) {
 		record.hybrid = createHybridRuntime({ session, runStore, profile: hybridSettings, record, onUsage: usage => harvestUsage({ ...usage, model: hybridSettings.classifier.model }, false) });
@@ -818,17 +817,10 @@ async function constructRuntime(session, runStore) {
 			sdkSession.continueWithTurn = sdkSession.continueWithLatestUserMessage.bind(sdkSession);
 		}
 
-		// Legacy provider usage arrives here, right before the
-		// SDK would drop it. This is the ONLY real-usage source: the SDK's Azure
-		// debug log line carries the same report, so the logger above deliberately
-		// ignores it (harvesting both would double-count Azure). Hybrid counts its
-		// transport receipt instead, not this second copy of the provider report.
-		const releaseUsageCapture = attachUsageCapture(runtime.cleanSlateService, {
-			// Hybrid's validated transport receipts are canonical and call-ID keyed.
-			// Do not count the SDK's copy of that same usage or its estimates again.
-			onUsage: usage => { if (!isQualified) harvestUsage(usage, false); }
+		if (!isQualified) record.releaseUsageCapture = attachUsageCapture(runtime.cleanSlateService, {
+			estimateMissing: true,
+			onUsage: usage => harvestUsage(usage, usage.estimated === true)
 		});
-		record.releaseUsageCapture = releaseUsageCapture;
 
 		// The registry is fixed at construction, so mode-specific tools are
 		// registered afterwards through the headless runtime that resolves them.
@@ -856,9 +848,34 @@ async function constructRuntime(session, runStore) {
 			invoke: (...args) => record.invokeSqaSmokeTool(...args),
 			isCancelled: () => Boolean(record.controller?.signal.aborted)
 		});
+		if (allowedTools.has(FOUNDER_PAGE_REVIEW)) record.founderPageReview = createFounderPageReview(session, {
+			invoke: (...args) => record.invokeFounderPageTool(...args),
+			readCurrentPage: async input => redact(session.id, await record.bridge.readPageContent(input)),
+			currentUrl: () => {
+				const page = record.bridge?.service?.activePage;
+				return page && !page.isClosed() ? page.url() : undefined;
+			},
+			isCancelled: () => Boolean(record.controller?.signal.aborted)
+		});
 		if (isQualified) allowedTools.delete('run_sqa_smoke_workflow');
 		const sessionTools = [...modeTools, ...createBrowserTools(() => record.bridge), ...(record.sqaSmokeWorkflow ? [record.sqaSmokeWorkflow.tool] : []), ...(record.hybrid?.tools || []), ...(record.modeReasoning?.tools || [])]
 			.filter(tool => allowedTools.has(tool.name));
+		if (record.founderPageReview) sessionTools.push(record.founderPageReview.tool);
+		if (allowedTools.has(FOUNDER_FORM_REVIEW)) sessionTools.push(createFounderFormTool((input, signal) => record.bridge.founderFormReview(input, {
+			signal,
+			async saveCase(evidence) {
+				const result = redact(session.id, evidence);
+				const feedback = result.feedback.map(item => item.text).join(' ').slice(0, 320);
+				const activity = await runStore.addActivity(session, {
+					type: 'tool', toolName: FOUNDER_FORM_CASE, status: 'done',
+					label: `Observed ${result.name} local form case`, input: { case: result.name },
+					summary: `Native validity: ${result.validity.valid ? 'valid' : 'invalid'}${result.validity.failures.length ? ` (${result.validity.failures.join(', ')})` : ''}. ${feedback ? `Local feedback: ${feedback}` : 'No visible status feedback.'}${result.networkBlocked ? ' Browser blocked a network request.' : ''}`,
+					founderFormCase: result
+				});
+				await runStore.commit(session, 'founder.form_case', { activityId: activity.id });
+				return activity.id;
+			}
+		})));
 		if (isHybrid) sessionTools.push(createHybridScenarioTool(sessionTools.find(tool => tool.name === 'browser_qa_check')));
 		const headless = runtime.headlessRuntime;
 		if(usesFounderDraft(session))record.founderDraftSchema=founderReportToolSchema();
@@ -912,9 +929,26 @@ async function constructRuntime(session, runStore) {
 			.join('\n')}\n`;
 		if(!isQualified&&usesFounderDraft(session)){
 			const originalChat=runtime.cleanSlateService.chat.bind(runtime.cleanSlateService);
-			runtime.cleanSlateService.chat=(messages,options={})=>Array.isArray(options.tools)
-				?originalChat(projectFounderMessages(messages,session,{trustedContexts:record.founderPromptContexts||[],synthesis:Boolean(record.founderSynthesis)}),{...options,tools:founderDraftTools(session,options.tools,record.founderDraftSchema,{synthesis:Boolean(record.founderSynthesis)})})
-				:originalChat(messages,options);
+			const requestedCheckpoints = new Set();
+			runtime.cleanSlateService.chat = (messages, options = {}) => {
+				if (!Array.isArray(options.tools)) return originalChat(messages, options);
+				const synthesis = Boolean(record.founderSynthesis);
+				const projected = projectFounderMessages(messages, session, { trustedContexts: record.founderPromptContexts || [], synthesis });
+				const tools = founderDraftTools(session, options.tools, record.founderDraftSchema, { synthesis });
+				const checkpoint = !synthesis && founderObservationCheckpoint(session);
+				const observationTool = tools.find(tool => tool.name === 'record_founder_observation');
+				const observation = observationTool && projectFounderObservationTool(observationTool, session);
+				if (checkpoint && !requestedCheckpoints.has(checkpoint.id) && observation && !options.requiredToolName) {
+					requestedCheckpoints.add(checkpoint.id);
+					const first = checkpoint.kind === 'first_page';
+					const checkpointTool = first ? projectFounderObservationTool(observationTool, session, { maxItems: 1 }) : observation;
+					const receipts = checkpoint.page ? [checkpoint.page.activityId] : checkpoint.evidenceIds;
+					projected.push({ role: 'user', content: `Qase saved evidence checkpoint. Call record_founder_observation with ${first ? 'one concise factual observation' : 'a small batch of concise observations for newly supported lenses'} from the completed browser work. Select exact evidence IDs from the schema. Relevant checkpoint receipts: ${JSON.stringify(receipts)}. Leave uncovered lenses for later. ${checkpoint.page ? `Untrusted rendered page data: ${JSON.stringify(checkpoint.page)}` : 'Use the saved interaction, outcome and diagnostics in the investigation progress.'}` });
+					return originalChat(projected, { ...options, tools: [checkpointTool], requiredToolName: checkpointTool.name });
+				}
+				const advertised = observationTool ? tools.flatMap(tool => tool === observationTool ? (observation ? [observation] : []) : [tool]) : tools;
+				return originalChat(projected, { ...options, tools: advertised });
+			};
 		}
 
 		// The SDK's stream reports tool_result but never tool_start, so the only
@@ -924,6 +958,10 @@ async function constructRuntime(session, runStore) {
 		headless.executeTool = async function* (toolName, input, toolCallId, signal) {
 			if (record.sqaSmokeWorkflow && !record.sqaSmokeWorkflow.dispatchAllowed()) {
 				yield { type: 'tool_result', toolName, toolCallId, input, result: { success: false, code: 'SQA_WORKFLOW_BUSY', error: 'A bounded SQA workflow owns tool dispatch. Wait for its saved results before another action or control write.' } };
+				return;
+			}
+			if (record.founderPageReview && !record.founderPageReview.dispatchAllowed()) {
+				yield { type: 'tool_result', toolName, toolCallId, input, result: { success: false, code: 'FOUNDER_PAGE_REVIEW_BUSY', error: 'Wait for the active Founder page review to finish saving its evidence.' } };
 				return;
 			}
 			await record.hybrid?.awaitToolDispatch(signal);
@@ -948,6 +986,16 @@ async function constructRuntime(session, runStore) {
 						}
 						yield part;
 					}
+				} else if (activity && ([FOUNDER_PAGE_REVIEW, FOUNDER_FORM_REVIEW].includes(toolName) || (toolName === 'browser_diagnostics' && record.founderPageReview && !record.founderPageReview.isChild()))) {
+					for await (const part of originalExecute(toolName, input, toolCallId, signal)) {
+						if (part.type === 'tool_result') {
+							await record.onNestedToolResult?.(part);
+							const { reviewReceipt, ...result } = part.result;
+							yield { ...part, result: redact(session.id, result) };
+							continue;
+						}
+						yield part;
+					}
 				} else if (session.mode === 'founder' && ['draft_founder_report_section', 'draft_founder_report_batch'].includes(toolName)) {
 					for await (const part of originalExecute(toolName, input, toolCallId, signal)) {
 						if (part.type === 'tool_result') await record.onFounderDraftResult?.(part);
@@ -967,6 +1015,19 @@ async function constructRuntime(session, runStore) {
 			}
 			const activity = session.activities.find(item => item.id === activityId);
 			if (!activity || !['done', 'failed'].includes(activity.status)) throw new Error('SQA child activity was not durably completed.');
+			return { activityId, result };
+		};
+		if (record.founderPageReview) record.invokeFounderPageTool = async (toolName, input, signal) => {
+			if (!record.founderPageReview.dispatchAllowed() || !record.onNestedToolResult) throw new Error('Founder page review requires an active turn.');
+			const activityId = randomUUID();
+			let result;
+			for await (const part of headless.executeTool(toolName, input, activityId, signal)) {
+				if (part.type !== 'tool_result') continue;
+				result = redact(session.id, part.result);
+				await record.onNestedToolResult(part);
+			}
+			const activity = session.activities.find(item => item.id === activityId);
+			if (!activity || !['done', 'failed'].includes(activity.status)) throw new Error('Founder page check was not durably saved.');
 			return { activityId, result };
 		};
 		if (isQualified) record[isHybrid?'invokeHybridTool':'invokeModeTool'] = async (toolName, input, signal) => {
@@ -1249,17 +1310,8 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 		thinking = undefined;
 	};
 
-	// Fold harvested usage into the run's token totals and persist. Real
-	// provider reports win over SDK estimates. Both kinds commit live, per
-	// model call, so the dashboard's token chip updates during a run even
-	// when the provider sends no in-stream usage (providers without usage
-	// support are the chars/4 estimate fallback — still real accounting,
-	// flagged with the run's `estimated` marker). Commits are coalesced with
-	// a short throttle, and a flush is always forced on turn end / terminal
-	// paths so a completed, stopped, or failed run carries its exact usage.
-	// If a real report supersedes an already-committed estimate, the estimate
-	// is rolled back before the report is applied: totals end up exactly as
-	// if the estimate had never been counted.
+	// Commit accounted calls live with a short throttle. Force a final flush
+	// when a turn ends, including on failure or stop.
 	let pendingUsage = [];
 	let usageFlushPromise = Promise.resolve();
 	let lastUsageCommitAt = 0;
@@ -1270,12 +1322,6 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 		const batch = pendingUsage;
 		pendingUsage = [];
 		for (const usage of batch) {
-			if (usage.estimateDelta) {
-				// A real report superseded a live-committed estimate for the
-				// same call: roll the estimate out first, then apply the
-				// report, so totals are exact either way.
-				session.tokenUsage = subtractUsage(session.tokenUsage, usage.estimateDelta);
-			}
 			session.tokenUsage = applyUsage(session.tokenUsage, usage);
 			console.info(JSON.stringify({
 				event: 'token_usage_commit', runId: session.id, model: usage.model || getConfig().model,
@@ -1338,19 +1384,6 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 		await commitUsageNow();
 	};
 
-	// Map of callId → committed estimate usage. Keyed per RUN and cleared
-	// alongside the ledger when the run's runtime record is discarded.
-	record.committedEstimates ??= new Map();
-	const committedEstimates = record.committedEstimates;
-	// Estimate callIds committed during the CURRENT turn. A provider either
-	// reports usage in-stream or not, consistently within a turn — so when a
-	// real report lands, every estimate from this turn belongs to calls whose
-	// real reports either arrived (same call) or never will (provider does not
-	// report). Rolling all of them back keeps totals exact and preserves the
-	// original turn-level "estimates only when the turn had no real usage"
-	// accounting, while still updating the chip live in the meantime.
-	const turnEstimateCallIds = new Set();
-
 	// Every harvested call funnels through here, deduped by this RUN's
 	// ledger: the same report (SDK retry, event replay) can never be applied
 	// twice however many times it surfaces. The ledger lives on the record,
@@ -1386,33 +1419,6 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 			}
 		});
 		record.emptyOutputGuard.observe(tracked);
-		if (tracked.estimated === true) {
-			// Estimates commit live too (throttled): on providers that never
-			// report usage in-stream this is the only accounting available, and
-			// deferring it made the chip sit at zero until the run finished.
-			committedEstimates.set(tracked.callId, tracked);
-			turnEstimateCallIds.add(tracked.callId);
-			pendingUsage.push(tracked);
-			scheduleUsageCommit();
-			return;
-		}
-		// A real report supersedes this turn's committed estimates: they are
-		// subtracted in commitUsageNow before the report is applied, so the
-		// totals are exact whether the provider reported usage or not.
-		if (turnEstimateCallIds.size > 0) {
-			let delta = { inputTokens: 0, outputTokens: 0 };
-			for (const id of turnEstimateCallIds) {
-				const estimate = committedEstimates.get(id);
-				if (!estimate) continue;
-				committedEstimates.delete(id);
-				delta = {
-					inputTokens: delta.inputTokens + (estimate.inputTokens ?? 0),
-					outputTokens: delta.outputTokens + (estimate.outputTokens ?? 0)
-				};
-			}
-			turnEstimateCallIds.clear();
-			if (delta.inputTokens > 0 || delta.outputTokens > 0) tracked.estimateDelta = delta;
-		}
 		pendingUsage.push(tracked);
 		scheduleUsageCommit();
 	};
@@ -1469,8 +1475,17 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 		const result = redact(session.id, part.result), ok = result?.success !== false;
 		const smokeSaved = session.mode === 'sqa' && !record.modeReasoning && part.toolName === 'browser_sqa_smoke'
 			&& session.activities.some(activity => activity.id === id && ['done', 'failed'].includes(activity.status));
-		if (!smokeSaved) await runStore.updateActivity(session, id, { status: ok ? 'done' : 'failed', error: ok ? undefined : sanitizeErrorDetail(result?.error ?? result?.message), summary: summariseResult(part.toolName, result) });
+		if (!smokeSaved) await runStore.updateActivity(session, id, {
+			status: ok ? 'done' : 'failed', error: ok ? undefined : sanitizeErrorDetail(result?.error ?? result?.message),
+			summary: summariseResult(part.toolName, result),
+			...(part.toolName === FOUNDER_PAGE_REVIEW && result?.reviewReceipt ? { founderPageReview: result.reviewReceipt } : {}),
+			...(part.toolName === FOUNDER_PAGE_REVIEW && result?.reused ? { founderPageReviewReused: result.review_id } : {}),
+			...(part.toolName === FOUNDER_FORM_REVIEW && result?.cases?.length ? { founderFormCaseIds: result.cases.map(item => item.activity_id) } : {})
+		});
 		openActivities.delete(part.toolCallId);
+		if (ok && session.mode === 'founder' && session.founder?.reportGeneration) {
+			await rememberFounderEvidence(session, runStore, { toolName: part.toolName, activityId: id, result, currentUrl: liveBrowserUrl(record) });
+		}
 		if (part.toolName === 'browser_open' && ok) bridge.startFrames();
 		if (session.qaExecutionMode === 'hybrid' && ['browser_open', 'browser_qa_check', 'browser_qa_scenario'].includes(part.toolName)) await bridge.captureFrame();
 		runStore.markExecutionStarted?.(session);
@@ -1670,16 +1685,16 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 					activeStepTracker.since = Date.now();
 					// A rejected or malformed call never reaches the executor, so
 					// its result is the first thing seen of it.
-					const savedFounderDraft = session.mode === 'founder'
-						&& ['draft_founder_report_section', 'draft_founder_report_batch'].includes(part.toolName)
+					const savedFounderActivity = session.mode === 'founder'
+						&& ['draft_founder_report_section', 'draft_founder_report_batch', FOUNDER_PAGE_REVIEW, FOUNDER_FORM_REVIEW, 'browser_diagnostics'].includes(part.toolName)
 						&& session.activities.some(a => a.id === part.toolCallId && ['done', 'failed'].includes(a.status));
-					if (!openActivities.has(part.toolCallId) && !savedFounderDraft) {
+					if (!openActivities.has(part.toolCallId) && !savedFounderActivity) {
 						await beginActivity(part.toolName, part.input, part.toolCallId);
 					}
 					const id = openActivities.get(part.toolCallId) ?? part.toolCallId;
 					const result = redact(session.id, part.result);
 					const ok = result?.success !== false;
-					const persistedAtDispatch = savedFounderDraft || record.modeReasoning || (session.mode === 'sqa' && part.toolName === 'browser_sqa_smoke');
+					const persistedAtDispatch = savedFounderActivity || record.modeReasoning || (session.mode === 'sqa' && part.toolName === 'browser_sqa_smoke');
 					if (!(persistedAtDispatch && session.activities.some(a=>a.id===id&&['done','failed'].includes(a.status)))) await runStore.updateActivity(session, id, {
 						status: ok ? 'done' : 'failed',
 						error: ok ? undefined : sanitizeErrorDetail(result?.error ?? result?.message),
@@ -2105,6 +2120,12 @@ export function summariseResult(toolName, result) {
 	if (toolName === 'run_sqa_smoke_workflow') {
 		return `SQA ${result.workflow ?? 'smoke'} workflow: ${result.checks?.length ?? 0} saved child check(s); review ${(result.control_ids ?? []).join(', ')}`;
 	}
+	if (toolName === FOUNDER_PAGE_REVIEW) {
+		const checks = result.checks ?? [];
+		if (result.reused) return `Reused ${checks.length} saved Founder page checks · ${result.route}`;
+		return `Founder ${result.depth ?? 'page'} review: ${checks.filter(check => check.result?.success !== false).length}/${checks.length} saved browser checks${result.route ? ` · ${result.route}` : ''}`;
+	}
+	if (toolName === FOUNDER_FORM_REVIEW) return `Saved ${result.cases?.length ?? 0} local form cases`;
 	if (toolName === 'browser_sqa_smoke') {
 		if (result.action === 'accessibility') return `Accessibility smoke: ${result.uniqueForwardTargets ?? 0} unique focus target(s), ${result.noFocusSteps ?? 0} no-focus step(s), wrapped=${Boolean(result.wrappedDuringSample)}`;
 		if (result.action === 'responsive') return `Responsive smoke: ${(result.samples ?? []).length} viewport(s), max overflow ${Math.max(0, ...(result.samples ?? []).map(sample => Number(sample.horizontalOverflowPx) || 0))}px`;

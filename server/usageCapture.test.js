@@ -6,7 +6,6 @@ import {
 	createUsageLogger,
 	parseAzureUsageLine,
 	parseStageCompleteLine,
-	subtractUsage,
 	sumUsage
 } from './usageCapture.js';
 
@@ -54,9 +53,11 @@ test('applyUsage accumulates per-run totals, keeps the last known total, and mar
 	assert.equal(usage.totalTokens, 1800);
 	assert.equal(usage.cachedInputTokens, 50);
 	assert.equal(usage.estimated, false);
-	// An estimate after a real report is discarded.
+	// A subsequent call without a provider receipt is still counted.
 	usage = applyUsage(usage, { inputTokens: 5, outputTokens: 5, estimated: true });
-	assert.equal(usage.inputTokens, 1500, 'estimate must not override real usage');
+	assert.equal(usage.inputTokens, 1505);
+	assert.equal(usage.estimated, true);
+	assert.equal(applyUsage(usage, { inputTokens: 3, outputTokens: 2 }).estimated, true);
 	// A pure-estimate run is marked as such.
 	const estimate = applyUsage(base, { inputTokens: 5, outputTokens: 5, estimated: true });
 	assert.equal(estimate.estimated, true);
@@ -64,22 +65,53 @@ test('applyUsage accumulates per-run totals, keeps the last known total, and mar
 });
 
 // #17934 — shared token accounting: per-model breakdown.
-test('applyUsage attributes usage per model and subtractUsage rolls it back exactly once', () => {
+test('mixed receipts stay attributed and their sum agrees with the aggregate', () => {
 	const base = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
-	let usage = applyUsage(base, { model: 'z-ai/glm-5.2', inputTokens: 1000, outputTokens: 200 });
-	usage = applyUsage(usage, { model: 'z-ai/glm-5.2', inputTokens: 300, outputTokens: 50 });
+	let usage = applyUsage(base, { model: 'z-ai/glm-5.2', inputTokens: 1000, outputTokens: 200, estimated: true });
 	usage = applyUsage(usage, { model: 'drytis/jev-1.13', inputTokens: 10, outputTokens: 5 });
+	usage = applyUsage(usage, { model: 'z-ai/glm-5.2', inputTokens: 300, outputTokens: 50, estimated: true });
 	assert.equal(usage.byModel['z-ai/glm-5.2'].inputTokens, 1300);
 	assert.equal(usage.byModel['z-ai/glm-5.2'].outputTokens, 250);
 	assert.equal(usage.byModel['drytis/jev-1.13'].inputTokens, 10);
 	assert.equal(usage.totalTokens, 1565);
-	// Rollback of a superseded estimate removes it from the SAME model's row.
-	const rolled = subtractUsage(usage, { model: 'z-ai/glm-5.2', inputTokens: 300, outputTokens: 50 });
-	assert.equal(rolled.byModel['z-ai/glm-5.2'].inputTokens, 1000);
-	assert.equal(rolled.totalTokens, 1215);
-	// Rolling a model row to zero drops it entirely.
-	const dropped = subtractUsage(usage, { model: 'drytis/jev-1.13', inputTokens: 10, outputTokens: 5 });
-	assert.equal(dropped.byModel['drytis/jev-1.13'], undefined);
+	assert.equal(usage.estimated, true);
+});
+
+test('resuming legacy aggregates preserves their totals without carrying stale model attribution', () => {
+	for (const byModel of [undefined, { old: { inputTokens: 800, outputTokens: 100 } }]) {
+		const legacy = { inputTokens: 80, outputTokens: 10, byModel };
+		const usage = applyUsage(legacy, { model: 'primary', inputTokens: 5, outputTokens: 1 });
+		assert.deepEqual(usage.byModel, {
+			unknown: { inputTokens: 80, outputTokens: 10 },
+			primary: { inputTokens: 5, outputTokens: 1 }
+		});
+		assert.equal(usage.totalTokens, 96);
+	}
+});
+
+test('SDK streams choose one receipt each, including interleaved streams using the same model', () => {
+	const captured = [];
+	const service = { logProviderReportedUsage() {}, logProviderTiming() {} };
+	const release = attachUsageCapture(service, { estimateMissing: true, onUsage: usage => captured.push(usage) });
+	const first = { model: 'primary', estimatedInputTokens: 1000 };
+	const second = { model: 'primary', estimatedInputTokens: 1300 };
+	const partial = { model: 'primary', estimatedInputTokens: 1500 };
+	service.logProviderTiming('first-part', first, 0, 1);
+	service.logProviderReportedUsage(first, { inputTokens: 700, outputTokens: 10 });
+	service.logProviderTiming('complete', second, 0, 2, 7, 9);
+	service.logProviderReportedUsage(first, { outputTokens: 42, cachedInputTokens: 50 });
+	service.logProviderTiming('complete', first, 0, 3, 400);
+	service.logProviderTiming('complete', first, 0, 3, 400);
+	service.logProviderReportedUsage(partial, { inputTokens: 1200 });
+	service.logProviderTiming('complete', partial, 0, 2, 28);
+	release();
+	service.logProviderTiming('complete', { model: 'primary', estimatedInputTokens: 500 }, 0, 2, 60);
+	assert.deepEqual(captured.map(({ model, inputTokens, outputTokens, estimated, cachedInputTokens }) =>
+		[model, inputTokens, outputTokens, estimated, cachedInputTokens]), [
+		['primary', 1300, 4, true, undefined],
+		['primary', 700, 42, false, 50],
+		['primary', 1200, 7, true, undefined]
+	]);
 });
 
 test('attachUsageCapture wraps logProviderReportedUsage and harvests every provider call', () => {

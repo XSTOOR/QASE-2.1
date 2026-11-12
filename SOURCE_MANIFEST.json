@@ -8,7 +8,7 @@
     },
     {
       "path": ".env.example",
-      "sha256": "28c026f73e1c995b35da3ed45bb4fd3a47dedae7ba96531c808a37af2862b51d"
+      "sha256": "e46933a25fe0bcb56c56924784bc8750efa67bfe69685ada7d0c82a05ba2b42e"
     },
     {
       "path": ".gitattributes",
@@ -404,7 +404,7 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "a85bb155e937e355ba82ca2e2af0256ea6c70abf52dea0f9eedbe5400c5f8f0a"
+      "sha256": "4c03a649cc14464633ba93af3e9e98d48ae873ee9dc02a3a572e254b1b528ace"
     },
     {
       "path": "public/auth.css",
@@ -592,11 +592,11 @@
     },
     {
       "path": "public/founderActions.js",
-      "sha256": "53e33a4f3823c0d5ad563cebba6b6649e0105066b3d8960a566158e6fce0912d"
+      "sha256": "784e3455564752fb18d0b5cbc60efc326016f1cb2e3c435c3a81cebf4b68a10e"
     },
     {
       "path": "public/founderActions.test.js",
-      "sha256": "e29e1d5db0724eea2cb71a558a7a6818e3b0c540f9a743792c565b0cfdabd4a6"
+      "sha256": "59296e7d4ab9361fdedf2bb34a00e45311945ec5d78d0ff8365e3cb1ce5a6e1e"
     },
     {
       "path": "public/founderEvidenceView.js",
@@ -632,7 +632,7 @@
     },
     {
       "path": "public/founderView.js",
-      "sha256": "c08d9a301191afbde549456177e6204e93a1f44366e37cbe0e1091ed1317d61d"
+      "sha256": "a6c4b0fc07d7ca156ded6d984e52295f71f6506842bdc4a460a7b2eec7728ad5"
     },
     {
       "path": "public/hybridQaView.js",
@@ -944,7 +944,7 @@
     },
     {
       "path": "public/sqaEvidencePolicy.js",
-      "sha256": "e6c027a21d9d60c5f438716a8c3c1a5e1629328f17e47865817551685eef94cb"
+      "sha256": "fc3dbdacae2daef7e23e72f9cab23c368254b1fe244aeb76cf68240d34d61d07"
     },
     {
       "path": "public/sqaEvidenceView.js",
@@ -952,7 +952,7 @@
     },
     {
       "path": "public/sqaPresentation.js",
-      "sha256": "a206ebd963a0a22561f1354742a5e5c87291cbca02e694efb7fd2ec575c5b524"
+      "sha256": "ee93539ac98375b81a5cd3f7edc99b6f5a6ef70fe42628d3bc2e4800587fdc30"
     },
     {
       "path": "public/sqaReportModel.js",
@@ -960,7 +960,7 @@
     },
     {
       "path": "public/sqaReviewView.js",
-      "sha256": "3bb542387f9951c978f869fc5754f67aa48e4582c9317bf0f38cca6ebd43c5bb"
+      "sha256": "7031ba86906e72f644e51d0f88dd68a55c274a74e72885440d889b922d8fcec2"
     },
     {
       "path": "public/sqaReviewView.test.js",
@@ -996,7 +996,7 @@
     },
     {
       "path": "public/styles.css",
-      "sha256": "429b75cbe9e8b408acab2fe800682774a3d868a58ce48d2684493bcbebc70e5a"
+      "sha256": "c0e89259a9a65e70301851dfb2450ae202cfdaca5e8e16097aae47952da23625"
     },
     {
       "path": "public/tabWorkspace.test.js",
@@ -1028,7 +1028,7 @@
     },
     {
       "path": "public/tokenUsageUi.test.js",
-      "sha256": "d12c3d260444528233cd9d1dfcb8124658c91e688269a8308da780ed7dab0953"
+      "sha256": "91bd7a727d67e9a1c7fbf478f7789b77e3d460d8418da85a364ed7b5a77786e1"
     },
     {
       "path": "public/uiPrimitives.js",
@@ -1176,7 +1176,7 @@
     },
     {
       "path": "scripts/qualify-founder-release.mjs",
-      "sha256": "fec0b889907edb3b8fe516733a014863378ad2bbe51479ed844a4ecc45322328"
+      "sha256": "1472cccff712b4a412c0711cdd000cbd4a0e0356ecacea60c10fb11a39ae5913"
     },
     {
       "path": "scripts/qualify-founder-report-resume.mjs",
@@ -1216,7 +1216,7 @@
     },
     {
       "path": "scripts/qualify-sqa-release.mjs",
-      "sha256": "545144aa3dbfb01d05b0a7b321146e914056ea3a83ef2b1d8e4e404e282c8291"
+      "sha256": "9ec637d4aff0efe97fb3b242a8591718cf5c51927bfff781a40cf032233d546d"
     },
     {
       "path": "scripts/qualify-sqa-report-resume.mjs",
@@ -1296,7 +1296,7 @@
     },
     {
       "path": "scripts/test-founder-actions-browser.mjs",
-      "sha256": "b161c2076e97cbcff5db442b527b2fe517399b62e11f42d4efa03994a2ef6f81"
+      "sha256": "e3fa5e082a75017787c8cf0e1322daccb68b07fcb3a7525e5ca3dfdfea0906e9"
     },
     {
       "path": "scripts/test-founder-completion-browser.mjs",
@@ -1320,7 +1320,7 @@
     },
     {
       "path": "scripts/test-sqa-evidence.mjs",
-      "sha256": "a582c47230c323dd76f68fda8b5d0a726a2fc6a741e20a1a66b6ab0afbd3aa0e"
+      "sha256": "281bf7f661ac2da2bec780f7b270b91317f307f172c6faa21eef62e3599d6815"
     },
     {
       "path": "scripts/test-sqa-launch.mjs",
@@ -1384,11 +1384,11 @@
     },
     {
       "path": "server/agent.js",
-      "sha256": "a3e0b6ea066c7586e973fde28e50f14276f1a964720850acae17926d2c1ae5d1"
+      "sha256": "7ad3ed8a4c33354ec75362eb69c4ddc0a140d156a97f2c0ec5a9d1c45a4b27b2"
     },
     {
       "path": "server/agent.test.js",
-      "sha256": "fa446f524c3ab60571b8b986fe7c358797251a180acecf11538b6cd6a2a09e9c"
+      "sha256": "c205c6884d4625d96ff3dc13138adfd30a753b1ba233319c8e61bc0b0501ec44"
     },
     {
       "path": "server/analytics.js",
@@ -1396,7 +1396,7 @@
     },
     {
       "path": "server/app.js",
-      "sha256": "7a98292abda0358849227dd2bb9a9b13721fcbf802ee488033328674d9d01621"
+      "sha256": "9744157777920f2af547e7574d54eabd9676a8aa16cc4a225a9a1711fa4478b2"
     },
     {
       "path": "server/app.test.js",
@@ -1452,7 +1452,7 @@
     },
     {
       "path": "server/browserBridge.js",
-      "sha256": "c02889114f945ed869aeb1a8706a507820fd3eeb149adb3d11a4f3f7108ec20e"
+      "sha256": "26a38435885d6b67159ce28040fc8de07e3129adcbacaeb5ef123dadb95507d5"
     },
     {
       "path": "server/browserBridge.runDependability.test.js",
@@ -1820,11 +1820,11 @@
     },
     {
       "path": "server/drytisIntegrationFactory.js",
-      "sha256": "69e4dc6c783629ec389c9e3b1981741ea37b734d1f5fa32f1d903763df3cfa7e"
+      "sha256": "491397039d2150a282dd57db2d77446dc77e6c32c8714caddb52ef747e91cc4c"
     },
     {
       "path": "server/drytisIntegrationFactory.test.js",
-      "sha256": "8e245ef5aa680320cf6159e26c74fcb200891f4db0932cb48f0415d89638d444"
+      "sha256": "c76f0a491e6618531481bb5544881a5c9a0c012eab980642d8d376d36efed054"
     },
     {
       "path": "server/drytisIntegrationSchema.js",
@@ -1848,7 +1848,7 @@
     },
     {
       "path": "server/drytisTransport.js",
-      "sha256": "d7b0bb29fdd98a6cdefc14c7926998f298c9bfadf5839a406bc768c69f72083d"
+      "sha256": "77fb47f783af6c40b8020e0a330cc74a85abf26039a0b9a55b3a339bd315ab37"
     },
     {
       "path": "server/drytisTransport.test.js",
@@ -1960,11 +1960,11 @@
     },
     {
       "path": "server/founderActions.js",
-      "sha256": "4491c2c76e6f08e908dbef764f23e9174b3640899a33b2847281b17c3e571146"
+      "sha256": "0f88ea40ed576d9816830097942d88ab146e667b60dc9b360168b8c222e9ca5c"
     },
     {
       "path": "server/founderActions.test.js",
-      "sha256": "e36e345ee7ef5f7d16f0fffb939bd986501ec7581097e06708d62bb1f5d0bfeb"
+      "sha256": "61552c1a64dcc76befe0d26d237006c81e4d1fda1cf74532c75f5edd05e3c053"
     },
     {
       "path": "server/founderContext.js",
@@ -1987,6 +1987,14 @@
       "sha256": "c47280af49e69db1a55c4f2b6193856b62387a1dedd93a02cd2f32a4fb94976e"
     },
     {
+      "path": "server/founderFormReview.js",
+      "sha256": "19ac7d5cc30697f46709bc213e762112fc67d66f35805bb4f75e4f67d29c1ff7"
+    },
+    {
+      "path": "server/founderFormReview.test.js",
+      "sha256": "33573162916a35c6185d1ae6cfbb2e07b70c8165ec3f0b5aca93bdaddd4229e1"
+    },
+    {
       "path": "server/founderHandoff.js",
       "sha256": "419c9c4e98c5a3a798668223522c0b2cadccd1d0cf8fe222db6459d323b3a620"
     },
@@ -2000,11 +2008,19 @@
     },
     {
       "path": "server/founderInvestigation.js",
-      "sha256": "d32e25455afb400d3dec248586d8ebb72b5753715af06e637419abaf13e83f10"
+      "sha256": "c3f20a05bbda1004e29aa46e090f243b66b25a7a81f4e8cce5c25ef82caa68c3"
     },
     {
       "path": "server/founderInvestigation.test.js",
-      "sha256": "70d6d3ed3096bd22fb00f5337d1dd2064017ae1511e52a2ee92f56e9a11899c8"
+      "sha256": "d5cbd148243217da83b65e856d51b745cb05fff8095515fb1df51c6a0a4722e2"
+    },
+    {
+      "path": "server/founderPageReview.js",
+      "sha256": "15b8b23b2caa202b9a438cbdbd3a4ff606328c000c90ec1104ea69d66d5ac8da"
+    },
+    {
+      "path": "server/founderPageReview.test.js",
+      "sha256": "756bc6adb931e60cb505a7c9127ed384f963adfef805f867ddb999b5413b52e5"
     },
     {
       "path": "server/founderPresentation.test.js",
@@ -2028,11 +2044,11 @@
     },
     {
       "path": "server/founderPrompt.js",
-      "sha256": "b6e254e27b0e6d1eb71d1f45309938a1b20599ffb223c39bddd4a8f6804feb04"
+      "sha256": "9f5581d3afde02470ce4ebb24c24baa7369bd5f7fc03a9232847d818280b0c14"
     },
     {
       "path": "server/founderPrompt.test.js",
-      "sha256": "8c45d4a1f19fc93ea761585f68a3b93e6fd461aff7c35c103e233b10997218d5"
+      "sha256": "3dd3aa731ba6a3ecd61e338a6a247cbec4a742fdccfaed5c61f6046cf50c351b"
     },
     {
       "path": "server/founderQuality.test.js",
@@ -2064,7 +2080,7 @@
     },
     {
       "path": "server/founderService.js",
-      "sha256": "f08b3ffdec5f689412dfec3a4a18b395b7b51588611b89c3d4f604390c4261b0"
+      "sha256": "eb7ffadd22ce536e69bba641e4ad4ac0b9afb5a2332f1c65a611278b4bc7241b"
     },
     {
       "path": "server/founderService.test.js",
@@ -2076,15 +2092,15 @@
     },
     {
       "path": "server/founderTools.js",
-      "sha256": "339bdd23fbe2a43d09a15eb0908b3ea5a09b68f7410e7bf06c8c0857028641a0"
+      "sha256": "e7a625719f8b40f6fc04da5fac208c849bb64caf1adf2d96d6dc0afbf9d7f45f"
     },
     {
       "path": "server/founderTools.test.js",
-      "sha256": "2af0ddb34762ee1d1a40570cef5daf9ba8c8745dd6968907af8cd940e0cc6c6f"
+      "sha256": "e581fe1fef4adecf3d498b7b030b74f3d765c70bfeb3b65300d3716f84faa79f"
     },
     {
       "path": "server/founderUi.test.js",
-      "sha256": "72701a6008087fde4cf13111b6fa814ee1b96a45f2baaaed3499cbca4c238be5"
+      "sha256": "aa8e635d2434937f9a3eec533bf4d8292fe6e35395e868b9bf899c8d10d79b15"
     },
     {
       "path": "server/governanceCommand.js",
@@ -2288,7 +2304,7 @@
     },
     {
       "path": "server/index.js",
-      "sha256": "2d36f09aeaaff19881cb6fd7b12cd81f9afcc866a0e4c580541fee5d7d015153"
+      "sha256": "aefcf173d2d2924cd5d9f65dd039be002c1f6da757c72e70190432b069c3f27e"
     },
     {
       "path": "server/instanceAccess.js",
@@ -2876,11 +2892,11 @@
     },
     {
       "path": "server/postgresServices.js",
-      "sha256": "3dbcfaab2cb3ffab765aa8379179af1b95fbb104e131d834fa746ece473be594"
+      "sha256": "1309c29f98cbbc89c2e598cf3634df36bddbbdbb26d038682c04bee2d1376c24"
     },
     {
       "path": "server/postgresServices.test.js",
-      "sha256": "2ef9a3a1388a303cf58dc7318ba4dce4392c6565000237dbb15b7854635b2368"
+      "sha256": "ca8b7451354f94b008cd73e6a03ce1a706e6d07e80cce25904a8ed2ada079a54"
     },
     {
       "path": "server/processLifecycle.js",
@@ -3256,7 +3272,7 @@
     },
     {
       "path": "server/sqaBrowserSmoke.js",
-      "sha256": "4cc45d491e1c9c62ecbf985459c939afa118fccc90ac7dd1c0ba98f577b5d560"
+      "sha256": "154feff5d02468c70045134bda86f482561a1967e9929a92ce0aa2cb1eb66061"
     },
     {
       "path": "server/sqaBrowserSmoke.test.js",
@@ -3296,7 +3312,7 @@
     },
     {
       "path": "server/sqaPresentation.test.js",
-      "sha256": "f1c5afb7154deefb55683812c2af45b731c2e80dd10cea9dd061e6c972665e06"
+      "sha256": "e2702c5c80b9d21898353c1fc674839c5e4ccce56335ccc1f9f0ca74b875dcb2"
     },
     {
       "path": "server/sqaPrompt.js",
@@ -3332,11 +3348,11 @@
     },
     {
       "path": "server/sqaService.js",
-      "sha256": "6581e316be17ec92642c4ad49a399c7727f8c409399cc4391bd71e1525262d12"
+      "sha256": "3e34893e1414ad96103665e38673264202ad5c9dca4143b2f544278b294ba2fc"
     },
     {
       "path": "server/sqaService.test.js",
-      "sha256": "e6fb9fb87e40b6b0cc628e07f8dc170b9a5c0828baa921accbf8d933e1bae29e"
+      "sha256": "8caba0b54334ce1a9e08845a5ff7d8aa0a7f7e60fb2e0a8b3567e10723b6f9d1"
     },
     {
       "path": "server/sqaSmokeWorkflow.js",
@@ -3356,7 +3372,7 @@
     },
     {
       "path": "server/sqaUi.test.js",
-      "sha256": "88a3ef71b52e49aa2b355c56be4fddb3f88d57a96331382473a835e65db33c17"
+      "sha256": "769c4ef82aa4f47eb7baa1d21ba8af6688694af7496b8d1ed20ba08736cfa24e"
     },
     {
       "path": "server/sqaWorkPlan.js",
@@ -3484,11 +3500,11 @@
     },
     {
       "path": "server/usageCapture.js",
-      "sha256": "7a66e519b5790ddf9818aef5984e9d4dbee2e2bad5b211c7f4b2bff54370e66c"
+      "sha256": "85b1bdb29854fbb51a87c44d908b176adebae0fcbbdb5b2ed8be2ee226dcda34"
     },
     {
       "path": "server/usageCapture.test.js",
-      "sha256": "6440e7de21ef7d09428b254743f51d0d3bdabcf2a8018517130e5bbacff92e46"
+      "sha256": "9f61538269a16f063bbe06090f3231531d7a7a58357e1e02642de5968239d0db"
     },
     {
       "path": "server/whiteboxAnalysis.js",

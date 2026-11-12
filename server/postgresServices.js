@@ -190,6 +190,7 @@ export function createPostgresApplicationServices({
 		const event = { type, sessionId: session.id, ts: timestamp, ...payload };
 		if (eventTransport) eventTransport.publish(event);
 		else bus.emit(session.id, event);
+		if (!eventTransport?.subscribeGlobal) bus.emit('*', session.id, event);
 	}
 
 	function enqueue(id, operation) {
@@ -524,6 +525,11 @@ export function createPostgresApplicationServices({
 			bus.on(sessionId, listener);
 			return () => bus.off(sessionId, listener);
 		},
+		subscribeGlobal(listener) {
+			if (eventTransport?.subscribeGlobal) return eventTransport.subscribeGlobal(listener);
+			bus.on('*', listener);
+			return () => bus.off('*', listener);
+		},
 		liveFor,
 		peekLive(id) {
 			return live.get(id);
@@ -567,10 +573,6 @@ export function createPostgresApplicationServices({
 		deviceRuntime,
 		feedbackStore: feedbackRepository ?? createPostgresFeedbackRepository({ pool: repository.pool ?? repository, tenantContext })
 	});
-	// In PostgreSQL mode the Redis transport is the global event fan-out.
-	if (eventTransport && typeof eventTransport.subscribeGlobal === 'function') {
-		services.events.subscribeGlobal = eventTransport.subscribeGlobal.bind(eventTransport);
-	}
 	services.tenantContext = tenantContext;
 	services.realtime = eventTransport;
 	return services;

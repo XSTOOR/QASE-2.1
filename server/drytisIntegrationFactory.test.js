@@ -14,8 +14,25 @@ test('a Founder-specific destination enables signed delivery without requiring a
 		createDeliveryClient: () => client, createApi: options => { input = options; return {}; }
 	});
 	assert.equal(result.deliveryClient, client); assert.equal(result.founderHandoffTarget, '/founder');
+	assert.equal(result.automaticFounderHandoff, false);
 	assert.equal(result.deliveryTarget, undefined); assert.equal(result.ticketsTarget, undefined);
 	assert.equal(input.deliveryClient, client); assert.equal(input.ticketsTarget, undefined);
+});
+
+test('automatic Founder delivery requires explicit activation and a Founder-specific receiver', () => {
+	const auto = { QASE_DRYTIS_FOUNDER_AUTO_HANDOFF: 'true' };
+	assert.throws(() => createConfiguredDrytisIntegration({ environment: auto }), /requires Drytis integration/);
+	assert.throws(() => createConfiguredDrytisIntegration({ environment: {
+		...auto, QASE_DRYTIS_INTEGRATION_ENABLED: 'true', QASE_DRYTIS_RESULTS_PATH: '/results'
+	} }), /explicit Studio handoff path/);
+	assert.throws(() => createConfiguredDrytisIntegration({ environment: { QASE_DRYTIS_FOUNDER_AUTO_HANDOFF: 'yes' } }), /true or false/);
+	const result = createConfiguredDrytisIntegration({
+		environment: { ...auto, QASE_DRYTIS_INTEGRATION_ENABLED: 'true', QASE_DRYTIS_FOUNDER_HANDOFF_PATH: '/founder' },
+		services: {}, tenantContext: { projectId: 'fixture' },
+		createConfig: () => ({ apiOrigin: 'https://studio.test', allowedOrigins: ['https://studio.test'] }),
+		createVerifier: () => ({}), createDeliveryClient: () => ({ deliver() {} }), createApi: () => ({})
+	});
+	assert.equal(result.automaticFounderHandoff, true);
 });
 
 const TENANT = Object.freeze({

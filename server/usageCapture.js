@@ -58,26 +58,31 @@ export function sumUsage(usageList) {
 }
 
 /**
- * Folds one provider call's usage into the run's accumulated totals.
- * Real reports always win: estimates are discarded once a real value was seen.
+ * Folds one accounted model call into the run's accumulated totals.
+ * Stream capture has already chosen reported or estimated usage for that call.
  */
 export function applyUsage(current, incoming) {
 	if (!incoming) return current;
-	const real = incoming.estimated !== true;
-	if (!real && current && current.estimated === false) {
-		return current;
-	}
 	const base = current ?? { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
-	const inputTokens = base.inputTokens + (incoming.inputTokens ?? 0);
-	const outputTokens = base.outputTokens + (incoming.outputTokens ?? 0);
+	const priorInput = base.inputTokens ?? 0;
+	const priorOutput = base.outputTokens ?? 0;
+	const inputTokens = priorInput + (incoming.inputTokens ?? 0);
+	const outputTokens = priorOutput + (incoming.outputTokens ?? 0);
 	const cachedInputTokens = base.cachedInputTokens + (incoming.cachedInputTokens ?? 0);
 	// #17934: per-model breakdown (additive). Each model's usage accumulates
 	// alongside the run total so the UI can attribute tokens to the model
 	// that spent them (primary agent vs JEV vs hybrid roles).
 	const modelKey = incoming.model || 'unknown';
-	const byModel = { ...(base.byModel ?? {}) };
-	const modelUsage = byModel[modelKey] ?? { inputTokens: 0, outputTokens: 0 };
-	byModel[modelKey] = {
+	let byModel = { ...(base.byModel ?? {}) };
+	const priorBreakdown = sumUsage(Object.values(byModel));
+	const mismatched = priorBreakdown && (priorBreakdown.inputTokens !== priorInput || priorBreakdown.outputTokens !== priorOutput);
+	// Older snapshots may have no breakdown or stale rows from a prior rollback.
+	// Keep the saved aggregate and avoid attributing it to a model without proof.
+	if (mismatched || (!priorBreakdown && (priorInput || priorOutput))) {
+		byModel = { unknown: { inputTokens: priorInput, outputTokens: priorOutput } };
+	}
+	const modelUsage = Object.hasOwn(byModel, modelKey) ? byModel[modelKey] : { inputTokens: 0, outputTokens: 0 };
+	const accumulated = {
 		inputTokens: modelUsage.inputTokens + (incoming.inputTokens ?? 0),
 		outputTokens: modelUsage.outputTokens + (incoming.outputTokens ?? 0)
 	};
@@ -85,43 +90,10 @@ export function applyUsage(current, incoming) {
 		inputTokens,
 		outputTokens,
 		cachedInputTokens,
-		byModel,
+		byModel: { ...byModel, [modelKey]: accumulated },
 		totalTokens: inputTokens + outputTokens,
-		estimated: real ? false : (base.estimated ?? true),
+		estimated: base.estimated === true || incoming.estimated === true || Boolean(mismatched),
 		updatedAt: Date.now()
-	};
-}
-
-/**
- * Rolls an already-committed estimate back out of the run's totals, before a
- * real provider report for the same call is applied in its place. Clamped at
- * zero so a rollback can never drive totals negative. The `estimated` flag is
- * recomputed: once nothing estimated-only remains, totals are real.
- */
-export function subtractUsage(current, delta) {
-	if (!current || !delta) return current;
-	// #17934: roll the per-model breakdown back too, so a superseded
-	// estimate leaves no phantom per-model tokens.
-	const byModel = current.byModel ? { ...current.byModel } : undefined;
-	if (byModel && delta.model) {
-		const key = delta.model || 'unknown';
-		const modelUsage = byModel[key];
-		if (modelUsage) {
-			const nextInput = Math.max(0, modelUsage.inputTokens - (delta.inputTokens ?? 0));
-			const nextOutput = Math.max(0, modelUsage.outputTokens - (delta.outputTokens ?? 0));
-			if (nextInput === 0 && nextOutput === 0) delete byModel[key];
-			else byModel[key] = { inputTokens: nextInput, outputTokens: nextOutput };
-		}
-	}
-	const inputTokens = Math.max(0, current.inputTokens - (delta.inputTokens ?? 0));
-	const outputTokens = Math.max(0, current.outputTokens - (delta.outputTokens ?? 0));
-	return {
-		...current,
-		...(byModel ? { byModel } : {}),
-		inputTokens,
-		outputTokens,
-		totalTokens: inputTokens + outputTokens,
-		cachedInputTokens: Math.max(0, (current.cachedInputTokens ?? 0) - (delta.cachedInputTokens ?? 0))
 	};
 }
 
@@ -240,24 +212,66 @@ export function createUsageLedger() {
 
 /**
  * Wraps `service.logProviderReportedUsage` so every provider call's usage is
- * observed before the SDK drops it. Returns a release function that restores
- * the original method.
+ * observed before the SDK drops it. With estimateMissing, the diagnostics
+ * object identifies the stream in both SDK hooks. Its final usage snapshot
+ * wins for that stream alone. Other calls keep their own receipts or estimates.
  */
-export function attachUsageCapture(service, { onUsage } = {}) {
+export function attachUsageCapture(service, { onUsage, estimateMissing = false } = {}) {
 	if (!service || typeof service.logProviderReportedUsage !== 'function' || typeof onUsage !== 'function') {
 		return () => undefined;
 	}
 	const original = service.logProviderReportedUsage.bind(service);
+	const timing = estimateMissing && typeof service.logProviderTiming === 'function'
+		? service.logProviderTiming.bind(service) : undefined;
+	const reports = new WeakMap();
+	const completed = new WeakSet();
+	const hasCount = value => Number.isSafeInteger(value) && value >= 0;
 	service.logProviderReportedUsage = (diagnostics, usage) => {
 		try {
-			if (usage && typeof usage === 'object') onUsage(usage);
+			if (usage && typeof usage === 'object') {
+				if (timing && diagnostics && typeof diagnostics === 'object') {
+					const report = reports.get(diagnostics) ?? {};
+					for (const key of ['inputTokens', 'outputTokens', 'cachedInputTokens']) {
+						if (hasCount(usage[key])) report[key] = usage[key];
+					}
+					if (typeof usage.callId === 'string') report.callId = usage.callId;
+					reports.set(diagnostics, report);
+				} else onUsage(usage);
+			}
 		} catch {
 			// Usage capture must never break a model turn.
 		}
 		return original(diagnostics, usage);
 	};
+	if (timing) {
+		service.logProviderTiming = (stage, diagnostics, startedAt, emittedParts, textChars = 0, reasoningChars = 0) => {
+			if (stage === 'complete' && diagnostics && typeof diagnostics === 'object' && !completed.has(diagnostics)) {
+				completed.add(diagnostics);
+				const report = reports.get(diagnostics);
+				reports.delete(diagnostics);
+				const estimatedInput = diagnostics.estimatedInputTokens;
+				const estimatedOutput = Math.ceil((textChars + reasoningChars) / 4);
+				const inputReported = hasCount(report?.inputTokens);
+				const outputReported = hasCount(report?.outputTokens);
+				if (inputReported || outputReported || (hasCount(estimatedInput) && hasCount(estimatedOutput))) {
+					try {
+						onUsage({
+							model: diagnostics.model,
+							callId: report?.callId,
+							inputTokens: inputReported ? report.inputTokens : hasCount(estimatedInput) ? estimatedInput : 0,
+							outputTokens: outputReported ? report.outputTokens : hasCount(estimatedOutput) ? estimatedOutput : 0,
+							cachedInputTokens: report?.cachedInputTokens,
+							estimated: !inputReported || !outputReported
+						});
+					} catch { /* Usage capture must never break a model turn. */ }
+				}
+			}
+			return timing(stage, diagnostics, startedAt, emittedParts, textChars, reasoningChars);
+		};
+	}
 	return () => {
 		service.logProviderReportedUsage = original;
+		if (timing) service.logProviderTiming = timing;
 	};
 }
 

@@ -4,6 +4,7 @@ import {
 	describeSqaLifecycle,
 	groupSqaUnresolvedResults,
 	isSqaBudgetStopResult,
+	sqaMissingEvidenceRequirements,
 	SQA_AGENT_CAPABLE_EVIDENCE_TYPES
 } from '../public/sqaPresentation.js';
 
@@ -75,7 +76,7 @@ test('unresolved SQA controls distinguish reviewer, mixed, automated, and failed
 	assert.equal(isSqaBudgetStopResult({ rationale: 'The host SQA browser-tool safety limit was exhausted (120/120).' }), true, 'older published assessments remain classified');
 });
 
-test('a reviewer-only blocked verdict is presented as evidence incomplete without changing raw verdict', () => {
+test('a reviewer-only blocked verdict names the required reviewer evidence and preserves the raw verdict', () => {
 	const presentation = describeSqaLifecycle({
 		finalizedAt: '2026-08-17T00:00:00.000Z',
 		assessment: {
@@ -86,9 +87,25 @@ test('a reviewer-only blocked verdict is presented as evidence incomplete withou
 	}, 'idle', 0);
 	assert.equal(presentation.status, 'blocked');
 	assert.equal(presentation.rawVerdict, 'blocked');
-	assert.equal(presentation.label, 'Evidence incomplete');
-	assert.equal(presentation.badge, 'evidence incomplete');
+	assert.equal(presentation.label, 'Reviewer evidence needed');
+	assert.equal(presentation.badge, 'reviewer evidence');
 	assert.equal(presentation.evidenceIncomplete, true);
+});
+
+test('mixed requirements name both sources and explicit browser requirements remain browser gaps', () => {
+	const mixed = unresolved({ id: 'mixed', automationLevel: 'hybrid', types: ['test_result', 'risk_register'] });
+	const browserOnly = unresolved({ id: 'browser', automationLevel: 'hybrid', types: ['risk_register'] });
+	browserOnly.evidenceCoverage.requirements[0].owner = 'browser';
+	assert.deepEqual(sqaMissingEvidenceRequirements(mixed).map(item => item.owner), ['browser', 'reviewer']);
+	assert.deepEqual(groupSqaUnresolvedResults([mixed, browserOnly]).mixed, [mixed]);
+	assert.deepEqual(groupSqaUnresolvedResults([mixed, browserOnly]).automated, [browserOnly]);
+	const sqa = { finalizedAt: '2026-08-17T00:00:00.000Z', assessment: { verdict: 'blocked', results: [mixed] } };
+	assert.equal(describeSqaLifecycle(sqa).label, 'More evidence needed');
+	sqa.assessment.technicalSummary = { verdict: 'blocked' };
+	assert.equal(describeSqaLifecycle(sqa).label, 'Blocked');
+	delete sqa.assessment.technicalSummary;
+	sqa.assessment.results.push({ ...browserOnly, rationale: 'Stopped early: budget reached.' });
+	assert.equal(describeSqaLifecycle(sqa).label, 'Blocked');
 });
 
 test('an automated blocker or real failure retains the blocked presentation', () => {

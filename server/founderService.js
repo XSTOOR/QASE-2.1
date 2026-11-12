@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { founderEvidenceDigest } from './founderEvidence.js';
+import { completedFounderPageReviews, FOUNDER_PAGE_REVIEW } from './founderPageReview.js';
+import { FOUNDER_FORM_REVIEW } from './founderFormReview.js';
 import {
 	assertPlainObject,
 	boundedStrings,
@@ -261,8 +263,17 @@ export function recordFounderPublicOnlyDecision(session, now = () => Date.now())
 
 function completedBrowserActivities(session) {
 	return (session.activities ?? []).filter(activity => (
-		activity.status === 'done' && String(activity.toolName ?? '').startsWith('browser_')
+		activity.status === 'done' && String(activity.toolName ?? '').startsWith('browser_') && !activity.founderPageReviewReused
 	));
+}
+
+/** Keep original page receipts and recent workflow evidence selectable together. */
+export function founderObservationEvidenceChoices(session) {
+	const activities = completedBrowserActivities(session).filter(activity => ![FOUNDER_PAGE_REVIEW, FOUNDER_FORM_REVIEW].includes(activity.toolName));
+	const pageIds = new Set(completedFounderPageReviews(session).flatMap(review => review.checks.map(check => check.activity_id)));
+	const saved = activities.filter(activity => pageIds.has(activity.id)).slice(-20);
+	const recent = activities.filter(activity => !pageIds.has(activity.id)).slice(-28);
+	return [...saved, ...recent];
 }
 
 function evidenceBundle(session, requestedIds, now) {
