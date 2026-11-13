@@ -19,7 +19,7 @@ test('expired qualification offers renewal and running checks block launch witho
 test('compact engine metadata validates the selected browser and gives an honest visible summary', () => {
   const model = qaBrowserStatus(input());
   assert.equal(model.state, 'ready'); assert.equal(model.title, 'Chrome 151');
-  assert.match(model.detail, /Desktop.*macOS 26/); assert.match(model.detail, /not a physical device/);
+  assert.match(model.detail, /Desktop.*macOS 26/); assert.match(model.detail, /Browser emulation/);
   assert.equal(model.action, 'change');
   assert.deepEqual(hybridLaunchOptions(input()), { qaExecutionMode: 'hybrid', environmentId: chrome.envId, engine: 'chromium' });
 });
@@ -52,6 +52,9 @@ test('loading, failed fetch, missing selection and multi-browser hybrid expose d
   assert.equal(qaBrowserStatus({ ...input(), envIds: ['a', 'b'] }).action, 'recommended');
   assert.equal(qaBrowserStatus({ ...input(), configurations: [], envIds: [] }).action, 'reload');
   assert.equal(qaBrowserStatus({ ...input(), config: {} }).action, 'config');
+  const disabled = qaBrowserStatus({ ...input(), config: { hybridQa: { status: 'disabled' } } });
+  assert.equal(disabled.state, 'blocked');
+  assert.equal(disabled.action, null);
 });
 
 test('unavailable or removed selections remain blocked; legacy multi-browser coverage stays available', () => {

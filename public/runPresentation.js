@@ -25,11 +25,20 @@ export function runPresentationLabel(session) {
 	return status ? status.replaceAll('_', ' ') : 'Idle';
 }
 
+export function qaEvidenceStatusLabel(session) {
+	const label = runPresentationLabel(session);
+	if (session.status === 'done' && session.report?.verdict === 'fail') {
+		return label === 'Completed with gaps' ? 'Failed with coverage gaps' : 'Failed';
+	}
+	return label;
+}
+
 /** Blocker review must show the prerequisite, even when unrelated bugs exist. */
 export function preferredResultTab(session, { sqaVisible = false, founderVisible = false } = {}) {
 	if (runPresentationStatus(session) === 'blocked') return 'tab-report';
 	if (session?.mode === 'sqa' && sqaVisible) return 'tab-sqa';
 	if (session?.mode === 'founder' && founderVisible) return 'tab-founder';
+	if (session?.mode === 'qa' && session.qaExecutionMode === 'hybrid') return 'tab-report';
 	return session?.findings?.length ? 'tab-findings' : 'tab-report';
 }
 

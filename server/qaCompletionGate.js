@@ -4,6 +4,7 @@ import { remainingHybridWork } from './qaExecutionState.js';
 import {scenarioExecutionAccount} from './qaExecutionState.js';
 import {qaScenarioSchedule,explicitQaCloseout} from './qaScenarioScheduler.js';
 import { requireApplicationDiscovery } from './qaApplicationDiscovery.js';
+import { canonicalModeHash, modeReceiptHash } from './modeIntegrity.js';
 
 export function validateHybridFinding(session, input) {
   const state = session.hybrid;
@@ -12,16 +13,16 @@ export function validateHybridFinding(session, input) {
   const evidence = state?.evidence.find(item => item.id === assertion?.evidenceRef);
   const action = state?.actions.find(item => item.id === assertion?.actionId);
   if (!scenario || !assertion || assertion.outcome !== 'fail' || !evidence?.success || evidence.runId !== session.id ||
-      evidence.digest !== digestEvidence(evidence.result) || evidence.actionId !== action?.id || action.status !== 'done' ||
+      evidence.digest !== modeReceiptHash(evidence) || evidence.actionId !== action?.id || action.status !== 'done' ||
       !['host_browser_check', 'request_assertion', 'host_diagnostic'].includes(assertion.authority)) throw new Error('Confirmed findings require a failed host assertion and intact evidence from this run.');
   if (!assertion.reproduction?.confirmed || assertion.reproduction.observations < 2) throw new Error('The observed failure is unresolved until safe reproduction or repeated deterministic assertion evidence is available.');
   if ((state.policyBlocks || []).some(item => item.url && String(assertion.actual).includes(item.url)) ||
       (assertion.authority === 'host_diagnostic' && (state.policyBlocks || []).some(item => ['script', 'stylesheet', 'document'].includes(item.resourceType)))) throw new Error('Browser policy blocked a relevant dependency; the target defect is not established.');
   if (assertion.authority === 'host_browser_check') {
-    if (evidence.toolName !== 'browser_qa_check' || !evidence.result.assertions?.some(item => item.name === assertion.name && digestEvidence(item.expected) === digestEvidence(assertion.expected) && digestEvidence(item.actual) === digestEvidence(assertion.actual) && item.outcome === 'fail' && item.reproduction?.confirmed === true)) throw new Error('Host assertion does not match the executed browser check.');
+    if (evidence.toolName !== 'browser_qa_check' || !evidence.result.assertions?.some(item => item.name === assertion.name && canonicalModeHash([item.expected, item.actual]) === canonicalModeHash([assertion.expected, assertion.actual]) && item.outcome === 'fail' && item.reproduction?.confirmed === true)) throw new Error('Host assertion does not match the executed browser check.');
   } else {
     const first = state.evidence.find(item => item.id === assertion.reproduction.firstEvidenceRef);
-    if (!first?.success || first.runId !== session.id || first.digest !== digestEvidence(first.result) || first.id === evidence.id || first.actionId === evidence.actionId) throw new Error('Distinct intact reproduction evidence is required.');
+    if (!first?.success || first.runId !== session.id || first.digest !== modeReceiptHash(first) || first.id === evidence.id || first.actionId === evidence.actionId) throw new Error('Distinct intact reproduction evidence is required.');
     if (assertion.authority === 'host_diagnostic' && (first.toolName !== 'browser_diagnostics' || evidence.toolName !== 'browser_diagnostics' || JSON.stringify(diagnosticFailures(first.result, first.url || session.targetUrl)) !== assertion.actual || JSON.stringify(diagnosticFailures(evidence.result, evidence.url || session.targetUrl)) !== assertion.actual)) throw new Error('Diagnostic reproduction does not match recorded exceptions.');
   }
   const url=assertion.check === 'broken_links' && evidence.result.destination ? evidence.result.destination : evidence.url || session.targetUrl;
@@ -67,7 +68,7 @@ export function hybridCompletion(session) {
     if (!item.executedActionIds.length || !item.assertions.length) throw new Error('Scenario completion has no executed action/assertion evidence.');
     for (const assertion of item.assertions) {
       const record = evidenceById.get(assertion.evidenceRef);
-      if (record && !checkedEvidence.has(record.id)) checkedEvidence.set(record.id, record.success && record.runId === session.id && record.digest === digestEvidence(record.result));
+      if (record && !checkedEvidence.has(record.id)) checkedEvidence.set(record.id, record.success && record.runId === session.id && record.digest === modeReceiptHash(record));
       if (!record || !checkedEvidence.get(record.id)) throw new Error('Scenario evidence is missing or invalid.');
     }
     if (item.status === 'passed' && item.assertions.some(assertion => assertion.outcome !== 'pass')) throw new Error('A scenario with failed assertions cannot pass.');

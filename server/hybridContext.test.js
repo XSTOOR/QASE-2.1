@@ -6,7 +6,7 @@ import { projectHybridMessages, hybridHostContext, prepareHybridInference } from
 import { createQaTools } from './qaTools.js';
 import { createHybridRuntime } from './hybridQaRuntime.js';
 import { hybridProfile } from './hybridConfig.js';
-import { digestEvidence } from './qaScenarioLedger.js';
+import { modeReceiptHash } from './modeIntegrity.js';
 import { createBrowserTools } from './browserTools.js';
 import { createHybridScenarioTool } from './hybridQaTools.js';
 import { hybridRecoveryProblem } from './hybridRecoveryGate.js';
@@ -57,7 +57,7 @@ test('old inventories compact to intact evidence references but assertions, erro
   assert.equal(tool.toolName, 'browser_snapshot'); assert.equal(compacted.hostEvidenceId, evidence.id);
   assert.deepEqual(compacted.assertions, data.assertions); assert.equal(compacted.error, data.error);
   assert.equal(compacted.contextCompaction.detailsOmitted, true);
-  assert.equal(evidence.digest, digestEvidence(evidence.result));
+  assert.equal(evidence.digest, modeReceiptHash(evidence));
   const reader = runtime.tools.find(item => item.name === 'qa_read_evidence');
   const read = await reader.run({ evidence_id: evidence.id, offset: 0, length: 6000 });
   assert.equal(read.data, JSON.stringify(evidence.result).slice(0, 6000)); assert.equal(read.nextOffset, 6000);
@@ -100,7 +100,7 @@ test('atomic scenarios serialize start/check/close and compute status from durab
   for (const result of results) {
     assert.equal(result.hostAssertions.length, 0); assert.equal(result.assertionCounts.passed, 1);
     const evidence = runtime.ledger.evidence(result.hostEvidenceId);
-    assert.equal(evidence.toolName, 'browser_qa_check'); assert.equal(evidence.digest, digestEvidence(evidence.result));
+    assert.equal(evidence.toolName, 'browser_qa_check'); assert.equal(evidence.digest, modeReceiptHash(evidence));
   }
   await assert.rejects(tool.run({ scenario_id: nav.id, action: 'navigation' }), /not replayed/);
 });

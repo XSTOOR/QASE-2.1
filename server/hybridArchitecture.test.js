@@ -6,7 +6,8 @@ import { hybridProfile, profileIdentity, selectQaExecutionMode, validateQualific
 import { createHybridTelemetry } from './hybridTelemetry.js';
 import { createHybridModelRouter, HybridPause } from './hybridModelRouter.js';
 import { createHybridRuntime, hybridRegressionSuggestions, publicHybridState } from './hybridQaRuntime.js';
-import { createQaScenarioLedger, digestEvidence } from './qaScenarioLedger.js';
+import { createQaScenarioLedger } from './qaScenarioLedger.js';
+import { modeReceiptHash } from './modeIntegrity.js';
 import { hybridCompletion, validateHybridFinding, validateHybridReport } from './qaCompletionGate.js';
 import { HybridUsageError } from './hybridUsageTransport.js';
 import { createQaTools } from './qaTools.js';
@@ -186,7 +187,7 @@ test('JEV receives immutable bounded observations, caches unchanged evidence and
   assert.equal(calls, 1); assert.equal(second.cached, true);
   assert.equal(first.classifications[0].authority, 'advisory');
   assert.equal(f.session.hybrid.observations[0].status, 'unresolved');
-  assert.equal(f.session.hybrid.evidence[0].digest, digestEvidence(f.session.hybrid.evidence[0].result));
+  assert.equal(f.session.hybrid.evidence[0].digest, modeReceiptHash(f.session.hybrid.evidence[0]));
   await assert.rejects(tools[0].run({ evidence_ids: ['another-tenant'] }), /intact evidence/);
 });
 

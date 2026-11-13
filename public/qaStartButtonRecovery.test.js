@@ -35,7 +35,7 @@ test('#18482 contract: failure path restores the button and preserves input', as
 	const postAt = body.indexOf("apiWithTimeout('/qa-matrix-runs'");
 	assert.ok(busyAt >= 0 && postAt > busyAt, 'busy flag must be set before the request');
 	// finally restores label + re-syncs (no permanent disable)
-	assert.match(body, /finally \{\s*[\s\S]*?qaUi\.submit\.dataset\.busy = 'false';\s*[\s\S]*?qaUi\.submit\.textContent = 'Start testing';\s*[\s\S]*?syncQaSubmitState\(\);\s*\}/,
+	assert.match(body, /finally \{\s*[\s\S]*?qaUi\.submit\.dataset\.busy = 'false';\s*[\s\S]*?qaUi\.submit\.textContent = 'Start QA test';\s*[\s\S]*?syncQaSubmitState\(\);\s*\}/,
 		'finally must restore busy flag, label, and re-sync the button state');
 	// error surfaces the actual reason
 	assert.match(body, /catch \(error\) \{\s*setQaFormError\(error instanceof Error \? error\.message : String\(error\)\);/,

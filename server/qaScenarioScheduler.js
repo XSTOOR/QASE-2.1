@@ -1,13 +1,12 @@
-import {createHash} from 'node:crypto';
 import {hasConfirmedAccess} from './hybridAuth.js';
+import {modeReceiptHash} from './modeIntegrity.js';
 
-const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const terminal = new Set(['passed', 'failed', 'blocked', 'inconclusive', 'not_executed']);
 export const explicitQaCloseout = session => Boolean(session.hybrid.partialReportApproved?.decisionId && session.hybrid.partialReportApproved.by === session.ownerUserId);
 
 export function intactQaReceipt(session, record) {
   const state = session.hybrid, access = hasConfirmedAccess(state) ? state.authentication.grantId : 'public';
-  return Boolean(record && record.runId === session.id && record.digest === digest(record.result) && (record.authenticationContext || 'public') === access);
+  return Boolean(record && record.runId === session.id && record.digest === modeReceiptHash(record) && (record.authenticationContext || 'public') === access);
 }
 
 // One evaluation shares indexes and receipt verification. Checkpoint/public

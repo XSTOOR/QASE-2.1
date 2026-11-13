@@ -20,6 +20,7 @@ import { InviteError } from './invites.js';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
 import { prepareHybridAuthGrant, recordHybridAnswer } from './hybridAuth.js';
 import { initializeHybridState } from './hybridQaRuntime.js';
+import { projectQaEvidence } from './qaEvidence.js';
 import { applyHostDecision } from './hybridContinuation.js';
 import {
 	FOUNDER_CATEGORIES,
@@ -2279,6 +2280,15 @@ export function createApplication(options = {}) {
 		response.set('Cache-Control', 'no-store');
 		try { response.json(inspectFounderEvidence(session, request.params.observationId, request.params.index)); }
 		catch (error) { safeErrorResponse(request, response, error); }
+	});
+
+	app.get('/api/sessions/:id/qa-evidence', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		if (session.mode !== 'qa' || session.qaExecutionMode !== 'hybrid') {
+			return response.status(404).json({ error: 'Browser assertion evidence is unavailable for this run.' });
+		}
+		response.set('Cache-Control', 'no-store').json(projectQaEvidence(session));
 	});
 
 	app.get('/api/sessions/:id/sqa/evidence/:controlId/:index', async (request, response) => {

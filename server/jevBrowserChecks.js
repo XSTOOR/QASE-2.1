@@ -188,12 +188,12 @@ async function navigation(page, input, onAction) {
     await page.goForward({ waitUntil: 'domcontentloaded', timeout: 10000 });
     await settleJevPage(page);
     assertions.push(assertion('navigation', 'Browser forward restores destination', sameUrl(page.url(), landed), landed, page.url()));
-    return { assertions, source, destination: landed, title, responseStatus };
+    return { assertions, source, destination: landed, controlLabel: trim(link.text), title, responseStatus };
   } catch (error) {
     // A failed history/reproduction subcheck cannot erase the click/HTTP facts
     // already observed. It is not automatically retried or labeled a defect.
     if (!assertions.length) throw error;
-    return { assertions, source, destination: landed, title, responseStatus,
+    return { assertions, source, destination: landed, controlLabel: trim(link.text), title, responseStatus,
       executionComplete: false, destinationReady: Boolean(landed && sameUrl(page.url(), landed)),
       gaps: [`${phase} was not completed: ${trim(error.message?.split('\n')[0])}. No automatic replay or history pass was inferred.`] };
   } finally { page.off('response', responseListener); }

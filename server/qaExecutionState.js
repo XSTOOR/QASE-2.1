@@ -3,6 +3,7 @@ import { HYBRID_ROUTE_CHECKS, hybridRoutePolicy } from './hybridRoutePolicy.js';
 import { hasConfirmedAccess } from './hybridAuth.js';
 import { observedCheckPresence } from './qaInventoryCoverage.js';
 import {qaScenarioSchedule} from './qaScenarioScheduler.js';
+import {modeReceiptHash} from './modeIntegrity.js';
 
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const actions = { navigation: ['navigation', 'navigation_control', 'open_test_form', 'tabs', 'disclosure', 'anchors'], broken_links: ['navigation', 'anchors'], responsive: ['responsive'], forms: ['forms', 'submit_test_form'], search: ['search'], media: ['media'], accessibility: ['accessibility'], console_health: [] };
@@ -13,7 +14,7 @@ export const fixedCheckCategory = action => Object.keys(actions).find(category =
 export function scenarioExecutionAccount(session, scenario, {intactRecord} = {}) {
   const state = session.hybrid;
   const access = hasConfirmedAccess(state) ? state.authentication.grantId : 'public';
-  const intact = intactRecord || (record => record && record.runId === session.id && record.digest === digest(record.result) && (record.authenticationContext || 'public') === access);
+  const intact = intactRecord || (record => record && record.runId === session.id && record.digest === modeReceiptHash(record) && (record.authenticationContext || 'public') === access);
   const attempted = (scenario.assertions || []).some(assertion => ['request_assertion', 'host_browser_check', 'host_diagnostic'].includes(assertion.authority) && intact(state.evidence.find(record => record.id === assertion.evidenceRef))) || (state.actions || []).some(action => {
     if (!(action.scenarioId === scenario.id || scenario.evidenceRefs?.includes(action.evidenceId)) || !['done', 'failed'].includes(action.status)) return false;
     const receipt = state.evidence.find(record => record.id === action.evidenceId && record.actionId === action.id);

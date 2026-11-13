@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { applicationDiscoveryStatus } from '../server/qaApplicationDiscovery.js';
 import { hybridCompletion, validateHybridFinding, validateHybridReport } from '../server/qaCompletionGate.js';
-import { digestEvidence } from '../server/qaScenarioLedger.js';
+import { modeReceiptHash } from '../server/modeIntegrity.js';
 import { qaScenarioSchedule } from '../server/qaScenarioScheduler.js';
 import { scenarioExecutionAccount } from '../server/qaExecutionState.js';
 
@@ -12,7 +12,7 @@ const file=process.argv[2];assert.ok(file,'Provide a saved qualification checkpo
 const session=JSON.parse(fs.readFileSync(file,'utf8')),state=session.hybrid;
 assert.equal(session.mode,'qa');assert.equal(session.status,'done');assert.ok(session.report);
 const discovery=applicationDiscoveryStatus(session);assert.equal(discovery.required,true);assert.equal(discovery.ready,true);
-for(const e of state.evidence){assert.equal(e.runId,session.id);assert.equal(e.digest,digestEvidence(e.result));assert.ok(state.actions.some(a=>a.id===e.actionId&&a.evidenceId===e.id));}
+for(const e of state.evidence){assert.equal(e.runId,session.id);assert.equal(e.digest,modeReceiptHash(e));assert.ok(state.actions.some(a=>a.id===e.actionId&&a.evidenceId===e.id));}
 for(const s of state.scenarios)for(const a of s.assertions){assert.ok(state.evidence.some(e=>e.id===a.evidenceRef));assert.ok(s.executedActionIds.includes(a.actionId));}
 assert.equal(state.actions.some(a=>['running','uncertain'].includes(a.status)),false);
 const schedule=qaScenarioSchedule(session,scenarioExecutionAccount);assert.equal(schedule.accounted,schedule.total);assert.equal(schedule.unresolved.length,0);

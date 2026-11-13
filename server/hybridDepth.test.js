@@ -7,7 +7,7 @@ import { createHybridScenarioTool } from './hybridQaTools.js';
 import { hybridCompletion, validateHybridFinding, validateHybridReport } from './qaCompletionGate.js';
 import { prepareHybridInference } from './hybridContext.js';
 import { createQaTools } from './qaTools.js';
-import { digestEvidence } from './qaScenarioLedger.js';
+import { modeReceiptHash } from './modeIntegrity.js';
 
 function fixture(selectedTests = ['navigation', 'broken_links', 'responsive'], version = 2, paths = ['/docs', '/contact'], automatic = false) {
   const session = { id: randomUUID(), mode: 'qa', qaExecutionMode: 'hybrid', targetUrl: 'https://fixture.test/', selectedTests, messages: [], findings: [], activities: [], todos: [], secretNames: [] };
@@ -238,7 +238,7 @@ test('route batches reject changed observation provenance before dispatching any
   const evidence = f.session.hybrid.evidence.find(item => item.result?.inventory);
   evidence.result.inventory.links = [];
   // Even a recomputed digest cannot turn a stale route into an observed link.
-  evidence.digest = digestEvidence(evidence.result);
+  evidence.digest = modeReceiptHash(evidence);
   await assert.rejects(f.runtime.tools.find(tool => tool.name === 'qa_test_routes').run({ route_ids: [route.id] }), /provenance/);
   assert.equal(f.calls(), before);
 });
@@ -296,7 +296,7 @@ test('hundreds of passing assertions remain durable but do not inflate model-fac
   const tool = f.runtime.wrapTool(createHybridScenarioTool({ name: 'browser_qa_check', parametersSchema: { properties: {} }, async run() { return { success: true, assertions: Array.from({ length: 400 }, () => ({ check: 'responsive', name: 'Repeated pass', expected: 'Supported', actual: 'Observed', outcome: 'pass' })) }; } }));
   const result = await tool.run({ scenario_id: scenario.id, action: 'responsive' });
   assert.equal(result.assertionCounts.passed, 400); assert.equal(result.hostAssertions.length, 0); assert.ok(JSON.stringify(result).length < 1000);
-  assert.equal(scenario.assertions.length, 400); assert.equal(f.session.hybrid.evidence[0].digest, digestEvidence(f.session.hybrid.evidence[0].result));
+  assert.equal(scenario.assertions.length, 400); assert.equal(f.session.hybrid.evidence[0].digest, modeReceiptHash(f.session.hybrid.evidence[0]));
   const ledger = await f.runtime.tools.find(tool => tool.name === 'qa_ledger').run({});
   assert.ok(JSON.stringify(ledger).length < 6000);
 });

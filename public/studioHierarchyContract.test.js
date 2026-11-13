@@ -40,7 +40,7 @@ test('completed QA preserves the selected tab and preview preference', () => {
 test('finding and report hierarchy lead with user-facing evidence and action', () => {
 	assert.ok(app.indexOf("stepsTitle.textContent = 'Reproduction'") < app.indexOf("evidenceTitle.textContent = 'Evidence'"));
 	assert.ok(app.indexOf("section('Summary'") < app.indexOf("section('Recommended next action'"));
-	assert.ok(app.indexOf("section('Recommended next action'") < app.indexOf('el.reportView.append(stats)'));
+	assert.ok(app.indexOf("section('Recommended next action'") < app.indexOf('reportContent.append(stats,'));
 	assert.match(workspaceStyles, /\.report-section h3[\s\S]*text-transform: none/);
 	assert.doesNotMatch(app, /finding\.classList\.toggle\('is-fixed'/);
 });

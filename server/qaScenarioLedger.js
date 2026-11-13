@@ -6,6 +6,7 @@ import { jevDiagnosticCandidates } from './jevDiagnostics.js';
 import { scenarioExecutionAccount } from './qaExecutionState.js';
 import {scenarioObligation,validateScenarioDependencies,intactQaReceipt} from './qaScenarioScheduler.js';
 import { requireApplicationDiscovery, observeApplication } from './qaApplicationDiscovery.js';
+import { canonicalModeHash, modeReceiptHash } from './modeIntegrity.js';
 
 const text = (value, max = 1500) => String(value ?? '').slice(0, max);
 export const digestEvidence = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -129,7 +130,7 @@ export function createQaScenarioLedger(session, { persist = async () => {}, now 
       const sampled = state.exploration?.routes.filter(route => route.status === 'tested') || [];
       const absentOnSample = sampled.length && sampled.every(route => route.absentChecks?.some(check => {
         const observed = evidence(check.evidenceId);
-        return check.category === item.category && observed?.success && observed.digest === digestEvidence(observed.result) && observed.result.inventory;
+        return check.category === item.category && observed?.success && observed.digest === modeReceiptHash(observed) && observed.result.inventory;
       }));
       if (disposition !== 'complete' && !state.budgetFinalizing && supported.includes(item.category) && state.exploration?.routes.some(route => route.status === 'tested') &&
           !(disposition==='blocked'&&dependencyBlocked) && !absentOnSample && !state.scenarios.some(other => other.category === item.category && other.executedActionIds.length)) throw new Error('Selected supported checks require an actual attempt. Use qa_test_routes with the selected checks; a prose skip reason alone is not execution evidence.');
@@ -168,7 +169,7 @@ export function createQaScenarioLedger(session, { persist = async () => {}, now 
     async record(action, result) {
       const clean = redact(session.id, result);
       const item = { id: randomUUID(), runId: session.id, actionId: action.id, toolName: action.toolName, scenarioId: action.scenarioId, ts: now(),
-        digest: digestEvidence(clean), success: clean?.success !== false, url: clean?.url || clean?.inventory?.url, result: clean };
+        hashVersion: 1, digest: canonicalModeHash(clean), success: clean?.success !== false, url: clean?.url || clean?.inventory?.url, result: clean };
       if (state.evidence.length >= 1200) throw new Error('Evidence ledger limit reached.');
       state.evidence.push(item); action.status = item.success ? 'done' : 'failed'; action.evidenceId = item.id; action.completedAt = now();
       observeApplication(session, item);
@@ -206,7 +207,7 @@ export function createQaScenarioLedger(session, { persist = async () => {}, now 
     },
     async adoptHostAssertions(scenarioId, evidenceId) {
       const current = scenario(scenarioId), record = evidence(evidenceId), action = state.actions.find(item => item.id === record?.actionId);
-      if (current.status !== 'running' || !state.scope.includes(current.category) || !record?.success || record.toolName !== 'browser_qa_check' || record.digest !== digestEvidence(record.result) || action?.status !== 'done') throw new Error('Shared assertions require an active scoped scenario and intact executed fixed browser evidence.');
+      if (current.status !== 'running' || !state.scope.includes(current.category) || !record?.success || record.toolName !== 'browser_qa_check' || record.digest !== modeReceiptHash(record) || action?.status !== 'done') throw new Error('Shared assertions require an active scoped scenario and intact executed fixed browser evidence.');
       if (!current.executedActionIds.includes(action.id)) current.executedActionIds.push(action.id);
       if (!current.evidenceRefs.includes(record.id)) current.evidenceRefs.push(record.id);
       for (const assertion of record.result.assertions || []) {

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { digestEvidence } from './qaScenarioLedger.js';
+import { modeReceiptHash } from './modeIntegrity.js';
 import { jevRouteCandidates, jevPrioritizeRoutes } from './jevQaRunner.js';
 import { scenarioSummary, assertionSummary } from './hybridSummaries.js';
 import { hybridRoutePolicy, HYBRID_ROUTE_CHECKS } from './hybridRoutePolicy.js';
@@ -33,7 +34,7 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
     if (!route.featurePath?.length || route.featurePath.length > 4 || new URL(route.rootUrl).origin !== new URL(session.targetUrl).origin) throw new Error('Feature exploration needs a bounded observed path on the authorized origin.');
     for (const step of route.featurePath) {
       const receipt = ledger.evidence(step.evidenceId), change = receipt?.result?.transition;
-      if (!receipt?.success || receipt.runId !== session.id || receipt.digest !== digestEvidence(receipt.result) || !change || change.from !== step.from || change.to !== step.to || change.control.label !== step.label || change.control.selector !== step.selector || change.control.kind !== step.kind) throw new Error('Feature transition provenance is missing or changed.');
+      if (!receipt?.success || receipt.runId !== session.id || receipt.digest !== modeReceiptHash(receipt) || !change || change.from !== step.from || change.to !== step.to || change.control.label !== step.label || change.control.selector !== step.selector || change.control.kind !== step.kind) throw new Error('Feature transition provenance is missing or changed.');
     }
   }
   async function enterFeature(route, signal) {
@@ -59,7 +60,7 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
     const authenticationContext = hasConfirmedAccess(state) ? state.authentication.grantId : 'public';
     for (const evidence of state.evidence) {
       const inventory = evidence.result?.inventory;
-      if (!evidence.success || !inventory?.url || evidence.digest !== digestEvidence(evidence.result)) continue;
+      if (!evidence.success || !inventory?.url || evidence.digest !== modeReceiptHash(evidence)) continue;
       if ((evidence.authenticationContext || 'public') !== authenticationContext) continue;
       const observedUrl = new URL(inventory.url);
       if (observedUrl.origin !== new URL(session.targetUrl).origin || observedUrl.username || observedUrl.password || observedUrl.search) continue;
@@ -248,7 +249,7 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
         for (const route of chosen) {
           if (route.kind === 'feature') { verifyFeature(route); continue; }
           const receipt = ledger.evidence(route.evidenceId), inventory = receipt?.result?.inventory;
-          if (!receipt?.success || !inventory || receipt.digest !== digestEvidence(receipt.result) ||
+          if (!receipt?.success || !inventory || receipt.digest !== modeReceiptHash(receipt) ||
               ![{ url: key(inventory.url), source: inventory.url }, ...jevRouteCandidates(inventory, session.targetUrl)].some(item => item.url === route.url && item.source === route.source && item.selector === route.selector)) throw new Error('Observed route provenance is missing, changed or outside its validated inventory.');
         }
         const requestedChecks = input.checks ?? supported.filter(category => state.scope.includes(category));

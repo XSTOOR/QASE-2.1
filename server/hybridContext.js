@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { autonomous } from './hybridAutonomy.js';
-import { digestEvidence } from './qaScenarioLedger.js';
+import { modeReceiptHash } from './modeIntegrity.js';
 import { hybridCompletion,hybridUnreportedFindings } from './qaCompletionGate.js';
 import { scenarioSummary } from './hybridSummaries.js';
 import { hybridRoutePolicy } from './hybridRoutePolicy.js';
@@ -74,7 +74,7 @@ export function projectHybridMessages(messages, session, context) {
       const evidence = session.hybrid.evidence.find(record => record.id === data?.hostEvidenceId && record.runId === session.id);
       // Preserve current observations, every assertion/failure and call/result
       // linkage. Only old bulky inventories with a durable receipt are elided.
-      if (evidence && evidence.digest === digestEvidence(evidence.result) && copy.content.length > 2500 && messages.indexOf(item) < lastEvidenceIndex - 3) {
+      if (evidence && evidence.digest === modeReceiptHash(evidence) && copy.content.length > 2500 && messages.indexOf(item) < lastEvidenceIndex - 3) {
         const { hostEvidenceId, hostActionId, scenarioId, success, error, code, url, title, assertions, limitations, skipped } = data;
         copy.content = JSON.stringify({ hostEvidenceId, hostActionId, scenarioId, success, error, code, url, title, assertions, limitations, skipped,
           contextCompaction: { detailsOmitted: true, evidenceTool: evidence.toolName, recovery: 'Use qa_read_evidence with this hostEvidenceId for original bounded details. Never infer absent controls from omitted inventory.' } });

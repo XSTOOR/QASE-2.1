@@ -22,6 +22,7 @@
 <link rel="stylesheet" href="runStartup.css?v=20261016-1">
 <link rel="stylesheet" href="founderReader.css?v=20261108-2">
 <link rel="stylesheet" href="reportReadability.css?v=20261109-1">
+<link rel="stylesheet" href="qaEvidence.css?v=20261113-1">
 <link rel="icon" type="image/svg+xml" href="qase-mark.svg">
 </head>
 <body class="cli-theme studio-workspace" data-has-run="false">
@@ -503,11 +504,11 @@
       <button class="tab tab-founder" id="tab-founder" data-tab="founder" role="tab" aria-selected="false" aria-controls="pane-founder" tabindex="-1" hidden>Founder <span class="count" id="count-founder"></span></button>
     </nav>
     <div class="tab-body">
-      <section class="tab-pane is-active" id="pane-plan" data-pane="plan" role="tabpanel" aria-labelledby="tab-plan"><div class="feed" id="plan-list" role="list"></div></section>
+      <section class="tab-pane is-active" id="pane-plan" data-pane="plan" role="tabpanel" aria-labelledby="tab-plan"><div id="qa-plan-evidence" hidden></div><div class="feed" id="plan-list" role="list"></div></section>
       <section class="tab-pane" id="pane-activity" data-pane="activity" role="tabpanel" aria-labelledby="tab-activity"><div class="feed" id="activity-feed" role="list" aria-live="polite" aria-relevant="additions text"></div></section>
       <section class="tab-pane" id="pane-findings" data-pane="findings" role="tabpanel" aria-labelledby="tab-findings"><div class="feed" id="findings-list" role="list"></div></section>
       <section class="tab-pane" id="pane-bugs" data-pane="bugs" role="tabpanel" aria-label="Bugs"><div class="feed" id="bugs-list" role="list"><div class="feed-empty">No bugs detected yet — use Report bug on a run with findings.</div></div></section>
-      <section class="tab-pane" id="pane-report" data-pane="report" role="tabpanel" aria-labelledby="tab-report"><div class="feed" id="report-view"></div></section>
+      <section class="tab-pane" id="pane-report" data-pane="report" role="tabpanel" aria-labelledby="tab-report"><div id="qa-report-evidence" hidden></div><div class="feed" id="report-view"></div></section>
       <section class="tab-pane" id="pane-sqa" data-pane="sqa" role="tabpanel" aria-labelledby="tab-sqa"><div class="feed sqa-view" id="sqa-view" aria-live="polite"></div></section>
       <section class="tab-pane" id="pane-founder" data-pane="founder" role="tabpanel" aria-labelledby="tab-founder"><section id="founder-progress" hidden></section><div class="feed founder-view" id="founder-view"></div></section>
     </div>
@@ -906,48 +907,47 @@
       <div class="route-page-heading">
         <span class="route-page-mark" aria-hidden="true">Q</span>
         <div>
-        <p class="route-page-context">New test run</p>
-        <h1 id="qa-start-title" tabindex="-1">Let’s test your website.</h1>
-        <p id="qa-start-description">A little context. A clear plan. Results you can act on.</p>
+        <h1 id="qa-start-title" tabindex="-1">Start testing</h1>
+        <p id="qa-start-description">Choose what you want to learn about your application.</p>
         </div>
       </div>
       <button class="btn btn-ghost btn-sm route-page-back" type="button" id="qa-close"><span aria-hidden="true">←</span> Back to tests</button>
     </header>
     <div class="modal-body">
       <nav class="route-section-nav" aria-label="Test setup sections">
-        <p>NEW TEST RUN</p>
-        <button type="button" data-journey-step="0" aria-current="step"><span>1</span><div>Website<small>Where should we start?</small></div></button>
-        <button type="button" data-journey-step="1"><span>2</span><div>Coverage<small>Choose what to check</small></div></button>
-        <button type="button" data-journey-step="2"><span>3</span><div>Review &amp; launch<small>Know exactly what will run</small></div></button>
-        <div class="journey-nav-note"><span aria-hidden="true">✦</span><p>You’re in control.<small>Qase asks when it needs credentials or your input.</small></p></div>
+        <button type="button" data-journey-step="0" aria-current="step"><span>1</span><div>Test target</div></button>
+        <button type="button" data-journey-step="1"><span>2</span><div>Browser &amp; checks</div></button>
+        <button type="button" data-journey-step="2"><span>3</span><div>Review &amp; launch</div></button>
       </nav>
       <div class="route-page-content" id="qa-page-content">
       <section class="journey-step" data-journey-panel="0" aria-labelledby="journey-website-title">
-      <p class="journey-eyebrow">STEP 01 / THE STARTING POINT</p>
-      <h2 id="journey-website-title" tabindex="-1">What are we testing?</h2>
-      <p class="journey-lead">Your homepage, staging environment, or a specific feature. Qase explores from here.</p>
+      <div class="qe-mode-picker" role="group" aria-label="Test mode">
+        <span class="qe-mode-current" aria-current="true"><strong>QA test</strong><small>Verify browser workflows</small></span>
+        <button type="button" id="qa-launch-sqa"><strong>SQA review</strong><small>Assess quality controls</small></button>
+        <button type="button" id="qa-launch-founder"><strong>Founder review</strong><small>Evaluate product and UX</small></button>
+      </div>
+      <h2 id="journey-website-title" tabindex="-1">Test a user journey</h2>
       <label class="field">
-        <span>Website URL</span>
+        <span>Application URL</span>
         <input id="qa-target-url" name="targetUrl" type="url" required maxlength="2048" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://example.com">
-        <small>Paste a link, or enter a domain such as example.com.
-          <button type="button" class="link-btn" id="qa-demo-fill">Try the demo site</button></small>
+        <small><button type="button" class="link-btn" id="qa-demo-fill">Use the demo site</button></small>
       </label>
-      <label class="field journey-goal"><span>Anything you’d like Qase to focus on? <small>Optional</small></span><textarea id="qa-goal" rows="3" maxlength="2000" placeholder="For example: check sign-in, project creation, and the mobile navigation."></textarea><small>Describe the workflow or concern. Provide sign-in credentials only when the agent asks.</small></label>
+      <label class="field journey-goal"><span>What should work? <small>Optional</small></span><textarea id="qa-goal" rows="2" maxlength="2000" placeholder="From Solutions, open Pricing. The page should show “Plans and pricing.”"></textarea><small>Include the steps and the expected result. Qase will ask separately if it needs sign-in.</small></label>
+      <section class="qe-launch-browser" id="qa-launch-browser" aria-label="Browser for this run" aria-live="polite">
+        <div><strong id="qa-launch-browser-title">Checking browsers…</strong><p id="qa-launch-browser-detail"></p></div>
+        <button class="btn btn-ghost btn-sm" id="qa-launch-browser-action" type="button" hidden></button>
+      </section>
       <label class="field qa-write-permission"><span><input id="qa-allow-test-writes" type="checkbox"> Allow test data writes</span><small>For an isolated test account: Qase may submit clearly marked test records. Records may persist. Account changes, payments, messages and destructive actions remain excluded. Read-only tests need no extra confirmation.</small></label>
       </section>
       <section class="journey-step" data-journey-panel="1" aria-labelledby="journey-coverage-title" hidden>
-      <p class="journey-eyebrow">STEP 02 / YOUR TEST PLAN</p>
-      <h2 id="journey-coverage-title" tabindex="-1">Start with the essentials.</h2>
-      <p class="journey-lead">Recommended checks are ready. Adjust the selection if this run needs something specific.</p>
-      <section class="field qa-agent-status" id="qa-execution-mode-field" aria-labelledby="qa-selected-agent">
-        <span class="qa-agent-status-label">YOUR QA TEAM</span>
+      <h2 id="journey-coverage-title" tabindex="-1">Browser and checks</h2>
+      <details class="qa-agent-status" id="qa-execution-mode-field">
+        <summary>Execution settings</summary>
         <input id="qa-execution-mode" type="hidden" name="qaExecutionMode" value="hybrid">
         <strong id="qa-selected-agent">Hybrid QA · Opus reasoning + JEV classification</strong>
         <small id="qa-hybrid-availability" role="status" aria-live="polite"></small>
-        <small>Tests eligible empty fields with safe sample values, including invalid inputs. Forms are not submitted. Add expected copy or a design reference for content and visual checks.</small>
-        <small>Choose one browser configuration. Existing runs keep their original execution mode.</small>
-      </section>
-      <div class="journey-presets" role="group" aria-label="Test environment"><button type="button" id="journey-focused" aria-pressed="true"><strong>Let QASE choose <span>Recommended</span></strong><small>Chrome on one default desktop. One test run, no setup.</small></button><button type="button" id="journey-custom" aria-pressed="false"><strong>Choose my own</strong><small>Choose one browser and one compatible device.</small></button></div>
+      </details>
+      <div class="journey-presets" role="group" aria-label="Test environment"><button type="button" id="journey-focused" aria-pressed="true"><strong>Recommended browser</strong><small>Use an available browser configuration.</small></button><button type="button" id="journey-custom" aria-pressed="false"><strong>Choose browser and device</strong><small>Test one configuration per run.</small></button></div>
       <section class="qa-browser-status" id="qa-browser-status" data-state="loading" aria-label="Browser for this run" aria-live="polite" aria-atomic="true">
         <div class="qa-browser-status-copy"><p class="qa-browser-status-label">BROWSER FOR THIS RUN <span id="qa-browser-status-badge">Checking</span></p>
           <h3 id="qa-browser-status-title" tabindex="-1">Finding your browser…</h3>
@@ -975,11 +975,10 @@
         </div>
       </fieldset>
       <section class="qa-recommended" aria-labelledby="qa-recommended-title">
-        <h3 id="qa-recommended-title">Recommended checks are selected</h3>
-        <p>Check forms, navigation, layout and accessibility. Customize the coverage for your website below.</p>
+        <h3 id="qa-recommended-title">Checks selected</h3>
+        <p>Qase looks for relevant controls and pages before running these checks.</p>
         <p id="qa-selection-summary" role="status" aria-live="polite">Loading available checks…</p>
       </section>
-      <div class="journey-benefits"><span>Forms &amp; validation</span><span>Navigation &amp; links</span><span>Layout &amp; accessibility</span></div>
       <details class="qa-customize" id="qa-customize">
         <summary>Customize checks</summary>
         <div class="qa-customize-body">
@@ -1100,22 +1099,19 @@
           </div>
       </section>
       <section class="journey-step" data-journey-panel="2" aria-labelledby="journey-review-title" hidden>
-        <p class="journey-eyebrow">STEP 03 / READY WHEN YOU ARE</p>
-        <h2 id="journey-review-title" tabindex="-1">Here’s your test run.</h2>
-        <p class="journey-lead">Check the details, then let Qase take it from here.</p>
+      <h2 id="journey-review-title" tabindex="-1">Review this run</h2>
         <div class="journey-review-card"><div class="journey-review-target"><span class="journey-site-icon" aria-hidden="true">↗</span><div><small>Website</small><strong id="journey-review-url"></strong></div><button type="button" class="link-btn" data-journey-edit="0">Edit</button></div><dl><div><dt>Checks selected</dt><dd id="journey-review-checks">—</dd></div><div><dt>Browser configurations</dt><dd id="journey-review-devices">—</dd></div><div><dt>Qase-provided model</dt><dd id="journey-review-model">—</dd></div><div><dt>Test access</dt><dd id="journey-review-access"></dd></div><div id="journey-review-goal-row" hidden><dt>Your focus</dt><dd id="journey-review-goal"></dd></div></dl><button type="button" class="link-btn" data-journey-edit="1">Edit coverage and devices</button></div>
-        <p class="journey-volume-note" id="journey-volume-note" hidden></p>
-        <div class="journey-next"><strong>What happens next</strong><ol><li>Qase opens your website in a real browser.</li><li>Follow progress live. Answer any sign-in or workflow questions.</li><li>Review findings, evidence, and the final report when the run finishes.</li></ol></div>
       </section>
       <div class="test-result" id="qa-form-error" role="alert" aria-live="assertive"></div>
+      <button type="button" class="btn btn-ghost btn-sm" id="qa-launch-retry-checks" hidden>Retry check catalog</button>
       </div>
     </div>
     <footer class="modal-foot">
       <button class="btn btn-ghost" type="button" id="qa-cancel">Cancel</button>
       <button class="btn btn-ghost" type="button" id="journey-back" hidden>← Back</button>
       <p class="journey-footer-hint" id="journey-footer-hint" aria-live="polite"></p>
-      <button class="btn btn-primary" type="button" id="journey-next">Choose coverage →</button>
-      <button class="btn btn-primary" type="submit" id="qa-submit" hidden>Start testing</button>
+      <button class="btn btn-ghost" type="button" id="journey-next">Browser and checks</button>
+      <button class="btn btn-primary" type="submit" id="qa-submit" aria-describedby="journey-footer-hint qa-form-error" hidden>Start QA test</button>
     </footer>
   </form>
 </dialog>
@@ -1771,6 +1767,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261111-1" type="module"></script>
+<script src="app.js?v=20261113-1" type="module"></script>
 </body>
 </html>

@@ -17,6 +17,9 @@ export function qaBrowserStatus({ fetchState, configurations = [], envIds = [], 
   if (fetchState === 'loading') return result('loading', 'Finding your browser…', 'Checking the available browsers and devices. Your selected checks are kept.', null);
   if (fetchState === 'error') return result('blocked', 'Browser list could not load', 'Your setup is saved. Retry the browser list to continue.', 'reload', 'Retry browser list');
   const hybrid = mode === 'hybrid';
+  if (hybrid && config?.hybridQa?.status === 'disabled') {
+    return result('blocked', 'QA execution unavailable', config.hybridQa.reason || 'The server has disabled Hybrid QA.', null);
+  }
   if (hybrid && !config?.hybridQa?.available) return config?.hybridQa?.status === 'qualification_running' && qualificationChecking
     ? result('loading', 'Checking model compatibility…', 'Verifying Opus, JEV and the agent runtime. Your website, browser and selected checks are kept.', 'config', 'Checking compatibility…')
     : result('blocked', 'Model compatibility needs checking', config?.hybridQa?.reason || 'Check model compatibility to continue. Your website, browser and selected checks are kept.', 'config', config?.hybridQa?.status === 'qualification_running' ? 'Check progress' : 'Check model compatibility');
@@ -34,7 +37,7 @@ export function qaBrowserStatus({ fetchState, configurations = [], envIds = [], 
   const row = selected[0];
   const title = [row.browser || 'Browser', row.browserVersion].filter(Boolean).join(' ');
   const device = [row.device, [row.os, row.osVersion].filter(Boolean).join(' ')].filter(Boolean).join(' · ');
-  const execution = ({ browser_emulation: 'Browser emulation, not a physical device.', simulator: 'Browser-engine simulation, not a native device.', emulator: 'Emulated device.', physical_device: 'Physical device.', virtual_machine: 'Virtual machine.' })[row.executionType] || 'Execution follows the selected environment.';
+  const execution = ({ browser_emulation: 'Browser emulation. Physical-device coverage requires a separate run.', simulator: 'Browser-engine simulation.', emulator: 'Emulated device.', physical_device: 'Physical device.', virtual_machine: 'Virtual machine.' })[row.executionType] || 'Execution follows the selected environment.';
   return result('ready', title, `${device ? `${device}. ` : ''}${execution} Ready for ${hybrid ? 'one hybrid' : 'this'} test run.`, 'change', 'Change browser');
 }
 

@@ -5,12 +5,14 @@ import { chromium } from 'playwright';
 import { createApplication } from '../server/app.js';
 import { hybridProfile } from '../server/hybridConfig.js';
 import { prepareHostDecision } from '../server/hybridContinuation.js';
+import { createQaScenarioLedger } from '../server/qaScenarioLedger.js';
 
 const session = { id: randomUUID(), title: 'Live preview fixture', mode: 'qa', qaExecutionMode: 'hybrid', status: 'running',
   targetUrl: 'https://fixture.test/', device: 'desktop', engine: 'chromium', createdAt: Date.now(), updatedAt: Date.now(), runStartedAt: Date.now(),
   environmentSnapshot: { device: 'Desktop', deviceType: 'desktop', platform: 'macos', browser: 'Chrome' },
   messages: [], activities: [], todos: [], findings: [], secretNames: [],
-  hybrid: { counts: { planned: 2, passed: 0 }, scenarios: [{ id: 'nav', category: 'navigation', status: 'planned' }, { id: 'layout', category: 'responsive', status: 'planned' }] } };
+  hybrid: { counts: { planned: 2, passed: 0 }, scope: ['navigation', 'responsive'] } };
+const ledger = createQaScenarioLedger(session);
 const listeners = new Set(), streams = new Set(), writeRequests = [];
 const publish = (s, type, payload = {}) => { for (const listener of listeners) listener({ type, sessionId: s.id, ts: Date.now(), ...payload }); };
 const config = { provider: 'custom', model: 'preview-fixture', ready: true, hasApiKey: true, providers: ['custom'], headless: true };
@@ -40,15 +42,28 @@ try {
   const deadline = Date.now() + 3000;
   while (!listeners.size && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
   assert.ok(listeners.size, 'Actual authenticated fixture SSE must be connected.');
+  const navigation = session.hybrid.scenarios[0];
+  await ledger.start(navigation.id);
+  await ledger.record(await ledger.beginAction('browser_qa_check', { action: 'navigation' }), {
+    success: true, url: session.targetUrl, assertions: [{
+      check: 'navigation', name: 'Observed anchor reaches its destination', expected: '/docs', actual: '/docs', outcome: 'pass'
+    }]
+  });
+  await ledger.close(navigation.id, 'complete');
   session.hybrid.counts = { passed: 1, planned: 1 }; session.hybrid.scenarios[0].status = 'passed';
   publish(session, 'hybrid.state', { hybrid: session.hybrid });
   await page.waitForFunction(() => document.querySelector('#progress-steps')?.textContent === '1/2');
-  session.hybrid.scenarios[0].routeCounts = { attempted: 2, gaps: 1 };
+  navigation.routeCounts = { attempted: 2, gaps: 1 };
+  navigation.routeRuns = [{ status: 'passed' }, { status: 'inconclusive', reason: 'A sampled destination did not finish loading.' }];
   session.hybrid.inputTesting = { fieldsFilled: 2, casesExecuted: 8, negativeCases: 3, submissionExecuted: false };
   publish(session, 'hybrid.state', { hybrid: session.hybrid });
-  await page.waitForFunction(() => document.querySelector('#progress-steps')?.textContent === '0/2' && document.querySelector('#plan-list')?.textContent.includes('navigation — partial'));
-  assert.match(await page.locator('#plan-list').textContent(), /Live inputs: 2 field trials · 8 input cases · 3/);
-  session.hybrid.scenarios[0].routeCounts.gaps = 0;
+  await page.waitForFunction(() => document.querySelector('#progress-steps')?.textContent === '0/2');
+  const planEvidence = page.locator('#qa-plan-evidence');
+  await planEvidence.getByText('Partial', { exact: true }).waitFor();
+  await planEvidence.getByText('A sampled destination did not finish loading.').waitFor();
+  assert.match(await page.locator('#report-view .qe-technical').textContent(), /Live inputs: 2 field trials · 8 input cases · 3/);
+  navigation.routeCounts.gaps = 0;
+  navigation.routeRuns[1] = { status: 'passed' };
   publish(session, 'hybrid.state', { hybrid: session.hybrid });
   await page.waitForFunction(() => document.querySelector('#progress-steps')?.textContent === '1/2');
   publish(session, 'frame', { frame: { base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', mimeType: 'image/png', url: 'https://fixture.test/docs', title: 'Live docs', viewport: { width: 1440, height: 900 } } });

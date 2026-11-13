@@ -14,6 +14,8 @@ export function createQaJourney({ document, getState, changed, onBlocked }) {
 	const $ = id => document.getElementById(id);
 	const form = $('qa-form');
 	const target = $('qa-target-url');
+	const submit = $('qa-submit');
+	const nextButton = $('journey-next');
 	const panels = [...form.querySelectorAll('[data-journey-panel]')];
 	const steps = [...form.querySelectorAll('[data-journey-step]')];
 	let step = 0;
@@ -56,9 +58,9 @@ export function createQaJourney({ document, getState, changed, onBlocked }) {
 		$('qa-start').dataset.journeyStep = String(step);
 		$('journey-back').hidden = step === 0;
 		$('qa-cancel').hidden = step !== 0;
-		$('journey-next').hidden = step === 2;
-		$('qa-submit').hidden = step !== 2;
-		$('journey-next').textContent = step === 0 ? 'Choose coverage →' : 'Review test run →';
+		nextButton.hidden = step === 2;
+		nextButton.className = step === 1 ? 'btn btn-primary' : 'btn btn-ghost';
+		nextButton.textContent = step === 0 ? 'Browser and checks' : 'Review test run';
 		$('qa-start').querySelector('.modal-body').scrollTop = 0;
 		sync(); changed();
 		panels[step].querySelector('h2')?.focus({ preventScroll: true });
@@ -67,45 +69,50 @@ export function createQaJourney({ document, getState, changed, onBlocked }) {
 		const state = getState();
 		const ready = Boolean(state.config?.ready);
 		const blocked = state.coverageBlocked || state.blocked;
-		$('qa-submit').hidden = step !== 2;
-		$('qa-submit').disabled = Boolean(state.busy || !ready || blocked);
-		$('journey-review-url').textContent = normalizeWebsite(target.value) || 'Add a website';
+		const normalized = normalizeWebsite(target.value);
+		submit.hidden = step === 1;
+		submit.disabled = Boolean(state.busy || !ready || blocked || !normalized);
+		$('journey-review-url').textContent = normalized || 'Add a website';
 		$('journey-review-checks').textContent = `${state.checks} selected`;
-		$('journey-review-devices').textContent = state.automatic ? 'Chrome · Default desktop · 1 run'
-			: state.browserLabel || state.environmentLabel || 'Choose one browser and one device';
+		$('journey-review-devices').textContent = state.environmentLabel || state.browserLabel || 'Choose one browser and one device';
 		$('journey-review-model').textContent = state.config?.model || 'Provided by Qase';
 		const writes = $('qa-allow-test-writes');
 		if ($('journey-review-access')) $('journey-review-access').textContent = writes?.checked ? 'Reads, local input checks and marked test records (up to 10 submissions)' : 'Reads and local input checks; no test-record submissions';
 		const goal = $('qa-goal').value.trim();
 		$('journey-review-goal-row').hidden = !goal;
 		$('journey-review-goal').textContent = goal;
-		$('journey-volume-note').hidden = state.configurations < 10;
-		$('journey-volume-note').textContent = `${state.configurations.toLocaleString()} configurations will run separately. A broader selection takes longer and uses more model capacity. You can narrow it under Coverage.`;
-		const reason = state.busy ? 'Creating your run. This may take a moment…'
-			: step === 0 ? 'You can change these details before launch.'
-			: step === 1 ? blocked || `${state.configurations.toLocaleString()} ${state.configurations === 1 ? 'run' : 'runs'} selected. Review before launching.`
-			: !ready ? 'Qase’s model service is unavailable. Please try again later or contact support. Your test setup is preserved.' : state.blocked || 'Everything is ready. Start when you are.';
+		const reason = state.busy ? 'Creating your run…'
+			: blocked || (!ready ? 'Qase’s model service is unavailable. Your test setup is preserved.'
+				: step === 1 ? 'One browser configuration will run.'
+				: 'Qase will discover the application and save evidence from executed checks.');
 		if (reason !== lastAnnouncement) { $('journey-footer-hint').textContent = reason; lastAnnouncement = reason; }
-		$('journey-next').disabled = Boolean(state.busy) || (step === 1 && Boolean(blocked));
-		// #17933: a disabled Review Test Run button always carries its reason
-		// in the live footer hint — disabled never means unexplained.
-		if (step === 1 && blocked && !state.busy && reason !== blocked) {
-			$('journey-footer-hint').textContent = blocked;
-			lastAnnouncement = blocked;
-		}
+		nextButton.disabled = Boolean(state.busy) || (step === 1 && Boolean(blocked));
 		$('journey-back').disabled = Boolean(state.busy);
+		$('qa-launch-sqa').disabled = Boolean(state.busy);
+		$('qa-launch-founder').disabled = Boolean(state.busy);
 		steps.forEach(button => { button.disabled = Boolean(state.busy); });
 	}
 	steps.forEach(button => button.addEventListener('click', () => go(Number(button.dataset.journeyStep))));
 	form.querySelectorAll('[data-journey-edit]').forEach(button => button.addEventListener('click', () => go(Number(button.dataset.journeyEdit), false)));
-	$('journey-next').addEventListener('click', () => go(step + 1));
+	nextButton.addEventListener('click', () => go(step + 1));
 	$('journey-back').addEventListener('click', () => go(step - 1, false));
 	target.addEventListener('blur', () => { normalize(); changed(); });
 	target.addEventListener('input', () => target.setCustomValidity(''));
 	$('qa-goal').addEventListener('input', sync);
 	$('qa-allow-test-writes')?.addEventListener('change', sync);
 	form.addEventListener('submit', event => {
-		if (step < 2) { event.preventDefault(); event.stopImmediatePropagation(); go(step + 1); }
+		if (step === 1) {
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			go(2);
+			return;
+		}
+		const valid = normalize();
+		if (!valid || submit.disabled) {
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			if (!valid) { go(0, false); target.reportValidity(); target.focus(); }
+		}
 	}, true);
 	form.addEventListener('invalid', event => {
 		if (event.target.closest('[data-journey-panel="1"]') && step !== 1) go(1, false);
@@ -114,7 +121,7 @@ export function createQaJourney({ document, getState, changed, onBlocked }) {
 	return {
 		start() { go(0, false); },
 		sync,
-		showCoverage() { go(1, false); $('qa-customize').open = true; },
+		showCoverage() { go(1, false); },
 		get step() { return step; }
 	};
 }

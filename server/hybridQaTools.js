@@ -1,4 +1,4 @@
-import { digestEvidence } from './qaScenarioLedger.js';
+import { modeReceiptHash } from './modeIntegrity.js';
 import { scenarioSummary } from './hybridSummaries.js';
 import {scenarioExecutionAccount} from './qaExecutionState.js';
 import {qaScenarioSchedule} from './qaScenarioScheduler.js';
@@ -51,7 +51,7 @@ export function createHybridQaTools(ledger, checkpoint) {
       parametersSchema: { type: 'object', additionalProperties: false, properties: { evidence_id: { type: 'string' }, view: { type: 'string', enum: ['observation', 'host_assertions', 'failed_assertions'] }, offset: { type: 'integer', minimum: 0 }, length: { type: 'integer', minimum: 1, maximum: 6000 } }, required: ['evidence_id'] },
       async run(input) {
         const evidence = ledger.evidence(input.evidence_id), offset = input.offset ?? 0, length = input.length ?? 6000;
-        if (!evidence || evidence.digest !== digestEvidence(evidence.result) || !Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 1 || length > 6000) throw new Error('An intact scoped evidence ID and valid bounded offset/length are required.');
+        if (!evidence || evidence.digest !== modeReceiptHash(evidence) || !Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 1 || length > 6000) throw new Error('An intact scoped evidence ID and valid bounded offset/length are required.');
         if (input.view && !['observation', 'host_assertions', 'failed_assertions'].includes(input.view)) throw new Error('Unknown evidence view.');
         const text = JSON.stringify(['host_assertions', 'failed_assertions'].includes(input.view) ? ledger.state.scenarios.flatMap(scenario => scenario.assertions.filter(item => item.evidenceRef === evidence.id && (input.view !== 'failed_assertions' || item.outcome === 'fail'))) : evidence.result);
         return { success: true, hostEvidenceId: evidence.id, offset, totalChars: text.length, nextOffset: offset + length < text.length ? offset + length : null, data: text.slice(offset, offset + length), authority: 'untrusted_observation_data' };
