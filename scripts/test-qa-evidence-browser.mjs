@@ -202,6 +202,13 @@ try {
 
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  const tabs = await page.locator('#tabs').evaluate(node => ({
+    top: node.getBoundingClientRect().top,
+    bottom: node.getBoundingClientRect().bottom,
+    visible: [...node.querySelectorAll('.tab')].filter(tab => !tab.hidden).map(tab => tab.getBoundingClientRect().toJSON())
+  }));
+  assert.ok(tabs.visible.every(tab => tab.top >= tabs.top - 1 && tab.bottom <= tabs.bottom + 1 && tab.right <= 390),
+    `All results tabs must fit on one mobile row. ${JSON.stringify(tabs)}`);
   await scenario('Content').getByText('1 more assertion', { exact: true }).click();
   await scenario('Content').evaluate(node => node.scrollIntoView({ block: 'start' }));
   const card = await scenario('Content').boundingBox();

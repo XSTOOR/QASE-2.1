@@ -201,7 +201,16 @@ html[data-theme="dark"] body.studio-workspace[data-page="results"] #results-page
   body.studio-workspace #qa-start #qa-cancel { display: none; }
   body.studio-workspace #qa-start [data-journey-panel="0"] { gap: 14px; }
   body.studio-workspace[data-page="results"] #qa-report-evidence { width: calc(100% - 40px); margin-top: 16px; }
-  body.studio-workspace[data-page="results"] #tabs:has(~ .tab-body #qa-report-evidence:not([hidden])) { gap: 12px; padding-inline: 16px; }
+  body.studio-workspace[data-page="results"] #tabs:has(~ .tab-body #qa-report-evidence:not([hidden])) {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    padding: 0 12px;
+  }
+  body.studio-workspace[data-page="results"] #tabs:has(~ .tab-body #qa-report-evidence:not([hidden])) .tab {
+    align-self: stretch;
+    min-height: 0;
+  }
   .qe-hero { padding: 17px 14px 0; }
   .qe-metrics { margin-inline: -14px !important; }
   .qe-metrics > div { padding-inline: 10px; }
