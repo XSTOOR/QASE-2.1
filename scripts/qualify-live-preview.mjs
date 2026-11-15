@@ -23,7 +23,15 @@ const services = {
   events: { publish, async subscribe(_id, listener) { listeners.add(listener); return () => listeners.delete(listener); } },
   configuration: { getPublic: () => config, save: () => config, testConnection: async () => ({ ok: true }) },
   secrets: { names: () => [], clear() {}, store: () => [] }, reports: { buildMarkdown: () => '' },
-  agent: { ensureRuntime() {}, async runTurn() { throw new Error('No model execution in the UI fixture.'); }, async closeBrowser() {}, stop() {}, getLiveState: () => ({ running: true }), invalidateIdleRuntimes: () => ({ kept: 1 }) },
+  agent: { ensureRuntime() {}, async runTurn(s, input) {
+    assert.equal(input.task, 'continue');
+    s.status = 'running';
+    publish(s, 'status', { status: s.status });
+  }, async closeBrowser() {}, stop() {
+    session.status = 'interrupted';
+    session.statusDetail = 'Stopped by user.';
+    publish(session, 'status', { status: session.status, detail: session.statusDetail });
+  }, getLiveState: () => ({ running: session.status === 'running' }), invalidateIdleRuntimes: () => ({ kept: 1 }) },
   environments: { seed() {}, async list() { return []; }, async facets() { return { total: 0, devices: [], osVersions: [], browsers: [] }; }, async get() { return null; }, async availability() { return { available: 0, busy: 0 }; }, async catalogVersion() { return 'fixture'; } },
   feedback: { async create() {}, async get() { return null; }, async update() {}, async remove() {}, async forRun() { return null; }, async list() { return []; }, async stats() { return {}; } },
   bugs: { async list() { return []; } }, readiness: { check: async () => ({ ready: true }) }, lifecycle: { close: async () => {} }
@@ -59,15 +67,16 @@ try {
   publish(session, 'hybrid.state', { hybrid: session.hybrid });
   await page.waitForFunction(() => document.querySelector('#progress-steps')?.textContent === '0/2');
   const planEvidence = page.locator('#qa-plan-evidence');
-  await planEvidence.getByText('Partial', { exact: true }).waitFor();
+  await planEvidence.getByRole('button', { name: 'Navigation Partial' }).waitFor();
   await planEvidence.getByText('A sampled destination did not finish loading.').waitFor();
   assert.match(await page.locator('#report-view .qe-technical').textContent(), /Live inputs: 2 field trials · 8 input cases · 3/);
   navigation.routeCounts.gaps = 0;
   navigation.routeRuns[1] = { status: 'passed' };
   publish(session, 'hybrid.state', { hybrid: session.hybrid });
   await page.waitForFunction(() => document.querySelector('#progress-steps')?.textContent === '1/2');
-  publish(session, 'frame', { frame: { base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', mimeType: 'image/png', url: 'https://fixture.test/docs', title: 'Live docs', viewport: { width: 1440, height: 900 } } });
+  publish(session, 'frame', { frame: { base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', mimeType: 'image/png', url: 'https://fixture.test/docs', title: 'Live docs', ts: Date.now(), viewport: { width: 1440, height: 900 } } });
   await page.waitForFunction(() => document.querySelector('#browser-url')?.textContent === 'https://fixture.test/docs' && document.querySelector('#chrome-url')?.textContent === 'fixture.test');
+  await planEvidence.getByRole('img', { name: 'Live browser preview' }).waitFor();
   const selectedImage = await page.locator('#frame').getAttribute('src');
   const viewport = { phase: 'responsive_sample', primary: { width: 1440, height: 900 }, current: { width: 390, height: 900 }, restored: false };
   session.hybrid.viewport = viewport; publish(session, 'qa.viewport', { viewport });
@@ -87,10 +96,19 @@ try {
   await page.route('**/api/sessions/*/events', outage);
   for (const response of streams) if (!response.writableEnded) response.end();
   await page.waitForFunction(() => document.querySelector('#status-chip')?.textContent === 'Reconnecting…' && document.querySelector('#thinking-label')?.textContent === 'Reconnecting');
+  await planEvidence.getByRole('img', { name: 'Last received browser frame' }).waitFor();
   assert.match(await page.locator('#journey-run-description').textContent(), /last received state/);
   assert.equal(session.status, 'running', 'The UI must not invent a server terminal state.');
   await page.unroute('**/api/sessions/*/events', outage);
   await page.waitForFunction(() => document.querySelector('#status-chip')?.textContent === 'Running');
+  await planEvidence.getByRole('img', { name: 'Live browser preview' }).waitFor();
+  await page.locator('#stop-run').click();
+  await page.waitForFunction(() => document.querySelector('#status-chip')?.textContent === 'Stopped');
+  assert.ok(writeRequests.some(url => url.endsWith('/stop')));
+  await page.locator('#resume-run').click();
+  await page.waitForFunction(() => document.querySelector('#status-chip')?.textContent === 'Running');
+  assert.ok(writeRequests.some(url => url.endsWith('/message')));
+  await planEvidence.getByRole('button', { name: 'Navigation Passed' }).waitFor();
   session.hybrid.telemetry = { elapsedMs: 137706, browserActions: 18, reasoner: {}, classifier: {} };
   session.hybrid.status = 'paused'; session.hybrid.recovery = { resumeBlockedReason: 'usage_unverified' };
   session.status = 'interrupted';
@@ -153,11 +171,11 @@ try {
       await page.goto(base);
       await page.waitForURL(`**/#/runs/${session.id}`);
       await page.waitForFunction(() => document.body.dataset.page === 'run' && !document.body.dataset.pageLoading);
-      assert.equal(await page.locator('body').getAttribute('data-workspace-view'), 'agent');
+      assert.equal(await page.locator('body').getAttribute('data-workspace-view'), 'results');
       await page.reload();
       await page.waitForFunction(() => document.body.dataset.page === 'run' && !document.body.dataset.pageLoading);
       assert.equal(new URL(page.url()).hash, `#/runs/${session.id}`);
-      assert.notEqual(await page.locator('body').getAttribute('data-workspace-view'), 'results');
+      assert.equal(await page.locator('body').getAttribute('data-workspace-view'), 'results');
     }
     await page.goto(`${base}/?run=${session.id}`);
     await page.waitForURL(`**/#/runs/${session.id}`);
@@ -219,7 +237,7 @@ try {
   assert.equal(new URL(page.url()).hash, `#/runs/${session.id}`);
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ passed: true, liveProgress: true, chromeUrlUpdated: true, responsivePreviewStable: true, responsiveStatusClearedAfterRestore: true, nestedActivityUpdated: true, honestLegacyCoverage: true, explicitAgentIdentity: true,
-    disconnectExplainedAndResynced: true, receiptRecoveryExplained: true, freshTestSetupDoesNotCreateOrReplay: true, pausedTimerStableAfterReload: true, completionKeepsDesktopAndMobileView: true, explicitResultsNavigation: true,
+    disconnectExplainedAndResynced: true, stopAndResumePreserveSavedChecks: true, receiptRecoveryExplained: true, freshTestSetupDoesNotCreateOrReplay: true, pausedTimerStableAfterReload: true, completionKeepsDesktopAndMobileView: true, explicitResultsNavigation: true,
     completedRunStartupAndRefreshStayOnRun: true, latestRunFallbackStaysOnRun: true, launchHandleStaysOnRun: true, explicitResultsRefreshPreserved: true,
     budgetContinuationOptionUsable: true, exactBudgetApprovalPreservesUsage: true, secureCredentialConsent: true, failedCredentialQuestionPreserved: true, publicOnlyDecisionRemembered: true, pageErrors: errors }));
 } finally {

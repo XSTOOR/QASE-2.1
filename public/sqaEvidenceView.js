@@ -6,7 +6,7 @@ function element(tag, text) {
 
 const INTEGRITY_LABELS = {
 	verified: 'Digest verified', mismatch: 'Digest mismatch', unavailable: 'Original bundle unavailable',
-	external_unverified: 'External document not verified', redacted: 'Additional redaction applied'
+	external_unverified: 'External document not verified', reviewer_confirmed: 'Access confirmed by reviewer', redacted: 'Additional redaction applied'
 };
 
 export function evidenceInspectButton({ runId, controlId, index, api, version }) {
@@ -31,7 +31,25 @@ export function evidenceInspectButton({ runId, controlId, index, api, version })
 			for (const [label, value] of [ ['Type', result.evidence.type], ['Collected at', result.evidence.collectedAt ?? 'not recorded'], ['Reference', result.evidence.reference], ['Digest', result.evidence.digest ?? 'not supplied'], ['Summary', result.evidence.summary ?? 'not recorded'] ]) {
 				metadata.append(element('dt', label), element('dd', value));
 			}
-			body.append(metadata, element('p', result.redaction), element('h3', 'Bound browser activities'));
+			body.append(metadata, element('p', result.redaction));
+			const documentRecord = result.reviewerDocument;
+			if (documentRecord) {
+				body.append(element('h3', 'Reviewer document'),
+					element('p', `${documentRecord.owner} · Build ${documentRecord.release} · ${documentRecord.environment}`),
+					element('p', documentRecord.reviewNote));
+				if (documentRecord.source === 'file' && result.integrity === 'verified') {
+					const link = element('a', `Download ${documentRecord.fileName}`);
+					link.href = `/api/sessions/${encodeURIComponent(runId)}/sqa/review/evidence/${encodeURIComponent(documentRecord.id)}/file`;
+					link.download = documentRecord.fileName;
+					body.append(link);
+				} else if (documentRecord.source === 'link' && URL.parse(documentRecord.link)?.protocol === 'https:') {
+					const link = element('a', 'Open source document');
+					link.href = documentRecord.link; link.target = '_blank'; link.rel = 'noopener noreferrer';
+					body.append(link);
+				}
+				return;
+			}
+			body.append(element('h3', 'Bound browser activities'));
 			if (!result.activities.length) body.append(element('p', 'No browser activity bundle is available for this evidence.'));
 			for (const activity of result.activities) {
 				const card = element('article');

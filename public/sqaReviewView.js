@@ -1,6 +1,21 @@
 import { isSqaInternalEvidence, isSqaPartialReleaseEvidence } from './sqaEvidencePolicy.js';
+import { sqaMissingEvidenceRequirements } from './sqaPresentation.js';
 
 let fieldSequence = 0;
+const managed = item => String(item?.reference).startsWith('qase-review://');
+const forTarget = (item, target) => (!target?.release || target.release === item.release)
+	&& (!target?.environment || target.environment === item.environment);
+
+async function filePayload(file) {
+	if (!file || file.size < 1 || file.size > 512 * 1024) throw new Error('Choose a nonempty PDF, text, or Markdown file up to 512 KB.');
+	const base64 = await new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onerror = () => reject(new Error('Could not read the selected file.'));
+		reader.onload = () => resolve(String(reader.result).split(',')[1]);
+		reader.readAsDataURL(file);
+	});
+	return { name: file.name, base64 };
+}
 
 function node(tag, text, className) {
 	const element = document.createElement(tag);
@@ -91,6 +106,90 @@ export function renderSqaReviewPanel({ session, role, api, refresh, selectRun, d
 		rationale.required = true;
 		rationale.maxLength = 2000;
 		const evidence = node('div', '', 'sqa-review-evidence');
+		const intake = node('section', '', 'sqa-review-form sqa-review-submissions');
+		const target = sqa.scope?.target;
+		const saveEvidence = async (path, data) => {
+			onSelectControl?.(controls.value);
+			const response = await api(`${prefix}/review/evidence${path}`, {
+				method: 'POST', body: JSON.stringify({ expectedRevision: revision, ...data })
+			});
+			await refresh(response.sqa, { focusControl: true });
+		};
+		const paintSubmissions = result => {
+			intake.replaceChildren();
+			const needs = sqaMissingEvidenceRequirements(result).filter(item => item.owner === 'reviewer');
+			const submitted = (sqa.reviewSubmissions ?? []).filter(item => item.controlId === result.controlId);
+			if (!needs.length && !submitted.length) return;
+			intake.append(node('h4', 'Reviewer document submissions'),
+				node('p', 'Submit a document for a specific requirement. Open it and record a reviewer decision before using it in the assessment.'));
+			for (const item of submitted) {
+				const card = node('fieldset');
+				const outOfScope = !forTarget(item, target);
+				const state = ({ submitted: 'Awaiting review', accepted: 'Accepted', rejected: 'Rejected' })[item.status];
+				card.append(node('legend', `${item.type.replaceAll('_', ' ')} · ${state}`),
+					node('p', `Owner ${item.owner} · Build ${item.release} · ${item.environment}`),
+					node('p', item.summary));
+				if (outOfScope) card.append(node('p', 'Out of scope. This build or environment differs from the assessment.'));
+				const link = node('a', item.source === 'file' ? `Download ${item.fileName}` : 'Open source document', 'btn btn-ghost btn-sm');
+				if (item.source === 'file') {
+					link.href = `/api${prefix}/review/evidence/${encodeURIComponent(item.id)}/file`;
+					link.download = item.fileName;
+				} else if (URL.parse(item.link)?.protocol === 'https:') {
+					link.href = item.link;
+					link.target = '_blank';
+					link.rel = 'noopener noreferrer';
+				}
+				if (link.hasAttribute('href')) card.append(link);
+				if (item.reviewNote) card.append(node('p', item.reviewNote));
+				if (item.status === 'submitted') {
+					const note = field(card, 'Document review note', 'textarea'); note.maxLength = 1000;
+					const opened = field(card, 'I opened this document and verified access.'); opened.type = 'checkbox';
+					if (!outOfScope) button('Accept document', () => saveEvidence(`/${item.id}/decision`, { decision: 'accepted', note: note.value, opened: opened.checked }), card);
+					button('Reject document', () => saveEvidence(`/${item.id}/decision`, { decision: 'rejected', note: note.value }), card);
+				}
+				intake.append(card);
+			}
+			if (!needs.length) return;
+			const submission = node('form', '', 'sqa-review-form');
+			const requirement = field(submission, 'Evidence requirement', 'select');
+			const purpose = node('p');
+			for (const item of needs) {
+				const option = node('option', item.type.replaceAll('_', ' ')); option.value = item.id; requirement.append(option);
+			}
+			const showPurpose = () => { purpose.textContent = needs.find(item => item.id === requirement.value)?.description ?? ''; };
+			requirement.onchange = showPurpose;
+			showPurpose();
+			submission.append(purpose);
+			const owner = field(submission, 'Document owner'); owner.required = true; owner.maxLength = 120;
+			const release = field(submission, 'Document build or release'); release.required = true; release.maxLength = 200; release.value = target?.release ?? '';
+			const environment = field(submission, 'Document environment'); environment.required = true; environment.maxLength = 100; environment.value = target?.environment ?? '';
+			const summary = field(submission, 'What the submitted document demonstrates', 'textarea'); summary.required = true; summary.maxLength = 1000;
+			const source = field(submission, 'Document source', 'select');
+			for (const [value, label] of [['link', 'HTTPS link'], ['file', 'Upload a file']]) {
+				const option = node('option', label); option.value = value; source.append(option);
+			}
+			const link = field(submission, 'HTTPS document link'); link.type = 'url'; link.maxLength = 512;
+			const file = field(submission, 'Reviewer document (PDF, text or Markdown, up to 512 KB)'); file.type = 'file'; file.accept = '.pdf,.txt,.md';
+			const syncSource = () => {
+				const uploading = source.value === 'file';
+				link.parentElement.hidden = uploading;
+				link.required = !uploading;
+				file.parentElement.hidden = !uploading;
+				file.required = uploading;
+			};
+			source.onchange = syncSource;
+			syncSource();
+			const submit = button('Submit document for review', async () => {
+				if (!submission.reportValidity()) return;
+				await saveEvidence('', {
+					controlId: result.controlId, requirementId: requirement.value, owner: owner.value,
+					release: release.value, environment: environment.value, summary: summary.value, source: source.value,
+					...(source.value === 'file' ? { file: await filePayload(file.files[0]) } : { link: link.value })
+				});
+			}, submission);
+			submission.onsubmit = event => { event.preventDefault(); submit.click(); };
+			intake.append(submission);
+		};
 		let evidenceInputs = [];
 		const syncEvidenceRequired = () => {
 			for (const item of evidenceInputs) item.reference.required = decision.value === 'pass' && item.neededForPass;
@@ -101,10 +200,13 @@ export function renderSqaReviewPanel({ session, role, api, refresh, selectRun, d
 			evidenceInputs = [];
 			const result = sqa.assessment.results.find(item => item.controlId === controls.value);
 			if (!result) return;
+			paintSubmissions(result);
 			decision.value = ['pass', 'fail', 'blocked'].includes(result.status) ? result.status : 'blocked';
 			rationale.value = result?.rationale ?? '';
 			const browser = (result.evidence ?? []).filter(isSqaInternalEvidence);
-			const documents = (result.evidence ?? []).filter(item => !isSqaInternalEvidence(item));
+			const documents = (result.evidence ?? []).filter(item => !isSqaInternalEvidence(item) && !managed(item));
+			const approved = (sqa.reviewSubmissions ?? []).filter(item => item.controlId === result.controlId && item.status === 'accepted' && forTarget(item, target));
+			if (approved.length) evidence.append(node('p', `${approved.length} accepted reviewer document${approved.length === 1 ? '' : 's'} will be checked and attached when you save.`));
 			if (browser.length) {
 				evidence.append(node('p', `${browser.length} browser evidence record${browser.length === 1 ? '' : 's'} will be kept with this decision.`, 'sqa-review-retained'));
 			}
@@ -118,7 +220,8 @@ export function renderSqaReviewPanel({ session, role, api, refresh, selectRun, d
 			for (const item of documents) if (!requirements.has(item.type)) requirements.set(item.type, { type: item.type, minimum: 0 });
 			for (const requirement of requirements.values()) {
 				const retained = browser.filter(item => item.type === requirement.type && !isSqaPartialReleaseEvidence(result.controlId, item)).length;
-				const required = Math.max(0, requirement.minimum - retained);
+				const accepted = approved.filter(item => item.type === requirement.type).length;
+				const required = Math.max(0, requirement.minimum - retained - accepted);
 				const existing = documents.filter(item => item.type === requirement.type);
 				for (let index = 0; index < Math.max(required, existing.length); index++) {
 					const row = node('fieldset');
@@ -149,7 +252,7 @@ export function renderSqaReviewPanel({ session, role, api, refresh, selectRun, d
 			await refresh(result.sqa);
 		}, form);
 		form.onsubmit = event => event.preventDefault();
-		section.append(form);
+		section.append(form, intake);
 		const publication = node('form', '', 'sqa-review-form');
 		const reason = field(publication, 'Publication reason', 'textarea'); reason.required = true; reason.maxLength = 2000;
 		button('Publish reviewed version', async () => { if (publication.reportValidity()) await change('publish', reason.value); }, publication);

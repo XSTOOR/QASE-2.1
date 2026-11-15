@@ -321,9 +321,10 @@ export function createLocalApplicationServices(options = {}) {
 			return deleteSession(id, ownerUserId());
 		},
 		async commit(session, type, payload = {}) {
-			// A Founder checkpoint or usage receipt must survive an immediate
-			// restart once acknowledged. Live frames remain ephemeral in emit.
-			emit(session, type, payload, { durable: session.qaExecutionMode === 'hybrid' || session.mode === 'founder' });
+			// Checkpoints and human decisions must survive an immediate restart
+			// once acknowledged. Browser activity progress can be batched.
+			const sqaDecision = type === 'sqa' && (payload.final === true || Number.isSafeInteger(payload.reviewRevision));
+			emit(session, type, payload, { durable: session.qaExecutionMode === 'hybrid' || session.mode === 'founder' || sqaDecision });
 			return session;
 		},
 		async setFindingStatus(session, findingId, patch) {
@@ -350,6 +351,9 @@ export function createLocalApplicationServices(options = {}) {
 			return session;
 		},
 		/** Phase 22: persist a final-frame evidence artifact for the run. */
+		async saveMotionFrame(session, bytes, phase) {
+			return artifactStore.save(session, { type: 'motion-frame', fileName: 'menu-motion.jpg', bytes, label: phase });
+		},
 		async saveEvidenceArtifact(session, bridgeHandle) {
 			// The agent passes { bridge } so runtime facts are available on it.
 			const bridge = bridgeHandle?.getLastFrame ? bridgeHandle : bridgeHandle?.bridge;

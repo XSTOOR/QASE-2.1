@@ -194,7 +194,9 @@ try {
   checks.push('Switching runs closes evidence and ignores late lookup results; another report has independent reading state.');
 
   await open(legacy); await navigate('recommendations');
-  await root().locator('[data-founder-section="recommendations"] .founder-evidence-link').first().click();
+  const legacyRecommendations = root().locator('[data-founder-section="recommendations"]');
+  await legacyRecommendations.getByText('Hypothesis to validate. No verified browser observation supports this item.', { exact: true }).first().waitFor();
+  await legacyRecommendations.getByRole('button', { name: 'View unverified references', exact: true }).first().click();
   await page.getByRole('dialog').getByText('Observation unavailable', { exact: true }).waitFor(); await page.keyboard.press('Escape');
   await navigate('evidence'); await root().getByRole('button', { name: /Browse all .* recorded observations/ }).click();
   const oldDialog = page.getByRole('dialog');

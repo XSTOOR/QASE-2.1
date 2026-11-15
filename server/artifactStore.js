@@ -198,6 +198,16 @@ export function createArtifactStore({ root = ARTIFACT_ROOT, now = () => Date.now
 			return { meta, bytes: fs.readFileSync(filePath) };
 		},
 
+		/** Removes an uncommitted artifact after a failed run update. */
+		remove(sessionId, artifactId) {
+			if (!safeId(sessionId) || !safeId(artifactId)) return;
+			const dir = directoryFor(sessionId);
+			const meta = readSidecar(dir, artifactId);
+			if (!meta) return;
+			fs.rmSync(path.join(dir, `${artifactId}.json`), { force: true });
+			fs.rmSync(path.join(dir, meta.fileName), { force: true });
+		},
+
 		/** Removes every artifact for a run (used on run deletion). */
 		removeAll(sessionId) {
 			const id = safeId(sessionId);

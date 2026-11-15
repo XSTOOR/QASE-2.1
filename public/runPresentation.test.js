@@ -1,13 +1,31 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { blockedRunReason, runPresentationLabel, runPresentationStatus } from './runPresentation.js';
+import { blockedRunReason, qaScenarioDisposition, runPresentationLabel, runPresentationStatus } from './runPresentation.js';
 import { workflowStatus } from './workflowStatus.js';
 
-test('a severe finding does not hide incomplete hybrid coverage behind Complete', () => {
+test('a paused journey preserves verified outcomes and stops advertising unfinished checks as active', () => {
+  assert.equal(qaScenarioDisposition({ status: 'running' }, 'paused'), 'interrupted');
+  assert.equal(qaScenarioDisposition({ status: 'planned' }, 'paused'), 'not_executed');
+  assert.equal(qaScenarioDisposition({ status: 'passed', passed: 1 }, 'paused'), 'passed');
+  assert.equal(qaScenarioDisposition({ status: 'running', failed: 1 }, 'paused'), 'failed');
+  assert.equal(qaScenarioDisposition({ status: 'running' }, 'running'), 'running');
+});
+
+test('scenario outcomes require verified assertions and retain coverage gaps', () => {
+  assert.equal(qaScenarioDisposition({ status: 'passed', passed: 0 }, 'done'), 'inconclusive');
+  assert.equal(qaScenarioDisposition({ status: 'failed', failed: 0 }, 'done'), 'inconclusive');
+  assert.equal(qaScenarioDisposition({ status: 'passed', passed: 1, incompleteRoutes: 1 }, 'done'), 'partial');
+  assert.equal(qaScenarioDisposition({ status: 'not_executed', absent: true }, 'done'), 'absent');
+});
+
+test('a failed hybrid check and its coverage gaps are visible on full runs and in lists', () => {
   const session = { status: 'done', qaExecutionMode: 'hybrid', report: { verdict: 'fail', notCovered: ['Eight unexecuted checks'] } };
-  assert.equal(runPresentationStatus(session), 'partial');
-  assert.equal(runPresentationLabel(session), 'Completed with gaps');
-  assert.equal(session.report.verdict, 'fail');
+  assert.equal(runPresentationStatus(session), 'failed');
+  assert.equal(runPresentationLabel(session), 'Failed with coverage gaps');
+  assert.equal(workflowStatus(session).title, 'Failed with coverage gaps');
+  assert.equal(session.status, 'done');
+  assert.equal(runPresentationLabel({ status: 'done', qaExecutionMode: 'hybrid', reportVerdict: 'fail', coverageIncomplete: true }), 'Failed with coverage gaps');
+  assert.equal(runPresentationLabel({ status: 'done', qaExecutionMode: 'hybrid', reportVerdict: 'fail' }), 'Failed');
   assert.equal(runPresentationStatus({ ...session, qaExecutionMode: 'legacy' }), 'done');
   assert.equal(runPresentationStatus({ status: 'done', reportVerdict: 'fail', coverageIncomplete: true }), 'partial');
 });

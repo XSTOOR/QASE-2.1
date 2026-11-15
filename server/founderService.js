@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { founderEvidenceDigest } from './founderEvidence.js';
+import { founderEvidenceDigest, verifiedFounderObservationIds } from './founderEvidence.js';
 import { completedFounderPageReviews, FOUNDER_PAGE_REVIEW } from './founderPageReview.js';
 import { FOUNDER_FORM_REVIEW } from './founderFormReview.js';
 import { assertFounderPricingClaims } from './founderPricingEvidence.js';
@@ -420,8 +420,10 @@ export async function finishFounderReview(session, input, runStore, now = () => 
 	if (/\b(reviewed|read|audited|analyzed)\b.{0,40}\b(?:the )?(?:complete|entire|full)\b.{0,20}\b(?:source|source code|codebase|repository|project files)\b/i.test(serialized)) {
 		throw new TypeError('Founder Mode reviewed browser-accessible product surfaces, not the complete source code or repository. State that boundary explicitly.');
 	}
+	const verifiedObservations = verifiedFounderObservationIds(session);
 	const report = normalizeFounderReport(safeInput, {
 		observations: session.founder.observations,
+		...(modeDiscoveryRequired(session) ? { verifiedObservations } : {}),
 		target: session.founder.scope.target,
 		generatedAt
 	});
@@ -431,7 +433,7 @@ export async function finishFounderReview(session, input, runStore, now = () => 
 	session.founder = { ...previous, report, updatedAt: generatedAt, finalizedAt: generatedAt };
 	session.todos = publicationTodos(previousTodos, 'founder');
 	try {
-		await runStore.commit(session, 'founder.finalized', { report, todos: session.todos });
+		await runStore.commit(session, 'founder.finalized', { report, todos: session.todos, verifiedObservations });
 	} catch (error) {
 		session.founder = previous;
 		session.todos = previousTodos;
@@ -454,15 +456,21 @@ function code(value) {
 	return `\`${String(value ?? '').replaceAll('`', '\\`')}\``;
 }
 
-function trace(lines, item = {}) {
+function reportTrace(lines, item = {}, verified) {
+	const ids = item.evidenceObservationIds ?? [];
 	lines.push('', '**Evidence observations**', '');
-	completeList(lines, (item.evidenceObservationIds ?? []).map(code));
+	completeList(lines, ids.map(id => `${code(id)}${verified && !verified.has(id) ? ' · verification unavailable' : ''}`));
+	if (!ids.length || (verified && !ids.some(id => verified.has(id)))) {
+		lines.push('', '**Hypothesis to validate.** No verified browser observation supports this item.');
+	}
 	lines.push('', '**Assumptions**', '');
 	completeList(lines, item.assumptions);
 }
 
 export function buildFounderReportMarkdown(founderOrSession) {
 	const founder = founderOrSession?.founder ?? founderOrSession;
+	const verified = founderOrSession?.mode === 'founder' ? new Set(verifiedFounderObservationIds(founderOrSession)) : undefined;
+	const trace = (lines, item) => reportTrace(lines, item, verified);
 	const report = founder?.report;
 	if (!report) throw new TypeError('Founder review has not been finalized.');
 	const confidence = report.evidenceConfidence ?? {};

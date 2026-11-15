@@ -9,7 +9,7 @@
 <title>QASE — Autonomous quality assurance</title>
 <script src="theme.js?v=20261015-11"></script>
 <script src="studioMode.js?v=20261014-6"></script>
-<link rel="stylesheet" href="styles.css?v=20261111-1">
+<link rel="stylesheet" href="styles.css?v=20261115-2">
 <link rel="stylesheet" href="bugsView.css?v=20261014-6">
 <link rel="stylesheet" href="studio-workspace.css?v=20261015-6">
 <link rel="stylesheet" href="studio-embed.css?v=20261108-2">
@@ -22,14 +22,14 @@
 <link rel="stylesheet" href="runStartup.css?v=20261016-1">
 <link rel="stylesheet" href="founderReader.css?v=20261108-2">
 <link rel="stylesheet" href="reportReadability.css?v=20261109-1">
-<link rel="stylesheet" href="qaEvidence.css?v=20261113-1">
+<link rel="stylesheet" href="qaEvidence.css?v=20261115-1">
 <link rel="icon" type="image/svg+xml" href="qase-mark.svg">
 </head>
 <body class="cli-theme studio-workspace" data-has-run="false">
 
 <section class="auth-gate" id="auth-gate" hidden aria-labelledby="auth-title">
   <header class="auth-masthead">
-    <a class="auth-brand" href="/" aria-label="QASE home"><span class="auth-brand-symbol" aria-hidden="true"></span><span>QΛSE</span></a>
+    <a class="auth-brand" href="welcome.html" aria-label="QASE home"><span class="auth-brand-symbol" aria-hidden="true"></span><span>QΛSE</span></a>
     <div class="auth-appearance">
       <label class="theme-control" for="auth-theme-select"><span>Theme</span><select id="auth-theme-select" name="theme" data-theme-control><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
     </div>
@@ -278,6 +278,7 @@
         </span>
         <button id="resume-run" class="btn btn-ghost btn-sm" hidden>Resume</button>
         <button id="stop-run" class="btn btn-danger btn-sm" hidden>Stop</button>
+        <button id="qa-workspace-switch" class="btn btn-ghost btn-sm" type="button" hidden>Agent conversation</button>
         <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false" aria-label="Switch to dark theme" title="Switch to dark theme">
           <span class="theme-toggle-icon" aria-hidden="true">
             <svg class="theme-toggle-glyph theme-toggle-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
@@ -932,12 +933,15 @@
         <input id="qa-target-url" name="targetUrl" type="url" required maxlength="2048" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://example.com">
         <small><button type="button" class="link-btn" id="qa-demo-fill">Use the demo site</button></small>
       </label>
-      <label class="field journey-goal"><span>What should work? <small>Optional</small></span><textarea id="qa-goal" rows="2" maxlength="2000" placeholder="From Solutions, open Pricing. The page should show “Plans and pricing.”"></textarea><small>Include the steps and the expected result. Qase will ask separately if it needs sign-in.</small></label>
+      <label class="field journey-goal"><span>What should work? <small>Optional</small></span><textarea id="qa-goal" rows="2" maxlength="2000" placeholder="From Solutions, open Pricing. The page should show “Plans and pricing.”"></textarea><small>Include the steps and the expected result. To check a menu transition on the target page, add a line like “Menu motion: Menu” using the button’s exact name.</small></label>
       <section class="qe-launch-browser" id="qa-launch-browser" aria-label="Browser for this run" aria-live="polite">
         <div><strong id="qa-launch-browser-title">Checking browsers…</strong><p id="qa-launch-browser-detail"></p></div>
         <button class="btn btn-ghost btn-sm" id="qa-launch-browser-action" type="button" hidden></button>
       </section>
-      <label class="field qa-write-permission"><span><input id="qa-allow-test-writes" type="checkbox"> Allow test data writes</span><small>For an isolated test account: Qase may submit clearly marked test records. Records may persist. Account changes, payments, messages and destructive actions remain excluded. Read-only tests need no extra confirmation.</small></label>
+      <details class="qa-launch-options">
+        <summary>Advanced options</summary>
+        <label class="field qa-write-permission"><span><input id="qa-allow-test-writes" type="checkbox"> Allow test data writes</span><small>Use an isolated test account. Qase may submit clearly marked test records, which can persist. Account changes, payments, messages and destructive actions are excluded.</small></label>
+      </details>
       </section>
       <section class="journey-step" data-journey-panel="1" aria-labelledby="journey-coverage-title" hidden>
       <h2 id="journey-coverage-title" tabindex="-1">Browser and checks</h2>
@@ -1110,7 +1114,7 @@
       <button class="btn btn-ghost" type="button" id="qa-cancel">Cancel</button>
       <button class="btn btn-ghost" type="button" id="journey-back" hidden>← Back</button>
       <p class="journey-footer-hint" id="journey-footer-hint" aria-live="polite"></p>
-      <button class="btn btn-ghost" type="button" id="journey-next">Browser and checks</button>
+      <button class="btn btn-ghost" type="button" id="journey-next">Customize checks</button>
       <button class="btn btn-primary" type="submit" id="qa-submit" aria-describedby="journey-footer-hint qa-form-error" hidden>Start QA test</button>
     </footer>
   </form>
@@ -1767,6 +1771,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261113-1" type="module"></script>
+<script src="app.js?v=20261115-3" type="module"></script>
 </body>
 </html>

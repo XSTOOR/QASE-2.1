@@ -35,6 +35,42 @@ function fixture(selectedTests = ['navigation', 'broken_links', 'responsive'], v
   return { session, runtime, record, tools, base, calls: () => calls };
 }
 
+test('the entry route samples an observed safe link and restores the source before later checks', async () => {
+  const f = fixture(['navigation', 'responsive']);
+  const calls = [];
+  const invoke = f.record.invokeHybridTool;
+  f.record.invokeHybridTool = async (name, input, signal) => {
+    const result = await invoke(name, input, signal);
+    if (name === 'browser_open' || ['navigation', 'responsive'].includes(input.action)) {
+      calls.push([input.action || name, result.url]);
+    }
+    return result;
+  };
+  await f.tools.get('browser_qa_check').run({ action: 'inspect' });
+  const entry = f.session.hybrid.exploration.routes.find(route => route.url === f.session.targetUrl);
+  await f.runtime.tools.find(tool => tool.name === 'qa_test_routes').run({ route_ids: [entry.id] });
+  const scenario = f.session.hybrid.scenarios.find(item => item.category === 'navigation');
+  assert.equal(scenario.routeRuns[0].status, 'passed');
+  assert.equal(scenario.routeRuns[0].evidenceRefs.length, 1);
+  assert.deepEqual(calls, [
+    ['browser_open', f.session.targetUrl],
+    ['navigation', 'https://fixture.test/docs'],
+    ['browser_open', f.session.targetUrl],
+    ['responsive', f.session.targetUrl]
+  ]);
+});
+
+test('directly opening the entry with only self and unsafe links leaves a navigation gap', async () => {
+  const f = fixture(['navigation'], 2, ['/#section']);
+  await f.tools.get('browser_qa_check').run({ action: 'inspect' });
+  const entry = f.session.hybrid.exploration.routes.find(route => route.url === f.session.targetUrl);
+  await f.runtime.tools.find(tool => tool.name === 'qa_test_routes').run({ route_ids: [entry.id] });
+  const scenario = f.session.hybrid.scenarios.find(item => item.category === 'navigation');
+  assert.equal(scenario.routeRuns[0].status, 'inconclusive');
+  assert.deepEqual(scenario.routeRuns[0].evidenceRefs, []);
+  assert.ok(!f.session.hybrid.actions.some(action => action.input?.action === 'navigation'));
+});
+
 for (const ambiguous of [false, true]) test(`stale navigation recovery requires a unique fresh control (ambiguous=${ambiguous})`, async () => {
   const f = fixture(['navigation'], 2, [], true), original = f.base.run;
   const selectors = [];

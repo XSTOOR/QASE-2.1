@@ -160,8 +160,8 @@ export function createFounderActions({ backend, deliveryClient, target, projectI
       const response = receipt.body ?? receipt;
       const candidate = response.reference ?? response.jobId ?? response.threadId ?? response.id;
       const reference = typeof candidate === 'string' || typeof candidate === 'number' ? String(candidate).trim().slice(0, 200) : undefined;
-      if (automatic && !reference) throw new Error('Studio did not return a delivery reference.');
-      outcome = { ...intent, status: 'succeeded', deliveredAt: now(), ...(reference ? { reference } : {}), upstreamStatus: receipt.status };
+      if (!reference) throw new Error('Studio did not return a delivery reference.');
+      outcome = { ...intent, status: 'succeeded', deliveredAt: now(), reference, upstreamStatus: receipt.status };
     } catch {
       outcome = { ...intent, status: 'failed', failedAt: now(), message: 'Studio delivery could not be confirmed. Your selection is saved. Retry reuses the same delivery key.' };
     }

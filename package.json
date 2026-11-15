@@ -50,6 +50,7 @@
     "prepare:sqa-release": "node scripts/prepare-sqa-release.mjs",
     "test:reset": "node scripts/test-reset-browser.mjs",
     "test:ui": "node scripts/test-ui-responsive.mjs",
+    "test:welcome": "node scripts/qualify-welcome.mjs",
     "test:acceptance": "node scripts/test-acceptance.mjs"
   },
   "engines": {

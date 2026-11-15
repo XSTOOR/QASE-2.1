@@ -12,6 +12,7 @@ import { hybridProfile } from './hybridConfig.js';
 import { createHybridTelemetry } from './hybridTelemetry.js';
 import { createHybridModelRouter } from './hybridModelRouter.js';
 import { createHybridBudgetLedger, reconcileLegacyBudget } from './hybridBudgetLedger.js';
+import { CancellationTokenSource } from '@cleanslate/sdk';
 
 function fixture() {
   const session = { id: randomUUID(), hybrid: {} }, profile = hybridProfile({ apiKey: 'fixture-key' }, {});
@@ -85,6 +86,19 @@ test('cancelled, timed-out and missing-usage calls retain exposure across recove
     await assert.rejects(recovered.reasoner(async () => { throw Error('Must not dispatch'); }, []), error => error.code === 'HYBRID_USAGE_UNRESOLVED');
     assert.equal(saved.hybrid.telemetry.reasoner.reservedTokens, before);
   }
+});
+
+test('cancelling a reasoner request at its checkpoint releases the undispatched reservation', async () => {
+  const f = fixture();
+  const cancellation = new CancellationTokenSource();
+  const router = createHybridModelRouter({ ...f, checkpoint: async () => { cancellation.cancel(); } });
+  await assert.rejects(router.reasoner(() => assert.fail('Stop reached the provider request'), [], {
+    cancellationToken: cancellation.token
+  }), error => error.code === 'HYBRID_CANCELLED');
+  assert.equal(f.telemetry.metrics.reasoner.calls, 0);
+  assert.equal(f.telemetry.metrics.reasoner.reservedTokens, 0);
+  assert.equal(f.session.hybrid.modelBudget.roles.reasoner.reservations[0].status, 'not_dispatched');
+  router.check();
 });
 
 test('settled usage survives runtime reconstruction and does not reset pinned budgets or calls', async () => {

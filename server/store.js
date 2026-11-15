@@ -87,6 +87,19 @@ export function normalizeFindingStatus(finding) {
 }
 
 let saveTimer;
+const windowsRenameDelays = [10, 25, 50];
+
+function replaceSessionFile(temporary, target) {
+	for (let attempt = 0; ; attempt++) {
+		try { fs.renameSync(temporary, target); return; }
+		catch (error) {
+			if (process.platform !== 'win32' || !['EACCES', 'EPERM', 'EBUSY'].includes(error.code) || attempt >= windowsRenameDelays.length) throw error;
+			// External readers and antivirus can briefly deny Windows rename.
+			// Keep the same atomic replacement and retain the old file on failure.
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, windowsRenameDelays[attempt]);
+		}
+	}
+}
 
 function persistNow({ strict = false } = {}) {
 	let tmp;
@@ -99,14 +112,14 @@ function persistNow({ strict = false } = {}) {
 		// a directory; PID reuse must never disable all future persistence.
 		tmp = `${stateFile}.tmp-${process.pid}-${randomUUID()}`;
 		fs.writeFileSync(tmp, JSON.stringify([...sessions.values()], undefined, '\t'), { mode: 0o600 });
-		fs.renameSync(tmp, stateFile);
+		replaceSessionFile(tmp, stateFile);
 	} catch (error) {
 		if (tmp) {
 			try { fs.unlinkSync(tmp); } catch { /* best-effort cleanup */ }
 		}
 		// A dashboard that cannot write its history is still a usable dashboard,
 		// but surface it loudly so the operator notices data loss risk.
-		console.error(`[qase-store] failed to persist sessions: ${error?.code ?? error?.message ?? 'unknown'}`);
+		console.error(`[qase-store] failed to persist sessions: ${error?.code ?? error?.message ?? 'unknown'}${error?.syscall ? ` (${error.syscall})` : ''}`);
 		if (strict) throw error;
 	}
 }

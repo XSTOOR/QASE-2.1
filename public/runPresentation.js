@@ -8,14 +8,19 @@ export function runPresentationStatus(session) {
 		? session.sqa?.assessment?.verdict ?? session.sqaVerdict ?? session.reportVerdict ?? ''
 		: session?.report?.verdict ?? session?.reportVerdict ?? '').toLowerCase();
 	if (status === 'done' && session?.mode === 'sqa' && verdict === 'fail') return 'failed';
-	if (status === 'done' && (session.coverageIncomplete || session?.qaExecutionMode === 'hybrid' && session.report?.notCovered?.length)) return verdict === 'blocked' ? 'blocked' : 'partial';
+	if (status === 'done' && session?.qaExecutionMode === 'hybrid' && verdict === 'fail') return 'failed';
+	if (status === 'done' && hasCoverageGaps(session)) return verdict === 'blocked' ? 'blocked' : 'partial';
 	return status === 'done' && ['blocked', 'partial'].includes(verdict) ? verdict : status;
+}
+
+function hasCoverageGaps(session) {
+	return session?.coverageIncomplete || (session?.qaExecutionMode === 'hybrid' && session.report?.notCovered?.length > 0);
 }
 
 export function runPresentationLabel(session) {
 	const status = runPresentationStatus(session);
 	if (status === 'blocked') return 'Blocked';
-	if (status === 'failed') return 'Failed';
+	if (status === 'failed') return session.qaExecutionMode === 'hybrid' && hasCoverageGaps(session) ? 'Failed with coverage gaps' : 'Failed';
 	if (status === 'partial') return 'Completed with gaps';
 	if (status === 'done') return 'Complete';
 	if (status === 'running') return 'Running';
@@ -25,12 +30,22 @@ export function runPresentationLabel(session) {
 	return status ? status.replaceAll('_', ' ') : 'Idle';
 }
 
-export function qaEvidenceStatusLabel(session) {
-	const label = runPresentationLabel(session);
-	if (session.status === 'done' && session.report?.verdict === 'fail') {
-		return label === 'Completed with gaps' ? 'Failed with coverage gaps' : 'Failed';
+/** Present the server's verified evidence without turning an unfinished check into a result. */
+export function qaScenarioDisposition(scenario, runStatus) {
+	if (scenario.failed > 0) return 'failed';
+	if (scenario.absent) return 'absent';
+	if (scenario.status === 'passed') {
+		if (!(scenario.passed > 0)) return 'inconclusive';
+		return scenario.incompleteRoutes || scenario.gaps?.length ? 'partial' : 'passed';
 	}
-	return label;
+	if (scenario.status === 'failed') return 'inconclusive';
+	const endedOrPaused = ['done', 'error', 'interrupted', 'paused', 'cancelled'].includes(runStatus);
+	if (endedOrPaused && scenario.status === 'running') return 'interrupted';
+	if (endedOrPaused && scenario.status === 'planned') return 'not_executed';
+	if (['running', 'blocked', 'inconclusive', 'partial', 'planned', 'not_executed', 'interrupted'].includes(scenario.status)) {
+		return scenario.status;
+	}
+	return 'not_executed';
 }
 
 /** Blocker review must show the prerequisite, even when unrelated bugs exist. */

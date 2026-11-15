@@ -1,7 +1,9 @@
 import { applicationDiscoveryStatus } from './qaApplicationDiscovery.js';
 import { scenarioExecutionAccount } from './qaExecutionState.js';
 import { modeReceiptHash } from './modeIntegrity.js';
+import { validateHybridFinding } from './qaCompletionGate.js';
 import { redact } from './secrets.js';
+import { MENU_MOTION } from './qaMenuMotion.js';
 
 const assertionTools = {
   host_browser_check: 'browser_qa_check',
@@ -40,10 +42,23 @@ export function projectQaEvidence(session) {
   const discovery = state?.discovery?.version === 1 && Array.isArray(state.evidence)
     ? applicationDiscoveryStatus(session) : null;
   const features = new Map((discovery?.features || []).map(feature => [feature.id, feature]));
-  const linkedFindings = new Map((session.findings || []).filter(finding => finding.hybridEvidence?.assertionId)
-    .map(finding => [finding.hybridEvidence.assertionId, { id: finding.id, scenarioId: finding.hybridEvidence.scenarioId }]));
+  const linkedFindings = new Map();
+  let confirmedFindings = 0;
+  let unverifiedFindings = 0;
+  for (const finding of session.findings || []) {
+    if (!finding.hybridEvidence) continue;
+    const { scenarioId, assertionId } = finding.hybridEvidence;
+    try {
+      validateHybridFinding(session, { scenario_id: scenarioId, assertion_id: assertionId });
+      linkedFindings.set(assertionId, { id: finding.id, scenarioId });
+      confirmedFindings++;
+    } catch { unverifiedFindings++; }
+  }
   const scenarios = (state?.scenarios || []).map(scenario => {
     const executed = new Set(scenario.executedActionIds);
+    const motionRecord = scenario.category === MENU_MOTION && (scenario.evidenceRefs || []).map(id => records.get(id)).findLast(record =>
+      record?.result?.action === MENU_MOTION && record.result.motion && record.success && executed.has(record.actionId)
+      && actions.get(record.actionId)?.status === 'done' && intact(record));
     const assertions = (scenario.assertions || []).filter(assertion => {
       const record = records.get(assertion.evidenceRef);
       return ['pass', 'fail'].includes(assertion.outcome) && record?.success && assertionTools[assertion.authority] === record.toolName
@@ -71,6 +86,7 @@ export function projectQaEvidence(session) {
       targets: [...new Set(targets.map(feature => feature.name))].slice(0, 6),
       expectation: ['request', 'specification'].includes(scenario.expected?.source) ? excerpt(scenario.expected.text) : undefined,
       passed: assertions.length - failed, failed,
+      ...(motionRecord ? { motion: motionRecord.result.motion } : {}),
       assertions: assertions.filter(assertion => selected.has(assertion.id)).map(assertion => {
         const record = records.get(assertion.evidenceRef);
         const result = record.result || {};
@@ -91,6 +107,8 @@ export function projectQaEvidence(session) {
   });
   const inventory = [...features.values()];
   return redact(session.id, {
+    confirmedFindings,
+    unverifiedFindings,
     currentScenarioId: state?.currentScenarioId,
     discovery: discovery ? {
       status: discovery.blocked ? 'blocked' : discovery.ready ? 'ready' : 'pending',

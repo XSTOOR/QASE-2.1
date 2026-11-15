@@ -58,7 +58,7 @@ import {
 } from './bulkProgress.js';
 import { formatTokens, hostOf, list, markdown, miniSummaryText, paragraph, relativeTime, section, tokenSummaryText, truncate } from './uiPrimitives.js';
 import { createPageRouter, routeHash } from './pageRouter.js';
-import { blockedRunReason, preferredResultTab, qaEvidenceStatusLabel, runPresentationLabel, runPresentationStatus } from './runPresentation.js';
+import { blockedRunReason, preferredResultTab, runPresentationLabel, runPresentationStatus } from './runPresentation.js';
 import { createQaJourney, normalizeWebsite } from './qaJourney.js';
 import { createQaEvidenceWorkspace, isQaEvidenceRun } from './qaEvidenceView.js';
 import { workflowStatus } from './workflowStatus.js';
@@ -411,7 +411,7 @@ const founderActions = createFounderActionController({
 		document.body.append(save); save.click(); save.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 0);
 	}
 });
-const updateQaEvidence = createQaEvidenceWorkspace({
+const { update: updateQaEvidence, updatePreview: updateQaEvidencePreview } = createQaEvidenceWorkspace({
 	api,
 	plan: $('qa-plan-evidence'),
 	report: $('qa-report-evidence'),
@@ -1341,6 +1341,11 @@ function applySessionSnapshot(session) {
 	const changedSession = state.session?.id !== session.id;
 	state.bubbles.clear();
 	state.session = session;
+	document.body.dataset.qaWorkspace = String(isQaEvidenceRun(session));
+	if (changedSession && isQaEvidenceRun(session) && document.body.dataset.page === 'run') {
+		activateDetailTab($('tab-plan'));
+		setWorkspaceView(session.pendingQuestion ? 'agent' : 'results');
+	}
 	updateQaEvidence(session, true);
 	// Refresh the clock-skew sample on every snapshot (load, resync, refresh).
 	noteServerNow(session.serverNow);
@@ -1426,7 +1431,8 @@ async function createQaRun({
 			: (kickoffText ?? targetUrl);
 		await api(`/sessions/${session.id}/message`, { method: 'POST', body: JSON.stringify({ text }) }).catch(fail);
 	}
-	el.composerInput.focus();
+	if (isQaEvidenceRun(state.session) && document.body.dataset.workspaceView === 'results') focusPageHeading(el.chatTitle);
+	else el.composerInput.focus();
 	return session;
 }
 
@@ -1700,6 +1706,7 @@ function renderMiniSummary() {
 
 function renderHeader() {
 	const session = state.session;
+	$('qa-workspace-switch').hidden = !isQaEvidenceRun(session) || document.body.dataset.page !== 'run';
 	const resumeBlock = workflowStatus(session).resumeBlocked;
 	el.resumeRun.disabled = Boolean(resumeBlock);
 	el.resumeRun.title = resumeBlock || '';
@@ -1799,6 +1806,7 @@ function renderHeader() {
 	const displayStatus = runPresentationStatus(session);
 	el.chatTitle.textContent = session.status === 'running'
 		? `Testing ${targetName}`
+		: isQaEvidenceRun(session) ? targetName
 		: displayStatus === 'blocked' ? 'Testing blocked'
 			: displayStatus === 'partial' ? 'Testing completed with gaps'
 			: session.status === 'done' ? 'Testing complete' : targetName;
@@ -1886,7 +1894,7 @@ function setStatus(status) {
 	const justStarted = status === 'running' && previousStatus !== 'running';
 	if (state.session) state.session.status = status;
 	document.body.dataset.runStatus = status;
-	if (justStarted && matchMedia('(max-width: 720px)').matches) setWorkspaceView('browser');
+	if (justStarted && matchMedia('(max-width: 720px)').matches && !isQaEvidenceRun(state.session)) setWorkspaceView('browser');
 	const stopping = status === 'running' && state.stopRequests.has(state.sessionId);
 	const stoppedByUser = status === 'interrupted' && state.session?.statusDetail === 'Stopped by user.';
 	const displayStatus = runPresentationStatus(state.session);
@@ -1898,6 +1906,7 @@ function setStatus(status) {
 	el.statusChip.textContent = stopping ? 'Stopping…' : status === 'awaiting_input'
 		? 'waiting for you'
 		: status === 'running' ? (['reconnecting', 'syncing'].includes(state.streamConnection) ? 'Reconnecting…' : 'Running')
+			: status === 'done' && isQaEvidenceRun(state.session) ? runPresentationLabel(state.session)
 			: displayStatus === 'blocked' ? 'Blocked'
 				: displayStatus === 'failed' ? 'Failed'
 				: displayStatus === 'partial' ? 'Completed with gaps'
@@ -3005,6 +3014,7 @@ function applyFrame(frame) {
 	if (frame.viewportTesting && state.session?.hybrid) state.session.hybrid.viewport = frame.viewportTesting;
 	renderViewportStatus();
 	if (holdPrimaryPreview(frame, state.session)) return;
+	updateQaEvidencePreview(state.session?.id, { nextFrame: frame, streamConnection: state.streamConnection });
 	el.frame.src = `data:${frame.mimeType};base64,${frame.base64}`;
 	el.stageEmpty.hidden = true;
 	el.stageInner.hidden = false;
@@ -4656,7 +4666,7 @@ function renderSqaTechnicalSummary(summary) {
 	const node = sqaSection(
 		'Browser checks',
 		!summary ? 'This assessment has no saved browser check summary.'
-			: applicable ? `${applicable} automated web check${applicable === 1 ? '' : 's'} in scope.`
+			: applicable ? `${applicable} automated web check${applicable === 1 ? '' : 's'} in scope. This summary covers browser checks only.`
 			: 'No automated web checks applied to this scope.'
 	);
 	node.classList.add('sqa-technical');
@@ -5101,6 +5111,7 @@ function connect(id) {
 	const connection = next => {
 		if (state.stream !== stream || state.sessionId !== id) return;
 		state.streamConnection = next;
+		updateQaEvidencePreview(id, { streamConnection: next });
 		if (next === 'live') state.connectionLostAt = undefined; else state.connectionLostAt ??= Date.now();
 		if (state.session) renderHeader();
 	};
@@ -5360,6 +5371,7 @@ function handleEvent(event) {
 			session.founder ??= { scope: {}, observations: [] };
 			session.founder.report = event.report;
 			session.founder.finalizedAt = event.report?.generatedAt ?? new Date(event.ts ?? Date.now()).toISOString();
+			if (Array.isArray(event.verifiedObservations)) session.founderVerifiedObservations = event.verifiedObservations;
 			void founderActions.load();
 			syncSqaDetailMode();
 			renderHeader();
@@ -5380,6 +5392,7 @@ function handleEvent(event) {
 		case 'question':
 			session.pendingQuestion = event.question;
 			renderQuestion();
+			if (event.question && isQaEvidenceRun(session) && document.body.dataset.page === 'run') setWorkspaceView('agent');
 			break;
 
 		case 'status': {
@@ -7368,11 +7381,7 @@ function renderResultsPageHeader() {
 		? 'Blocked'
 		: displayStatus === 'partial' ? 'Completed with gaps' : session.status === 'done' ? 'Complete' : 'Results available';
 	$('results-page-status').dataset.status = displayStatus;
-	if (isQaEvidenceRun(session)) {
-		const label = qaEvidenceStatusLabel(session);
-		$('results-page-status').textContent = label;
-		if (label.startsWith('Failed')) $('results-page-status').dataset.status = 'failed';
-	}
+	if (isQaEvidenceRun(session)) $('results-page-status').textContent = runPresentationLabel(session);
 	$('results-page-findings').textContent = `${findings} finding${findings === 1 ? '' : 's'}`;
 	const assessment = session.mode === 'sqa' ? session.sqa?.assessment : null;
 	if (assessment) {
@@ -7464,7 +7473,11 @@ async function applyPageRoute(route) {
 				focusPageHeading($('results-page-title'));
 				document.title = `Results — ${state.session?.title ?? 'Qase'}`;
 			} else {
-				if (matchMedia('(max-width: 720px)').matches && state.session?.status === 'running') setWorkspaceView('browser');
+				if (isQaEvidenceRun(state.session)) {
+					$('qa-workspace-switch').hidden = false;
+					activateDetailTab($('tab-plan'));
+					setWorkspaceView(state.session.pendingQuestion ? 'agent' : 'results');
+				} else if (matchMedia('(max-width: 720px)').matches && state.session?.status === 'running') setWorkspaceView('browser');
 				else if (matchMedia('(max-width: 720px)').matches) setWorkspaceView('agent');
 				else if (document.body.dataset.workspaceView === 'runs') setWorkspaceView('agent');
 				focusPageHeading(el.chatTitle);
@@ -8891,6 +8904,12 @@ $('results-page-export')?.addEventListener('click', async event => {
 });
 el.newSqa.onclick = openSqaStart;
 el.newFounder.onclick = openFounderStart;
+$('qa-workspace-switch').onclick = () => {
+	if (document.body.dataset.workspaceView === 'agent') {
+		activateDetailTab($('tab-plan'));
+		setWorkspaceView('results');
+	} else setWorkspaceView('agent');
+};
 el.stopRun.onclick = async () => {
 	const runId = state.sessionId;
 	if (!runId || state.stopRequests.has(runId)) return;
@@ -8956,9 +8975,11 @@ const detailTabs = [...document.querySelectorAll('#tabs .tab')];
 
 function setWorkspaceView(view) {
 	if (!['runs', 'agent', 'browser', 'results'].includes(view)) view = 'agent';
+	if (view === 'browser' && document.body.dataset.page === 'run' && isQaEvidenceRun(state.session)) view = 'results';
 	const nav = document.querySelector('.workspace-mobile-nav');
 	const focusedPanel = document.activeElement?.closest('.panel');
 	document.body.dataset.workspaceView = view;
+	$('qa-workspace-switch').textContent = view === 'agent' ? 'Test workspace' : 'Agent conversation';
 	if (view === 'browser' && state.sessionId && matchMedia('(max-width: 720px)').matches) {
 		state.stageCollapsePreferences.set(state.sessionId, false);
 		renderStageCollapse();

@@ -582,7 +582,7 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 	for (const page of service.context?.pages?.() ?? []) attachDiagnostics(page);
 	bridge.authenticate = () => authentication.signIn({ getPage: currentPage, reopen: url => service.open(url), signal: activeAbortSignal ?? options.signal,
 		persist: () => runStore.commit(session, 'hybrid.auth', { authentication: { ...session.hybrid.authentication } }) });
-	bridge.runQaCheck = async input => {
+	bridge.runQaCheck = async (input, navigationGuard, menuMotion) => {
 		const signal = activeAbortSignal ?? options.signal;
 		signal?.throwIfAborted();
 		if (bridge.qaOperationActive) return { success: false, action: input?.action, error: 'Another QA scenario is still executing.' };
@@ -606,8 +606,11 @@ export async function attachBrowserBridge(session, service, runStore, options = 
 					if (!destination.allowed) return policy.asBlockedResult(destination);
 				}
 			}
-			const run = () => runJevBrowserCheck(currentPage(), input, { signal, executeTestForm: (selector, signal) => testWrites.run(currentPage(), selector, signal), responsiveBoundaries: session.qaExecutionMode === 'hybrid',
-				liveForms: session.qaExecutionMode === 'hybrid' && protectedContexts.has(currentPage().context?.()) && typeof currentPage().context?.()?.routeWebSocket === 'function', requireLiveForms: session.qaExecutionMode === 'hybrid',
+			const isolated = session.qaExecutionMode === 'hybrid' && page && protectedContexts.has(page.context?.()) && typeof page.context?.()?.routeWebSocket === 'function';
+			const run = () => runJevBrowserCheck(currentPage(), input, { signal, navigationGuard, menuMotion: isolated ? menuMotion : undefined,
+				saveMotionFrame: typeof runStore.saveMotionFrame === 'function' ? (bytes, phase) => runStore.saveMotionFrame(session, bytes, phase) : undefined,
+				executeTestForm: (selector, signal) => testWrites.run(currentPage(), selector, signal), responsiveBoundaries: session.qaExecutionMode === 'hybrid',
+				liveForms: isolated, requireLiveForms: session.qaExecutionMode === 'hybrid',
 				protectInputs: page => inputIsolation.protect(page), onViewport: session.qaExecutionMode === 'hybrid' ? async viewport => {
 				if (!session.hybrid) return;
 				session.hybrid.viewport = { ...session.hybrid.viewport, ...viewport, updatedAt: Date.now() };

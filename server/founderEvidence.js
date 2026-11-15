@@ -58,3 +58,11 @@ export function inspectFounderEvidence(session, observationId, index) {
 	}
 	return safe;
 }
+
+export function verifiedFounderObservationIds(session) {
+	return (session.founder?.observations ?? []).filter(observation =>
+		observation.evidence?.some((_, index) => {
+			try { return ['verified', 'redacted'].includes(inspectFounderEvidence(session, observation.id, index + 1).integrity); }
+			catch (error) { if (error instanceof PublicInputError) return false; throw error; }
+		})).map(item => item.id);
+}

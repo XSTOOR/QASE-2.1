@@ -6,7 +6,7 @@ import {qaScenarioSchedule} from './qaScenarioScheduler.js';
 import {modeReceiptHash} from './modeIntegrity.js';
 
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const actions = { navigation: ['navigation', 'navigation_control', 'open_test_form', 'tabs', 'disclosure', 'anchors'], broken_links: ['navigation', 'anchors'], responsive: ['responsive'], forms: ['forms', 'submit_test_form'], search: ['search'], media: ['media'], accessibility: ['accessibility'], console_health: [] };
+const actions = { navigation: ['navigation', 'navigation_control', 'open_test_form', 'tabs', 'disclosure', 'anchors'], broken_links: ['navigation', 'anchors'], responsive: ['responsive'], forms: ['forms', 'submit_test_form'], search: ['search'], media: ['media'], accessibility: ['accessibility'], menu_motion: ['menu_motion'], console_health: [] };
 export const fixedCheckCategory = action => Object.keys(actions).find(category => category !== 'broken_links' && actions[category].includes(action));
 
 /** Only intact host receipts discharge an execution obligation. A model's

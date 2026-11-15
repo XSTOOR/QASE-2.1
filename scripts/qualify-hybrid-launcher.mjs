@@ -64,10 +64,13 @@ try {
   await page.goto(`${base}/#/runs/new`);
   await page.locator('#auth-gate').waitFor({ state: 'hidden' });
   await page.locator('#qa-start[open]').waitFor();
-  await page.locator('#qa-allow-test-writes').waitFor({state:'visible'});
+  await page.locator('#qa-launch-browser[data-state="ready"]').waitFor();
+  assert.equal(await page.locator('#qa-allow-test-writes').isVisible(), false);
+  await page.locator('.qa-launch-options > summary').click();
   assert.equal(await page.locator('#qa-allow-test-writes').isChecked(), false);
   const writeControl = await page.locator('#qa-allow-test-writes').boundingBox();
   assert.ok(writeControl.width >= 16 && writeControl.width <= 24 && writeControl.height <= 24);
+  await page.locator('.qa-launch-options > summary').click();
   await page.locator('#qa-target-url').fill('example.test');
   await page.locator('#qa-goal').fill('Keep this focus while recovering browser details.');
   await page.locator('#qa-launch-browser[data-state="ready"]').waitFor();
@@ -167,6 +170,7 @@ try {
   checks.push('390px mobile layout has no horizontal overflow and exposes a reachable browser action');
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.locator('#journey-back').click();
+  if (!await page.locator('#qa-allow-test-writes').isVisible()) await page.locator('.qa-launch-options > summary').click();
   await page.locator('#qa-allow-test-writes').check();
   await page.locator('#qa-allow-test-writes').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(output, 'test-writes-desktop.png'), animations: 'disabled' });

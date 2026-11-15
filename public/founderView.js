@@ -139,15 +139,28 @@ export function createFounderView({
 	function founderTrace(item = {}) {
 		const trace = doc.createElement('div');
 		trace.className = 'founder-trace';
-		const evidenceIds = founderValues(item.evidenceObservationIds);
+		const evidenceIds = [...new Set(founderValues(item.evidenceObservationIds))];
+		const verified = new Set(getSession()?.founderVerifiedObservations ?? []);
+		const validIds = evidenceIds.filter(id => verified.has(id));
+		const unverifiedIds = evidenceIds.filter(id => !verified.has(id));
 		const assumptions = founderValues(item.assumptions);
-		if (evidenceIds.length) {
+		const addEvidenceLink = (ids, label, focusKey) => {
+			if (!ids.length) return;
 			const evidence = doc.createElement('button');
-			evidence.type='button';evidence.className='founder-evidence-link';evidence.dataset.founderFocus=viewKey('evidence');
-			evidence.textContent = `View ${new Set(evidenceIds).size} supporting observation${new Set(evidenceIds).size===1?'':'s'}`;
-			evidence.onclick=()=>evidenceView.open(evidenceIds,evidence);
+			evidence.type = 'button';
+			evidence.className = 'founder-evidence-link';
+			evidence.dataset.founderFocus = viewKey(focusKey);
+			evidence.textContent = label;
+			evidence.onclick = () => evidenceView.open(ids, evidence);
 			trace.append(evidence);
+		};
+		if (!validIds.length) {
+			const boundary = doc.createElement('p');
+			boundary.textContent = 'Hypothesis to validate. No verified browser observation supports this item.';
+			trace.append(boundary);
 		}
+		addEvidenceLink(validIds, `View ${validIds.length} supporting observation${validIds.length === 1 ? '' : 's'}`, 'evidence');
+		addEvidenceLink(unverifiedIds, 'View unverified references', 'unverified-evidence');
 		if (assumptions.length) {
 			const hypothesis = doc.createElement('details');
 			hypothesis.dataset.kind = 'assumption';
@@ -155,11 +168,6 @@ export function createFounderView({
 			const summary=doc.createElement('summary');summary.textContent=`Assumptions to validate (${assumptions.length})`;summary.dataset.founderFocus=`toggle-${hypothesis.dataset.founderDisclosure}`;
 			hypothesis.append(summary,founderList(assumptions));
 			trace.append(hypothesis);
-		}
-		if (!trace.childElementCount) {
-			const boundary = doc.createElement('span');
-			boundary.textContent = 'No supporting observations or explicit assumptions recorded.';
-			trace.append(boundary);
 		}
 		return trace;
 	}
@@ -438,7 +446,7 @@ export function createFounderView({
 			if (item.intendedOutcome) {
 				const outcome = doc.createElement('p');
 				outcome.className = 'founder-detail';
-				outcome.textContent = `Outcome: ${item.intendedOutcome}`;
+				outcome.textContent = `Outcome to validate: ${item.intendedOutcome}`;
 				content.append(outcome);
 			}
 			content.append(founderList(item.actions, 'No actions supplied.'));
@@ -663,7 +671,7 @@ export function createFounderView({
 	function appendFounderCompletedReport(container, founder, report) {
 		const observations = groupFounderObservations(founder.observations);
 		container.append(renderReportNavigation(container),renderFounderReportActions(), renderFounderEvidence(founder, report));
-		const thesis = founderSection('Executive thesis', 'The concise product, market, and execution diagnosis.');
+		const thesis = founderSection('Executive thesis', 'Founder interpretation of the product, market, and execution.');
 		const thesisCopy = doc.createElement('p');
 		thesisCopy.className = 'founder-copy founder-copy--lead';
 		thesisCopy.textContent = report.executiveSummary ?? 'No executive summary was returned.';
@@ -818,12 +826,14 @@ export function createFounderView({
 	/** Handoff status line: honest pending / succeeded / failed / unavailable. */
 	function renderHandoffStatus(saved, automatic) {
 		if (!handoff && !automatic) return undefined;
-		const status = handoff?.status ?? (saved?.handoffStartOverdue?'failed':'pending');
+		const status = handoff?.status === 'succeeded' && !handoff.reference ? 'unconfirmed'
+			: handoff?.status ?? (saved?.deliveryConfigured === false ? 'unavailable' : saved?.handoffStartOverdue ? 'failed' : 'queued');
 		const node = doc.createElement('p');
 		node.className = `founder-handoff-status founder-handoff-${status}`;
 		node.dataset.role = 'handoff-status';
-		if (!handoff) {
-			node.textContent = saved?.handoffStartOverdue?'Automatic Studio delivery did not start.':'Waiting for automatic Studio delivery.';
+		node.setAttribute('role', 'status');
+		if (status === 'queued') {
+			node.textContent = 'Recommendations queued for automatic Studio delivery.';
 		} else if (status === 'pending') {
 			node.textContent = saved?.leaseExpired?'Delivery confirmation is overdue. Retry uses the same delivery key.':automatic?'Sending recommendations to Studio…':'Sending to Studio… your saved selection is locked while delivery is pending.';
 		} else if (status === 'succeeded') {
@@ -831,10 +841,13 @@ export function createFounderView({
 			const reference = handoff.reference ? ` Studio reference ${handoff.reference}.` : '';
 			node.textContent = `Studio accepted ${count} ${count===1?'recommendation':'recommendations'}.${reference}`;
 		} else if (status === 'failed') {
-			node.textContent = handoff.message ?? 'Studio delivery could not be confirmed. Your selection is saved.';
+			node.textContent = handoff
+				? handoff.message ?? 'Studio delivery could not be confirmed. Your selection is saved.'
+				: 'Automatic Studio delivery did not start. Your requirements are saved.';
+		} else if (status === 'unconfirmed') {
+			node.textContent = 'This saved delivery has no Studio receipt. Use the requirements export or confirm it in Studio.';
 		} else if (status === 'unavailable') {
-			node.textContent = handoff.message ?? 'Drytis Studio delivery is not configured on this instance.';
-			node.textContent += ' Use Copy requirements or Download requirements. No build was started.';
+			node.textContent = handoff?.message ?? 'Drytis Studio delivery is not configured on this instance. Use Copy requirements or Download requirements.';
 		}
 		if (status === 'failed' || (automatic && saved?.leaseExpired)) {
 			const retry = doc.createElement('button');
@@ -863,7 +876,7 @@ export function createFounderView({
 		const lifecycle = describeFounderLifecycle(founder, session.status, session.activities?.length ?? 0, session.founderProgress, session);
 		elements.countFounder.textContent = lifecycle.badge;
 		handoff=handoffOverride??getProjectState?.()?.handoff;
-		const signature=founderViewSignature({scope,observations:founder.observations,report,finalizedAt:founder.finalizedAt,lifecycle,categories:getCatalog()?.categories,projectSet:report?undefined:getProjectState?.()?.recommendationSet,feedback:report?(getFeedbackRating?.()??null):undefined});
+		const signature=founderViewSignature({scope,observations:founder.observations,verified:session.founderVerifiedObservations,report,finalizedAt:founder.finalizedAt,lifecycle,categories:getCatalog()?.categories,projectSet:report?undefined:getProjectState?.()?.recommendationSet,feedback:report?(getFeedbackRating?.()??null):undefined});
 		reader.update(elements.founderView,session,signature,()=>{
 		surface=elements.founderView;traceIndex=0;surface.dataset.founderRun=session.id;delete surface.dataset.founderSelection;
 		elements.founderView.append(renderFounderHero(scope, lifecycle), renderFounderScope(scope));
@@ -906,7 +919,7 @@ export function createFounderView({
 		const founder = session?.founder ?? {};
 		const report = founder.report;
 		const lifecycle = describeFounderLifecycle(founder, session?.status, session?.activities?.length ?? 0, session?.founderProgress, session);
-		const signature=founderViewSignature({scope:founder.scope,observations:founder.observations,report,finalizedAt:founder.finalizedAt,lifecycle,categories:getCatalog()?.categories,feedback:report?(getFeedbackRating?.()??null):undefined});
+		const signature=founderViewSignature({scope:founder.scope,observations:founder.observations,verified:session.founderVerifiedObservations,report,finalizedAt:founder.finalizedAt,lifecycle,categories:getCatalog()?.categories,feedback:report?(getFeedbackRating?.()??null):undefined});
 		reader.update(elements.reportView,session,signature,()=>{
 		surface=elements.reportView;traceIndex=0;surface.dataset.founderRun=session.id;delete surface.dataset.founderSelection;
 		if (!founder.finalizedAt || !report) {

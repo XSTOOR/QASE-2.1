@@ -494,6 +494,8 @@ test('SQA human review API preserves versions, rejects stale writes and enforces
 	assert.equal((await fixture.request('/api/sqa/reviews')).status, 403);
 	assert.equal((await fixture.request(`${base}/review/reopen`, { method: 'POST', json: { expectedRevision: 1, reason: 'Review evidence.' } })).status, 403);
 	assert.equal((await fixture.request(`${base}/observations`, { method: 'POST', json: {} })).status, 403);
+	assert.equal((await fixture.request(`${base}/review/evidence`, { method: 'POST', json: {} })).status, 403);
+	assert.equal((await fixture.request(`${base}/review/evidence/arbitrary-id/decision`, { method: 'POST', json: {} })).status, 403);
 	role = 'owner';
 	assert.equal((await body(await fixture.request('/api/sqa/reviews'))).reviews.length, 1);
 	const original = await body(await fixture.request(`${base}/versions/1`));
@@ -520,6 +522,7 @@ test('SQA human review API preserves versions, rejects stale writes and enforces
 	fixture.services.runs.get = id => id === session.id ? undefined : get(id);
 	assert.equal((await fixture.request(`${base}/versions/1`)).status, 404);
 	assert.equal((await fixture.request(`${base}/evidence/SQA-GOV-001/1`)).status, 404);
+	assert.equal((await fixture.request(`${base}/review/evidence/arbitrary-id/file`)).status, 404);
 	assert.equal((await fixture.request(`${base}/review/reopen`, { method: 'POST', json: { expectedRevision: 4, reason: 'Unavailable run.' } })).status, 404);
 });
 

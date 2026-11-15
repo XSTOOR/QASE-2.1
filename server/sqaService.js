@@ -5,6 +5,7 @@ import { redact } from './secrets.js';
 import { PublicInputError, publicInput } from './publicErrors.js';
 import { assertSqaSize, preserveSqaPublication } from './sqaHistory.js';
 import { evidenceDigest } from './sqaEvidence.js';
+import { acceptedSqaReviewEvidence, isSubmittedSqaReference } from './sqaReviewEvidence.js';
 import { isSqaInternalEvidence, SQA_RELEASE_REPORT_CONTROL_IDS } from '../public/sqaEvidencePolicy.js';
 import { publicationTodos } from './finalizationGuard.js';
 import { sqaExecutionBudget } from './sqaBrowserBudget.js';
@@ -696,7 +697,7 @@ export async function finishSqaAssessment(session, runStore, now = () => Date.no
  * its authority, licence, scope, and retention. The deterministic evaluator
  * still downgrades unsupported pass/fail claims.
  */
-export async function recordReviewerSqaObservation(session, observation, reviewer, runStore, now = () => Date.now(), { reviewerDocuments = false } = {}) {
+export async function recordReviewerSqaObservation(session, observation, reviewer, runStore, now = () => Date.now(), { reviewerDocuments = false, artifacts } = {}) {
 	if (session?.mode !== 'sqa' || !session.sqa) {
 		throw new PublicInputError('This run is not an SQA assessment.');
 	}
@@ -721,6 +722,9 @@ export async function recordReviewerSqaObservation(session, observation, reviewe
 	// already held in the run vault. Scrub the complete structured observation
 	// before validation, hashing, persistence, and publication.
 	let safeObservation = redact(session.id, observation);
+	if (Array.isArray(safeObservation?.evidence) && safeObservation.evidence.some(item => isSubmittedSqaReference(item?.reference))) {
+		throw new PublicInputError('Submitted documents must be accepted through evidence review.');
+	}
 	const controlId = publicInput(() => text(safeObservation?.controlId, 'SQA control ID', 32, true));
 	const index = candidate.findIndex(item => item.controlId === controlId);
 	if (reviewerDocuments) {
@@ -742,7 +746,8 @@ export async function recordReviewerSqaObservation(session, observation, reviewe
 			return prior ? { ...item, reference, collectedAt: prior.collectedAt }
 				: { ...item, reference, collectedAt: reviewedAt };
 		});
-		safeObservation = { ...safeObservation, evidence: [...existing.filter(isSqaInternalEvidence), ...documents] };
+		const approved = acceptedSqaReviewEvidence(session, controlId, artifacts);
+		safeObservation = { ...safeObservation, evidence: [...existing.filter(isSqaInternalEvidence), ...documents, ...approved] };
 	}
 	if (index >= 0) candidate[index] = safeObservation;
 	else candidate.push(safeObservation);

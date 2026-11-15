@@ -60,7 +60,7 @@ export function createQaJourney({ document, getState, changed, onBlocked }) {
 		$('qa-cancel').hidden = step !== 0;
 		nextButton.hidden = step === 2;
 		nextButton.className = step === 1 ? 'btn btn-primary' : 'btn btn-ghost';
-		nextButton.textContent = step === 0 ? 'Browser and checks' : 'Review test run';
+		nextButton.textContent = step === 0 ? 'Customize checks' : 'Review test run';
 		$('qa-start').querySelector('.modal-body').scrollTop = 0;
 		sync(); changed();
 		panels[step].querySelector('h2')?.focus({ preventScroll: true });

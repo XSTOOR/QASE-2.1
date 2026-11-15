@@ -154,6 +154,28 @@ test('snapshot assertions require operator expectations and separate evidence fo
   assert.ok(validateHybridFinding(f.session, { scenario_id: scenario.id, assertion_id: b.id }));
 });
 
+test('an exact heading check ignores matching body copy and needs a separate load to confirm a failure', async () => {
+  const f = fixture(['content']), [scenario] = f.session.hybrid.scenarios;
+  await f.ledger.plan([{ id: scenario.id, category: 'content', objective: 'Visible heading', expected: { source: 'request', text: 'Welcome' } }]);
+  await f.ledger.start(scenario.id);
+  const observe = async (heading, omitted = 0) => f.ledger.record(await f.ledger.beginAction('browser_snapshot', {}), {
+    success: true, url: f.session.targetUrl, bodyText: `${heading}\nWelcome to the app`,
+    elements: [{ tagName: 'h1', text: heading }, { tagName: 'p', text: 'Welcome' }], elementCoverage: { omitted }
+  });
+  const check = ({ id }) => f.ledger.assertSnapshot({ scenarioId: scenario.id, evidenceId: id, predicate: 'heading_equals', expected: 'Welcome' });
+  assert.equal((await check(await observe('Welcome'))).outcome, 'pass');
+  await assert.rejects(check(await observe('Wrong', 1)), /truncated snapshot/);
+  const first = await check(await observe('Wrong'));
+  assert.equal(first.outcome, 'fail');
+  assert.equal(first.actual, 'Wrong');
+  const second = await check(await observe('Wrong'));
+  assert.equal(second.reproduction, undefined);
+  await f.ledger.record(await f.ledger.beginAction('browser_open', { url: f.session.targetUrl }), { success: true, url: f.session.targetUrl });
+  const afterReload = await check(await observe('Wrong'));
+  assert.equal(afterReload.reproduction.firstEvidenceRef, first.evidenceRef);
+  assert.ok(validateHybridFinding(f.session, { scenario_id: scenario.id, assertion_id: afterReload.id }));
+});
+
 test('reasoner budgets, timeouts, cancellation and reasoning filtering surround the SDK chat interface', async () => {
   const f = fixture(); f.profile.budgets.reasonerCalls = 1;
   const telemetry = createHybridTelemetry(f.session.hybrid);
@@ -209,6 +231,20 @@ test('an interrupted action is uncertain, requires verification, and is not auto
   assert.equal(f.session.hybrid.recovery.verificationRequired, true);
   await assert.rejects(f.runtime.wrapTool({ name: 'browser_click', async run() { throw Error('must not execute'); } }).run({ selector: '#save' }), /fresh browser/);
   assert.equal(f.session.hybrid.actions.length, 1);
+});
+
+test('a stop during the action checkpoint does not reach the browser', async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  let dispatched = false;
+  f.store.commit = async () => {
+    if (f.session.hybrid.actions.some(action => action.status === 'running')) controller.abort(new Error('Stopped before dispatch'));
+  };
+  const tool = f.runtime.wrapTool({ name: 'browser_open', async run() { dispatched = true; } });
+  await assert.rejects(tool.run({ url: f.session.targetUrl }, { signal: controller.signal }), /Stopped before dispatch/);
+  assert.equal(dispatched, false);
+  assert.equal(f.session.hybrid.actions[0].status, 'not_dispatched');
+  assert.equal(f.session.hybrid.evidence.length, 0);
 });
 
 test('evidence and action inputs use existing secret redaction before persistence', async t => {

@@ -134,9 +134,10 @@ test('Phase 4 — selection controls gate an explicit send; selection alone neve
 });
 
 test('Phase 4 — honest handoff states: pending, succeeded with reference, failed keeps selections, unavailable fallback', () => {
-	assert.match(founderView, /Waiting for automatic Studio delivery/);
+	assert.match(founderView, /Recommendations queued for automatic Studio delivery/);
 	assert.match(founderView, /Sending recommendations to Studio/);
 	assert.match(founderView, /Studio reference \$\{handoff\.reference\}/);
+	assert.match(founderView, /This saved delivery has no Studio receipt/);
 	assert.match(founderView, /Studio delivery could not be confirmed/);
 	assert.match(founderView, /Retry delivery/);
 	assert.match(founderView, /Studio delivery is not configured/);

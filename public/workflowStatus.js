@@ -1,4 +1,4 @@
-import { runPresentationStatus } from './runPresentation.js';
+import { runPresentationLabel, runPresentationStatus } from './runPresentation.js';
 
 /** Guidance derived from actual run state, never elapsed-time guesses. */
 export function workflowStatus(session, connection) {
@@ -12,7 +12,9 @@ export function workflowStatus(session, connection) {
 		if(progress.recovery.available)return {tone:'attention',title:progress.title,description:progress.detail,action:'View review progress',destination:'founder'};
 	}
 	if (session?.pendingQuestion || status === 'awaiting_input') return { tone: 'attention', title: 'Qase needs your input', description: 'Answer the question below so testing can continue.', action: 'Answer question', destination: 'question' };
-	if (status === 'failed') return { tone: 'attention', title: 'Quality review found failed controls', description: 'Review the failed controls, their supporting evidence and any remaining coverage gaps in the quality report.', action: 'Review quality report', destination: 'results' };
+	if (status === 'failed') return session?.mode === 'sqa'
+		? { tone: 'attention', title: 'Quality review found failed controls', description: 'Review the failed controls, their supporting evidence and any remaining coverage gaps in the quality report.', action: 'Review quality report', destination: 'results' }
+		: { tone: 'attention', title: runPresentationLabel(session), description: 'Review the failed checks, their evidence and any gaps in the results.', action: 'Review results', destination: 'results' };
 	if (status === 'blocked') return session?.mode === 'sqa'
 		? { tone: 'attention', title: 'Quality review has unresolved controls', description: 'Review the quality report for missing evidence and any recorded execution limits. Completed technical checks remain available.', action: 'Review quality report', destination: 'results' }
 		: { tone: 'attention', title: 'Testing needs a prerequisite', description: 'Open the report to see what prevented testing and what to provide next.', action: 'Review blocker', destination: 'results' };

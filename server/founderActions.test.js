@@ -134,7 +134,7 @@ test('handoff reserves atomically, blocks duplicate writes, and cannot overwrite
 
 test('delivery retries preserve the full payload and key; another report with repeated IDs has a different key', async () => {
   const calls = []; let fail = true;
-  const f = fixture({ deliveryClient: { async deliver(target, payload, options) { calls.push({ payload, options }); if (fail) throw new Error('Timeout after possible acceptance'); return { status: 202 }; } } });
+  const f = fixture({ deliveryClient: { async deliver(target, payload, options) { calls.push({ payload, options }); if (fail) throw new Error('Timeout after possible acceptance'); return { status: 202, reference: 'confirmed-job' }; } } });
   const a = report(); const saved = await f.service.select(a, input(await f.service.read(a), ['rec-1']));
   await assert.rejects(f.service.send(a, input(saved)), error => error.code === 'handoff_failed');
   assert.deepEqual((await f.service.read(a)).selections, ['rec-1']);

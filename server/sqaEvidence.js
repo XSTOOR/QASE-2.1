@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { PublicInputError } from './publicErrors.js';
 import { redact } from './secrets.js';
 import { sqaVersion } from './sqaHistory.js';
+import { isSubmittedSqaReference, readSqaReviewerFile } from './sqaReviewEvidence.js';
 
 export function canonicalEvidence(value) {
 	if (Array.isArray(value)) return `[${value.map(canonicalEvidence).join(',')}]`;
@@ -14,7 +15,7 @@ export function evidenceDigest(payload) {
 }
 
 /** Resolve only evidence already attached to the authorized run/control/version. */
-export function inspectSqaEvidence(session, controlId, index, version) {
+export function inspectSqaEvidence(session, controlId, index, version, artifacts) {
 	if (session.mode !== 'sqa' || !session.sqa) throw new PublicInputError('This run is not an SQA assessment.', 409);
 	const assessment = version === undefined ? session.sqa.assessment : sqaVersion(session.sqa, version).assessment;
 	if (!/^\d+$/.test(String(index)) || Number(index) < 1) throw new PublicInputError('Invalid evidence index.');
@@ -26,8 +27,32 @@ export function inspectSqaEvidence(session, controlId, index, version) {
 	let integrity = 'external_unverified';
 	let activities = [];
 	let detail = 'Reviewer document reference. Qase has not fetched or verified the document bytes.';
-	let payload;
-	if (reference.startsWith('qase://')) {
+	let payload, reviewerDocument;
+	if (isSubmittedSqaReference(reference)) {
+		const id = reference.slice('qase-review://'.length);
+		const item = session.sqa.reviewSubmissions?.find(item => item.id === id && item.controlId === controlId && item.status === 'accepted');
+		if (!item) {
+			integrity = 'unavailable';
+			detail = 'The reviewer submission for this reference is unavailable.';
+		} else {
+			reviewerDocument = { id, source: item.source, owner: item.owner, release: item.release, environment: item.environment,
+				reviewedAt: item.reviewedAt, reviewNote: item.reviewNote, link: item.link, fileName: item.fileName };
+			detail = 'An authorized reviewer confirmed access and accepted the document for this build and environment.';
+			if (item.source === 'file') {
+				try {
+					readSqaReviewerFile(session, id, artifacts);
+					integrity = 'verified';
+					detail = 'The stored upload matches its recorded digest. The reviewer’s decision records its applicability.';
+				} catch (error) {
+					if (!(error instanceof PublicInputError)) throw error;
+					integrity = 'unavailable';
+					detail = error.message;
+				}
+			} else {
+				integrity = 'reviewer_confirmed';
+			}
+		}
+	} else if (reference.startsWith('qase://')) {
 		if (!match || match[1] !== session.id) throw new PublicInputError('This internal reference does not belong to the current run.', 409);
 		const record = session.sqa.evidenceRecords?.[evidence.digest];
 		if (record) {
@@ -45,7 +70,9 @@ export function inspectSqaEvidence(session, controlId, index, version) {
 			activities = (session.activities ?? []).filter(activity => encodeURIComponent(String(activity.id).slice(0, 128)) === match[2]).map(({ id, toolName, ts, status, detail, summary }) => ({ id, toolName, ts, status, detail, summary }));
 		}
 	}
-	const resultPayload = { controlId, index: Number(index), evidence, integrity, detail, activities, ...(payload ? { bundle: payload } : {}), redaction: 'Values currently held in the run credential vault are redacted before delivery.' };
+	const resultPayload = { controlId, index: Number(index), evidence, integrity, detail, activities,
+		...(payload ? { bundle: payload } : {}), ...(reviewerDocument ? { reviewerDocument } : {}),
+		redaction: 'Values currently held in the run credential vault are redacted before delivery.' };
 	const safe = redact(session.id, resultPayload);
 	if (integrity === 'verified' && canonicalEvidence(safe) !== canonicalEvidence(resultPayload)) {
 		safe.integrity = 'redacted';

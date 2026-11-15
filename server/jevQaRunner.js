@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { QA_STANDARD_TESTS } from './qaTestCatalog.js';
+import { MENU_MOTION, menuMotionLabel } from './qaMenuMotion.js';
 
 const bounded = (value, limit = 1500) => String(value ?? '').slice(0, limit);
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 20);
@@ -41,6 +42,7 @@ export function jevRequestedChecks(session) {
   if (/accessibility|\ba11y\b|keyboard reachability|focus visibility|\bcontrast\b/i.test(request)) selected.push('accessibility');
   if (/content and text|content.*validation|text validation|placeholders correct/i.test(request)) selected.push('content');
   if (/UI consistency|visual consistency|fonts.*colors.*spacing/i.test(request)) selected.push('visual_consistency');
+  if (session.qaExecutionMode === 'hybrid' && menuMotionLabel(session)) selected.push(MENU_MOTION);
   return [...new Set(selected)];
 }
 

@@ -164,9 +164,9 @@ export function upgradeLegacyReport(report) {
  * Normalize the model's final payload into the single persisted Founder report
  * shape. Computed fields and the caveat never come from the model.
  */
-export function normalizeFounderReport(input, { observations, target, generatedAt }) {
+export function normalizeFounderReport(input, { observations, target, generatedAt, verifiedObservations }) {
 	assertPlainObject(input, 'Founder report');
-	const observationIds = new Set(observations.map(item => item.id));
+	const observationIds = new Set(verifiedObservations ?? observations.map(item => item.id));
 
 	const rawIcp = assertPlainObject(input.icp, 'Founder ICP');
 	const icpEvidenceObservationIds = normalizeReferenceIds(rawIcp.evidence_observation_ids ?? rawIcp.evidenceObservationIds, 'Founder ICP evidence', observationIds);

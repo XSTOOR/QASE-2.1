@@ -351,7 +351,28 @@ export function createHybridRouteExecution({ session, ledger, checkpoint, router
                   const anchors = await invoke('browser_qa_check', { action: 'anchors' }, context.signal);
                   fragmentEvidence = anchors.hostEvidenceId;
                   await controls(inventory.inventory || {}, route, context);
-                  await ledger.close(navigationScenario.id, navigationScenario.assertions.slice(navigationScenario.routeRuns.at(-1).assertionOffset).length ? 'complete' : 'inconclusive', 'No navigation control contract was exercised on this page; fragment assertions belong to broken links.');
+                  const offset = navigationScenario.routeRuns.at(-1).assertionOffset;
+                  if (navigationScenario.assertions.length === offset && route.kind !== 'feature' && key(route.url) === key(session.targetUrl)) {
+                    // A direct open only loads the entry page. When no local
+                    // navigation control was exercised, sample one safe link
+                    // from a fresh inventory and verify the entry is restored.
+                    const observed = await invoke('browser_qa_check', { action: 'inspect' }, context.signal);
+                    const fresh = observed.inventory;
+                    if (observed.success && fresh?.url && key(fresh.url) === key(route.url) && fresh.readiness?.ready !== false && !fresh.overlays?.length) {
+                      const link = jevRouteCandidates(fresh, session.targetUrl).find(candidate =>
+                        fresh.links.some(observed => observed.selector === candidate.selector && observed.href === candidate.url));
+                      if (link) {
+                        await invoke('browser_qa_check', { action: 'navigation', selector: link.selector, expected: link.url }, context.signal);
+                        const restored = await invoke('browser_open', { url: route.url }, context.signal);
+                        if (restored.success === false || !restored.url || key(restored.url) !== key(route.url)) {
+                          const reason = 'The entry page could not be restored after checking an observed link.';
+                          await ledger.close(navigationScenario.id, 'inconclusive', reason);
+                          route.status = 'failed'; route.reason = reason; await checkpoint(); continue;
+                        }
+                      }
+                    }
+                  }
+                  await ledger.close(navigationScenario.id, navigationScenario.assertions.length > offset ? 'complete' : 'inconclusive', 'No eligible navigation control or link could be exercised on this page. Fragment assertions count toward broken-link checks.');
                 }
               } else if (suites && navigationScenario) await ledger.close(navigationScenario.id, navigationScenario.assertions.slice(navigationScenario.routeRuns.at(-1).assertionOffset).length ? 'complete' : 'inconclusive', 'No category-specific navigation assertion was recorded.');
               // Read-only checks and responsive sampling precede live inputs:

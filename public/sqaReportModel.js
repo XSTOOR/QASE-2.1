@@ -1,4 +1,4 @@
-import { SQA_AGENT_CAPABLE_EVIDENCE_TYPES } from './sqaPresentation.js';
+import { sqaMissingEvidenceRequirements } from './sqaPresentation.js';
 
 /** Common traceability data used by the UI, Markdown and PDF renderers. */
 export function sqaReportModel(assessment = {}) {
@@ -6,20 +6,20 @@ export function sqaReportModel(assessment = {}) {
 	return {
 		technical: assessment.technicalSummary,
 		failures: results.filter(item => item.status === 'fail'),
-		evidenceRequests: results.flatMap(result => (result.evidenceCoverage?.requirements ?? [])
-			.filter(requirement => !requirement.satisfied)
+		evidenceRequests: results.flatMap(result => sqaMissingEvidenceRequirements(result)
 			.map(requirement => ({
 				controlId: result.controlId, title: result.title, severity: result.severity,
 				mandatory: result.mandatory, status: result.status,
 				id: requirement.id, type: requirement.type, minimum: requirement.minimum,
 				description: requirement.description,
-					owner: ['browser', 'reviewer'].includes(requirement.owner) ? requirement.owner : (SQA_AGENT_CAPABLE_EVIDENCE_TYPES.includes(requirement.type) ? 'browser' : 'reviewer')
+				owner: requirement.owner
 			}))),
 		evidence: results.flatMap(result => (result.evidence ?? []).map((item, index) => ({
 			controlId: result.controlId, status: result.status, index: index + 1,
 			type: item.type, collectedAt: item.collectedAt ?? 'not recorded', reference: item.reference,
 			digest: item.digest ?? 'not supplied', summary: item.summary ?? '',
-			origin: String(item.reference).startsWith('qase://') ? 'Internal browser record' : 'Reviewer document reference'
+			origin: String(item.reference).startsWith('qase://') ? 'Internal browser record'
+				: String(item.reference).startsWith('qase-review://') ? 'Accepted reviewer document' : 'Reviewer document reference'
 		})))
 	};
 }

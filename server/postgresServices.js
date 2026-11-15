@@ -84,6 +84,10 @@ function summary(session) {
 		findingCount: session.findings.length,
 		messageCount: session.messages.length,
 		...(session.report?.verdict ? { reportVerdict: session.report.verdict } : {}),
+		...(session.qaExecutionMode === 'hybrid' ? {
+			qaExecutionMode: 'hybrid',
+			...(session.report?.notCovered?.length ? { coverageIncomplete: true } : {})
+		} : {}),
 		...(session.mode === 'sqa' && session.sqa?.assessment?.verdict ? { sqaVerdict: session.sqa.assessment.verdict } : {}),
 		tokenUsage: session.tokenUsage
 	};

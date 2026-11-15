@@ -9,6 +9,7 @@ import { redact } from './secrets.js';
 import { hybridHostContext, projectHybridMessages, prepareHybridInference } from './hybridContext.js';
 import { assertionSummary, scenarioSummary } from './hybridSummaries.js';
 import { createHybridRouteExecution } from './hybridRouteExecution.js';
+import { createHybridNavigationDecision } from './hybridNavigationDecision.js';
 import { checkPrimaryViewport } from './qaViewport.js';
 import { hybridRecoveryProblem } from './hybridRecoveryGate.js';
 import { hybridRoutePolicy } from './hybridRoutePolicy.js';
@@ -19,7 +20,9 @@ import { executionProgress, recordHybridSegment, fixedCheckCategory, scenarioExe
 import {qaScenarioSchedule} from './qaScenarioScheduler.js';
 import { createApplicationDiscovery, applicationDiscoveryStatus, observeApplication } from './qaApplicationDiscovery.js';
 import { recordInferenceProgress } from './qaInferenceProgress.js';
+import { MENU_MOTION, menuMotionLabel } from './qaMenuMotion.js';
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 const discovery = new Set(['browser_authenticate', 'browser_open', 'browser_snapshot', 'browser_get_url', 'browser_screenshot', 'browser_diagnostics', 'browser_tabs']);
 const forbidden = new Set(['security_check', 'browser_dialog', 'browser_media', 'browser_test_meeting_link']);
@@ -41,11 +44,12 @@ export async function hybridRegressionSuggestions(session, runStore) {
   return suggestions;
 }
 
-export function initializeHybridState(session, profile) {
+export function initializeHybridState(session, profile, { jevNavigation = false } = {}) {
   if (session.mode !== 'qa' || session.qaExecutionMode !== 'hybrid') throw new Error('Hybrid is available only for explicitly selected QA runs.');
   const identity = profileIdentity(profile);
   if (session.hybrid && session.hybrid.profileIdentity !== identity) throw new Error('Hybrid model/key identity changed. Requalify and create a new run; an in-progress run cannot switch models.');
   session.hybrid ??= { version: 1, profileIdentity: identity, sdkVersion: profile.sdkVersion,
+    ...(jevNavigation ? { navigationDecisionVersion: 1 } : {}),
     ...(session.qaDiscoveryVersion === 1 ? { discovery: { version: 1, status: 'pending', observations: [], features: [], probes: [] } } : {}),
     reasoner: { model: profile.reasoner.model, endpoint: profile.reasoner.endpoint }, classifier: { model: profile.classifier.model, endpoint: profile.classifier.endpoint },
     budgets: structuredClone(profile.budgets), allowWithoutClassifier: profile.allowWithoutClassifier, continuationPolicyVersion: profile.autonomy?.enabled ? 2 : 1, ...(profile.autonomy?.enabled ? { executionPolicy: { mode: 'autonomous', limits: structuredClone(profile.autonomy.limits), maxPages: profile.autonomy.maxPages } } : {}), status: 'ready', createdAt: Date.now() };
@@ -78,6 +82,7 @@ export function publicHybridState(session) {
 
 export function createHybridRuntime({ session, runStore, profile, record, onUsage, fetchImpl }) {
   const state = initializeHybridState(session, profile);
+  if (session.status === 'interrupted' && !session.report) state.recovery = { ...state.recovery, verificationRequired: true };
   state.scheduler??={version:1,maxInvestigations:2};
   if(state.executionPolicy&&!session.report)state.executionPolicy.incompleteOutcome??='pause';
   const telemetry = createHybridTelemetry(state);
@@ -94,6 +99,9 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
   const router = createHybridModelRouter({ session, profile, telemetry, checkpoint, onUsage, fetchImpl });
   let browserTail = Promise.resolve();
   let browserOperationActive = false;
+  const navigationOwners = new AsyncLocalStorage();
+  let navigationOwner;
+  const navigationAccess = () => !navigationOwner || navigationOwners.getStore() === navigationOwner;
   let signal;
   let modelTimer;
   state.repeatActions ??= [];
@@ -102,6 +110,17 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
   tools.push(...routes.tools);
   const appDiscovery = createApplicationDiscovery({ session, checkpoint, invoke: (...args) => record.invokeHybridTool(...args) });
   tools.push(appDiscovery.tool);
+  if (state.navigationDecisionVersion === 1 && state.scope.includes('navigation')) {
+    tools.push(createHybridNavigationDecision({ session, ledger, router, checkpoint,
+      invoke: (...args) => record.invokeHybridTool(...args),
+      async withBrowserOwner(work) {
+        if (navigationOwner || browserOperationActive) throw new Error('Wait for the active navigation or browser operation.');
+        navigationOwner = {};
+        try { return await navigationOwners.run(navigationOwner, () => work(guard => { navigationOwner.clickGuard = guard; })); }
+        finally { navigationOwner = undefined; }
+      }
+    }));
+  }
   let catalog = [];
   let modelToolsReady = Promise.resolve(true);
   let closeoutCalls = [];
@@ -243,13 +262,14 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
     },
     wrapTool(tool) {
       if (!tool.name.startsWith('browser_')) return { ...tool, async run(input, context) {
+        const activeSignal = context?.signal || signal;
         let unlock;
         if (['qa_work_schedule','qa_investigate_scenario','qa_plan_scenarios', 'qa_start_scenario', 'qa_close_scenario', 'qa_assert_snapshot', 'qa_assert_diagnostics', 'finish_qa_report'].includes(tool.name)) {
           const previous = browserTail; browserTail = new Promise(resolve => { unlock = resolve; });
           await previous;
         }
         try {
-          signal?.throwIfAborted();
+          activeSignal?.throwIfAborted();
           if (state.pendingDecision && (tool.name !== 'ask_question' || digestEvidence(input) !== digestEvidence(state.pendingDecision.input))) throw new Error('A host decision is pending. Only its native user question may execute.');
           if (autonomous(state) && tool.name === 'ask_question' && !state.pendingDecision && !needsHybridAuthQuestion(session)) return { success: false, code: 'QASE_CONTINUE_AUTOMATICALLY', error: 'Choose the next safe check using the supplied goal, access state and evidence. Do not ask about budgets, priorities or publishing gaps. Missing optional expectations are report limitations; missing credentials require the secure access workflow.' };
           const closeout = state.finishRequested && (state.partialReportApproved?.decisionId || autonomous(state) && state.closeoutAuthorization?.source === 'pinned_run_policy');
@@ -261,29 +281,37 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           } else if (!(tool.name === 'ask_question' && state.pendingDecision)) router.check();
           if (!routes.access()) throw new Error('An approved route batch owns the browser/scenario lifecycle; wait for its result.');
           if (!appDiscovery.access()) throw new Error('Application discovery owns the browser; wait for its checkpoint.');
+          if (!navigationAccess()) throw new Error('A navigation decision owns the browser and scenario lifecycle; wait for its result.');
           if (tool.name === 'qa_discover_application' && state.actions.some(a => ['running','uncertain'].includes(a.status))) throw new HybridPause('HYBRID_UNCERTAIN_ACTION', 'Discovery has an uncertain prior action. Progress is saved; verify the browser/action state before continuing. No navigation was replayed.');
           if (state.budgetFinalizing && !['qa_close_scenario', 'update_todo', 'report_finding', 'finish_qa_report'].includes(tool.name)) throw new Error('Budget closeout permits only scenario dispositions, evidenced findings, todo dispositions and final report publication.');
           if (browserOperationActive && ['qa_start_scenario','qa_investigate_scenario', 'qa_close_scenario'].includes(tool.name)) throw new Error('Wait for the active browser operation before changing scenario ownership.');
-          return await tool.run(input, context);
+          return await tool.run(input, tool.name === 'qa_choose_navigation' ? { ...context, signal: activeSignal } : context);
         }
         catch (error) { if (error instanceof HybridPause) { state.pauseReason = error.message; state.status = 'paused'; record.hybridPause = error; await checkpoint(); } throw error; }
         finally { unlock?.(); }
       } };
       return { ...tool, async run(input, context = {}) {
+        const activeSignal = context.signal || signal;
         const atomicScenario = tool.name === 'browser_qa_scenario';
         const previous = browserTail; let unlock; browserTail = new Promise(resolve => { unlock = resolve; });
         await previous;
         browserOperationActive = true;
         let action;
+        let dispatched = false;
         let ownsPreviewLock = false;
         try {
-          const activeSignal = context.signal || signal;
           activeSignal?.throwIfAborted();
           if (state.pendingDecision) throw new Error('A host decision is pending; browser execution waits for the user answer.');
           router.check();
           if (!routes.access()) throw new Error('An approved route batch owns the browser; wait for its result.');
           if (!appDiscovery.access()) throw new Error('Application discovery owns the browser; wait for its checkpoint.');
+          if (!navigationAccess()) throw new Error('A navigation decision owns the browser; wait for its result.');
           if (state.budgetFinalizing) throw new Error('Browser exploration has stopped for budget closeout. Record remaining coverage gaps and publish the host-validated report.');
+          const motionRequested = ['browser_qa_check', 'browser_qa_scenario'].includes(tool.name) && input?.action === MENU_MOTION;
+          const motionLabel = motionRequested && menuMotionLabel(session);
+          if (motionRequested && (!atomicScenario || !motionLabel || !state.scope.includes(MENU_MOTION))) {
+            throw new Error('Menu motion requires the explicitly requested named menu scenario.');
+          }
           if (['browser_qa_check', 'browser_qa_scenario'].includes(tool.name)) {
             const categories = { navigation: ['navigation', 'broken_links'], navigation_control: ['navigation'], open_test_form: ['navigation'], anchors: ['navigation', 'broken_links'], disclosure: ['navigation'], tabs: ['navigation'], dismiss_overlay: ['navigation'], submit_test_form: ['forms'], responsive: ['responsive'], forms: ['forms'], search: ['search'], media: ['media'], accessibility: ['accessibility'] };
             if (!appDiscovery.active() && !routes.preparing(input) && !(autonomous(state) && input?.action === 'dismiss_overlay') && categories[input?.action] && !categories[input.action].some(category => state.scope.includes(category))) throw new Error('The fixed check is outside the selected test scope or selected scenario category.');
@@ -302,7 +330,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           }
           if (atomicScenario) {
             const scenario = ledger.scenario(input.scenario_id);
-            const compatible = { navigation: ['navigation', 'navigation_control', 'open_test_form', 'disclosure', 'anchors', 'tabs'], broken_links: ['navigation', 'anchors'], responsive: ['responsive'], forms: ['forms', 'submit_test_form'], search: ['search'], media: ['media'], accessibility: ['accessibility'] };
+            const compatible = { navigation: ['navigation', 'navigation_control', 'open_test_form', 'disclosure', 'anchors', 'tabs'], broken_links: ['navigation', 'anchors'], responsive: ['responsive'], forms: ['forms', 'submit_test_form'], search: ['search'], media: ['media'], accessibility: ['accessibility'], [MENU_MOTION]: [MENU_MOTION] };
             if (!compatible[scenario.category]?.includes(input.action)) throw new Error('This action cannot establish the selected scenario category; use its matching fixed check or record a concrete coverage gap.');
             if (state.actions.some(action => action.status === 'uncertain' && action.toolName === 'browser_qa_check' && action.scenarioId === scenario.id)) throw new HybridPause('HYBRID_UNCERTAIN_ACTION', 'The scenario has an uncertain prior browser-check receipt. It cannot be automatically replayed. Record the blocker or choose a separately verified investigation.');
             if (state.currentScenarioId && state.currentScenarioId !== scenario.id) throw new Error('Close the active scenario before executing another.');
@@ -334,7 +362,12 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           }
           state.telemetry.browserActions += actionCost;
           action = await ledger.beginAction(atomicScenario ? 'browser_qa_check' : tool.name, input);
-          const result = await tool.run(tool.name === 'browser_diagnostics' ? { ...input, clear: true } : input, context);
+          activeSignal?.throwIfAborted();
+          const clickGuard = atomicScenario && navigationOwners.getStore()?.clickGuard;
+          dispatched = true;
+          const result = await tool.run(tool.name === 'browser_diagnostics' ? { ...input, clear: true } : input,
+            motionRequested ? { ...context, qaseMenuMotion: { label: motionLabel, url: session.targetUrl } }
+              : clickGuard ? { ...context, qaseNavigationGuard: clickGuard } : context);
           if (result?.code === 'QA_NAVIGATION_RESTORE_FAILED') { state.recovery = { ...state.recovery, verificationRequired: true }; throw new HybridPause('QA_NAVIGATION_RESTORE_FAILED', 'Navigation restoration could not be verified. Inspect browser state; do not replay the action.'); }
           if (result?.code === 'QA_INPUT_RESTORE_FAILED') { state.recovery = { ...state.recovery, verificationRequired: true }; throw new HybridPause('QA_INPUT_RESTORE_FAILED', 'Live input restoration could not be verified. Progress is saved; do not replay input actions.'); }
           const restoreProblem = checkPrimaryViewport(session, record.bridge?.service?.activePage);
@@ -342,7 +375,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           state.policyBlocks = (record.bridge?.securityBlocks || []).slice(-100).map(({ url, code, resourceType }) => ({ url, code, resourceType }));
           // Cancellation after dispatch leaves an uncertain receipt. Never
           // convert a late result into a passing assertion or replay it.
-          if (activeSignal?.aborted) throw activeSignal.reason;
+          activeSignal?.throwIfAborted();
           const evidence = await ledger.record(action, result);
           if (state.exploration?.observingWriteResult && result?.inventory) evidence.postWriteObservation = true;
           observeHybridAuthentication(session, result);
@@ -360,7 +393,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
             else await ledger.close(scenario.id, 'inconclusive', result.skipped || result.limitations || 'The fixed check produced no category-specific host assertions.');
           }
           let classification;
-          if ((['browser_qa_check', 'browser_qa_scenario'].includes(tool.name) && (result?.assertions?.some(item => item.outcome === 'fail') || result?.gaps?.length || result?.success === false)) || (tool.name === 'browser_diagnostics' && diagnosticFailures(result, result.url || session.targetUrl).length)) {
+          if ((['browser_qa_check', 'browser_qa_scenario'].includes(tool.name) && (result?.assertions?.some(item => item.outcome === 'fail') || result?.gaps?.length || result?.success === false && !(clickGuard && result.code === 'QA_CONTROL_STALE'))) || (tool.name === 'browser_diagnostics' && diagnosticFailures(result, result.url || session.targetUrl).length)) {
             classification = await tools.find(item => item.name === 'classify_qa_observations').run({ evidence_ids: [evidence.id] }, { signal: activeSignal });
           }
           telemetry.browserTiming(input?.action || tool.name, action.completedAt - action.ts);
@@ -368,17 +401,22 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           if (state.recovery?.verificationRequired && evidence.success && tool.name === 'browser_snapshot') {
             const current = evidence.result.url;
             if (!current || new URL(current).origin !== new URL(session.targetUrl).origin) throw new HybridPause('HYBRID_VERIFY_STATE', 'Recovered browser is outside the authorized scope.');
+            if (evidence.result.loading || evidence.result.loadError) throw new HybridPause('HYBRID_VERIFY_STATE', 'Recovered browser has not finished loading the authorized target.');
             state.recovery.verificationRequired = false; state.recovery.verifiedAt = Date.now();
           }
           await checkpoint();
-          const response = atomicScenario ? { success: result.success, action: result.action || input.action, url: evidence.url, limitations: result.limitations, skipped: result.skipped, error: result.error, gaps: result.gaps, executionComplete: result.executionComplete, formTesting: result.formTesting,
+          const response = atomicScenario ? { success: result.success, action: result.action || input.action, url: evidence.url, limitations: result.limitations, skipped: result.skipped, error: result.error, code: result.code, gaps: result.gaps, executionComplete: result.executionComplete, formTesting: result.formTesting,
             scenarioStatus: ledger.scenario(input.scenario_id).status,
             assertionCounts: { passed: ledger.scenario(input.scenario_id).assertions.filter(item => item.actionId === action.id && item.outcome === 'pass').length,
               failed: ledger.scenario(input.scenario_id).assertions.filter(item => item.actionId === action.id && item.outcome === 'fail').length },
             hostAssertions: ledger.scenario(input.scenario_id).assertions.filter(item => item.actionId === action.id && item.outcome === 'fail').slice(0, 8).map(assertionSummary) } : result;
           return { ...response, hostEvidenceId: evidence.id, hostActionId: action.id, scenarioId: action.scenarioId, ...(classification ? { classification } : {}) };
         } catch (error) {
-          if (action?.status === 'running') { action.status = 'uncertain'; action.completedAt = Date.now(); state.recovery = { verificationRequired: true, uncertainActionId: action.id }; }
+          if (action?.status === 'running') {
+            action.status = dispatched ? 'uncertain' : 'not_dispatched';
+            action.completedAt = Date.now();
+            if (dispatched) state.recovery = { verificationRequired: true, uncertainActionId: action.id };
+          }
           if (error instanceof HybridPause) { state.pauseReason = error.message; state.status = 'paused'; record.hybridPause = error; }
           await checkpoint(); throw error;
         } finally { if (ownsPreviewLock) record.bridge.qaOperationActive = false; browserOperationActive = false; unlock(); }
@@ -409,6 +447,14 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
       if (!closeout) modelTimer = setTimeout(() => { record.hybridPause = new HybridPause('HYBRID_TIME_BUDGET', 'Execution time budget exhausted.'); record.controller?.abort(record.hybridPause); }, Math.max(1, remaining));
       signal.addEventListener('abort', () => telemetry.event('cancelled'), { once: true });
       await checkpoint();
+      if (!closeout && state.recovery?.verificationRequired && session.targetUrl && record.invokeHybridTool) {
+        const opened = await record.invokeHybridTool('browser_open', { url: session.targetUrl }, signal);
+        signal.throwIfAborted();
+        if (opened.success === false || !opened.url) throw new HybridPause('HYBRID_VERIFY_STATE', 'The authorized target could not be reopened. Saved evidence is available; resolve browser access before resuming.');
+        const snapshot = await record.invokeHybridTool('browser_snapshot', {}, signal);
+        signal.throwIfAborted();
+        if (snapshot.success === false || state.recovery.verificationRequired) throw new HybridPause('HYBRID_VERIFY_STATE', 'The fresh browser state could not be verified. Saved evidence is available; resolve browser access before resuming.');
+      }
     },
     async endTurn(status) {
       clearTimeout(modelTimer); modelTimer = undefined;

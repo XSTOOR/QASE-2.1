@@ -106,7 +106,7 @@ async function scenario({ baseline = false, mobile = false } = {}) {
 			// A later standard QA launch and return to SQA must still work.
 			await page.goto(`${base.origin}/#/runs/new`);
 			await page.locator('#qa-start[open]').waitFor({ state: 'visible' });
-			await page.locator('#qa-cancel').click();
+			await page.locator(mobile ? '#qa-close' : '#qa-cancel').click();
 			await page.waitForFunction(() => !document.querySelector('#qa-start').open);
 			await page.locator('#new-sqa').click();
 			await page.locator('#sqa-start[open]').waitFor({ state: 'visible' });

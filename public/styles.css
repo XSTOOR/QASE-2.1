@@ -21,7 +21,8 @@
 .sqa-review-field { display: grid; gap: 6px; min-width: 0; font-size: 12px; }
 .sqa-review-field input, .sqa-review-field select, .sqa-review-field textarea { width: 100%; min-width: 0; box-sizing: border-box; padding: 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel-chat); font: inherit; }
 .sqa-review-field textarea { min-height: 76px; resize: vertical; }
-.sqa-review-evidence fieldset { min-width: 0; display: grid; gap: 10px; border: 1px solid var(--border); padding: 12px; }
+.sqa-review-evidence fieldset, .sqa-review-submissions fieldset { min-width: 0; display: grid; gap: 10px; border: 1px solid var(--border); padding: 12px; overflow-wrap: anywhere; }
+.sqa-review-submissions .sqa-review-field input[type="checkbox"] { width: 1rem; height: 1rem; margin: 0; }
 .sqa-review-panel details > div { display: grid; gap: 10px; padding-top: 10px; }
 .sqa-review-version { display: flex; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--border); padding: 10px 0; overflow-wrap: anywhere; }
 .sqa-review-version p { flex-basis: 100%; }

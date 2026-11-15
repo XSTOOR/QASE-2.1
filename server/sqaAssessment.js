@@ -557,9 +557,14 @@ export function buildSqaReportMarkdown(assessment) {
 			lines.push('');
 		}
 
-		if (reportModel.evidenceRequests.length > 0) {
-			lines.push('## Reviewer evidence request register', '', 'Browser rows need further verified testing. Reviewer rows need release-specific artifacts supplied through human evidence review; browser samples cannot replace those documents.', '', '| Control | Evidence owner | Requirement | Type / minimum | What to provide |', '|---|---|---|---|---|');
-			for (const request of reportModel.evidenceRequests) {
+		for (const [owner, heading, detail] of [
+			['browser', 'Browser evidence gaps', 'These controls need further verified browser testing.'],
+			['reviewer', 'Reviewer evidence request register', 'These controls require artifacts from an authorized reviewer for the assessed release and environment.']
+		]) {
+			const requests = reportModel.evidenceRequests.filter(item => item.owner === owner);
+			if (!requests.length) continue;
+			lines.push(`## ${heading}`, '', detail, '', '| Control | Evidence owner | Requirement | Type / minimum | What to provide |', '|---|---|---|---|---|');
+			for (const request of requests) {
 				lines.push(`| ${markdown(request.controlId)} | ${markdown(request.owner)} | ${markdown(request.id)} | ${markdown(request.type)} / ${markdown(request.minimum)} | ${markdown(request.description)} |`);
 			}
 			lines.push('');

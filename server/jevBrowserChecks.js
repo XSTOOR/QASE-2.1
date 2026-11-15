@@ -10,7 +10,9 @@ import { settleQaControl, qaPageReadiness } from './qaRenderReadiness.js';
 import { runLiveFormChecks } from './qaLiveForms.js';
 import { featureStateKey, legacyFeatureStateKey } from './qaFeatureState.js';
 
-export const JEV_BROWSER_CHECKS = ['inspect', 'navigation', 'responsive', 'forms', 'search', 'media', 'disclosure', 'accessibility', 'dismiss_overlay', 'anchors', 'tabs', 'scroll', 'navigation_control', 'open_test_form', 'submit_test_form'];
+import { MENU_MOTION, runMenuMotion } from './qaMenuMotion.js';
+
+export const JEV_BROWSER_CHECKS = ['inspect', 'navigation', 'responsive', 'forms', 'search', 'media', 'disclosure', 'accessibility', 'dismiss_overlay', 'anchors', 'tabs', 'scroll', 'navigation_control', 'open_test_form', 'submit_test_form', MENU_MOTION];
 const risky = /delete|remove|logout|log.?out|sign.?out|reset|cancel|purchase|checkout|payment|subscribe|send|invite|publish|deploy|save|create|destroy|revoke|confirm|unsubscribe/i;
 const trim = value => String(value ?? '').slice(0, 1500);
 const sameUrl = (a, b) => new URL(a).href.replace(/\/$/, '') === new URL(b).href.replace(/\/$/, '');
@@ -150,13 +152,22 @@ async function prepareJevControl(page, selector) {
   await settleQaControl(page, selector);
 }
 
-async function navigation(page, input, onAction) {
+async function navigation(page, input, onAction, guard, signal) {
   const source = page.url();
+  const stale = () => ({ success: false, dispatched: false, code: 'QA_CONTROL_STALE', assertions: [], error: 'The selected link or source page changed before the click. Observe again before choosing a link.' });
+  if (guard && source !== guard.source) return stale();
   const node = page.locator(input.selector);
-  if (await node.count() !== 1) throw new Error('Observed navigation selector is not unique.');
+  if (await node.count() !== 1) {
+    if (guard) return stale();
+    throw new Error('Observed navigation selector is not unique.');
+  }
   const link = await node.evaluate(element => ({ href: element.href, text: element.innerText, target: element.target, download: element.hasAttribute('download'), tag: element.tagName }));
+  if (guard && link.href !== input.expected) return stale();
   const destination = new URL(link.href);
-  if (link.tag !== 'A' || destination.origin !== new URL(source).origin || !['http:', 'https:'].includes(destination.protocol) || destination.username || destination.password || destination.search || link.download || (link.target && link.target !== '_self') || risky.test(`${link.text} ${link.href}`) || !sameUrl(link.href, input.expected)) throw new Error('Navigation must use the exact observed safe same-origin anchor.');
+  if (link.tag !== 'A' || destination.origin !== new URL(source).origin || !['http:', 'https:'].includes(destination.protocol) || destination.username || destination.password || destination.search || link.download || (link.target && link.target !== '_self') || risky.test(`${link.text} ${link.href}`) || !sameUrl(link.href, input.expected)) {
+    if (guard) return stale();
+    throw new Error('Navigation must use the exact observed safe same-origin anchor.');
+  }
   const assertions = [];
   let responseStatus, landed, title, phase = 'anchor click';
   const responseListener = response => { if (response.request().isNavigationRequest() && response.frame() === page.mainFrame()) responseStatus = response.status(); };
@@ -164,7 +175,23 @@ async function navigation(page, input, onAction) {
   try {
     await prepareJevControl(page, input.selector);
     await onAction?.({ phase: 'before', action: 'click', selector: input.selector });
-    await node.click({ timeout: 5000 });
+    signal?.throwIfAborted();
+    // Pin the element after preview capture so Playwright cannot click a
+    // replacement matched by the same selector while waiting for actionability.
+    const handle = await node.elementHandle({ timeout: 1000 }).catch(() => null);
+    if (!handle) return stale();
+    try {
+      const matches = await handle.evaluate((element, { source, link, guard }) => {
+        const label = (element.getAttribute('aria-label') || element.innerText || element.getAttribute('title') || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+        return location.href === source && element.isConnected && element.tagName === 'A' && element.href === link.href &&
+          element.innerText === link.text && (!guard || label === guard.label) &&
+          !element.hasAttribute('download') && (!element.target || element.target === '_self') &&
+          !element.closest('[hidden],[inert],[aria-hidden="true"]');
+      }, { source, link, guard }).catch(() => false);
+      if (!matches) return stale();
+      signal?.throwIfAborted();
+      await handle.click({ timeout: 5000 });
+    } finally { await handle.dispose().catch(() => {}); }
     await page.waitForURL(url => !sameUrl(url.href, source), { timeout: 7000, waitUntil: 'domcontentloaded' });
     await settleJevPage(page);
     await onAction?.({ phase: 'after', action: 'click', selector: input.selector });
@@ -176,15 +203,18 @@ async function navigation(page, input, onAction) {
     assertions.push(assertion('broken_links', 'Destination renders usable page content', rendered.trim().length > 0 && !(responseStatus >= 400), 'A non-empty page without an HTTP error', { url: landed, title, responseStatus, textLength: rendered.trim().length }));
     if (responseStatus >= 400) {
       phase = 'HTTP error reproduction';
+      signal?.throwIfAborted();
       const second = await page.reload({ waitUntil: 'domcontentloaded', timeout: 10000 });
       assertions.push(assertion('broken_links', 'HTTP error reproduced on second load', !(second?.status() >= 400), 'A successful second load', { first: responseStatus, second: second?.status() }));
       if (second?.status() >= 400) assertions.find(item => item.check === 'broken_links' && item.outcome === 'fail').reproduction = { confirmed: true, observations: 2, kind: 'http-error', first: responseStatus, second: second.status() };
     }
     phase = 'browser back';
+    signal?.throwIfAborted();
     await page.goBack({ waitUntil: 'domcontentloaded', timeout: 10000 });
     await settleJevPage(page);
     assertions.push(assertion('navigation', 'Browser back restores source route', sameUrl(page.url(), source), source, page.url()));
     phase = 'browser forward';
+    signal?.throwIfAborted();
     await page.goForward({ waitUntil: 'domcontentloaded', timeout: 10000 });
     await settleJevPage(page);
     assertions.push(assertion('navigation', 'Browser forward restores destination', sameUrl(page.url(), landed), landed, page.url()));
@@ -503,7 +533,7 @@ async function dismissOverlay(page, input) {
   return { assertions: [assertion('navigation', 'Observed dialog closes after its close control is activated', closed, 'The original dialog becomes hidden or is detached; any replacement is inspected separately', { label: overlay.close.label, closed })], inventory: await inspectJevPage(page) };
 }
 
-export async function runJevBrowserCheck(page, input, { signal, authorizeControl, onAction, onViewport, responsiveBoundaries = false, liveForms = false, requireLiveForms = false, protectInputs, executeTestForm } = {}) {
+export async function runJevBrowserCheck(page, input, { signal, navigationGuard, menuMotion, saveMotionFrame, authorizeControl, onAction, onViewport, responsiveBoundaries = false, liveForms = false, requireLiveForms = false, protectInputs, executeTestForm } = {}) {
   const startedAt = Date.now();
   if (!page || page.isClosed()) return { success: false, dispatched: false, action: input?.action, error: 'No live browser page.' };
   if (!JEV_BROWSER_CHECKS.includes(input?.action)) return { success: false, dispatched: false, error: 'Unknown QA scenario.' };
@@ -529,9 +559,10 @@ export async function runJevBrowserCheck(page, input, { signal, authorizeControl
     }
     let result;
     switch (input.action) {
+      case MENU_MOTION: result = await runMenuMotion(page, menuMotion, { authorizeControl, protectInputs, signal, saveFrame: saveMotionFrame }); break;
       case 'submit_test_form': result = executeTestForm ? await executeTestForm(input.selector, signal) : { success: false, assertions: [], gaps: ['No test-write authorization is available.'] }; break;
       case 'inspect': result = { inventory: await inspectJevPage(page), assertions: [] }; break;
-      case 'navigation': result = await navigation(page, input, onAction); break;
+      case 'navigation': result = await navigation(page, input, onAction, navigationGuard, signal); break;
       case 'responsive': result = await responsive(page, { authorizeControl, signal, onAction, onViewport, responsiveBoundaries }); break;
       case 'forms': result = liveForms ? await runLiveFormChecks(page, { signal, onAction, protectInputs }) : requireLiveForms ? { fields: [], assertions: [], gaps: ['The runtime could not verify HTTP, WebSocket and service-worker isolation; live inputs were not modified.'] } : await forms(page); break;
       case 'search': result = await search(page); break;

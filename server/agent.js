@@ -500,6 +500,7 @@ const ACTIVITY_LABELS = {
 	[FOUNDER_FORM_REVIEW]: 'Checked public form behavior',
 	browser_qa_check: 'Executed QA scenario',
 	browser_qa_scenario: 'Executed bounded scenario',
+	qa_choose_navigation: 'Chose and verified an observed link',
 	qa_route_frontier: 'Reviewed observed route coverage',
 	qa_test_routes: 'Tested observed routes',
 	qa_discover_application: 'Discovered application features',
@@ -711,6 +712,7 @@ async function constructRuntime(session, runStore) {
 	}
 	if (isModeReasoning) for (const name of ['mode_discover_application','mode_read_discovery','mode_plan_work','mode_run_workflow','mode_start_workflow','mode_close_workflow','mode_test_surface','mode_execute_steps','mode_verify_recovery','mode_load_tools','classify_mode_observations', 'mode_execution_progress',...(session.mode==='founder'?['draft_founder_report_section']:[])]) allowedTools.add(name);
 	if (isHybrid) allowedTools.add('browser_authenticate');
+	if (isHybrid && session.hybrid?.navigationDecisionVersion === 1) allowedTools.add('qa_choose_navigation');
 	if (isHybrid) for (const name of ['qa_discover_application','qa_read_discovery','qa_work_schedule','qa_investigate_scenario','qa_plan_scenarios', 'qa_start_scenario', 'qa_close_scenario', 'qa_assert_snapshot', 'qa_assert_diagnostics', 'qa_ledger', 'qa_read_evidence', 'browser_qa_scenario', 'qa_route_frontier', 'qa_test_routes', 'qa_load_tools', 'classify_qa_observations', 'rank_qa_candidates']) allowedTools.add(name);
 	const problem = getPublicConfig().problem;
 	if (problem) {

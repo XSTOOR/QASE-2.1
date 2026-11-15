@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-11-11-founder-sqa-combined-r2",
-  "uiVersion": "20261113-1",
+  "releaseId": "qase-2026-11-15-evidence-rc1",
+  "uiVersion": "20261115-3",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Combined release 6f5c804 with Push-SQA 9259aaf, including SQA saved-evidence recovery and Founder draft publication"
+  "source": "Qase Evidence Workspace release candidate with Hybrid QA navigation and menu motion, SQA reviewer evidence, and Founder export"
 }

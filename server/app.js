@@ -58,12 +58,13 @@ import { preflightSqaRuntime, preflightFounderRuntime } from './sqaRuntime.js';
 import { changeSqaReview, assertSqaReviewIdle, assertSqaReviewRevision } from './sqaReview.js';
 import { sqaPublishedVersions, sqaVersion } from './sqaHistory.js';
 import { inspectSqaEvidence } from './sqaEvidence.js';
+import { assertAppliedSqaReviewEvidence, changeSqaReviewEvidence, isSqaReviewerArtifact, readSqaReviewerFile } from './sqaReviewEvidence.js';
 import { publicQaTestCatalog } from './qaTestCatalog.js';
 import { validateQaSelectedTests, validateSecurityAuthorization } from './appQaSelection.js';
 import { selectQaExecutionMode, hybridProfile, loadQualification } from './hybridConfig.js';
 import { hybridRecoveryProblem, reconcileHybridUsageBeforeResume } from './hybridRecoveryGate.js';
 import { buildFounderProgress, founderContinuationTask } from './founderProgress.js';
-import { inspectFounderEvidence } from './founderEvidence.js';
+import { inspectFounderEvidence, verifiedFounderObservationIds } from './founderEvidence.js';
 import { getConfig } from './config.js';
 import { renderReportPdf } from './reportPdf.js';
 import { buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
@@ -1222,7 +1223,7 @@ export function createApplication(options = {}) {
 				// captured; never fabricated.
 				collectArtifacts: async (session) => {
 					const list = services.artifacts?.list?.(session.id) ?? [];
-					return list.map((meta) => ({
+					return list.filter(meta => !isSqaReviewerArtifact(meta)).map((meta) => ({
 						artifactId: meta.artifactId,
 						type: meta.type,
 						contentType: meta.contentType,
@@ -2016,9 +2017,10 @@ export function createApplication(options = {}) {
 					...(scopeSelection ? { scopeSelection } : {})
 				}
 			);
-			if (request.body?.allowTestWrites === true) {
-				const state = initializeHybridState(session, hybridProfile(getConfig()));
-				state.writeAuthorization = { enabled: true, runId: session.id, ownerUserId: session.ownerUserId, grantedAt: Date.now(), maximumSubmissions: 10, trials: [] };
+			const jevNavigation = qaExecutionMode === 'hybrid' && process.env.QASE_HYBRID_JEV_NAVIGATION_ENABLED === 'true';
+			if (jevNavigation || request.body?.allowTestWrites === true) {
+				const state = initializeHybridState(session, hybridProfile(getConfig()), { jevNavigation });
+				if (request.body?.allowTestWrites === true) state.writeAuthorization = { enabled: true, runId: session.id, ownerUserId: session.ownerUserId, grantedAt: Date.now(), maximumSubmissions: 10, trials: [] };
 				await services.runs.commit(session, 'hybrid.state', {});
 			}
 			track('run_created', { mode: session.mode, ...cohortFor(request.auth?.role) });
@@ -2155,6 +2157,7 @@ export function createApplication(options = {}) {
 		response.json({
 			...session,
 			...(session.mode==='founder'?{founderProgress:buildFounderProgress(session,{running:liveState.running,resuming:founderContinuations.has(session.id),stopping:founderContinuations.get(session.id)?.cancelled})}:{}),
+			...(session.mode === 'founder' && session.founder?.finalizedAt ? { founderVerifiedObservations: verifiedFounderObservationIds(session) } : {}),
 			durationSeconds,
 			secretNames: await services.secrets.names(session.id),
 			running: liveState.running,
@@ -2238,17 +2241,40 @@ export function createApplication(options = {}) {
 				request.auth ?? {},
 				services.runs,
 				undefined,
-				{ reviewerDocuments: evidenceMode === 'reviewer_documents' }
+				{ reviewerDocuments: evidenceMode === 'reviewer_documents', artifacts: services.artifacts }
 			);
 			response.json({ result, assessment: session.sqa.assessment, sqa: session.sqa });
 	}));
 
 	for (const action of ['request', 'reopen', 'publish']) {
 		app.post(`/api/sessions/:id/sqa/review/${action}`, (request, response) => withSqaReview(request, response, async session => {
+			if (action === 'publish') assertAppliedSqaReviewEvidence(session, services.artifacts);
 			const sqa = await changeSqaReview(session, action, request.body, request.auth, services.runs);
 			response.json({ sqa });
 		}, action !== 'request'));
 	}
+
+	app.post('/api/sessions/:id/sqa/review/evidence', (request, response) => withSqaReview(request, response, async session => {
+		assertSqaReviewRevision(session.sqa, request.body?.expectedRevision);
+		const sqa = await changeSqaReviewEvidence(session, request.body, request.auth, services.runs, services.artifacts);
+		response.status(201).json({ sqa });
+	}));
+
+	app.post('/api/sessions/:id/sqa/review/evidence/:documentId/decision', (request, response) => withSqaReview(request, response, async session => {
+		assertSqaReviewRevision(session.sqa, request.body?.expectedRevision);
+		const sqa = await changeSqaReviewEvidence(session, request.body, request.auth, services.runs, services.artifacts, { id: request.params.documentId });
+		response.json({ sqa });
+	}));
+
+	app.get('/api/sessions/:id/sqa/review/evidence/:documentId/file', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		try {
+			const file = readSqaReviewerFile(session, request.params.documentId, services.artifacts);
+			response.attachment(file.name).set('Content-Type', 'application/octet-stream')
+				.set('Cache-Control', 'no-store').set('X-Content-Type-Options', 'nosniff').send(file.bytes);
+		} catch (error) { safeErrorResponse(request, response, error); }
+	});
 
 	app.get('/api/sqa/reviews', async (request, response) => {
 		if (!['owner', 'admin'].includes(request.auth?.role)) return response.status(403).json({ error: 'The review inbox requires an owner or administrator.' });
@@ -2295,7 +2321,7 @@ export function createApplication(options = {}) {
 		const session = await requireSession(request, response);
 		if (!session) return;
 		try {
-			response.json(inspectSqaEvidence(session, request.params.controlId, request.params.index, request.query.version));
+			response.set('Cache-Control', 'no-store').json(inspectSqaEvidence(session, request.params.controlId, request.params.index, request.query.version, services.artifacts));
 		} catch (error) { safeErrorResponse(request, response, error); }
 	});
 
@@ -2632,14 +2658,14 @@ export function createApplication(options = {}) {
 	app.get('/api/sessions/:id/artifacts', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
-		response.json({ artifacts: services.artifacts?.list(session.id) ?? [] });
+		response.json({ artifacts: (services.artifacts?.list(session.id) ?? []).filter(item => !isSqaReviewerArtifact(item)) });
 	});
 
 	app.get('/api/sessions/:id/artifacts/:artifactId', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
 		const found = services.artifacts?.get(session.id, request.params.artifactId);
-		if (!found) {
+		if (!found || isSqaReviewerArtifact(found.meta)) {
 			response.status(404).json({ error: 'Unknown artifact.' });
 			return;
 		}

@@ -142,6 +142,26 @@ test('model schemas advertise the host verdict rather than inviting repeated uns
   assert.ok(finish.parametersSchema.properties.verdict.enum.includes('pass'), 'Original registry schema remains unchanged.');
 });
 
+test('selected content exposes the snapshot workflow without loading extra tools', () => {
+  const { session, runtime } = fixture();
+  const options = { tools: [...runtime.tools, { name: 'browser_snapshot', parametersSchema: { type: 'object' } }] };
+  const names = () => prepareHybridInference([], options, session).options.tools.map(tool => tool.name);
+  assert.ok(!names().includes('qa_assert_snapshot'));
+  session.hybrid.scope.push('content');
+  for (const name of ['qa_plan_scenarios', 'browser_snapshot', 'qa_assert_snapshot']) assert.ok(names().includes(name));
+  assert.match(hybridHostContext(session), /heading_equals for exact heading text/);
+});
+
+test('resume exposes recovery tools even in navigation-only scope and hides other actions until verified', () => {
+  const { session, runtime } = fixture();
+  session.hybrid.scope = ['navigation'];
+  session.hybrid.recovery = { verificationRequired: true };
+  const options = { tools: [...runtime.tools, ...['browser_open', 'browser_snapshot', 'browser_qa_scenario'].map(name => ({ name, parametersSchema: { type: 'object' } }))] };
+  const result = prepareHybridInference([], options, session);
+  assert.deepEqual(result.options.tools.map(item => item.name), ['browser_open', 'browser_snapshot']);
+  assert.match(result.messages.at(-1).content, /Preserve earlier assertions/);
+});
+
 test('budget headroom narrows the same loop to closeout without increasing limits, resetting usage or granting a pass', async () => {
   const { session, runtime } = fixture();
   Object.assign(session.hybrid.telemetry.reasoner, { inputTokens: 218085, outputTokens: 1113, calls: 7 });

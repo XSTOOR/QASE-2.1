@@ -4,17 +4,22 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import path from 'node:path';
+import { parseArgs } from 'node:util';
 import { request } from 'playwright';
-import { createSqaTestServer, launchSqaTestBrowser } from './sqa-test-runtime.mjs';
+import { assertSqaTestBrowser, createSqaTestServer, launchSqaTestBrowser } from './sqa-test-runtime.mjs';
 import { createApplicationDiscovery } from '../server/qaApplicationDiscovery.js';
 import { runJevBrowserCheck } from '../server/jevBrowserChecks.js';
 import { hybridCompletion, validateHybridFinding } from '../server/qaCompletionGate.js';
 import { createQaScenarioLedger } from '../server/qaScenarioLedger.js';
 import { projectQaEvidence } from '../server/qaEvidence.js';
+import { createArtifactStore } from '../server/artifactStore.js';
 import { hybridStorage, hydrateHybrid } from '../server/hybridPersistence.js';
 import { legacyModeHash } from '../server/modeIntegrity.js';
 
-const directory = path.resolve(process.env.QASE_EVIDENCE_OUTPUT || 'test-results/qa-evidence-workspace');
+const { values } = parseArgs({ options: { browser: { type: 'string', default: 'chromium' }, 'output-dir': { type: 'string' } } });
+const browserName = assertSqaTestBrowser(values.browser);
+const browserLabel = { chromium: 'Chromium', firefox: 'Firefox', webkit: 'WebKit' }[browserName];
+const directory = path.resolve(values['output-dir'] || process.env.QASE_EVIDENCE_OUTPUT || 'test-results/qa-evidence-workspace');
 const runtimeDirectory = path.join(directory, `runtime-${randomUUID()}`);
 const runtime = await createSqaTestServer(runtimeDirectory, { authRequired: true });
 const expected = 'Plans and pricing';
@@ -36,13 +41,13 @@ async function collect(page, targetUrl, ownerUserId, broken) {
   heading = broken ? wrong : expected;
   const session = {
     id: randomUUID(), ownerUserId, mode: 'qa', qaExecutionMode: 'hybrid', status: 'done', targetUrl,
-    title: broken ? 'Wrong-copy fixture' : 'Healthy fixture', device: 'desktop', engine: 'chromium',
+    title: broken ? 'Wrong-copy fixture' : 'Healthy fixture', device: 'desktop', engine: browserName,
     createdAt: Date.now(), startedAt: Date.now(), completedAt: Date.now(), updatedAt: Date.now(),
     selectedTests: ['navigation', 'content', 'search', 'visual_consistency'],
     messages: [{ id: randomUUID(), role: 'user', text: `Go through Solutions to Pricing. Expect “${expected}”.`, ts: Date.now() }],
     activities: [], todos: [], findings: [], secretNames: [],
-    environmentSnapshot: { device: 'Desktop', browser: 'Chrome', executionType: 'browser_emulation' },
-    runtimeFacts: { executionLevel: 'SIMULATED', executionEngine: 'chromium', viewport: page.viewportSize() },
+    environmentSnapshot: { device: 'Desktop', browser: browserLabel, executionType: 'browser_emulation' },
+    runtimeFacts: { executionLevel: 'SIMULATED', executionEngine: browserName, viewport: page.viewportSize() },
     hybrid: { version: 1, discovery: { version: 1, status: 'pending', features: [], observations: [], probes: [] } }
   };
   const ledger = createQaScenarioLedger(session);
@@ -75,6 +80,7 @@ async function collect(page, targetUrl, ownerUserId, broken) {
     assert.equal(result.responseStatus, 200);
     assert.equal(result.assertions[0].outcome, 'pass');
   }
+  assert.equal(await page.getByRole('heading', { level: 1 }).innerText(), broken ? wrong : expected);
   await ledger.close(navigation.id, 'complete');
   await ledger.start(pricing.id);
   const observed = await run('browser_snapshot');
@@ -112,10 +118,13 @@ try {
   const registered = await owner.post('/api/auth/register', { data: { email: 'evidence-owner@example.test', password, displayName: 'Evidence fixture' } });
   assert.equal(registered.status(), 201);
   const { id: ownerUserId } = await registered.json();
-  browser = await launchSqaTestBrowser('chromium');
+  browser = await launchSqaTestBrowser(browserName);
   const targetPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const healthy = await collect(targetPage, targetUrl, ownerUserId, false);
   const broken = await collect(targetPage, targetUrl, ownerUserId, true);
+  createArtifactStore({ root: path.join(runtimeDirectory, '.qase', 'artifacts') }).save(broken, {
+    type: 'screenshot', fileName: 'pricing.jpg', bytes: await targetPage.screenshot({ type: 'jpeg' }), label: 'Saved fixture browser frame'
+  });
   const interrupted = structuredClone(healthy);
   const unfinished = interrupted.hybrid.scenarios.find(scenario => scenario.category === 'content');
   interrupted.id = randomUUID();
@@ -129,6 +138,8 @@ try {
   delete interrupted.report;
   const verified = projectQaEvidence(broken);
   assert.equal(verified.scenarios.find(item => item.category === 'content').failed, 2);
+  assert.equal(verified.confirmedFindings, 1);
+  assert.equal(verified.unverifiedFindings, 0);
   // Model JSONB's reordering of object keys, including nested receipt data.
   const stored = JSON.parse(hybridStorage(broken), (_key, value) => value && typeof value === 'object' && !Array.isArray(value)
     ? Object.fromEntries(Object.entries(value).reverse()) : value);
@@ -143,13 +154,21 @@ try {
   }
   assert.deepEqual(projectQaEvidence(legacy), verified);
   const altered = structuredClone(broken);
+  altered.id = randomUUID();
+  // Use a separate saved run for the UI, keeping its other receipts owned.
+  for (const receipt of altered.hybrid.evidence) receipt.runId = altered.id;
+  altered.title = 'Altered evidence fixture';
   altered.hybrid.evidence.find(item => item.toolName === 'browser_snapshot').result.bodyText = 'Altered after receipt';
-  assert.equal(projectQaEvidence(altered).scenarios.find(item => item.category === 'content').failed, 1);
+  const alteredEvidence = projectQaEvidence(altered);
+  assert.equal(alteredEvidence.scenarios.find(item => item.category === 'content').failed, 1);
+  assert.equal(alteredEvidence.confirmedFindings, 0);
+  assert.equal(alteredEvidence.unverifiedFindings, 1);
+  assert.ok(alteredEvidence.scenarios.every(item => item.assertions.every(assertion => !assertion.findingId)));
   await targetPage.close();
 
   await runtime.stop();
   await mkdir(path.join(runtimeDirectory, '.qase'), { recursive: true });
-  await writeFile(path.join(runtimeDirectory, '.qase', 'sessions.json'), JSON.stringify([healthy, broken, interrupted]));
+  await writeFile(path.join(runtimeDirectory, '.qase', 'sessions.json'), JSON.stringify([healthy, broken, interrupted, altered]));
   await runtime.start();
   const evidencePath = `/api/sessions/${broken.id}/qa-evidence`;
   const response = await owner.get(evidencePath);
@@ -178,6 +197,9 @@ try {
   };
   await navigate(broken);
   await root.getByRole('heading', { name: 'Browser results' }).waitFor();
+  await page.locator('#results-page-status').getByText('Failed with coverage gaps', { exact: true }).waitFor();
+  const confirmedMetric = root.locator('.qe-metrics > div').filter({ hasText: 'Confirmed findings' }).locator('dd');
+  await confirmedMetric.getByText('1', { exact: true }).waitFor();
   assert.equal(await page.locator('#tab-report').getAttribute('aria-selected'), 'true');
   await scenario('Content').getByText('Failed', { exact: true }).waitFor();
   await scenario('Content').getByText(expected, { exact: true }).first().waitFor();
@@ -186,7 +208,7 @@ try {
   await scenario('Search').getByText('Absent on sampled pages', { exact: true }).waitFor();
   await scenario('Visual comparison').getByText('Blocked', { exact: true }).waitFor();
   await root.getByText('Animation timing, visual regressions and theme flashes have no recorded checks here.').waitFor();
-  await root.getByText('Browser emulation · Chromium · 1440 × 900').waitFor();
+  await root.getByText(`Browser emulation · ${browserLabel} · 1440 × 900`).waitFor();
   await page.screenshot({ path: path.join(directory, 'results-desktop.png'), animations: 'disabled' });
   const navigationReceipt = scenario('Navigation').getByText('Evidence receipt', { exact: true }).first();
   await navigationReceipt.click();
@@ -219,19 +241,72 @@ try {
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.screenshot({ path: path.join(directory, 'results-dark.png'), animations: 'disabled' });
 
+  await navigate(altered);
+  await confirmedMetric.getByText('0', { exact: true }).waitFor();
+  await root.getByText('1 saved finding lacks verifiable evidence.', { exact: true }).waitFor();
+  assert.equal(await root.getByRole('button', { name: 'Open confirmed finding', includeHidden: true }).count(), 0);
   await navigate(healthy);
   await scenario('Content').getByText('Passed', { exact: true }).waitFor();
   assert.equal(await root.getByText(wrong, { exact: false }).count(), 0);
+  await page.emulateMedia({ colorScheme: 'light' });
+  const artifactList = `**/api/sessions/${broken.id}/artifacts`;
+  const unavailable = route => route.fulfill({ status: 503, json: { error: 'Controlled screenshot request failure' } });
+  await page.route(artifactList, unavailable);
+  await navigate(broken, false);
+  const plan = page.locator('#qa-plan-evidence');
+  await page.locator(`[data-run-id="${broken.id}"] .run-status-label`).getByText('Failed with coverage gaps', { exact: true }).waitFor();
+  await plan.getByText('Could not retrieve the saved browser screenshot.', { exact: true }).waitFor();
+  await page.unroute(artifactList, unavailable);
+  await plan.getByRole('button', { name: 'Retry screenshot' }).click();
+  await plan.getByText(/Saved browser screenshot ·/).waitFor();
+  await page.waitForFunction(() => document.querySelector('.qe-preview img')?.naturalWidth > 0);
+  await plan.getByRole('button', { name: 'Content Failed' }).click();
+  await plan.locator('.qe-compare').first().getByText(expected, { exact: true }).waitFor();
+  await page.screenshot({ path: path.join(directory, 'workspace-desktop.png'), animations: 'disabled' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await plan.getByRole('button', { name: 'Journey', exact: true }).click();
+  await plan.getByRole('button', { name: 'Content Failed' }).click();
+  await plan.locator('.qe-compare').first().getByText(expected, { exact: true }).waitFor();
+  await plan.getByRole('button', { name: 'Preview', exact: true }).click();
+  await plan.getByRole('img', { name: 'Saved browser screenshot' }).waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  assert.equal(await page.locator('#tabs').evaluate(tabs => {
+    const box = tabs.getBoundingClientRect();
+    return [...tabs.querySelectorAll('button:not([hidden])')].every(button => button.getBoundingClientRect().bottom <= box.bottom + 1);
+  }), true, 'workspace tabs stay in their navigation row');
+  await page.screenshot({ path: path.join(directory, 'workspace-mobile.png'), animations: 'disabled' });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const evidenceFailure = route => route.fulfill({ status: 503, json: { error: 'Controlled evidence request failure' } });
+  const interruptedEvidencePath = `**/api/sessions/${interrupted.id}/qa-evidence`;
+  await page.route(interruptedEvidencePath, evidenceFailure);
   await navigate(interrupted, false);
   await page.locator('#tab-plan').click();
   const progress = page.locator('#qa-plan-evidence');
   await progress.getByRole('heading', { name: 'Test progress' }).waitFor();
+  await progress.getByText('Could not load the saved browser evidence.').waitFor();
+  await page.unroute(interruptedEvidencePath, evidenceFailure);
+  await progress.getByRole('button', { name: 'Retry evidence' }).click();
   await progress.getByText('The fixture was stopped before the copy check was saved.').waitFor();
-  assert.equal(await progress.getByText('Interrupted', { exact: true }).count(), 1);
+  // The run header renders before its independent evidence request completes.
+  await progress.getByRole('button', { name: 'Content Interrupted' }).waitFor();
+  await progress.getByText('No saved browser screenshot is available for this run.').waitFor();
+  assert.equal(await progress.locator('.qe-scenario').getByText('Interrupted', { exact: true }).count(), 1);
   assert.equal(await progress.getByText(wrong, { exact: false }).count(), 0);
   await page.screenshot({ path: path.join(directory, 'progress-desktop.png'), animations: 'disabled' });
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ healthy: 'passed', wrongCopyWithHttp200: 'failed', resumedView: 'saved progress', authorizedEvidence: true, reorderedReceipts: 'verified', legacyReceipts: 'verified', screenshots: directory, modelCalls: 0 }, null, 2));
+  const result = {
+    browser: browserName,
+    browserVersion: browser.version(),
+    fixture: { journey: ['Home', 'Solutions', 'Pricing'], expectedHeading: expected, defectiveHeading: wrong, pricingHttpStatus: 200 },
+    healthy: 'passed', wrongCopyWithHttp200: 'failed', resumedView: 'saved progress',
+    authorizedEvidence: true, reorderedReceipts: 'verified', legacyReceipts: 'verified',
+    alteredReceipt: 'excluded', visualComparison: 'blocked without an approved reference',
+    workspace: { stepSelection: 'verified', savedBrowserScreenshot: 'verified', missingScreenshot: 'verified', mobilePanels: 'verified', evidenceRetry: 'verified' },
+    screenshots: ['results-desktop.png', 'results-mobile.png', 'results-dark.png', 'progress-desktop.png', 'workspace-desktop.png', 'workspace-mobile.png'],
+    modelCalls: 0
+  };
+  await writeFile(path.join(directory, 'result.json'), `${JSON.stringify(result, null, 2)}\n`);
+  console.log(JSON.stringify(result, null, 2));
 } finally {
   await Promise.all([owner?.dispose(), other?.dispose(), anonymous?.dispose(), browser?.close(), runtime.stop()]);
   target.closeAllConnections();

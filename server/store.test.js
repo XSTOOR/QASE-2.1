@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import fsSync from 'node:fs';
 import * as fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
@@ -22,6 +24,33 @@ test('hybrid durable events are written before publication and filesystem failur
   await fs.rename(path.join(directory, '.qase'), path.join(directory, 'history-backup'));
   await fs.writeFile(path.join(directory, '.qase'), 'fixture obstructing directory creation');
   assert.throws(() => store.emit(session, 'hybrid.state', {}, { durable: true }));
+});
+
+test('Windows session checkpoints retry a brief atomic replacement lock', { skip: process.platform !== 'win32' }, async t => {
+  const before = process.cwd();
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'qase-store-replace-'));
+  t.after(async () => { process.chdir(before); await fs.rm(directory, { recursive: true, force: true }); });
+  process.chdir(directory);
+  const store = await import(`./store.js?replacement-retry=${Date.now()}`);
+  const session = store.createSession('Atomic replacement fixture');
+  store.flushSessions({ strict: true });
+  const destination = path.join(directory, '.qase', 'sessions.json');
+  const original = fsSync.renameSync;
+  let attempts = 0;
+  const rename = t.mock.method(fsSync, 'renameSync', (source, target) => {
+    if (target === destination && ++attempts <= 2) throw Object.assign(new Error('Sharing violation'), { code: 'EPERM', syscall: 'rename' });
+    return original(source, target);
+  });
+  syncBuiltinESMExports();
+  try {
+    session.title = 'Saved after the lock cleared';
+    store.flushSessions({ strict: true });
+  } finally {
+    rename.mock.restore();
+    syncBuiltinESMExports();
+  }
+  assert.equal(attempts, 3);
+  assert.equal(JSON.parse(await fs.readFile(destination, 'utf8'))[0].title, session.title);
 });
 
 test('local Founder project state writes and reloads from its resolved state directory', async t => {

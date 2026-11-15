@@ -66,6 +66,37 @@ test('coverage planner uses only fresh observed safe links, never invented route
   assert.equal(jevRouteCandidates(inventory, inventory.url, [], ['https://site.test/help']).length, 0);
 });
 
+test('a decided navigation refuses a replaced link after preview capture', { timeout: 20000 }, async t => {
+  const requests = [];
+  const fixture = http.createServer((request, response) => {
+    requests.push(request.url);
+    response.setHeader('Content-Type', 'text/html');
+    response.end('<h1>Fixture</h1><a id="rates" href="/rates">Monthly rates</a>');
+  });
+  fixture.listen(0, '127.0.0.1');
+  await once(fixture, 'listening');
+  t.after(() => { fixture.closeAllConnections(); fixture.close(); });
+  const source = `http://127.0.0.1:${fixture.address().port}/`;
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.goto(source);
+  const result = await runJevBrowserCheck(page, { action: 'navigation', selector: '#rates', expected: source + 'rates' }, {
+    navigationGuard: { source, label: 'Monthly rates' },
+    async onAction() {
+      await page.locator('#rates').evaluate(node => {
+        const replacement = node.cloneNode(true);
+        replacement.href = '/plans';
+        node.replaceWith(replacement);
+      });
+    }
+  });
+  assert.equal(result.code, 'QA_CONTROL_STALE');
+  assert.equal(result.dispatched, false);
+  assert.equal(page.url(), source);
+  assert.ok(!requests.some(url => ['/plans', '/rates'].includes(url)));
+});
+
 test('coverage gate cannot credit page counts as executed navigation or responsive tests', () => {
   const execution = { visits: [{ url: 'https://site.test/', title: 'Test', diagnosticsComplete: true }], checks: [], remainingRoutes: 8 };
   const result = assessJevExecution(['navigation', 'responsive', 'console_health'], execution);

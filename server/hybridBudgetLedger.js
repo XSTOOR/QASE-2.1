@@ -36,6 +36,7 @@ export function createHybridBudgetLedger(state, telemetry) {
         return false;
       }
       item.status = 'settled'; item.receipt = receipt; item.completedAt = Date.now();
+      if (Number.isFinite(usage.cost) && usage.cost >= 0) item.reportedCost = usage.cost;
       // #18637: durable evidence a verified receipt settled this reservation.
       // The log entry is written in the SAME in-memory mutation (and therefore
       // the same checkpoint) as the settle + telemetry bump, so its durable

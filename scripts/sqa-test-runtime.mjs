@@ -42,7 +42,7 @@ export function isolatedSqaEnvironment(environment = process.env) {
 		NODE_ENV: 'test', QASE_HOST: '127.0.0.1', QASE_RUN_STORE: 'local',
 		QASE_EXECUTION_MODE: 'local', QASE_MAIL_MODE: 'mock',
 		QASE_TELEGRAM_ENABLED: 'false', QASE_DRYTIS_INTEGRATION_ENABLED: 'false',
-		QASE_AUTOGEN_ENABLED: 'false', QASE_HEADLESS: 'true'
+		QASE_AUTOGEN_TESTCASES: 'off', QASE_HEADLESS: 'true'
 	};
 }
 
@@ -52,7 +52,7 @@ export async function launchSqaTestBrowser(browser) {
 	return engine.type.launch({ headless: true, ...engine.launch });
 }
 
-export async function createSqaTestServer(directory, { authRequired = false, envFile } = {}) {
+export async function createSqaTestServer(directory, { authRequired = false, envFile, hybridQa = false, jevNavigation = false } = {}) {
 	await mkdir(directory, { recursive: true });
 	const probe = createServer();
 	await new Promise((resolve, reject) => { probe.once('error', reject); probe.listen(0, '127.0.0.1', resolve); });
@@ -75,30 +75,45 @@ export async function createSqaTestServer(directory, { authRequired = false, env
 	}
 	async function start() {
 		if (server) throw new Error('Isolated SQA server is already started.');
-		log = createWriteStream(path.join(directory, `server-${Date.now()}.log`));
+		const logPath = path.join(directory, `server-${Date.now()}.log`);
+		log = createWriteStream(logPath);
 		const args = envFile
 			? [path.join(root, 'scripts', 'start-local.mjs'), '--env-file', path.resolve(envFile)]
 			: [path.join(root, 'server', 'index.js')];
 		server = spawn(process.execPath, args, {
 			cwd: directory, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
 			env: { ...isolatedSqaEnvironment(), PORT: String(port), QASE_PUBLIC_URL: base, QASE_AUTH_REQUIRED: String(authRequired),
+				...(hybridQa ? { QASE_HYBRID_QA_ENABLED: 'true', QASE_HYBRID_MAX_PAGES: '3', QASE_HYBRID_DURATION_MS: '480000' } : {}),
+				...(jevNavigation ? { QASE_HYBRID_JEV_NAVIGATION_ENABLED: 'true' } : {}),
 				...(envFile ? { NODE_ENV: 'development', QASE_ALLOW_PRIVATE_NETWORK: 'true', QASE_BROWSER_ALLOWED_PRIVATE_HOSTS: '127.0.0.1' } : {}) }
 		});
 		let launchError;
 		server.once('error', error => { launchError = error; });
 		server.stdout.pipe(log, { end: false }); server.stderr.pipe(log, { end: false });
 		try {
+			// /readyz reports local services readiness. A model key is only needed to launch model-backed runs.
 			const deadline = Date.now() + 45_000;
+			let lastProbe = 'No HTTP response';
 			while (Date.now() < deadline) {
 				if (launchError) throw launchError;
-				if (server.exitCode !== null || server.signalCode !== null) throw new Error('Isolated SQA server exited before readiness; inspect its server log.');
+				if (server.exitCode !== null || server.signalCode !== null) throw new Error(`Isolated SQA server exited before readiness. See ${logPath}`);
 				try {
 					const response = await fetch(`${base}/readyz`, { signal: AbortSignal.timeout(1500) });
-					if (response.ok) return;
-				} catch { /* still starting */ }
+					lastProbe = `HTTP ${response.status}`;
+					if (response.ok) break;
+				} catch (error) { lastProbe = error.cause?.code ?? error.name; }
 				await new Promise(resolve => setTimeout(resolve, 200));
 			}
-			throw new Error('Isolated SQA server did not become ready.');
+			if (lastProbe !== 'HTTP 200') throw new Error(`Isolated SQA server did not become ready (${lastProbe}). See ${logPath}`);
+			// Exercise the selected access mode before a browser test seeds or reads runs.
+			const identity = await fetch(`${base}/api/auth/me`, { signal: AbortSignal.timeout(3000) });
+			const expected = authRequired ? 401 : 200;
+			if (identity.status !== expected) {
+				throw new Error(`Isolated SQA access check expected HTTP ${expected}, got ${identity.status}. See ${logPath}`);
+			}
+			if (!authRequired && !(await identity.json()).actorUserId) {
+				throw new Error(`Isolated SQA access check did not receive an instance owner. See ${logPath}`);
+			}
 		} catch (error) { await stop(); throw error; }
 	}
 	return { base, start, stop };

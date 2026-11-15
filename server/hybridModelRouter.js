@@ -85,7 +85,7 @@ export function createHybridModelRouter({ session, profile, telemetry, checkpoin
       }
       catch (error) { throw modelFailure(error); }
     },
-    async classifier(observations, questions, signal) {
+    async classifier(observations, questions, signal, { onVerifiedUsage } = {}) {
       signal?.throwIfAborted();
       if (accounting.unresolved('classifier') && profile.allowWithoutClassifier) {
         state.degradedClassification = true;
@@ -113,6 +113,7 @@ export function createHybridModelRouter({ session, profile, telemetry, checkpoin
           onDispatch: () => { dispatched = true; },
           onUsageReceipt: async receipt => {
             if (accounting.settle('classifier', reservation.id, { ...receipt, callId: reservation.id })) onUsage?.({ ...receipt, callId: reservation.id });
+            onVerifiedUsage?.({ reservationId: reservation.id, providerCallId: receipt.callId, inputTokens: receipt.inputTokens, outputTokens: receipt.outputTokens });
             await checkpoint();
           }
         });
@@ -146,8 +147,12 @@ export function createHybridModelRouter({ session, profile, telemetry, checkpoin
       deadlines.set(reservation.id, () => clearTimeout(timeout));
       const subscription = cts.token.onCancellationRequested(() => { if (!stop.signal.aborted) stop.abort(new HybridPause('HYBRID_CANCELLED', 'Model request cancelled.')); });
       const began = Date.now();
+      let submitted = false;
       try {
         await checkpoint();
+        if (cts.token.isCancellationRequested) throw new HybridPause('HYBRID_CANCELLED', 'Model request cancelled.');
+        stop.signal.throwIfAborted();
+        submitted = true;
         const stream = await boundedRace(chat(messages, { ...options, qaseBudgetReservationId: reservation.id, maxOutputTokens: Math.min(options.maxOutputTokens || budget.outputTokens, budget.outputTokens), cancellationToken: cts.token }), stop.signal);
         return (async function* () {
           const iterator = stream[Symbol.asyncIterator]();
@@ -171,7 +176,9 @@ export function createHybridModelRouter({ session, profile, telemetry, checkpoin
       } catch (error) {
         clearTimeout(timeout); deadlines.delete(reservation.id); subscription.dispose(); cts.dispose(true);
         telemetry.metrics.reasoner.latencyMs += Math.max(0, (reservation.completedAt || Date.now()) - began);
-        await settleReservation('reasoner', reservation, () => {}); await checkpoint();
+        if (submitted) await settleReservation('reasoner', reservation, () => {});
+        else accounting.notDispatched('reasoner', reservation);
+        await checkpoint();
         throw modelFailure(error);
       }
     }

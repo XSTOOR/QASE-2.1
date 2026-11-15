@@ -7,6 +7,7 @@ import { scenarioExecutionAccount } from './qaExecutionState.js';
 import {scenarioObligation,validateScenarioDependencies,intactQaReceipt} from './qaScenarioScheduler.js';
 import { requireApplicationDiscovery, observeApplication } from './qaApplicationDiscovery.js';
 import { canonicalModeHash, modeReceiptHash } from './modeIntegrity.js';
+import { MENU_MOTION, menuMotionLabel } from './qaMenuMotion.js';
 
 const text = (value, max = 1500) => String(value ?? '').slice(0, max);
 export const digestEvidence = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -43,7 +44,12 @@ export function createQaScenarioLedger(session, { persist = async () => {}, now 
       status: 'planned', coverage: 'not_executed', uncertainty: [], createdAt: now(), updatedAt: now() };
     state.scenarios.push(item); return item;
   }
-  if (!state.scenarios.length) for (const category of state.scope) addScenario({ category, objective: `Exercise selected ${category} scope`, expected: { source: 'hypothesis', text: 'Define a supported behavior and execute assertions.' } }, true);
+  if (!state.scenarios.length) for (const category of state.scope) {
+    const menu = category === MENU_MOTION && menuMotionLabel(session);
+    addScenario(menu
+      ? { category, objective: `Check the opening transition for “${menu}”.`, expected: { source: 'request', text: `Menu motion: ${menu}` } }
+      : { category, objective: `Exercise selected ${category} scope`, expected: { source: 'hypothesis', text: 'Define a supported behavior and execute assertions.' } }, true);
+  }
   return {
     state, session, evidence, scenario,
     async plan(inputs) {
@@ -225,13 +231,31 @@ export function createQaScenarioLedger(session, { persist = async () => {}, now 
       if (current.status !== 'running' || !observed?.success || observed.scenarioId !== current.id || observed.toolName !== 'browser_snapshot') throw new Error('An executed snapshot from this running scenario is required.');
       if (!['request', 'specification'].includes(current.expected.source) || !current.expected.text || !sourceText(session).includes(current.expected.text) || !String(expected).trim() || !current.expected.text.includes(String(expected))) throw new Error('Snapshot expectations must be quoted from the authorized request or test specification.');
       const facts = observed.result;
-      let pass;
-      if (predicate === 'text_contains') pass = String(facts.bodyText || '').includes(expected);
-      else if (predicate === 'url_equals') pass = facts.url === expected;
-      else if (predicate === 'title_equals') pass = facts.title === expected;
-      else throw new Error('Unknown snapshot predicate.');
-      const assertion = { id: randomUUID(), name: `Snapshot ${predicate}`, expected, actual: text(predicate === 'text_contains' ? facts.bodyText : predicate === 'url_equals' ? facts.url : facts.title), outcome: pass ? 'pass' : 'fail', authority: 'request_assertion', evidenceRef: observed.id, actionId: observed.actionId, ts: now() };
-      const repeated = current.assertions.find(item => item.name === assertion.name && item.expected === expected && item.outcome === assertion.outcome && item.evidenceRef !== observed.id && evidence(item.evidenceRef)?.actionId !== observed.actionId);
+      let pass, actual;
+      if (predicate === 'text_contains') {
+        actual = facts.bodyText;
+        pass = String(actual || '').includes(expected);
+      } else if (predicate === 'heading_equals') {
+        if (current.category !== 'content' || !Array.isArray(facts.elements) || expected.length >= 300) throw new Error('An exact heading check requires a content scenario, a heading under 300 characters and a recorded element inventory.');
+        const headings = facts.elements.filter(item => /^h[1-6]$/i.test(item.tagName) || item.role === 'heading').map(item => item.text).filter(Boolean);
+        pass = headings.includes(expected);
+        if (!pass && (facts.elementCoverage?.omitted !== 0 || headings.some(heading => heading.length >= 300))) throw new Error('The heading could not be ruled out in a truncated snapshot. Record the coverage limitation or take a fuller snapshot.');
+        actual = headings.join(' | ') || 'No visible headings';
+      } else if (predicate === 'url_equals' || predicate === 'title_equals') {
+        actual = predicate === 'url_equals' ? facts.url : facts.title;
+        pass = actual === expected;
+      } else throw new Error('Unknown snapshot predicate.');
+      const assertion = { id: randomUUID(), name: `Snapshot ${predicate}`, expected, actual: text(actual), outcome: pass ? 'pass' : 'fail', authority: 'request_assertion', evidenceRef: observed.id, actionId: observed.actionId, ts: now() };
+      const repeated = current.assertions.find(item => {
+        const first = evidence(item.evidenceRef);
+        if (item.name !== assertion.name || item.expected !== expected || item.outcome !== assertion.outcome || !first || first.id === observed.id || first.actionId === observed.actionId) return false;
+        if (predicate !== 'heading_equals') return true;
+        if (!observed.url || first.url !== observed.url) return false;
+        const firstIndex = state.actions.findIndex(action => action.id === first.actionId);
+        const currentIndex = state.actions.findIndex(action => action.id === observed.actionId);
+        return firstIndex >= 0 && state.actions.slice(firstIndex + 1, currentIndex).some(action =>
+          action.toolName === 'browser_open' && action.status === 'done' && evidence(action.evidenceId)?.url === observed.url);
+      });
       if (repeated) assertion.reproduction = { confirmed: true, observations: 2, kind: 'request_assertion', firstEvidenceRef: repeated.evidenceRef, secondEvidenceRef: observed.id };
       current.assertions.push(assertion);
       if (!pass) observation(current, assertion, observed.id);
