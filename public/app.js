@@ -1159,16 +1159,15 @@ function renderLiveDeviceViewHeader(session, are = null) {
 		live.textContent = completed ? 'Complete' : 'Idle';
 		live.dataset.live = 'false';
 		ldv.title = hasSavedPreview ? 'Saved preview from the completed run' : 'Preview — no active browser';
+		renderUnavailableState(null);
 		return;
 	}
 
 	state.activeRuntimeEnvironment = view;
-	// Preview header/frame follow the ACTIVE RUN only; when the session is
-	// idle/queued/completed, the user's store selection owns the preview
-	// (same rule as the env card — a stale session must not override it).
+	// A saved frame keeps the browser identity of the run that captured it.
 	const activeRun = ['running', 'connected', 'connecting', 'reserving'].includes(view.runtimeStatus);
-	const selView = activeRun ? null : viewForSelection(activeTestEnvStore?.get?.());
-	if (!activeRun && !selView) {
+	const headerView = activeRun || hasSavedPreview ? view : viewForSelection(activeTestEnvStore?.get?.());
+	if (!headerView) {
 		// Idle with NO store selection (e.g. after Clear): empty state — never
 		// resurrect the stale session device on the header/frame.
 		dev.textContent = hasSavedPreview ? 'Saved' : '—';
@@ -1180,10 +1179,9 @@ function renderLiveDeviceViewHeader(session, are = null) {
 		ldv.title = hasSavedPreview ? 'Saved preview from the completed run' : 'Preview — no browser selected';
 		renderBrowserChrome(null);
 		applyDeviceFrame(null);
-		renderUnavailableState(null, 'NO DEVICE');
+		renderUnavailableState(null);
 		return;
 	}
-	const headerView = selView ?? view;
 	const deviceLabel = headerView.device;
 	const execMap = {
 		real_device: headerView.executionTypeAttested ? 'REAL DEVICE' : 'REAL (UNVERIFIED)',
@@ -1206,7 +1204,7 @@ function renderLiveDeviceViewHeader(session, are = null) {
 	};
 	const liveLabel = statusMap[view.runtimeStatus] ?? String(view.runtimeStatus).replaceAll('_', ' ');
 
-	exec.dataset.exec = view.executionType;
+	exec.dataset.exec = headerView.executionType;
 	exec.textContent = execLabel;
 	live.hidden = false;
 	live.textContent = liveLabel;
@@ -1214,11 +1212,9 @@ function renderLiveDeviceViewHeader(session, are = null) {
 	dev.textContent = deviceLabel;
 	ldv.title = `Preview — ${headerView.device} · ${[headerView.os, headerView.osVersion].filter(Boolean).join(' ') || 'unknown OS'} · ${[headerView.browser, headerView.browserVersion].filter(Boolean).join(' ') || 'unknown browser'} · ${execLabel}`;
 
-	// Chrome + frame + unavailable state follow the same source split: the
-	// active run when executing, otherwise the store selection.
-	renderBrowserChrome(activeRun ? view : headerView);
-	applyDeviceFrame(activeRun ? view : headerView);
-	renderUnavailableState(activeRun ? view : headerView, execLabel);
+	renderBrowserChrome(headerView);
+	applyDeviceFrame(headerView);
+	renderUnavailableState(hasSavedPreview ? null : headerView);
 }
 
 
@@ -1323,9 +1319,10 @@ function renderExecutionTargeting(session) {
 }
 
 /* Unavailable state: honest error panel, never a fake preview. */
-function renderUnavailableState(view, execLabel) {	const panel = document.getElementById('ldv-unavailable');
-	if (!panel || !view) return;
-	if (view.runtimeStatus !== 'device_unavailable') { panel.hidden = true; return; }
+function renderUnavailableState(view) {
+	const panel = document.getElementById('ldv-unavailable');
+	if (!panel) return;
+	if (view?.runtimeStatus !== 'device_unavailable') { panel.hidden = true; return; }
 	panel.hidden = false;
 	const env = document.getElementById('ldv-unavailable-env');
 	if (env) env.textContent = [view.device, [view.os, view.osVersion].filter(Boolean).join(' '), [view.browser, view.browserVersion].filter(Boolean).join(' ')].filter(Boolean).join(' · ');
@@ -1879,9 +1876,13 @@ function renderCurrentActivity() {
 		el.currentActivityState.textContent = label || 'Working…';
 		el.currentActivity.hidden = false;
 	} else if (session?.status === 'done') {
-		el.currentActivityState.textContent = runPresentationStatus(session) === 'blocked'
-			? `Testing could not proceed — ${truncate(blockedRunReason(session), 160)}`
-			: runPresentationStatus(session) === 'partial' ? 'QA scenarios completed — review executed evidence and remaining workflows.' : 'Testing complete';
+		const outcome = runPresentationStatus(session);
+		if (outcome === 'blocked') {
+			const summary = session.mode === 'sqa' ? 'Quality review finished with evidence gaps' : 'Testing could not proceed';
+			el.currentActivityState.textContent = `${summary} — ${truncate(blockedRunReason(session), 160)}`;
+		} else {
+			el.currentActivityState.textContent = outcome === 'partial' ? 'QA scenarios completed — review executed evidence and remaining workflows.' : 'Testing complete';
+		}
 		el.currentActivity.hidden = false;
 	} else {
 		el.currentActivityState.textContent = '';
@@ -2063,8 +2064,9 @@ function renderStageCollapse() {
 		if (previewAvailable) {
 			const count = state.session?.findings?.length ?? 0;
 			const result = count === 1 ? '1 finding' : `${count} findings`;
-			el.stageNote.textContent = runPresentationStatus(state.session) === 'blocked'
-				? `Run blocked · Review report · Open preview`
+			const blocked = runPresentationStatus(state.session) === 'blocked';
+			el.stageNote.textContent = blocked
+				? (state.session?.mode === 'sqa' && status === 'done' ? 'Quality review finished · Evidence gaps · Open preview' : 'Run blocked · Review report · Open preview')
 				: state.session?.status === 'done'
 					? `Run complete · ${result} · Open preview`
 					: ['running', 'awaiting_input'].includes(status)

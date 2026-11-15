@@ -1,6 +1,15 @@
-# QASE Founder/SQA integration candidate
+# QASE Evidence Workspace release candidate
 
-Current release: `qase-founder-sqa-2026-11-10-batching-r3`. UI: `20261110-2`.
+Candidate `qase-2026-11-15-evidence-rc2`, UI version `20261115-4`.
+
+- Hybrid QA records navigation and menu-motion assertions with saved evidence. JEV navigation is opt-in and applies to new runs.
+- SQA separates browser results from reviewer requirements, supports scoped reviewer evidence and preserves published assessment versions.
+- Founder separates product observations from assumptions and supports report and requirements exports. Automatic Studio delivery requires a configured receiver and an acceptance receipt.
+- Saved browser previews retain the device identity captured by their run. SQA displays evidence gaps separately from browser startup failures.
+
+To stop using JEV navigation for new runs, set `QASE_HYBRID_JEV_NAVIGATION_ENABLED=false` on the API and workers and roll out the setting. Older navigation evidence remains part of the saved run. This candidate has no SQL migration. For an image rollback, deploy the previously approved image by digest and verify health, readiness and a representative saved run before reopening traffic.
+
+## Previous Founder and SQA integration changes
 
 Configured-provider SQA can compose diagnostics, keyboard/responsive checks,
 and navigation/form checks through two bounded SDK calls. Each child retains

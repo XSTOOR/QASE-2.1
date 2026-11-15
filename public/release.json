@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-11-15-evidence-rc1",
-  "uiVersion": "20261115-3",
+  "releaseId": "qase-2026-11-15-evidence-rc2",
+  "uiVersion": "20261115-4",
   "productionOrigin": "https://qase.drytis.com",
   "source": "Qase Evidence Workspace release candidate with Hybrid QA navigation and menu motion, SQA reviewer evidence, and Founder export"
 }

@@ -16,6 +16,9 @@ const browserName = assertSqaTestBrowser(values.browser);
 const directory = path.resolve(values['output-dir'] ?? path.join(root, 'test-results', 'sqa-phase-9', `${browserName}-${Date.now()}`));
 await mkdir(path.join(directory, '.qase'), { recursive: true });
 const session = { id: randomUUID(), title: 'Phase 9 evidence fixture', mode: 'sqa', status: 'done', ownerUserId: createTenantContext().actorUserId, createdAt: Date.now(), updatedAt: Date.now(), todos: [], findings: [], activities: [{ id: 'fixture-observation', toolName: 'browser_snapshot', status: 'done', ts: Date.now(), summary: 'Synthetic observation used solely to test evidence transport and report rendering.' }], messages: [], secretNames: [] };
+session.environmentSnapshot = { device: 'Evidence fixture desktop', browser: 'Chrome', browserVersion: '151', os: 'Windows' };
+session.runtimeFacts = { executionLevel: 'SIMULATED', launchedEngineId: 'chromium' };
+const frame = { mimeType: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', url: 'https://fixture.test/', ts: Date.now() };
 session.sqa = createSqaState({ authorizationConfirmed: true, target: { name: 'Controlled evidence fixture', release: 'phase-9', environment: 'isolated browser test' } });
 session.sqa.observations = session.sqa.scope.applicableControlIds.map(controlId => ({ controlId, status: 'blocked', rationale: 'Fixture evidence prerequisite.', evidence: [] }));
 await seedSqaSmokePassReceipts(session);
@@ -48,6 +51,17 @@ try {
 		await route.fulfill({ status: 503, json: { error: 'Model turns are disabled in evidence acceptance.' } });
 	});
 	const errors = []; page.on('pageerror', error => errors.push(error.message));
+	const sessionUrl = `${base}/api/sessions/${session.id}`;
+	// The session endpoint attaches the current runtime frame. Keep the fixture
+	// on that path so the persisted evidence tests continue using the real store.
+	await page.route(sessionUrl, async route => {
+		const response = await route.fetch();
+		await route.fulfill({ response, json: { ...await response.json(), frame } });
+	}, { times: 1 });
+	await page.goto(`${base}/#/runs/${session.id}`);
+	await page.waitForFunction(() => document.querySelector('#current-activity-state')?.textContent.startsWith('Quality review finished with evidence gaps'));
+	await page.waitForFunction(() => document.querySelector('#ldv-device')?.textContent === 'Evidence fixture desktop');
+	assert.equal(await page.locator('#ldv-unavailable').isHidden(), true);
 	await page.goto(`${base}/#/runs/${session.id}/results`);
 	await page.waitForFunction(title => document.body.dataset.page === 'results' && !document.body.dataset.pageLoading
 		&& document.getElementById('results-page-title').title === title, session.title);
