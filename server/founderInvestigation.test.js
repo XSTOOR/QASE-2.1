@@ -39,6 +39,45 @@ test('an unreturned native tool call and recent failure remain available for rep
  assert.ok(projected.some(m=>m.toolCallId==='failed'&&m.content===messages.at(-1).content));
 });
 
+test('a public evidence checkpoint reduces repeated context and retains current evidence for the next action', async () => {
+	const session = fixture();
+	const message = { role: 'user', content: 'Review the original authorized fixture.' };
+	const messages = [message, { role: 'assistant', content: '', toolCalls: [{ id: 'pending', toolName: 'browser_click', input: {} }] }];
+	for (let index = 0; index < 4; index++) {
+		const id = `read-${index}`;
+		messages.push({ role: 'assistant', content: '', toolCalls: [{ id, toolName: 'browser_read_page', input: {} }] });
+		messages.push({ role: 'tool', toolCallId: id, content: `Browser result ${index}.` });
+	}
+	const store = { async commit() {} };
+	session.activities.push({ id: 'text', toolName: 'browser_read_page', status: 'done' });
+	await rememberFounderEvidence(session, store, {
+		activityId: 'text', toolName: 'browser_read_page',
+		result: { success: true, url: 'https://fixture.test/pricing', text: 'The listed price is $19 per team.' }
+	});
+	session.founder.observations = Array.from({ length: 8 }, (_, index) => ({
+		...session.founder.observations[0], id: `observation-${index}`, summary: 'Saved observation details. '.repeat(16)
+	}));
+	const saved = structuredClone(session);
+	const projected = projectFounderMessages(messages, session);
+	assert.deepEqual(projected.filter(item => item.role === 'tool').map(item => item.toolCallId), ['read-2', 'read-3']);
+	assert.ok(projected.includes(message));
+	assert.ok(projected.some(item => item.toolCalls?.some(call => call.id === 'pending')));
+	assert.match(projected.at(-1).content, /\$19 per team/);
+	const { observations } = JSON.parse(projected.at(-1).content.split('\n')[1]);
+	assert.deepEqual(observations.map(item => item.id), saved.founder.observations.map(item => item.id));
+	assert.equal(observations[0].summary.length, 160);
+	assert.equal(observations.at(-1).summary.length, 400);
+	assert.deepEqual(session, saved);
+
+	for (const fallback of [
+		{ ...saved, pendingQuestion: { text: 'Clarify the review scope.' } },
+		{ ...saved, founder: { ...saved.founder, scope: { ...saved.founder.scope, access: { decision: 'authenticated' } } } },
+		{ ...saved, activities: saved.activities.slice(0, -1) }
+	]) {
+		assert.equal(projectFounderMessages(messages, fallback).filter(item => item.role === 'tool').length, 4);
+	}
+});
+
 test('only exact SDK context envelopes are deduplicated; synthesis and legacy/qualified callers keep their own contract',()=>{
  const session=fixture(),root=path.join(process.cwd(),'.qase','workspaces',session.id),context=`Workspace root: ${root}\n\nTrusted Founder instructions`;
  const messages=[{role:'user',content:`[CONTEXT]\n${context}\n\nUser Request: Original request`},{role:'system',content:`[RUNTIME CONTEXT REMINDER]\n${context}\n\nCurrent objective: Review fixture`}];

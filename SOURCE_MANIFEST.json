@@ -2076,11 +2076,11 @@
     },
     {
       "path": "server/founderInvestigation.js",
-      "sha256": "8e2435fd5d3e71d392321420688219e0e9ab909fae9793fe15aa4d8e839bc20a"
+      "sha256": "2db059957eca9de2a2f3b1dcfd0259e94f3766a995caa693f5417f9261d69b73"
     },
     {
       "path": "server/founderInvestigation.test.js",
-      "sha256": "d5cbd148243217da83b65e856d51b745cb05fff8095515fb1df51c6a0a4722e2"
+      "sha256": "8bea88d665c84f68d17d87f3074a63ac8a53029b3962825f0efc54bcbe2a9c3f"
     },
     {
       "path": "server/founderPageReview.js",
