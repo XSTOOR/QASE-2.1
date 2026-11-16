@@ -185,6 +185,46 @@ test('post-interaction checkpoint requires a saved outcome and diagnostics and y
 	assert.equal(founderObservationCheckpoint(session), undefined);
 });
 
+test('an oversized atomic observation write gets one evidence-preserving correction, also after reload', () => {
+ const session = fixture();
+ const rejected = { id: 'oversized', toolName: 'record_founder_observation', status: 'failed',
+  error: 'No observations were saved. Titles can use up to 120 characters and summaries up to 600. Shorten the listed fields, preserve the evidence and scope limitations, and retry the batch.',
+  input: { observations: [{ category: 'activation', title: 'Observed limitation', summary: 'x'.repeat(601), evidence_activity_ids: ['a-1'] }] } };
+ session.activities.push(rejected);
+ const before = structuredClone(session);
+ const expected = { id: 'repair:oversized', kind: 'observation_repair', invalidFields: [{ item_number: 1, field: 'summary', max_length: 600 }], evidenceIds: ['a-1'] };
+ assert.deepEqual(founderObservationCheckpoint(session), expected);
+ assert.deepEqual(founderObservationCheckpoint(JSON.parse(JSON.stringify(session))), expected);
+ assert.deepEqual(session, before);
+ session.activities.push({ ...structuredClone(rejected), id: 'failed-correction' });
+ assert.equal(founderObservationCheckpoint(session), undefined);
+ assert.equal(founderObservationCheckpoint(JSON.parse(JSON.stringify(session))), undefined);
+ session.activities.at(-1).status = 'done';
+ assert.equal(founderObservationCheckpoint(session), undefined);
+});
+
+test('observation correction never forces storage failures, stale evidence, active work or report generation', () => {
+ const base = fixture();
+ base.activities.push({ id: 'oversized', toolName: 'record_founder_observation', status: 'failed',
+  error: 'No observations were saved. Titles can use up to 120 characters and summaries up to 600.',
+  input: { observations: [{ title: 'x'.repeat(121), summary: 'Observed', evidence_activity_ids: ['a-1'] }] } });
+ for (const mutate of [
+  s => { s.activities.at(-1).error = 'Storage unavailable'; },
+  s => { s.activities.at(-1).input.observations[0].evidence_activity_ids = ['missing']; },
+  s => { s.activities.at(-1).input.observations[0].title = 'Within limit'; },
+  s => { s.activities.push({ id: 'active', status: 'running', toolName: 'browser_snapshot' }); },
+  s => { s.pendingQuestion = { text: 'Need permission' }; },
+  s => { s.founder.scope.access.decision = 'authenticated'; },
+  s => { s.founder.reportDraft = {}; },
+  s => { s.founder.execution = {}; },
+  s => { s.founder.finalizedAt = 1; },
+  s => { delete s.founder.reportGeneration; }
+ ]) {
+  const session = structuredClone(base); mutate(session);
+  assert.equal(founderObservationCheckpoint(session), undefined);
+ }
+});
+
 test('a stale public review plan surfaces verified work and an ambiguous form without closing the plan', async () => {
 	const session = fixture();
 	session.founder.scope = { ...session.founder.scope, categories: FOUNDER_CATEGORY_IDS,

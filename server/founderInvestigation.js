@@ -123,6 +123,28 @@ export function founderObservationCheckpoint(session) {
  const founder = session.founder;
  if (!founder?.reportGeneration || founder.scope?.access?.decision !== 'public_only'
   || session.pendingQuestion || !founderInvestigationIntact(session)) return undefined;
+ // A rejected atomic write contains no saved observations. Give the native
+ // tool loop one correction opportunity before it discards this page's work.
+ // Consecutive failed writes never force another retry, including after reload.
+ const latest = session.activities.at(-1);
+ if (!founder.execution && !founder.finalizedAt && !founder.reportDraft
+  && !session.activities.some(activity => activity.status === 'running')
+  && latest?.toolName === 'record_founder_observation' && latest.status === 'failed'
+  && latest.error?.startsWith('No observations were saved. Titles can use up to 120 characters and summaries up to 600.')) {
+  const previousWrite = session.activities.slice(0, -1).findLast(activity => activity.toolName === 'record_founder_observation');
+  const batch = latest.input?.observations;
+  if (previousWrite?.status !== 'failed' && Array.isArray(batch) && batch.length > 0 && batch.length <= 6) {
+   const invalidFields = batch.flatMap((item, index) => Object.entries({ title: 120, summary: 600 })
+    .filter(([field, limit]) => typeof item?.[field] === 'string' && item[field].length > limit)
+    .map(([field, limit]) => ({ item_number: index + 1, field, max_length: limit })));
+   const allowed = new Set(founderObservationEvidenceChoices(session).map(activity => activity.id));
+   const receipts = batch.flatMap(item => item?.evidence_activity_ids ?? []);
+   if (invalidFields.length && batch.every(item => Array.isArray(item?.evidence_activity_ids) && item.evidence_activity_ids.length)
+    && receipts.every(id => allowed.has(id))) {
+    return { id: `repair:${latest.id}`, kind: 'observation_repair', invalidFields, evidenceIds: [...new Set(receipts)] };
+   }
+  }
+ }
  const first = firstFounderObservationCheckpoint(session);
  if (first) return { id: first.reviewId, kind: 'first_page', page: first.page };
  const observed = new Set(founder.observations.map(item => item.category));
