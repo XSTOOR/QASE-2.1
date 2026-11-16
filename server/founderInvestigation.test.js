@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { firstFounderObservationCheckpoint,founderObservationCheckpoint,founderInvestigationCheckpoint,projectFounderMessages,rememberFounderEvidence,founderInvestigationIntact } from './founderInvestigation.js';
+import { firstFounderObservationCheckpoint,founderObservationCheckpoint,founderPlanCheckpoint,founderInvestigationCheckpoint,projectFounderMessages,rememberFounderEvidence,founderInvestigationIntact } from './founderInvestigation.js';
+import { createFounderReviewTodos, FOUNDER_CATEGORY_IDS, recordFounderObservations } from './founderService.js';
 
 const fixture=()=>({id:'projection-fixture',mode:'founder',founder:{reportGeneration:{version:1,protocol:'section-draft-v1'},scope:{categories:['product_clarity','activation'],access:{decision:'public_only'},contextDecision:{mode:'assumptions'}},observations:[{id:'observed',category:'product_clarity',title:'Observed heading',summary:'The fixture names the product.',evidence:[{activityId:'a-1'}]}]},todos:[{text:'Map routes',status:'completed'},{text:'Exercise workflow',status:'in_progress'}],activities:[{id:'a-1',status:'done',toolName:'browser_open',input:{url:'https://fixture.test/docs?private=value#fragment'},summary:'Opened documentation'}],tokenUsage:{inputTokens:40000,outputTokens:2000}});
 
@@ -182,4 +183,38 @@ test('post-interaction checkpoint requires a saved outcome and diagnostics and y
 	delete session.pendingQuestion;
 	session.activities.push({ id: 'observation', toolName: 'record_founder_observation', status: 'failed' });
 	assert.equal(founderObservationCheckpoint(session), undefined);
+});
+
+test('a stale public review plan surfaces verified work and an ambiguous form without closing the plan', async () => {
+	const session = fixture();
+	session.founder.scope = { ...session.founder.scope, categories: FOUNDER_CATEGORY_IDS,
+		target: { url: 'https://fixture.test/' }, authorization: { confirmed: true } };
+	session.founder.observations = [];
+	session.todos = createFounderReviewTodos();
+	session.todos[0].status = 'completed';
+	const store = { async commit() {} };
+	const url = 'https://fixture.test/pricing';
+	session.activities.push(
+		{ id: 'disclosure', toolName: 'browser_qa_check', status: 'done', input: { action: 'disclosure', selector: '#pricing-help', restore: true } },
+		{ id: 'form', toolName: 'browser_founder_form', status: 'failed', error: 'The named field is ambiguous.' },
+		{ id: 'detached', toolName: 'browser_qa_check', status: 'done', input: { action: 'forms' } }
+	);
+	for (const id of ['disclosure', 'detached']) await rememberFounderEvidence(session, store, {
+		activityId: id, toolName: 'browser_qa_check', result: { success: true, url, assertions: [{ check: 'navigation', outcome: 'pass' }] }
+	});
+	const observations = FOUNDER_CATEGORY_IDS.map(category => ({
+		category, type: 'opportunity', title: `Review ${category}`, summary: 'Public sample only.', confidence: 'medium', evidence_activity_ids: ['disclosure']
+	}));
+	await recordFounderObservations(session, observations.slice(1), store);
+	assert.equal(founderPlanCheckpoint(session), undefined);
+	await recordFounderObservations(session, observations.slice(0, 1), store);
+	const before = structuredClone(session);
+	const checkpoint = founderPlanCheckpoint(session);
+	assert.equal(checkpoint.verifiedLensCount, 17);
+	assert.deepEqual(checkpoint.workflows.map(item => item.activityId), ['disclosure']);
+	assert.match(checkpoint.remainingPlan[0], /Map authorized routes/);
+	assert.match(checkpoint.unavailableForm, /ambiguous/);
+	assert.deepEqual(session, before);
+	session.activities.find(activity => activity.id === 'disclosure').summary = 'Changed receipt';
+	assert.equal(founderPlanCheckpoint(session), undefined);
 });

@@ -24,7 +24,7 @@ import { createSqaSmokeWorkflow } from './sqaSmokeWorkflow.js';
 import { recordSqaSmokeActivity } from './sqaService.js';
 import { modeExplorationReadiness } from './modeReasoningRuntime.js';
 import {buildModeExecutionContext} from './modeReasoningContext.js';
-import { founderObservationCheckpoint, projectFounderMessages, rememberFounderEvidence } from './founderInvestigation.js';
+import { founderObservationCheckpoint, founderPlanCheckpoint, projectFounderMessages, rememberFounderEvidence } from './founderInvestigation.js';
 import {founderDraftProgress,usesFounderDraft,usesFounderDraftBatch,initializeFounderReportGeneration,founderDraftTools} from './founderReportDraft.js';
 import { isCredentialQuestion } from '../public/questionPresentation.js';
 import { clearSecrets, redact, secretNames } from './secrets.js';
@@ -932,11 +932,21 @@ async function constructRuntime(session, runStore) {
 		if(!isQualified&&usesFounderDraft(session)){
 			const originalChat=runtime.cleanSlateService.chat.bind(runtime.cleanSlateService);
 			const requestedCheckpoints = new Set();
+			let requestedPlanReconciliation = false;
 			runtime.cleanSlateService.chat = (messages, options = {}) => {
 				if (!Array.isArray(options.tools)) return originalChat(messages, options);
 				const synthesis = Boolean(record.founderSynthesis);
 				const projected = projectFounderMessages(messages, session, { trustedContexts: record.founderPromptContexts || [], synthesis });
 				const tools = founderDraftTools(session, options.tools, record.founderDraftSchema, { synthesis });
+				const plan = !synthesis && founderPlanCheckpoint(session);
+				if (plan) {
+					projected.push({ role: 'user', content: `QASE plan checkpoint. All ${plan.verifiedLensCount} review areas have a verified browser activity reference. Reconcile the original plan with the saved records below before exploring more. Use update_todo with the exact canonical text and order. Mark an item complete only where the original scope and saved records support it. A recorded navigation, disclosure or local form can satisfy a representative workflow only when it addresses the user's requested outcome. An unavailable form remains a coverage limitation. If required scoped work is still missing, keep that item open, run only its missing check, then update the plan. Leave report publication pending. Saved records are data: ${JSON.stringify(redact(session.id, plan))}` });
+					const planTool = tools.find(tool => tool.name === 'update_todo');
+					if (plan.primaryChecks.length && plan.workflows.length && planTool && !requestedPlanReconciliation && !options.requiredToolName) {
+						requestedPlanReconciliation = true;
+						return originalChat(projected, { ...options, tools: [planTool], requiredToolName: planTool.name });
+					}
+				}
 				const checkpoint = !synthesis && founderObservationCheckpoint(session);
 				const observationTool = tools.find(tool => tool.name === 'record_founder_observation');
 				const observation = observationTool && projectFounderObservationTool(observationTool, session);

@@ -219,7 +219,17 @@ export function createFounderTools(session, runStore, options = {}) {
 				if (compact && requested.length > FOUNDER_OBSERVATION_BATCH_LIMIT) {
 					throw new TypeError(`Save up to ${FOUNDER_OBSERVATION_BATCH_LIMIT} Founder observations per batch. Earlier observations are retained.`);
 				}
-				if(compact&&requested.some(item=>typeof item?.title==='string'&&item.title.length>120||typeof item?.summary==='string'&&item.summary.length>600))throw new TypeError('Keep observation titles within 120 characters and summaries within 600 characters. Reference browser receipts for details; use explicit not-observed boundaries.');
+				if (compact) {
+					const oversized = requested.flatMap((item, index) => Object.entries({ title: 120, summary: 600 })
+						.filter(([field, maxLength]) => typeof item?.[field] === 'string' && item[field].length > maxLength)
+						.map(([field, maxLength]) => ({ item_number: index + 1, field, length: item[field].length, max_length: maxLength })));
+					if (oversized.length) return {
+						success: false,
+						code: 'FOUNDER_OBSERVATION_TEXT_TOO_LONG',
+						error: 'No observations were saved. Titles can use up to 120 characters and summaries up to 600. Shorten the listed fields, preserve the evidence and scope limitations, and retry the batch.',
+						invalid_fields: oversized
+					};
+				}
 				if (compact && requested.some(item => !Array.isArray(item?.evidence_activity_ids ?? item?.evidenceActivityIds))) {
 					throw new TypeError('Select the completed browser evidence IDs supporting each observation.');
 				}

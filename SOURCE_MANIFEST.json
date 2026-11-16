@@ -1452,7 +1452,7 @@
     },
     {
       "path": "server/agent.js",
-      "sha256": "37298cf555da35a1e761151d232f253575795430ee27e136c9c9d40c04e6a5d4"
+      "sha256": "4e3735dc6d58452f248beb690dc232e6241d88694ad3a0352c4907344d8a8810"
     },
     {
       "path": "server/agent.test.js",
@@ -2076,11 +2076,11 @@
     },
     {
       "path": "server/founderInvestigation.js",
-      "sha256": "2db059957eca9de2a2f3b1dcfd0259e94f3766a995caa693f5417f9261d69b73"
+      "sha256": "5efd463d1d1418228a7fa0e3b842eea4d6dc4e204b0d5ac54e7e95d2252daec6"
     },
     {
       "path": "server/founderInvestigation.test.js",
-      "sha256": "8bea88d665c84f68d17d87f3074a63ac8a53029b3962825f0efc54bcbe2a9c3f"
+      "sha256": "621838ad4ec7016ca05789d152a595f57ee766aa64dc56d1bb1e463aad0b39e2"
     },
     {
       "path": "server/founderPageReview.js",
@@ -2164,11 +2164,11 @@
     },
     {
       "path": "server/founderTools.js",
-      "sha256": "e7a625719f8b40f6fc04da5fac208c849bb64caf1adf2d96d6dc0afbf9d7f45f"
+      "sha256": "68940f893471ebb34ae060ffef9fd02fe995431a17933637a5cfc335cc2ded76"
     },
     {
       "path": "server/founderTools.test.js",
-      "sha256": "e581fe1fef4adecf3d498b7b030b74f3d765c70bfeb3b65300d3716f84faa79f"
+      "sha256": "161265777c08eca6c1de6956d1f2fa974562770e98da11e89cb4977ae64b1650"
     },
     {
       "path": "server/founderUi.test.js",

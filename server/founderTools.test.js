@@ -38,6 +38,8 @@ test('configured observations expose and enforce concise bounds without changing
  const tool=createFounderTools(candidate,{async commit(){writes++;}})[0];assert.equal(tool.parametersSchema.properties.observations.items.properties.summary.maxLength,600);
  const result=await tool.run({observations:[{category:'product_clarity',type:'opportunity',title:'Observed task entry',summary:'x'.repeat(601),confidence:'medium'}]});
  assert.equal(result.success,false);assert.match(result.error,/600/);assert.equal(writes,0);assert.equal(candidate.founder.observations.length,0);
+ assert.equal(result.code, 'FOUNDER_OBSERVATION_TEXT_TOO_LONG');
+ assert.deepEqual(result.invalid_fields, [{ item_number: 1, field: 'summary', length: 601, max_length: 600 }]);
 });
 
 test('a running report batch can save its sections, while a concurrent browser action still blocks drafting',async()=>{

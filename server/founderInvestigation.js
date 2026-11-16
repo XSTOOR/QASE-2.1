@@ -4,7 +4,8 @@ import { redact } from './secrets.js';
 import { usesFounderDraft } from './founderReportDraft.js';
 import { canonicalModeHash } from './modeIntegrity.js';
 import { completedFounderPageReviews, FOUNDER_PAGE_REVIEW } from './founderPageReview.js';
-import { founderObservationEvidenceChoices } from './founderService.js';
+import { createFounderReviewTodos, FOUNDER_CATEGORY_IDS, founderObservationEvidenceChoices } from './founderService.js';
+import { verifiedFounderObservationIds } from './founderEvidence.js';
 import { FOUNDER_FORM_CASE, FOUNDER_FORM_REVIEW } from './founderFormReview.js';
 
 const publicUrl=value=>{try{const url=new URL(value);return url.origin+url.pathname;}catch{return undefined;}};
@@ -148,6 +149,54 @@ export function founderObservationCheckpoint(session) {
  const outcome = workflow.slice(interaction + 1).findLast(activity => activity.toolName === 'browser_snapshot' && activity.status === 'done');
  if (!outcome) return undefined;
  return { id: pending[diagnostics].id, kind: 'workflow', evidenceIds: [workflow[interaction].id, outcome.id, pending[diagnostics].id] };
+}
+
+/** Supply the canonical plan with saved evidence once observation coverage is complete. */
+export function founderPlanCheckpoint(session) {
+ const founder = session.founder;
+ const saved = founder?.investigationCheckpoint;
+ if (!founder?.reportGeneration || founder.execution || founder.finalizedAt || founder.reportDraft
+  || founder.scope?.access?.decision !== 'public_only' || founder.scope.authorization?.confirmed !== true
+  || session.pendingQuestion || !saved?.entries?.length || session.activities.some(activity => activity.status === 'running')) return undefined;
+ const plan = createFounderReviewTodos();
+ if (session.todos.length !== plan.length || session.todos.some((todo, index) => todo.text !== plan[index].text)) return undefined;
+ const remainingPlan = session.todos.slice(0, -1).filter(todo => todo.status !== 'completed').map(todo => todo.text);
+ const categories = new Set(founder.observations.map(item => item.category));
+ if (!remainingPlan.length || FOUNDER_CATEGORY_IDS.some(id => !categories.has(id)) || !founderInvestigationIntact(session)) return undefined;
+ const verified = new Set(verifiedFounderObservationIds(session));
+ const verifiedCategories = new Set(founder.observations.filter(item => verified.has(item.id)).map(item => item.category));
+ if (FOUNDER_CATEGORY_IDS.some(id => !verifiedCategories.has(id))) return undefined;
+
+ const target = publicUrl(founder.scope.target?.url ?? session.targetUrl);
+ if (!target || !/^https?:/.test(target)) return undefined;
+ const origin = new URL(target).origin;
+ const inScope = url => typeof url === 'string' && url.startsWith(`${origin}/`);
+ const reviews = completedFounderPageReviews(session).filter(review => inScope(review.route));
+ const primary = reviews.find(review => review.depth === 'primary');
+ const activityById = new Map(session.activities.map(activity => [activity.id, activity]));
+ const browserWorkflows = saved.entries.filter(entry => {
+  if (entry.tool !== 'browser_qa_check' || !inScope(entry.url) || !entry.selector) return false;
+  const assertions = entry.assertions?.filter(check => ['pass', 'fail'].includes(check.outcome)) ?? [];
+  if (entry.action === 'navigation') return inScope(entry.expected) && assertions.length >= 4;
+  return entry.action === 'disclosure' && activityById.get(entry.activityId)?.input?.restore === true && assertions.length > 0;
+ }).map(({activityId, action, url, selector, expected, assertions}) => ({activityId, action, url, selector, expected, assertions}));
+ const formReviews = session.activities.filter(activity => activity.toolName === FOUNDER_FORM_REVIEW);
+ const formWorkflows = formReviews.flatMap(activity => {
+  if (activity.status !== 'done' || activity.founderFormCaseIds?.length !== 2) return [];
+  const cases = activity.founderFormCaseIds.map(id => activityById.get(id));
+  if (!cases.every(item => item?.toolName === FOUNDER_FORM_CASE && item.status === 'done'
+   && item.founderFormCase?.samePage === true && item.founderFormCase.networkBlocked === false)
+   || !['invalid', 'valid'].every(name => cases.some(item => item.founderFormCase.name === name))) return [];
+  return [{activityId: activity.id, action: 'local_form', caseIds: activity.founderFormCaseIds}];
+ });
+ return {
+  remainingPlan,
+  reviewedRoutes: [...new Set(reviews.map(review => review.route))].slice(-8),
+  primaryChecks: primary?.checks ?? [],
+  workflows: [...formWorkflows.slice(-2), ...browserWorkflows.slice(-4)],
+  unavailableForm: formReviews.findLast(activity => activity.status === 'failed')?.error,
+  verifiedLensCount: verifiedCategories.size
+ };
 }
 
 /** Preserve the SDK transcript and native call/result links. Only complete
