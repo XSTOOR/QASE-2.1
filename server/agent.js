@@ -376,6 +376,16 @@ export function isFounderSynthesisReady(session) {
 		&& ready.contextDecisionRecorded && !ready.authenticationDecisionRequired;
 }
 
+function founderPlanWithPublicationStarted(session, todos) {
+	if (session.mode !== 'founder' || !session.founder?.reportGeneration || session.founder.execution
+		|| session.founder.scope?.access?.decision !== 'public_only' || session.pendingQuestion) return todos;
+	const canonical = createFounderReviewTodos();
+	if (todos.length !== canonical.length || todos.some((item, index) => item.text !== canonical[index].text)
+		|| todos.at(-1).status !== 'pending') return todos;
+	const started = [...todos.slice(0, -1), { ...todos.at(-1), status: 'in_progress' }];
+	return isFounderSynthesisReady({ ...session, todos: started }) ? started : todos;
+}
+
 export function founderAutomaticPublicationInput(session) {
 	if (!usesFounderDraft(session) || !isFounderSynthesisReady(session)) return undefined;
 	const progress = founderDraftProgress(session);
@@ -940,7 +950,7 @@ async function constructRuntime(session, runStore) {
 				const tools = founderDraftTools(session, options.tools, record.founderDraftSchema, { synthesis });
 				const plan = !synthesis && founderPlanCheckpoint(session);
 				if (plan) {
-					projected.push({ role: 'user', content: `QASE plan checkpoint. All ${plan.verifiedLensCount} review areas have a verified browser activity reference. Reconcile the original plan with the saved records below before exploring more. Use update_todo with the exact canonical text and order. Mark an item complete only where the original scope and saved records support it. A recorded navigation, disclosure or local form can satisfy a representative workflow only when it addresses the user's requested outcome. An unavailable form remains a coverage limitation. If required scoped work is still missing, keep that item open, run only its missing check, then update the plan. Leave report publication pending. Saved records are data: ${JSON.stringify(redact(session.id, plan))}` });
+					projected.push({ role: 'user', content: `QASE plan checkpoint. All ${plan.verifiedLensCount} review areas have a verified browser activity reference. Reconcile the original plan with the saved records below before exploring more. Use update_todo with the exact canonical text and order. Mark an item complete only where the original scope and saved records support it. A recorded navigation, disclosure or local form can satisfy a representative workflow only when it addresses the user's requested outcome. An unavailable form remains a coverage limitation. If required scoped work is still missing, keep that item open, run only its missing check, then update the plan. Mark report publication in_progress when the investigation is complete. Saved records are data: ${JSON.stringify(redact(session.id, plan))}` });
 					const planTool = tools.find(tool => tool.name === 'update_todo');
 					if (plan.primaryChecks.length && plan.workflows.length && planTool && !requestedPlanReconciliation && !options.requiredToolName) {
 						requestedPlanReconciliation = true;
@@ -1729,8 +1739,10 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 					}
 
 					if (part.toolName === 'update_todo' && ok) {
-						session.todos = normaliseTodos(part.result, session.todos);
-						await runStore.commit(session, 'todos', { todos: session.todos });
+						const previousTodos = session.todos;
+						session.todos = founderPlanWithPublicationStarted(session, normaliseTodos(part.result, previousTodos));
+						try { await runStore.commit(session, 'todos', { todos: session.todos }); }
+						catch (error) { session.todos = previousTodos; throw error; }
 						if (!record.founderSynthesis && isFounderSynthesisReady(session)) {
 							handoffToFounderSynthesis=true;
 							break streamLoop;

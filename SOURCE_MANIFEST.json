@@ -1452,11 +1452,11 @@
     },
     {
       "path": "server/agent.js",
-      "sha256": "4e3735dc6d58452f248beb690dc232e6241d88694ad3a0352c4907344d8a8810"
+      "sha256": "eb4965bbc4d5d3c2d995a91680e74ef2f19a2e6b2b7b33bd3f105ec3cefcd433"
     },
     {
       "path": "server/agent.test.js",
-      "sha256": "c205c6884d4625d96ff3dc13138adfd30a753b1ba233319c8e61bc0b0501ec44"
+      "sha256": "3814eb5b79777669e7ab01d973e7a9ba04ce2f6b6a2637113d22f78606cc870d"
     },
     {
       "path": "server/analytics.js",
@@ -2076,7 +2076,7 @@
     },
     {
       "path": "server/founderInvestigation.js",
-      "sha256": "5efd463d1d1418228a7fa0e3b842eea4d6dc4e204b0d5ac54e7e95d2252daec6"
+      "sha256": "c5963b06185daed11d42926288639dee3b5e8a9ce2bd8533d6ec51d93e2057eb"
     },
     {
       "path": "server/founderInvestigation.test.js",

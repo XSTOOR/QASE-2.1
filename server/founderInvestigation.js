@@ -161,6 +161,7 @@ export function founderPlanCheckpoint(session) {
  const plan = createFounderReviewTodos();
  if (session.todos.length !== plan.length || session.todos.some((todo, index) => todo.text !== plan[index].text)) return undefined;
  const remainingPlan = session.todos.slice(0, -1).filter(todo => todo.status !== 'completed').map(todo => todo.text);
+ if (!remainingPlan.length && session.todos.at(-1).status === 'pending') remainingPlan.push(session.todos.at(-1).text);
  const categories = new Set(founder.observations.map(item => item.category));
  if (!remainingPlan.length || FOUNDER_CATEGORY_IDS.some(id => !categories.has(id)) || !founderInvestigationIntact(session)) return undefined;
  const verified = new Set(verifiedFounderObservationIds(session));

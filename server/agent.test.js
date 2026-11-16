@@ -1165,6 +1165,29 @@ test('Founder synthesis readiness retains every prerequisite and clears only the
 	assert.equal(fixture.clearCount(), 1);
 });
 
+test('a saved public plan starts publication only after the original Founder readiness checks pass', async () => {
+	for (const missingDiagnostics of [false, true]) {
+		const { session, record, store, statuses } = founderSynthesisFixture();
+		session.founder.scope.access = { decision: 'public_only' };
+		session.founder.reportGeneration = { version: 1, protocol: 'section-draft-v1', evidenceHashVersion: 1 };
+		session.todos[1].status = 'in_progress';
+		session.todos.at(-1).status = 'pending';
+		if (missingDiagnostics) session.activities = session.activities.filter(activity => activity.toolName !== 'browser_diagnostics');
+		const committed = [];
+		store.commit = async (_session, type, payload) => { if (type === 'todos') committed.push(structuredClone(payload.todos)); };
+		record.runtime.run = async function* () {
+			if (record.founderSynthesis) return;
+			const todos = session.todos.map((todo, index) => ({ ...todo, status: index < session.todos.length - 1 ? 'completed' : 'pending' }));
+			yield { type: 'tool_result', toolName: 'update_todo', toolCallId: 'reconcile-plan', result: { success: true, todos } };
+		};
+		await runTurn(session, { task: 'Continue the public review', incompleteAttempt: Number.MAX_SAFE_INTEGER }, store);
+		assert.equal(committed[0].at(-1).status, missingDiagnostics ? 'pending' : 'in_progress');
+		assert.equal(Boolean(record.founderSynthesis), !missingDiagnostics);
+		assert.equal(statuses.some(item => item.detail?.includes('Preparing the Founder report')), !missingDiagnostics);
+		assert.equal(session.founder.finalizedAt, undefined);
+	}
+});
+
 test('configured-provider Founder synthesis keeps durable draft tools and removes browser work at the SDK boundary',()=>{
  const f=founderSynthesisFixture();f.session.founder.reportGeneration={version:1,protocol:'section-draft-v1',evidenceHashVersion:1};
  const draft={name:'draft_founder_report_section',parametersSchema:{type:'object'}};f.headless.options.tools.push(draft);f.headless.toolsByName.set(draft.name,draft);
