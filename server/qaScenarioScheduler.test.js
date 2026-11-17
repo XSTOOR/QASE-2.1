@@ -162,6 +162,41 @@ test('the next SDK inference hands off exhausted recovery before billing another
  assert.equal(f.state.pendingDecision.kind,'coverage');assert.equal(f.session.report,undefined);
 });
 
+test('an exhausted no-change navigation check releases the browser and preserves failures in the report', async () => {
+  const f = fixture();
+  const item = f.state.scenarios[0];
+  const gap = 'The observed control did not produce a verifiable new state; no pass or confirmed defect was inferred.';
+  await f.ledger.start(item.id);
+  await check(f, { action: 'navigation_control', selector: '#inert' }, {
+    success: true,
+    gaps: [gap],
+    assertions: [{ ...assertion('navigation'), actual: false, outcome: 'fail' }]
+  });
+  await f.ledger.close(item.id, 'inconclusive', gap);
+  for (let index = 0; index < 2; index++) {
+    await f.ledger.investigate(item.id, (await observation(f)).id);
+    if (index === 0) {
+      assert.equal(await f.ledger.checkpointExhaustedNavigation(), false);
+      await check(f, { action: 'tabs' }, { success: true, assertions: [assertion('navigation')] });
+      await f.ledger.close(item.id, 'inconclusive', gap);
+    }
+  }
+  const evidence = structuredClone(f.state.evidence);
+  const assertions = structuredClone(item.assertions);
+  const service = { async chat() { assert.fail('Verified recovery can finalize without another model call.'); } };
+  f.runtime.wrapChat(service);
+  const parts = [];
+  for await (const part of await service.chat([], { tools: [createQaTools(f.session, { async commit() {} }).find(t => t.name === 'finish_qa_report')] })) parts.push(part);
+  assert.equal(parts[0]?.call?.toolName, 'finish_qa_report');
+  assert.equal(parts[0].call.input.verdict, 'partial');
+  assert.equal(f.state.currentScenarioId, undefined);
+  assert.equal(item.status, 'failed');
+  assert.deepEqual(f.state.evidence, evidence);
+  assert.deepEqual(item.assertions, assertions);
+  assert.equal(schedule(f).accounted, 1);
+  assert.match(validateHybridReport(f.session, parts[0].call.input).not_covered.join(' '), /remained inconclusive after 2 bounded investigations/);
+});
+
 test('host scheduler offers an existing pending route through the SDK after stagnant reasoning and checkpoints its identity',async()=>{
  const f=fixture();f.state.exploration.routes=[{id:'observed-entry',url:f.session.targetUrl,source:f.session.targetUrl,status:'pending'}];
  recordInferenceProgress(f.state);f.state.inferenceProgress.stagnantTurns=2;

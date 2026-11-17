@@ -25,7 +25,7 @@ export function continuationOffer(session) {
 
 /** Host-authored prerequisites enter the existing SDK question tool. They do
  * not spend model tokens or create another agent loop. */
-export function prepareHostDecision(session, { closing = false, forcedBudget = false, forcedCoverage = false } = {}) {
+export function prepareHostDecision(session, { closing = false, forcedBudget = false, forcedCoverage = false, stalled = false } = {}) {
   const state = session.hybrid;
   if (![1, 2].includes(state.continuationPolicyVersion)) return null;
   if (state.pendingDecision && (!forcedBudget || state.pendingDecision.kind === 'budget')) return state.pendingDecision;
@@ -41,18 +41,20 @@ export function prepareHostDecision(session, { closing = false, forcedBudget = f
       question = `Authenticated testing needs test account credentials or an access recovery decision. Use the secure form, or continue public-only.${auth.blockedEndpoint ? ` The site attempted this authentication API; approve its exact URL only if trusted: ${auth.blockedEndpoint}` : ''}`;
       options = ['Provide an authorized test account securely', PUBLIC];
     }
-  } else if (autonomous(state)&&!forcedCoverage&&!(closing&&state.executionPolicy.incompleteOutcome==='pause')) return null;
+  } else if (autonomous(state)&&!forcedCoverage&&!stalled&&!(closing&&state.executionPolicy.incompleteOutcome==='pause')) return null;
   else if (closing && !state.partialReportApproved) {
     kind = 'budget'; offer = continuationOffer(session);
     question = 'Testing is unfinished. Progress and exact usage are saved. Approve a bounded additional budget to continue the remaining tests, or explicitly choose a report with coverage gaps.';
     options = offer.available && offer.changes.reasonerTokens > 0 && offer.changes.durationMs > 0 ? [offer.label, FINISH] : [FINISH];
-  } else if (!state.partialReportApproved && (forcedCoverage || state.scenarios.length && state.scenarios.every(item => !['planned', 'running'].includes(item.status)) && hybridRoutePolicy(state).publicationAllowed && hybridCompletion(session).gaps.length)) {
+  } else if (!state.partialReportApproved && (stalled || forcedCoverage || state.scenarios.length && state.scenarios.every(item => !['planned', 'running'].includes(item.status)) && hybridRoutePolicy(state).publicationAllowed && hybridCompletion(session).gaps.length)) {
     kind = 'coverage';
-    question = 'Some requested checks still lack requirements, access or execution evidence. Provide the missing context to continue, or explicitly publish the report with those coverage gaps.';
+    question = stalled
+      ? 'Testing stopped because eight attempts by the agent produced no new verified progress. Publish the saved results with explicit coverage gaps, or provide concrete new requirements or access context to continue.'
+      : 'Some requested checks still lack requirements, access or execution evidence. Provide the missing context to continue, or explicitly publish the report with those coverage gaps.';
     options = ['I will provide the missing requirements or access context', FINISH];
   }
   if (!kind) return null;
-  return state.pendingDecision = { id: `qase-host-${randomUUID()}`, kind, createdAt: Date.now(), ...(offer ? { offer } : {}),
+  return state.pendingDecision = { id: `qase-host-${randomUUID()}`, kind, createdAt: Date.now(), ...(offer ? { offer } : {}), ...(stalled && kind === 'coverage' ? { stalled: true } : {}),
     input: { summary: 'Progress is saved. A user decision is required before testing can continue or an incomplete report can be finalized.', question, options, allowCustom: kind === 'coverage' } };
 }
 
@@ -100,7 +102,8 @@ export function applyHostDecision(session, answer) {
     if (state.exploration) state.exploration.maxPages += decision.offer.pages;
     state.budgetFinalizing = false; state.partialReportApproved = undefined; state.finishRequested = false;
   } else if (decision.kind === 'coverage') {
-    if (selected === decision.input.options[0]) throw new Error('Enter the missing requirements in the custom answer so the agent has concrete new context.');
+    if (!selected || selected === decision.input.options[0] || (decision.stalled && /^(continue|resume|retry|try again)[.!]?$/i.test(selected))) throw new Error('Enter the missing requirements in the custom answer so the agent has concrete new context.');
+    if (decision.stalled && state.inferenceProgress) state.inferenceProgress.stagnantTurns = 0;
     // Keep all assertions/actions. Reopen only unfinished outcomes, never failed
     // or passed tests, so new requirements cannot erase existing evidence.
     for (const scenario of state.scenarios) if (['blocked', 'inconclusive', 'not_executed'].includes(scenario.status)) scenario.status = 'planned';

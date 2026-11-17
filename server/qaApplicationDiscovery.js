@@ -8,6 +8,49 @@ const hash = value => createHash('sha256').update(JSON.stringify(value)).digest(
 const access = session => hasConfirmedAccess(session.hybrid) ? session.hybrid.authentication.grantId : 'public';
 const clean = value => String(value || '').slice(0, 180);
 export const discoveryRequired = session => session.hybrid?.discovery?.version === 1;
+
+/** Pair fresh receipts with the features accepted by the investigation gate. */
+export function navigationInvestigationChoices(session, obligation, discovery = applicationDiscoveryStatus(session)) {
+  if (obligation?.category !== 'navigation' || !obligation.canInvestigate || !discovery.ready || !discovery.required) return [];
+  const state = session.hybrid;
+  const scenario = state.scenarios.find(item => item.id === obligation.id);
+  const used = new Set(scenario?.investigations?.map(item => item.strategyFeatureId));
+  const excluded = new Set(scenario?.executionGaps?.map(gap => {
+    const action = state.actions.find(item => item.id === gap.actionId);
+    const receipt = state.evidence.find(item => item.id === gap.evidenceRef);
+    return JSON.stringify([receipt?.url, action?.input?.selector]);
+  }));
+  const origin = new URL(session.targetUrl).origin;
+  const choices = [];
+  for (const id of [...obligation.freshObservationIds].reverse()) {
+    const receipt = state.evidence.find(item => item.id === id);
+    const inventory = receipt?.result?.inventory;
+    if (inventory?.readiness?.ready !== true || !inventory.stateKey) continue;
+    for (const feature of discovery.features) {
+      if (feature.stateKey !== inventory.stateKey || feature.location !== receipt.url || used.has(feature.id)) continue;
+      const control = feature.controls[0];
+      if (!control?.selector || excluded.has(JSON.stringify([feature.location, control.selector]))) continue;
+      const input = feature.kind === 'link' && control.href && !control.download && !control.target && safeLink(control.href, origin)
+        ? { action: 'navigation', selector: control.selector, expected: control.href }
+        : feature.kind === 'navigation' ? { action: 'navigation_control', selector: control.selector }
+        : null;
+      if (!input) continue;
+      choices.push({ observation_evidence_id: id, strategy_feature_id: feature.id, location: feature.location, check: input });
+      used.add(feature.id);
+      if (choices.length === 4) return choices;
+    }
+  }
+  return choices;
+}
+
+function safeLink(href, origin) {
+  try {
+    const url = new URL(href);
+    return url.origin === origin && !url.username && !url.password && !url.hash && !url.search &&
+      !/login|logout|sign.?out|delete|remove|reset|subscribe|payment|checkout|create|invite|send/i.test(url.pathname);
+  } catch { return false; }
+}
+
 function candidatesFor(inventory, targetUrl) {
   const controls = [...(inventory.navigationControls || []).map(c => ({ ...c, action: 'navigation_control' })), ...(inventory.formOpeners || []).map(c => ({ ...c, action: 'open_test_form' }))];
   const links = (inventory.links || []).filter(c => { try { const u = new URL(c.href); return u.origin === new URL(targetUrl).origin && u.href !== inventory.url && !u.search && !u.hash && !c.download && !c.target && !/login|logout|sign.?out|delete|remove|reset|subscribe|payment|checkout|create|invite|send/i.test(u.pathname + ' ' + c.label); } catch { return false; } }).map(c => ({ ...c, action: 'navigation' }));

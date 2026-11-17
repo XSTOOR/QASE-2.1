@@ -9,6 +9,7 @@ import { createHybridRuntime } from './hybridQaRuntime.js';
 import { hybridProfile, OPUS_MODEL } from './hybridConfig.js';
 import { applyHostDecision } from './hybridContinuation.js';
 import { createQaTools } from './qaTools.js';
+import { recordInferenceProgress } from './qaInferenceProgress.js';
 
 test('installed SDK pauses for a host budget decision and resumes the same loop only after explicit approval', { timeout: 20000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-continuation-sdk-'));
@@ -78,4 +79,58 @@ for (const automatic of [false, true]) test(`installed SDK ${automatic ? 'autono
   assert.equal(session.report.securityOutcomes[0].outcome, 'not_tested');
   assert.ok(session.hybrid.scenarios.every(scenario => !['planned', 'running', 'passed'].includes(scenario.status)));
   assert.equal(session.hybrid.budgets.reasonerTokens, 300000, 'Publication cannot grant more model budget.');
+});
+test('a stalled QA run offers publication of saved evidence without another model call', { timeout: 20000 }, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-stalled-sdk-'));
+  const sdk = new CleanSlateNodeAgentRuntime({ rootPath: root,
+    configuration: createNodeProviderConfiguration({ provider: 'custom', model: OPUS_MODEL, baseUrl: 'https://fixture.invalid/v1', apiKey: 'fixture-key', maxTurns: 6 }),
+    approveCommand: async () => false, approveTool: async () => true, logger: { debug() {}, info() {}, warn() {}, error() {} } });
+  t.after(() => { sdk.dispose(); fs.rmSync(root, { recursive: true, force: true }); });
+  const session = { id: randomUUID(), mode: 'qa', qaExecutionMode: 'hybrid', targetUrl: 'https://fixture.test/', ownerUserId: 'owner',
+    selectedTests: ['responsive', 'forms'], messages: [], activities: [], todos: [], findings: [], secretNames: [] };
+  const store = { async commit() {} };
+  const hybrid = createHybridRuntime({ session, record: {}, profile: hybridProfile({ apiKey: 'fixture-key' }, {}), runStore: store });
+  t.after(() => hybrid.endTurn('done'));
+  const tools = [ALL_TOOLS.find(tool => tool.name === 'ask_question'), ...hybrid.tools, ...createQaTools(session, store)].map(tool => hybrid.wrapTool(tool));
+  sdk.headlessRuntime.options.tools = tools;
+  sdk.headlessRuntime.toolsByName.clear();
+  for (const tool of tools) sdk.headlessRuntime.toolsByName.set(tool.name, tool);
+
+  const checked = session.hybrid.scenarios.find(scenario => scenario.category === 'responsive');
+  await hybrid.ledger.start(checked.id);
+  const action = await hybrid.ledger.beginAction('browser_qa_check', { action: 'responsive' });
+  await hybrid.ledger.record(action, { success: true, url: session.targetUrl, assertions: [
+    { check: 'responsive', name: 'Fixture fits viewport', expected: true, actual: true, outcome: 'pass' }
+  ] });
+  session.activities.push({ toolName: 'browser_qa_check', status: 'done' });
+  session.runtimeFacts = { executionLevel: 'SIMULATED', userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/153', os: 'Linux', capturedAt: new Date().toISOString() };
+  await hybrid.ledger.close(checked.id, 'complete');
+  const savedEvidence = structuredClone(session.hybrid.evidence);
+  for (let index = 0; index < 8; index++) recordInferenceProgress(session.hybrid);
+
+  let requests = 0;
+  sdk.cleanSlateService.chat = async () => { requests++; throw new Error('Stalled recovery must use the host decision'); };
+  hybrid.wrapChat(sdk.cleanSlateService);
+  await hybrid.beginTurn(t.signal);
+  for await (const _part of sdk.run('Continue the incomplete QA run.', t.signal)) { /* host decision */ }
+  await hybrid.endTurn('awaiting_input');
+  const decision = session.hybrid.pendingDecision;
+  assert.equal(decision?.kind, 'coverage');
+  assert.equal(decision.stalled, true);
+  assert.equal(sdk.getPendingQuestion()?.toolCallId, decision.id);
+  assert.equal(session.report, undefined);
+  session.pendingQuestion = { toolCallId: decision.id };
+  assert.throws(() => applyHostDecision(session, 'continue'), /concrete new context/);
+  const answer = decision.input.options.at(-1);
+  assert.equal(applyHostDecision(session, answer), true);
+  await hybrid.beginTurn(t.signal);
+  const results = [];
+  for await (const part of sdk.resumePendingQuestion(answer, t.signal)) {
+    if (part.type === 'tool_result') results.push({ tool: part.toolName, error: part.result?.error });
+  }
+  assert.equal(requests, 0);
+  assert.equal(session.report?.verdict, 'partial', JSON.stringify(results));
+  assert.ok(session.report.notCovered.some(gap => gap.includes('forms')));
+  assert.equal(checked.status, 'passed');
+  assert.deepEqual(session.hybrid.evidence, savedEvidence);
 });

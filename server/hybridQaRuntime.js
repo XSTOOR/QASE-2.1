@@ -4,7 +4,7 @@ import { createHybridModelRouter, HybridPause } from './hybridModelRouter.js';
 import { createJevClassificationTools } from './jevClassificationTools.js';
 import { createHybridQaTools } from './hybridQaTools.js';
 import { profileIdentity } from './hybridConfig.js';
-import { hybridCompletion } from './qaCompletionGate.js';
+import { hybridCompletion, hybridUnreportedFindings } from './qaCompletionGate.js';
 import { redact } from './secrets.js';
 import { hybridHostContext, projectHybridMessages, prepareHybridInference } from './hybridContext.js';
 import { assertionSummary, scenarioSummary } from './hybridSummaries.js';
@@ -18,7 +18,7 @@ import { prepareHostDecision, hostCloseoutCalls } from './hybridContinuation.js'
 import { autonomous, ensureAutonomousCapacity, requestAutomaticCloseout, synchronizeAccessPhase } from './hybridAutonomy.js';
 import { executionProgress, recordHybridSegment, fixedCheckCategory, scenarioExecutionAccount } from './qaExecutionState.js';
 import {qaScenarioSchedule} from './qaScenarioScheduler.js';
-import { createApplicationDiscovery, applicationDiscoveryStatus, observeApplication } from './qaApplicationDiscovery.js';
+import { createApplicationDiscovery, applicationDiscoveryStatus, navigationInvestigationChoices, observeApplication } from './qaApplicationDiscovery.js';
 import { recordInferenceProgress } from './qaInferenceProgress.js';
 import { MENU_MOTION, menuMotionLabel } from './qaMenuMotion.js';
 import { randomUUID } from 'node:crypto';
@@ -179,6 +179,18 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           })();
         }
         if (autonomous(state)) synchronizeAccessPhase(state);
+        const page = record.bridge?.service?.activePage;
+        const livePageUrl = page && !page.isClosed() ? page.url() : undefined;
+        const liveUrl = livePageUrl ?? record.bridge?.saved?.url;
+        const dispatches = state.scheduler.hostDispatches || [];
+        const navAttempt = dispatches.at(-1);
+        const activeRecovery = navAttempt?.reason === 'navigation_recovery_investigate' &&
+          navAttempt.scenarioId === state.currentScenarioId && navAttempt.choice?.location === livePageUrl &&
+          !state.recovery?.verificationRequired && !state.actions.some(action => ['running', 'uncertain'].includes(action.status)) &&
+          state.scenarios.find(item => item.id === navAttempt.scenarioId)?.investigations?.at(-1)?.strategyFeatureId === navAttempt.choice?.strategy_feature_id;
+        if (!activeRecovery && !state.pendingDecision && autonomous(state) && routes.access() && appDiscovery.access() && navigationAccess() && !browserOperationActive) {
+          await ledger.checkpointExhaustedNavigation();
+        }
         const closeout = hostCloseoutCalls(session);
         if (closeout) {
           closeoutCalls = closeout;
@@ -189,8 +201,6 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           })();
         }
         const clean = redact(session.id, messages);
-        const page = record.bridge?.service?.activePage;
-        const liveUrl = page && !page.isClosed() ? page.url() : record.bridge?.saved?.url;
         const projected = projectHybridMessages(clean, session, redact(session.id, hybridHostContext(session, liveUrl)));
         let prepared = prepareHybridInference(projected, options, session);
         if (autonomous(state) && prepared.closing && !state.budgetFinalizing) {
@@ -207,16 +217,18 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           }
         }
         const schedule=qaScenarioSchedule(session,scenarioExecutionAccount);
-        const exhaustedInvestigation=!hybridRoutePolicy(state).canExplore&&schedule.ready.length===0&&schedule.recoveryBlocked.length>0;
-        const decision = prepareHostDecision(session, { closing: prepared.closing, forcedCoverage:exhaustedInvestigation });
-        if (decision) {
+        const exhaustedInvestigation = !activeRecovery && !hybridRoutePolicy(state).canExplore &&
+          schedule.ready.length === 0 && schedule.recoveryBlocked.length > 0;
+        const askHostDecision = async decision => {
           telemetry.event('host_question_requested', { kind: decision.kind, decisionId: decision.id });
           await checkpoint();
           return (async function* () {
             try { yield { type: 'tool_call', call: { id: decision.id, toolName: 'ask_question', input: decision.input } }; }
             finally { release(true); }
           })();
-        }
+        };
+        const decision = prepareHostDecision(session, { closing: prepared.closing, forcedCoverage:exhaustedInvestigation });
+        if (decision) return await askHostDecision(decision);
         if (prepared.closing && !state.budgetFinalizing) { state.budgetFinalizing = true; state.status = 'finalizing_budget'; telemetry.event('budget_closeout_started'); }
         const progress = recordInferenceProgress(state);
         const discoveryStatus = applicationDiscoveryStatus(session);
@@ -225,8 +237,28 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
         // replay a dispatched call, or spend beyond pinned limits.
         const idleBrowser = !state.currentScenarioId && !state.recovery?.verificationRequired && !state.actions.some(a => ['running','uncertain'].includes(a.status));
         const dispatchAccess = hasConfirmedAccess(state) ? state.authentication.grantId : 'public';
+        const nav = schedule.ready.find(item => item.navigationNoChange && item.canInvestigate);
+        const navChoice = idleBrowser && nav && !hybridRoutePolicy(state).canExplore && autonomous(state) &&
+          navigationInvestigationChoices(session, nav, discoveryStatus).find(choice => choice.location === livePageUrl);
         let scheduled;
-        if (!prepared.closing && session.targetUrl && idleBrowser && discoveryStatus.required && !discoveryStatus.ready && discoveryStatus.status !== 'blocked' && (state.scheduler.hostDispatches || []).filter(d => d.reason === 'mandatory_discovery' && d.authenticationContext === dispatchAccess).length < 2) {
+        if (!prepared.closing && activeRecovery) {
+          scheduled = { toolName: 'browser_qa_scenario', input: { scenario_id: navAttempt.scenarioId, ...navAttempt.choice.check },
+            reason: 'navigation_recovery_check' };
+        } else if (!prepared.closing && navChoice && !dispatches.some(d => d.reason === 'navigation_recovery_investigate' &&
+            d.scenarioId === nav.id && d.choice.strategy_feature_id === navChoice.strategy_feature_id)) {
+          const { observation_evidence_id, strategy_feature_id } = navChoice;
+          scheduled = { toolName: 'qa_investigate_scenario', input: { scenario_id: nav.id, observation_evidence_id, strategy_feature_id },
+            reason: 'navigation_recovery_investigate', scenarioId: nav.id, choice: navChoice };
+        } else if (autonomous(state) && idleBrowser && !schedule.unresolved.length && hybridRoutePolicy(state).publicationAllowed &&
+            (!discoveryStatus.required || discoveryStatus.ready) &&
+            state.scenarios.some(item => item.navigationRecovery) &&
+            !(session.selectedTests || []).some(check => check.startsWith('security_')) &&
+            !(state.scheduler.hostDispatches || []).some(d => d.reason === 'navigation_recovery_report') &&
+            !hybridUnreportedFindings(session).length) {
+          const result = hybridCompletion(session);
+          scheduled = { toolName: 'finish_qa_report', input: { verdict: result.verdict, summary: result.summary },
+            reason: 'navigation_recovery_report' };
+        } else if (!prepared.closing && session.targetUrl && idleBrowser && discoveryStatus.required && !discoveryStatus.ready && discoveryStatus.status !== 'blocked' && (state.scheduler.hostDispatches || []).filter(d => d.reason === 'mandatory_discovery' && d.authenticationContext === dispatchAccess).length < 2) {
           scheduled = { toolName: 'qa_discover_application', input: {}, reason: 'mandatory_discovery' };
         } else if (!prepared.closing && idleBrowser && progress.stagnantTurns >= 3 && routes.stats().canExplore && (state.scheduler.hostDispatches || []).filter(d => d.reason === 'stalled_route_execution').length < 4) {
           const auth = hasConfirmedAccess(state) ? state.authentication.grantId : 'public';
@@ -238,12 +270,19 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
         if (scheduled) {
           const call = { id: `qase-schedule-${randomUUID()}`, toolName: scheduled.toolName, input: scheduled.input };
           state.scheduler.hostDispatches ??= [];
-          state.scheduler.hostDispatches.push({ callId: call.id, reason: scheduled.reason, authenticationContext: dispatchAccess, routeIds: scheduled.routeIds, at: Date.now(), progress: state.inferenceProgress.turns });
+          state.scheduler.hostDispatches.push({ callId: call.id, reason: scheduled.reason, authenticationContext: dispatchAccess,
+            routeIds: scheduled.routeIds, scenarioId: scheduled.scenarioId, choice: scheduled.choice, at: Date.now(), progress: state.inferenceProgress.turns });
           telemetry.event('host_scenario_scheduled', { toolName: call.toolName, reason: scheduled.reason });
           await checkpoint();
           return (async function* () { try { yield { type: 'tool_call', call }; } finally { release(true); } })();
         }
         if (progress.stalled) {
+          // Keep the same report validation and owner consent as other
+          // coverage handoffs. No further reasoning call is needed here.
+          const decision = !state.actions.some(a => ['running', 'uncertain'].includes(a.status)) &&
+            !Object.values(state.modelBudget?.roles || {}).some(role => role.legacyCalls > 0 || role.reservations?.some(item => ['pending', 'uncertain'].includes(item.status))) &&
+            prepareHostDecision(session, { stalled: true });
+          if (decision) return await askHostDecision(decision);
           await checkpoint();
           throw new HybridPause('HYBRID_NO_PROGRESS', 'Eight model turns produced no new checks, observed features, assertions or accountable outcomes. Progress is saved; inspect the blocked workflow before spending more model budget.');
         }
@@ -284,7 +323,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           if (!appDiscovery.access()) throw new Error('Application discovery owns the browser; wait for its checkpoint.');
           if (!navigationAccess()) throw new Error('A navigation decision owns the browser and scenario lifecycle; wait for its result.');
           if (tool.name === 'qa_discover_application' && state.actions.some(a => ['running','uncertain'].includes(a.status))) throw new HybridPause('HYBRID_UNCERTAIN_ACTION', 'Discovery has an uncertain prior action. Progress is saved; verify the browser/action state before continuing. No navigation was replayed.');
-          if (state.budgetFinalizing && !['qa_close_scenario', 'update_todo', 'report_finding', 'finish_qa_report'].includes(tool.name)) throw new Error('Budget closeout permits only scenario dispositions, evidenced findings, todo dispositions and final report publication.');
+          if (state.budgetFinalizing && !(tool.name === 'ask_question' && state.pendingDecision) && !['qa_close_scenario', 'update_todo', 'report_finding', 'finish_qa_report'].includes(tool.name)) throw new Error('Budget closeout permits only scenario dispositions, evidenced findings, todo dispositions and final report publication.');
           if (browserOperationActive && ['qa_start_scenario','qa_investigate_scenario', 'qa_close_scenario'].includes(tool.name)) throw new Error('Wait for the active browser operation before changing scenario ownership.');
           return await tool.run(input, tool.name === 'qa_choose_navigation' ? { ...context, signal: activeSignal } : context);
         }

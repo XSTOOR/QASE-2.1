@@ -58,6 +58,9 @@ export function hybridCompletion(session) {
   const gaps = state.scenarios.filter(item => !['passed', 'failed'].includes(item.status)).map(item => `${item.category}: ${item.objective} — ${item.status}. ${item.uncertainty.join(' ')}`);
   if (state.viewport && (state.viewport.phase !== 'selected_device' || !state.viewport.restored)) gaps.push('The selected-device viewport has not been verified restored; responsive or recovery work remains incomplete.');
   for (const scenario of state.scenarios) {
+    if (['passed', 'failed'].includes(scenario.status) && scenario.navigationRecovery) {
+      gaps.push(`Navigation: an observed control remained inconclusive after ${scenario.navigationRecovery.investigationLimit} bounded investigations. Confirmed failures on other paths remain in the findings.`);
+    }
     const routeGaps = scenario.routeRuns?.filter(run => !['passed', 'failed'].includes(run.status));
     if (routeGaps?.length) gaps.push(`${scenario.category}: ${routeGaps.length} route executions remain inconclusive/blocked/not executed: ${routeGaps.map(run => run.url).join(', ')}.`);
   }

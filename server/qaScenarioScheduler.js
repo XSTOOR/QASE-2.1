@@ -2,6 +2,7 @@ import {hasConfirmedAccess} from './hybridAuth.js';
 import {modeReceiptHash} from './modeIntegrity.js';
 
 const terminal = new Set(['passed', 'failed', 'blocked', 'inconclusive', 'not_executed']);
+const noNavigationChange = 'The observed control did not produce a verifiable new state; no pass or confirmed defect was inferred.';
 export const explicitQaCloseout = session => Boolean(session.hybrid.partialReportApproved?.decisionId && session.hybrid.partialReportApproved.by === session.ownerUserId);
 
 export function intactQaReceipt(session, record) {
@@ -51,6 +52,7 @@ export function scenarioObligation(session, scenario, account, context = schedul
   const unresolvedGaps = (scenario.executionGaps || []).filter(gap => {
     const old = context.evidence.get(gap.evidenceRef), prior = context.actions.get(old?.actionId);
     if (isSafetyExclusion(old, prior, gap, context, scenario)) return false;
+    if (scenario.navigationRecovery?.evidenceRefs.includes(gap.evidenceRef) && context.intact(old)) return false;
     // Only a proved pre-dispatch refusal can be superseded by an exact matching
     // fresh check. Dispatched/uncertain mutations are never silently forgiven.
     return !receipts.some(next => matchingRecheck(old, prior, next, scenario.category, context));
@@ -72,12 +74,23 @@ export function scenarioObligation(session, scenario, account, context = schedul
   const firstState = context.evidence.get(investigations[0]?.observationEvidenceId)?.result?.inventory?.stateKey;
   const newStates = state.discovery?.version === 1 ? new Set(state.evidence.filter((e,i)=>i>firstIndex&&context.intact(e)&&e.success&&e.result?.inventory?.readiness?.ready===true).map(e=>e.result.inventory.stateKey).filter(key=>key&&key!==firstState)) : new Set();
   const max = base + Math.min(2, newStates.size);
+  const navigationNoChange = scenario.category === 'navigation' && account.attempted &&
+    needsInvestigation && unresolvedGaps.every(gap => {
+      const receipt = context.evidence.get(gap.evidenceRef);
+      const action = context.actions.get(gap.actionId);
+      return context.intact(receipt) && receipt.success && receipt.actionId === action?.id &&
+        action.status === 'done' && action.toolName === 'browser_qa_check' &&
+        action.input?.action === 'navigation_control' && gap.reason === noNavigationChange &&
+        receipt.result?.gaps?.includes(noNavigationChange);
+    });
   return {
     id: scenario.id, category: scenario.category, status: scenario.status,
     phase: resolved ? 'resolved' : waiting.length ? 'pending' : needsInvestigation && investigations.length >= max ? 'recovery_blocked' : scenario.status === 'running' ? 'running' : blocked.length ? 'blocked_dependency' : 'ready',
     resolved, attempted: account.attempted, absent: account.absent, prerequisite,
     waitingFor: waiting.map(s => s?.id || 'missing'), blockedBy: blocked.map(s => s.id),
     needsInvestigation, investigations: investigations.length, investigationLimit: max, canInvestigate: needsInvestigation && investigations.length < max,
+    navigationNoChange,
+    exhaustedNavigationEvidence: navigationNoChange && investigations.length >= max ? [...new Set(unresolvedGaps.map(gap => gap.evidenceRef))] : [],
     freshObservationIds: fresh.slice(-3).map(e => e.id), evidenceRefs: receipts.slice(-3).map(e => e.id)
   };
 }

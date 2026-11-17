@@ -84,6 +84,55 @@ test('continuous discovery adds features without relocking an active validated s
  assert.equal(f.ledger.state.scenarios[0].status,'running');
 });
 
+test('navigation recovery schedules matching observed strategies and executes the last allowed alternative', async () => {
+  const session = { id: randomUUID(), mode: 'qa', qaExecutionMode: 'hybrid', qaDiscoveryVersion: 1,
+    targetUrl: 'https://fixture.test/', selectedTests: ['navigation'], messages: [], findings: [] };
+  const record = { bridge: { service: { activePage: { isClosed: () => false, url: () => session.targetUrl } } } };
+  const runtime = createHybridRuntime({ session, record, profile: hybridProfile({ apiKey: 'fixture' }, {}),
+    runStore: { async commit() {} } });
+  const { ledger } = runtime;
+  const item = ledger.state.scenarios[0];
+  const proof = await inventory({ session, ledger });
+  Object.assign(ledger.state.discovery, { status: 'ready', completedAccess: 'public', proofEvidenceIds: [proof.id] });
+  await ledger.start(item.id);
+  const inert = await ledger.beginAction('browser_qa_check', { action: 'navigation_control', selector: '#inert' });
+  await ledger.record(inert, { success: true, url: session.targetUrl,
+    gaps: ['The observed control did not produce a verifiable new state; no pass or confirmed defect was inferred.'] });
+  await ledger.close(item.id, 'inconclusive', 'No observable transition.');
+  const observed = { links: [{ selector: '#docs', href: 'https://fixture.test/docs', label: 'Docs' },
+    { selector: '#help', href: 'https://fixture.test/help', label: 'Help' }] };
+  await inventory({ session, ledger }, observed);
+  await inventory({ session, ledger }, observed);
+
+  const service = { async chat() { assert.fail('Paired host work should not require a model call'); } };
+  runtime.wrapChat(service);
+  const nextCall = async () => {
+    const parts = [];
+    for await (const part of await service.chat([], { tools: runtime.tools })) parts.push(part);
+    return parts[0]?.call;
+  };
+  const tested = [];
+  for (let index = 0; index < 2; index++) {
+    const call = await nextCall();
+    assert.equal(call.toolName, 'qa_investigate_scenario');
+    await runtime.wrapTool(runtime.tools.find(tool => tool.name === call.toolName)).run(call.input);
+    const check = await nextCall();
+    assert.equal(check.toolName, 'browser_qa_scenario');
+    assert.equal(check.input.scenario_id, item.id);
+    const action = await ledger.beginAction('browser_qa_check', check.input);
+    await ledger.record(action, { success: true, url: session.targetUrl, assertions: [
+      { check: 'navigation', outcome: 'pass', name: 'Alternate observed link works', actual: true, expected: true }
+    ] });
+    await ledger.close(item.id, 'complete');
+    tested.push(check.input.selector);
+  }
+  assert.equal(new Set(tested).size, 2);
+  assert.equal((await nextCall()).toolName, 'finish_qa_report');
+  assert.equal(item.status, 'inconclusive');
+  assert.equal(item.navigationRecovery.evidenceRefs.length, 1);
+  assert.equal(item.assertions.length, 2);
+});
+
 test('model-turn stalls are bounded within one SDK segment; repeated text and inspection are not progress',async()=>{
  const f=fixture();await inventory(f);
  const state=f.session.hybrid;state.exploration={routes:[]};

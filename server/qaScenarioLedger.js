@@ -104,6 +104,35 @@ export function createQaScenarioLedger(session, { persist = async () => {}, now 
       item.investigations??=[];item.investigations.push({observationEvidenceId:observationId,...(strategyKey?{strategyKey,strategyFeatureId}:{}),assertionOffset:item.assertions.length,actionOffset:item.executedActionIds.length,startedAt:now()});
       item.status='running';state.currentScenarioId=id;item.updatedAt=now();await persist();return item;
     },
+    async checkpointExhaustedNavigation() {
+      if (state.recovery?.verificationRequired || state.actions.some(action => ['running', 'uncertain'].includes(action.status))) return false;
+      const candidates = state.scenarios.filter(item => item.category === 'navigation' &&
+        item.investigations?.length >= (state.scheduler?.maxInvestigations ?? 2) &&
+        (!state.currentScenarioId || item.id === state.currentScenarioId) &&
+        !item.routeRuns?.some(run => run.status === 'running'));
+      const recovered = candidates.map(item => ({
+        item, obligation: scenarioObligation(session, item, scenarioExecutionAccount(session, item))
+      })).find(({ obligation }) => obligation.exhaustedNavigationEvidence.length);
+      if (!recovered) return false;
+      const { item, obligation: { exhaustedNavigationEvidence, investigationLimit } } = recovered;
+      const reason = `Navigation remained inconclusive after ${investigationLimit} bounded investigations. The observed control did not produce a verifiable new state. Findings from other tested navigation paths are preserved.`;
+      item.navigationRecovery = {
+        evidenceRefs: [...new Set([...(item.navigationRecovery?.evidenceRefs || []), ...exhaustedNavigationEvidence])],
+        investigationLimit
+      };
+      item.status = item.assertions.some(assertion => assertion.outcome === 'fail') ? 'failed' : 'inconclusive';
+      item.coverage = item.status === 'failed' ? 'executed' : 'inconclusive';
+      item.uncertainty.push(reason);
+      const investigation = item.investigations?.at(-1);
+      if (investigation && !investigation.completedAt) {
+        investigation.completedAt = now();
+        investigation.outcome = 'inconclusive';
+      }
+      item.updatedAt = now();
+      if (state.currentScenarioId === item.id) state.currentScenarioId = undefined;
+      await persist();
+      return true;
+    },
     // Host-only suite continuation, never exposed as a model tool. A new,
     // observed route is a distinct execution, not a replay of an old action.
     async startRoute(id, url) {
