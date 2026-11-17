@@ -14,6 +14,7 @@ import { withUserConfiguration } from './config.js';
 import { createRuntimeApplicationServices } from './localServices.js';
 import { modeReceiptHash } from './modeIntegrity.js';
 import { hybridRecoveryProblem } from './hybridRecoveryGate.js';
+import { digestEvidence } from './qaScenarioLedger.js';
 
 test('eleven real browser scenarios survive final-looking SDK segment endings and rejected early publication', { timeout: 120000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-lifecycle-sdk-'));
@@ -155,6 +156,10 @@ test('Stop fences a verified late SDK answer and Resume reopens and snapshots be
     first.dispose();
     live = {};
     Object.assign(session, durable);
+    // Reproduce a persisted loop guard that previously blocked Resume itself.
+    const recoveryKey = digestEvidence(['browser_open', { url: session.targetUrl }, undefined, undefined,
+      session.hybrid.exploration?.currentControlId, session.hybrid.lastObservedState || 'unobserved']);
+    session.hybrid.repeatActions = [{ key: recoveryKey, count: 3, toolName: 'browser_open' }];
     const resume = await ensureRuntime(session, store);
     let recoveredTurns = 0;
     resume.runtime.cleanSlateService.chat = async (_messages, options) => (async function* () {

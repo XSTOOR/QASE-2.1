@@ -79,6 +79,7 @@ export function watchTurn({ sessionId, controller, getStatus, getActiveStep, onS
 	let lastBeatAt = startedAt;
 	let beatCount = 0;
 	let settled = false;
+	let disposed = false;
 	let stallFired = false;
 	let stallTimer;
 	let deadlineTimer;
@@ -141,6 +142,7 @@ export function watchTurn({ sessionId, controller, getStatus, getActiveStep, onS
 	}
 
 	const failSafe = async (reason) => {
+		if (disposed) return;
 		const status = getStatus?.();
 		// Only an ACTIVE run (running/queued) whose turn settled can be
 		// wedged. Terminal runs are finished; paused / awaiting_input runs
@@ -152,6 +154,7 @@ export function watchTurn({ sessionId, controller, getStatus, getActiveStep, onS
 		}));
 		try {
 			await runStore.addMessage(sessionId, { role: 'system', text: `Run monitor: ${sanitizeErrorDetail(reason)}`, kind: 'error' });
+			if (disposed || !ACTIVE_STATUSES.has(getStatus?.())) return;
 			await runStore.setStatus(sessionId, 'error', sanitizeErrorDetail(reason));
 		} catch (error) {
 			console.error(JSON.stringify({
@@ -184,6 +187,7 @@ export function watchTurn({ sessionId, controller, getStatus, getActiveStep, onS
 			};
 		},
 		dispose() {
+			disposed = true;
 			settled = true;
 			clearTimeout(stallTimer);
 			clearTimeout(deadlineTimer);

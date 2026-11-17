@@ -16,6 +16,37 @@ import { seedSqaSmokePassReceipts } from '../scripts/fixtures/sqa-smoke.mjs';
 import { createFounderTools } from './founderTools.js';
 import { FOUNDER_REPORT_SECTIONS, founderDraftProgress } from './founderReportDraft.js';
 import { createFounderReportFixture } from './founderReportFixture.js';
+import { WATCHDOG_CONFIG, setWatchdogConfig } from './runWatchdog.js';
+
+test('a resumed answer is not failed by the previous awaiting-input turn monitor', async () => {
+  const defaults = { ...WATCHDOG_CONFIG };
+  setWatchdogConfig({ stallMs: 10000, deadlineMs: 0, graceMs: 30 });
+  const f = runtimeFixture();
+  let release;
+  const waiting = new Promise(resolve => { release = resolve; });
+  let began;
+  const started = new Promise(resolve => { began = resolve; });
+  let resumed;
+  try {
+    f.record.runtime.getPendingQuestion = () => ({ toolCallId: 'access', question: { question: 'Confirm signed-in access?' } });
+    await runTurn(f.session, { task: 'Test the application' }, f.store);
+    assert.equal(f.session.status, 'awaiting_input');
+    f.record.runtime.getPendingQuestion = () => undefined;
+    f.record.runtime.run = async function* () {
+      began(); await waiting;
+      f.record.controller.abort();
+    };
+    resumed = runTurn(f.session, { task: 'Confirmed; continue read-only testing' }, f.store);
+    await started;
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(f.session.status, 'running');
+    assert.equal(f.session.messages.some(m => m.text?.startsWith('Run monitor:')), false);
+  } finally {
+    release(); await resumed;
+    f.record.watchdog?.dispose();
+    setWatchdogConfig(defaults);
+  }
+});
 
 function runtimeFixture(overrides = {}) {
 	const session = { id: randomUUID(), mode: 'qa', targetUrl: 'https://example.test', messages: [], activities: [], todos: [], findings: [], secretNames: [], ...overrides };

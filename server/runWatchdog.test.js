@@ -103,6 +103,23 @@ describe('runWatchdog', () => {
   	wd.dispose();
   });
 
+  test('disposing a prior turn fences a fail-safe already awaiting message persistence', async () => {
+    let release, reached;
+    const pending = new Promise(resolve => { release = resolve; });
+    const writing = new Promise(resolve => { reached = resolve; });
+    const statuses = [];
+    const wd = watchTurn({ sessionId: 'resumed-turn', controller: makeController(),
+      getStatus: () => 'running', turnPromise: Promise.resolve(),
+      runStore: { async addMessage() { reached(); await pending; }, async setStatus(_id, status) { statuses.push(status); } }
+    });
+    try {
+      await Promise.race([writing, new Promise((_, reject) => setTimeout(() => reject(new Error('Monitor did not fire')), 1500))]);
+      wd.dispose(); release();
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(statuses, [], 'A retired monitor cannot set the resumed run to error.');
+    } finally { wd.dispose(); release(); }
+  });
+
   test('isTerminalStatus distinguishes terminal from active/paused', () => {
   	assert.equal(isTerminalStatus('done'), true);
   	assert.equal(isTerminalStatus('error'), true);

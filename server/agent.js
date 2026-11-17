@@ -1158,6 +1158,9 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 	const { runtime, bridge } = record;
 	if (record.running) throw new Error('This session is already running. Stop it first.');
 	// Claim the turn before asynchronous device selection or persistence.
+	// The prior turn may still have a fail-safe grace timer after asking for
+	// input. It must not terminalize this newly resumed turn.
+	record.watchdog?.dispose();
 	record.running = true;
 	const controller = new AbortController();
 	record.controller = controller;

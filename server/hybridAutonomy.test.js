@@ -114,3 +114,26 @@ test('shared source-page navigation belongs to distinct host route executions; r
   const inspect = runtime.wrapTool({ name: 'browser_qa_check', async run() { return { success: true, inventory: { url: 'https://fixture.test/', text: 'Same observed state', links: [] } }; } });
   for (let count = 0; count < 4; count++) await inspect.run({ action: 'inspect' });
 });
+
+test('host resume can verify the browser after repeated opens without clearing model loop protection', async () => {
+  const { session, state, runtime, record } = fixture();
+  let opens = 0;
+  const open = runtime.wrapTool({ name: 'browser_open', async run() { opens++; return { success: true, url: session.targetUrl }; } });
+  const snapshot = runtime.wrapTool({ name: 'browser_snapshot', async run() { return { success: true, url: session.targetUrl, text: 'Same page' }; } });
+  await snapshot.run({});
+  await open.run({ url: session.targetUrl });
+  await open.run({ url: session.targetUrl });
+  await assert.rejects(open.run({ url: session.targetUrl }), { code: 'HYBRID_REPLAN_REQUIRED' });
+  await runtime.endTurn('paused');
+  const saved = structuredClone(state.evidence);
+  const repeats = structuredClone(state.repeatActions);
+  record.invokeHybridTool = (name, input, signal) => ({ browser_open: open, browser_snapshot: snapshot })[name].run(input, { signal });
+  try {
+    await runtime.beginTurn(new AbortController().signal);
+    assert.equal(state.recovery.verificationRequired, false);
+    assert.equal(opens, 3, 'The host reopens the target exactly once.');
+    assert.deepEqual(state.evidence.slice(0, saved.length), saved);
+    assert.deepEqual(state.repeatActions, repeats, 'Recovery does not reset or consume the model repeat budget.');
+    await assert.rejects(open.run({ url: session.targetUrl }), { code: 'HYBRID_REPLAN_REQUIRED' });
+  } finally { await runtime.endTurn('paused'); }
+});

@@ -100,6 +100,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
   let browserTail = Promise.resolve();
   let browserOperationActive = false;
   const navigationOwners = new AsyncLocalStorage();
+  const recoveryOpens = new AsyncLocalStorage();
   let navigationOwner;
   const navigationAccess = () => !navigationOwner || navigationOwners.getStore() === navigationOwner;
   let signal;
@@ -355,7 +356,10 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
           if (['browser_click', 'browser_fill', 'browser_type', 'browser_check', 'browser_select', 'browser_key'].includes(tool.name) && state.actions.some(action => action.status === 'uncertain' && action.toolName === tool.name && digestEvidence(action.input) === digestEvidence(redact(session.id, input)))) throw new HybridPause('HYBRID_UNCERTAIN_ACTION', 'This action has an uncertain prior receipt. Inspect state and choose a different verified step or record the blocker; it cannot be automatically replayed.');
           const activeRoute = state.exploration?.batches?.findLast(batch => batch.status === 'running')?.currentRouteId;
           const key = digestEvidence([tool.name, redact(session.id, input), state.currentScenarioId, activeRoute, state.exploration?.currentControlId, state.lastObservedState || 'unobserved']);
-          if (mutates(tool.name) && !(tool.name === 'browser_qa_check' && input?.action === 'inspect')) {
+          // Only the host's bounded recovery open can bypass the model loop
+          // guard. Keep prior counts and all scope/budget checks intact.
+          const recoveryOpen = tool.name === 'browser_open' && input?.url === session.targetUrl && recoveryOpens.getStore() === true;
+          if (mutates(tool.name) && !recoveryOpen && !(tool.name === 'browser_qa_check' && input?.action === 'inspect')) {
             let repeated = state.repeatActions.find(item => item.key === key);
             if (!repeated) { repeated = { key, count: 0, toolName: tool.name }; state.repeatActions.push(repeated); if (state.repeatActions.length > 128) state.repeatActions.shift(); }
             if (++repeated.count >= 3) throw new HybridPause('HYBRID_REPLAN_REQUIRED', 'Repeated action produced no new observed state. Replan from a fresh snapshot.');
@@ -448,7 +452,7 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
       signal.addEventListener('abort', () => telemetry.event('cancelled'), { once: true });
       await checkpoint();
       if (!closeout && state.recovery?.verificationRequired && session.targetUrl && record.invokeHybridTool) {
-        const opened = await record.invokeHybridTool('browser_open', { url: session.targetUrl }, signal);
+        const opened = await recoveryOpens.run(true, () => record.invokeHybridTool('browser_open', { url: session.targetUrl }, signal));
         signal.throwIfAborted();
         if (opened.success === false || !opened.url) throw new HybridPause('HYBRID_VERIFY_STATE', 'The authorized target could not be reopened. Saved evidence is available; resolve browser access before resuming.');
         const snapshot = await record.invokeHybridTool('browser_snapshot', {}, signal);
