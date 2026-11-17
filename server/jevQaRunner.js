@@ -15,7 +15,7 @@ const failureTitle = name => ({
   'In-page link resolves to an existing target': 'In-page link points to a missing section',
   'Tab activation selects one tab and reveals its declared panel': 'Tab selection or associated panel is broken',
   'Local search removes unmatched results': 'Unmatched search leaves stale results'
-}[name] || name.replace('Disclosure responds to actual click at ', 'Disclosure does not respond to clicks at ').replace('Expanded disclosure exposes its declared panel at ', 'Expanded disclosure hides its panel at ').replace('No horizontal document overflow at ', 'Page overflows horizontally at ').replace('Visible controls stay reachable at ', 'Interactive controls extend outside the viewport at '));
+}[name] || name.replace('Disclosure responds to actual click at ', 'Disclosure does not respond to clicks at ').replace('Expanded disclosure exposes its declared panel at ', 'Expanded disclosure hides its panel at ').replace('No horizontal document overflow at ', 'Page overflows horizontally at ').replace('Visible controls fit horizontally at ', 'Visible controls are clipped horizontally at '));
 
 export function jevPrioritizeRoutes(routes, visited = []) {
   const family = url => new URL(url).pathname.split('/').filter(Boolean)[0] || '/';

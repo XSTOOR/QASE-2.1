@@ -288,7 +288,7 @@
     },
     {
       "path": "docs/qase-build-and-proof-guide-2026-11-13.md",
-      "sha256": "2435fb0b530f8d43e49191111b75d7209170407283e70c6c54e8acd2364b5d33"
+      "sha256": "ed4ad0faa573b8e978f0e0319313dfee197ae1578f69245d5afa6ed50efc304a"
     },
     {
       "path": "docs/qase-proof-plan-2026-11-13.md",
@@ -1115,6 +1115,10 @@
       "sha256": "ca3628bea8ffe3bb82a6766507c11aa51c96da770213998b65d4f5efd7779d72"
     },
     {
+      "path": "scripts/compare-menu-motion-frames.py",
+      "sha256": "db5ab5fc03c45313cd5b33461669a573c51400261013690ae985e73a4dfd01a9"
+    },
+    {
       "path": "scripts/data-governance.mjs",
       "sha256": "2d5f24b28a85365cd691e002516cc5d143376a5798f076961d95af55d2672d95"
     },
@@ -1191,6 +1195,10 @@
       "sha256": "3e1e396c508d1357052e4e5be56e2a31e41aa88d20e6e208654f790ada90179e"
     },
     {
+      "path": "scripts/opencv-motion-requirements.txt",
+      "sha256": "99325d819b778b2594cfefe0cf2c69e311ff8160c009470ffa22a29c254ed53c"
+    },
+    {
       "path": "scripts/package.mjs",
       "sha256": "e47c1c14db37b5c0a10d44b87e17c0efa387e8c8f6bb4e5f9f47d662a8064d94"
     },
@@ -1265,6 +1273,10 @@
     {
       "path": "scripts/qualify-menu-motion.mjs",
       "sha256": "c455391781ab69d0632354e5f86fbb81c0f11e1a5c05848f665c70d98af84440"
+    },
+    {
+      "path": "scripts/qualify-opencv-menu-motion.mjs",
+      "sha256": "39c01611ec86d36f558124114da4eef166286a2b2f853db5acc5e8360b3d2c6a"
     },
     {
       "path": "scripts/qualify-qa-scheduler.mjs",
@@ -2428,7 +2440,7 @@
     },
     {
       "path": "server/jevBrowserChecks.js",
-      "sha256": "a7cd4eaab4c24e3079a2313468759d2b9956808fb1f7814293011fd8290dd7d7"
+      "sha256": "c3704d9fe8c29e9325e6a9de61e3e8fff3a1a45e813a52d155b65f21d1555eb0"
     },
     {
       "path": "server/jevBrowserChecks.test.js",
@@ -2468,7 +2480,7 @@
     },
     {
       "path": "server/jevQaRunner.js",
-      "sha256": "ed7c0423f8369a98a40b426f1be47b598d1a771f3c0bb165981d4f62ba543994"
+      "sha256": "04f7a93560141fd96335f5c0e6f769c7ce654a12bebb2fb1b1e4779905e45b30"
     },
     {
       "path": "server/jevQaRunner.test.js",
@@ -3156,7 +3168,7 @@
     },
     {
       "path": "server/qaViewport.test.js",
-      "sha256": "6ec021d275940b1173d5fe4cefb3f4b01c6a3c6c472ed196af1facbcb1ed8b9b"
+      "sha256": "65b585d8686e2466d3ea900d028d517d57fa68d8e0845a0a69a13a985ce8cbc9"
     },
     {
       "path": "server/qaWorkflowPrecision.test.js",

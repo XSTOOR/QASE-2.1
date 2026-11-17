@@ -229,6 +229,72 @@ async function navigation(page, input, onAction, guard, signal) {
   } finally { page.off('response', responseListener); }
 }
 
+function measureResponsiveLayout() {
+  const tolerance = 2;
+  const clipped = [];
+  for (const element of document.querySelectorAll('a,button,input,select,textarea')) {
+    const box = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    if (box.width <= 0 || box.height <= 0 || box.top < 0 || box.top >= innerHeight ||
+      style.visibility === 'hidden' || style.position === 'fixed') continue;
+
+    let insideClip = false;
+    let scrollable = false;
+    let simpleLayout = !element.closest('[inert],[aria-hidden="true"]') &&
+      element.checkVisibility?.({ opacityProperty: true, visibilityProperty: true }) !== false;
+    let clipLeft = 0, clipRight = innerWidth, clipTop = 0, clipBottom = innerHeight;
+    for (let node = element; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
+      const css = node === element ? style : getComputedStyle(node);
+      // Containing blocks and transforms can make an ancestor's client box
+      // an unreliable clip boundary. Restrict this check to in-flow controls.
+      if (['absolute', 'fixed'].includes(css.position) || css.transform !== 'none' ||
+        (css.scale && css.scale !== 'none') || (css.rotate && css.rotate !== 'none') ||
+        (css.zoom && css.zoom !== '1')) simpleLayout = false;
+      if (node === element) continue;
+      if (['auto', 'scroll'].includes(css.overflowX)) {
+        scrollable = true;
+        break;
+      }
+      if (!['hidden', 'clip'].includes(css.overflowX)) continue;
+      insideClip = true;
+      if (node.clientWidth === 0) simpleLayout = false;
+      if (css.overflowX === 'clip' && css.overflowClipMargin && css.overflowClipMargin !== '0px') simpleLayout = false;
+      const rect = node.getBoundingClientRect();
+      const left = rect.left + node.clientLeft;
+      const top = rect.top + node.clientTop;
+      clipLeft = Math.max(clipLeft, left);
+      clipRight = Math.min(clipRight, left + node.clientWidth);
+      if (css.overflowY !== 'visible') {
+        clipTop = Math.max(clipTop, top);
+        clipBottom = Math.min(clipBottom, top + node.clientHeight);
+      }
+    }
+    if (scrollable) continue;
+
+    const center = (box.left + box.right) / 2;
+    const partlyVisible = Math.min(box.right, clipRight) - Math.max(box.left, clipLeft) > tolerance &&
+      Math.min(box.bottom, clipBottom) > Math.max(box.top, clipTop);
+    const containerClip = insideClip && simpleLayout && partlyVisible && center >= 0 && center <= innerWidth &&
+      (center < clipLeft - tolerance || center > clipRight + tolerance);
+    const viewportClip = !insideClip && (box.left < -tolerance || box.right > innerWidth + tolerance);
+    if (!containerClip && !viewportClip) continue;
+    clipped.push({
+      label: (element.innerText || element.getAttribute('aria-label') || element.tagName).slice(0, 100),
+      left: box.left, right: box.right, cause: containerClip ? 'container' : 'viewport',
+      ...(containerClip ? { clipLeft, clipRight } : {})
+    });
+    if (clipped.length === 10) break;
+  }
+  return { width: innerWidth, documentWidth: document.documentElement.scrollWidth, clipped };
+}
+
+function sameHorizontalClip(first, second) {
+  return first.label === second.label && first.cause === second.cause &&
+    Math.abs(first.left - second.left) < 2 && Math.abs(first.right - second.right) < 2 &&
+    (first.cause !== 'container' ||
+      (Math.abs(first.clipLeft - second.clipLeft) < 2 && Math.abs(first.clipRight - second.clipRight) < 2));
+}
+
 async function responsive(page, options = {}) {
   const original = page.viewportSize();
   if (!original) return { assertions: [], skipped: 'This runtime does not expose a resizable viewport.' };
@@ -244,29 +310,22 @@ async function responsive(page, options = {}) {
       await options.onViewport?.({ phase: 'responsive_sample', primary: original, current: page.viewportSize(), restored: false });
       options.signal?.throwIfAborted();
       await settleJevPage(page);
-      const measure = () => page.evaluate(() => {
-        const visible = element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden';
-        const clipped = [...document.querySelectorAll('a,button,input,select,textarea')].filter(visible).filter(element => {
-          const box = element.getBoundingClientRect();
-          const style = getComputedStyle(element);
-          // Ignore intentionally off-canvas controls and horizontal carousels.
-          let scrollContainer = element.parentElement;
-          while (scrollContainer && scrollContainer !== document.body) {
-            if (['auto', 'scroll', 'hidden', 'clip'].includes(getComputedStyle(scrollContainer).overflowX)) return false;
-            scrollContainer = scrollContainer.parentElement;
-          }
-          return box.top >= 0 && box.top < innerHeight && box.width > 0 && style.position !== 'fixed' && (box.left < -2 || box.right > innerWidth + 2);
-        }).slice(0, 10).map(element => ({ label: (element.innerText || element.getAttribute('aria-label') || element.tagName).slice(0, 100), left: element.getBoundingClientRect().left, right: element.getBoundingClientRect().right }));
-        return { width: innerWidth, documentWidth: document.documentElement.scrollWidth, clipped };
-      });
+      const measure = () => page.evaluate(measureResponsiveLayout);
       const measured = await measure();
       const overflow = measured.documentWidth > measured.width + 2;
-      const unreachable = measured.clipped.length > 0;
+      const clipped = measured.clipped.length > 0;
       let repeated;
-      if (overflow || unreachable) { await settleJevPage(page); repeated = await measure(); }
+      if (overflow || clipped) { await settleJevPage(page); repeated = await measure(); }
       measurements.push({ ...measured, repeated });
       assertions.push({ ...assertion('responsive', `No horizontal document overflow at ${width}px`, !overflow, `Document width <= ${measured.width + 2}px`, measured), ...(overflow ? { reproduction: { confirmed: repeated.documentWidth > repeated.width + 2, observations: 2, kind: 'document-overflow', first: measured, second: repeated } } : {}) });
-      assertions.push({ ...assertion('responsive', `Visible controls stay reachable at ${width}px`, !unreachable, 'Visible interactive controls fit the viewport or an intentional scroll container', measured.clipped), ...(unreachable ? { reproduction: { confirmed: measured.clipped.some(first => repeated.clipped.some(second => first.label === second.label && Math.abs(first.left - second.left) < 2 && Math.abs(first.right - second.right) < 2)), observations: 2, kind: 'clipped-control', first: measured.clipped, second: repeated.clipped } } : {}) });
+      assertions.push({
+        ...assertion('responsive', `Visible controls fit horizontally at ${width}px`, !clipped,
+          'Visible controls fit the viewport, and partially visible controls retain their center inside any measured clipping container', measured.clipped),
+        ...(clipped ? { reproduction: {
+          confirmed: measured.clipped.some(first => repeated.clipped.some(second => sameHorizontalClip(first, second))),
+          observations: 2, kind: 'clipped-control', first: measured.clipped, second: repeated.clipped
+        } } : {})
+      });
       if (width === 390) {
         const inventory = await inspectJevPage(page);
         for (const menu of inventory.disclosures.filter(item => /\b(menu|navigation)\b/i.test(item.label)).slice(0, 2)) {

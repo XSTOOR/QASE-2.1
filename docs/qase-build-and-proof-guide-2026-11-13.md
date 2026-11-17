@@ -166,6 +166,22 @@ The panel must stay visible for 65 ms to establish a stable result. Qase restore
 
 Run `node scripts/qualify-menu-motion.mjs` to repeat the controlled Chromium and Firefox matrix. Pass the authorized `--env-file` to run the healthy and defective variants from the real Chromium launcher.
 
+#### OpenCV screenshot comparison
+
+The optional fixture runner compares the settled menu screenshots against a separate healthy capture from the same browser, viewport and motion preference. It measures differences in the portion of the menu that visibly changes during the reference opening. Two matching openings are required. Missing or inconsistent captures produce an inconclusive result.
+
+The fixture includes a working menu, a menu stuck at partial opacity and a menu covered by another rendered layer. The covered menu validates what screenshots add to the existing DOM/CSS measurements. Timing still comes from the DOM/CSS check. The fixture comparison is separate from dashboard runs and does not require an AI key.
+
+To repeat on Windows with Python 3.11 and the project browsers installed:
+
+```powershell
+python -m venv test-results/opencv-venv
+& test-results/opencv-venv/Scripts/python.exe -m pip install -r scripts/opencv-motion-requirements.txt
+node scripts/qualify-opencv-menu-motion.mjs --python test-results/opencv-venv/Scripts/python.exe
+```
+
+The default runner uses Chromium, Firefox and WebKit with standard and reduced motion. Use `--browser chromium` to run only Chromium. Each result includes its screenshot filenames, the pixel comparison scores and the DOM result.
+
 ### Phase 8 - Release qualification
 
 1. Identify the exact candidate commit and dirty state. A release must refer to an immutable source revision.
@@ -291,4 +307,4 @@ The local baseline passed on 14 November 2026. Chromium and Firefox distinguishe
 
 The Chromium launcher published the healthy result and, on a fresh run, published the seeded defect with a confirmed finding. Both reports reopened their timing evidence and screenshots after reload. An earlier defective run recorded the finding before optional route ranking paused the run on a missing usage receipt. The replay of that saved workspace reopened all three screenshots. See `test-results/redesign/phase-7/live-final/result.json`, `test-results/redesign/phase-7/saved-defect/result.json`, and `test-results/redesign/phase-7/live-defect-verified/result.json`.
 
-Next is Phase 8 release qualification. General animation testing, OCR/OpenCV, load, native mobile and country-specific compliance remain open.
+Next is Phase 8 release qualification. General animation testing, OCR integration, using OpenCV in product runs, load, native mobile and country-specific compliance remain open.

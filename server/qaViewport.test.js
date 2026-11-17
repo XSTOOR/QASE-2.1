@@ -62,6 +62,39 @@ test('responsive edge sampling restores selected viewport, scroll and focus, inc
   assert.equal(await page.evaluate(() => scrollY), 900);
 });
 
+test('responsive checks reproduce a cropped mobile control without flagging a carousel or hidden controls', { timeout: 30000 }, async t => {
+  const browser = await chromium.launch(); t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.setContent(`<!doctype html><title>Responsive clipping</title>
+    <style>
+      .row { width: 360px; white-space: nowrap; }
+      .row button { margin-left: 200px; width: 140px; }
+      .crop { overflow: hidden; }
+      .carousel { width: 250px; overflow-x: auto; }
+      .offscreen button { margin-left: 370px; }
+      @media (max-width: 400px) { .crop { width: 250px; } }
+    </style>
+    <main><h1>Settings</h1>
+      <div class="row crop"><div><button>Save preferences</button></div></div>
+      <div class="row carousel"><button>Next slide</button></div>
+      <div class="row crop offscreen"><button>Off-canvas control</button></div>
+      <div class="row crop" inert><button>Inactive control</button></div>
+    </main>`);
+  const result = await runJevBrowserCheck(page, { action: 'responsive' });
+  assert.equal(result.success, true, result.error);
+  assert.ok(result.assertions.filter(item => /document overflow/.test(item.name)).every(item => item.outcome === 'pass'));
+  const failures = result.assertions.filter(item => item.outcome === 'fail');
+  assert.equal(failures.length, 1, JSON.stringify(result.assertions));
+  const [failure] = failures;
+  assert.match(failure.name, /390px/);
+  assert.equal(failure.reproduction?.confirmed, true);
+  const clipped = JSON.parse(failure.actual);
+  assert.deepEqual(clipped.map(item => item.label), ['Save preferences']);
+  assert.equal(clipped[0].cause, 'container');
+  assert.ok(clipped[0].clipRight < (clipped[0].left + clipped[0].right) / 2);
+  assert.deepEqual(page.viewportSize(), { width: 1440, height: 900 });
+});
+
 test('failed viewport restoration cannot return a successful responsive result', { timeout: 30000 }, async t => {
   const browser = await chromium.launch(); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
