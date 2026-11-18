@@ -8548,7 +8548,6 @@ const devicePicker = $('device-picker') ? createDevicePicker({
 		// M3 (#14422): keep the sidebar highlight in sync with card selections.
 		matrixSidebar?.setSelection?.(selection?.device ?? null, selection?.osVersion ?? null);
 	},
-	onClose: () => void refreshDevicePickerData(),
 	onOpen: () => {
 		const forSqa = sqaUi.dialog.open && !devicePicker.state.addPick;
 		$('mx-target-field').hidden = forSqa;
@@ -8689,8 +8688,9 @@ async function refreshDevicePickerData() {
 	renderMatrixColumns();
 }
 
-// Hydrate the persisted selection once environments are known; data is
-// refreshed again every time the picker opens (onClose).
+// Hydrate the persisted selection once environments are known. Refresh the
+// catalog when the picker opens, so closing it keeps the selected device and
+// does not start more requests just before the user continues or reloads.
 void (async () => {
 	if (!devicePicker) return;
 	const environments = await api('/environments?active=true&limit=80000').then((p) => p.environments ?? []).catch(() => null);

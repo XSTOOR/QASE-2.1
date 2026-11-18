@@ -20,6 +20,16 @@ try {
   assert.equal(registered.status(), 201);
   const page = await context.newPage(), errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  // Observe requests at fetch time, including those the browser may cancel on reload.
+  await page.addInitScript(() => {
+    window.pickerRequests = [];
+    const fetch = window.fetch.bind(window);
+    window.fetch = (input, options) => {
+      const pathname = new URL(input instanceof Request ? input.url : input, location.href).pathname;
+      if (pathname === '/api/environments' || pathname === '/api/device-runtime/devices') window.pickerRequests.push(pathname);
+      return fetch(input, options);
+    };
+  });
   // Use a configured-looking UI without any provider key. Only the explicit
   // launch message is intercepted; assessment creation uses the real API.
   await page.route('**/api/config', route => route.fulfill({ json: { provider: 'custom', model: 'launch-fixture', ready: true, hasApiKey: true, providers: ['custom'], headless: true } }));
@@ -47,12 +57,20 @@ try {
   await openSqa();
   await completeDetails();
   // Explicit device selection remains available after a supported default.
+  await page.locator('#sqa-submit:enabled').waitFor();
+  const pickerBoard = page.waitForResponse(response => new URL(response.url()).pathname === '/api/device-runtime/devices' && response.ok());
   await page.locator('#sqa-start [data-test-on-change]').click();
   await page.locator('#mx-sidebar .mx-device-name').filter({ hasText: /^iPad \(10th Gen\)$/ }).first().click();
   await page.locator('#mx-columns').getByRole('group', { name: 'Edge versions', exact: true }).locator('.mx-version').first().click();
+  await (await pickerBoard).finished();
   assert.equal(await page.locator('#mx-target-url').isHidden(), true, 'SQA already has its own target field');
+  const requestsBeforeClose = await page.locator('#device-picker').evaluate(dialog => {
+    window.pickerRequestsAtClose = new Promise(resolve => dialog.addEventListener('close', () => resolve(window.pickerRequests.slice()), { once: true }));
+    return window.pickerRequests.slice();
+  });
   await page.getByRole('button', { name: 'Continue to quality review' }).click();
   assert.equal(await page.locator('#device-picker').isHidden(), true);
+  assert.deepEqual(await page.evaluate(() => window.pickerRequestsAtClose), requestsBeforeClose, 'Closing the picker must not start another catalog or availability request');
   assert.equal(await page.locator('#sqa-target-url').inputValue(), 'https://example.test/');
   assert.match(await page.locator('#sqa-test-on').innerText(), /iPad \(10th Gen\)[\s\S]*Edge/);
   assert.equal(launchDispatches, 0, 'Continuing from the picker only returns to the form');

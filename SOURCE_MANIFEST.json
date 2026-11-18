@@ -424,7 +424,7 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "c96f37d005c121c0b326f4698fa77816f472498e0fe88cc62651bac0fd1a035f"
+      "sha256": "daea3ce94327d577faef5e3a98aba2fc5f4cf123aee8b8b88fdd8e045e63d3b6"
     },
     {
       "path": "public/auth.css",
@@ -1404,7 +1404,7 @@
     },
     {
       "path": "scripts/test-sqa-launch.mjs",
-      "sha256": "381b2a01eb5f99f1d671cad16c7310f083fed36990cb1a108ba9d9a3416e8137"
+      "sha256": "379ffbff8f32c1db2c0d0c9876d447039873a46377cfa3b8c1546c7065f202ee"
     },
     {
       "path": "scripts/test-sqa-release.mjs",
