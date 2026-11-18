@@ -98,6 +98,30 @@ test('document review requires an identified reviewer and binds the scoped decis
  assert.equal(applicabilityReviewIds(s,decision,[requirement]),null);
 });
 
+test('reviewer scope evidence stays with its requirement and preserves the browser failure',async()=>{
+ const {sqaResearchSections}=await import('../public/sqaResearchSections.js');
+ const requirement={id:'r1',framework:'Practice',controlId:'A',quote:'Name controls.',requirementResult:'NOT_VERIFIABLE',testIds:['form']};
+ const report={profile:[{id:'button',name:'Demo button'}],references:[],limitations:[],blockers:[],documents:[],metrics:{},
+  requirements:[requirement,{...requirement,id:'r2',controlId:'B',testIds:[]}],
+  decisions:[{requirement_ids:['r1'],feature_ids:['button'],classification:'RECOMMENDED',rationale:'Observed form',assumptions:[]}],
+  tests:[{id:'form',objective:'Inspect form',method:[],observations:[]}],
+  findings:[{testId:'form',title:'Control has an accessible name',expected:'A label',observed:'{"kind":"control","tag":"button","selector":"#submit","name":""}',evidenceId:'receipt-1'}]};
+ const rows=()=>sqaResearchSections(report).slice(0,2).map(([,lines])=>lines.join('\n'));
+ const [before]=rows();
+ assert.match(before,/Which product features/);
+ report.documents.push({requirementId:'r1',featureId:'button',determination:'CONFIRMED_APPLICABLE'});
+ const [reviewed,unrelated]=rows();
+ assert.match(reviewed,/Reviewer record · Demo button · confirmed applicable/);
+ assert.doesNotMatch(reviewed,/Which product features/);
+ for(const version of [before,reviewed]) {
+  assert.match(version,/button #submit has an empty accessible name/);
+  assert.match(version,/receipt-1/);
+  assert.match(version,/rest of the requirement/);
+ }
+ assert.match(unrelated,/Which product features/);
+ assert.doesNotMatch(unrelated,/receipt-1|confirmed applicable/);
+});
+
 test('research export preserves citation, uncertainty and missing coverage in Markdown and PDF HTML',async()=>{
  const {buildResearchReport}=await import('./sqaResearchReport.js');
  const {researchMarkdown}=await import('../public/sqaResearchSections.js');
