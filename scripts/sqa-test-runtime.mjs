@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SQA_STANDALONE_CAPABILITIES, standaloneProfileIdentity, standaloneResearchProfile } from '../server/sqaStandaloneQualification.js';
+import { SQA_STANDALONE_STRATEGY } from '../server/sqaStandaloneStrategy.js';
 import { resolveEngine } from '../server/browserEngines.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -52,8 +54,25 @@ export async function launchSqaTestBrowser(browser) {
 	return engine.type.launch({ headless: true, ...engine.launch });
 }
 
-export async function createSqaTestServer(directory, { authRequired = false, envFile, hybridQa = false, jevNavigation = false } = {}) {
+export async function createSqaTestServer(directory, { authRequired = false, envFile, hybridQa = false, jevNavigation = false, qualifiedSqaLaunch = false } = {}) {
 	await mkdir(directory, { recursive: true });
+	const standalone = {};
+	if (qualifiedSqaLaunch) {
+		Object.assign(standalone, {
+			QASE_SQA_STANDALONE_ENABLED: 'true',
+			QASE_SQA_REASONER_API_KEY: 'sqa-launch-browser-fixture',
+			QASE_SQA_SEARCH_URL: 'https://search.example.test/search',
+			QASE_SQA_QUALIFICATION_FILE: path.resolve(directory, 'standalone-launch-fixture.json')
+		});
+		const profile = standaloneResearchProfile({}, standalone);
+		await writeFile(standalone.QASE_SQA_QUALIFICATION_FILE, JSON.stringify({
+			strategy: SQA_STANDALONE_STRATEGY, sdkVersion: profile.sdkVersion,
+			profileIdentity: standaloneProfileIdentity(profile, standalone), checkedAt: Date.now(),
+			jevCalls: 0, runId: 'launcher-test-only',
+			capabilities: Object.fromEntries(SQA_STANDALONE_CAPABILITIES.map(name=>[name,{passed:true,evidenceRef:'launcher-fixture'}]))
+		}),{mode:0o600});
+	}
+
 	const probe = createServer();
 	await new Promise((resolve, reject) => { probe.once('error', reject); probe.listen(0, '127.0.0.1', resolve); });
 	const port = probe.address().port;
@@ -82,7 +101,7 @@ export async function createSqaTestServer(directory, { authRequired = false, env
 			: [path.join(root, 'server', 'index.js')];
 		server = spawn(process.execPath, args, {
 			cwd: directory, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-			env: { ...isolatedSqaEnvironment(), PORT: String(port), QASE_PUBLIC_URL: base, QASE_AUTH_REQUIRED: String(authRequired),
+			env: { ...isolatedSqaEnvironment(), ...standalone, PORT: String(port), QASE_PUBLIC_URL: base, QASE_AUTH_REQUIRED: String(authRequired),
 				...(hybridQa ? { QASE_HYBRID_QA_ENABLED: 'true', QASE_HYBRID_MAX_PAGES: '3', QASE_HYBRID_DURATION_MS: '480000' } : {}),
 				...(jevNavigation ? { QASE_HYBRID_JEV_NAVIGATION_ENABLED: 'true' } : {}),
 				...(envFile ? { NODE_ENV: 'development', QASE_ALLOW_PRIVATE_NETWORK: 'true', QASE_BROWSER_ALLOWED_PRIVATE_HOSTS: '127.0.0.1' } : {}) }

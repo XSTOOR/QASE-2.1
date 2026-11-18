@@ -6,7 +6,7 @@ const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf
 const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
 
-test('Quality launcher exposes an accessible recommended review with optional advanced scope', () => {
+test('Quality launcher exposes an accessible browser review and optional notes', () => {
 	assert.match(html, /id="new-sqa"[^>]+aria-label="Start quality review"[^>]+data-feature="sqa"/);
 	assert.match(html, /class="feature-label">SQA<\/span>/);
 	assert.match(html, /<dialog[^>]+id="sqa-start"[^>]+aria-labelledby="sqa-start-title"/);
@@ -24,7 +24,12 @@ test('Quality launcher exposes an accessible recommended review with optional ad
 	assert.match(html, /id="tab-sqa"[^>]+role="tab"[^>]+aria-controls="pane-sqa"/);
 	assert.match(html, /id="pane-sqa"[^>]+role="tabpanel"[^>]+aria-labelledby="tab-sqa"/);
 	assert.match(html, /id="sqa-scope-guidance"[^>]+role="note"/);
-	assert.match(html, /Some standards require documents, approvals, security reports, or independent review/);
+	assert.match(html, /Organizational processes, legal compliance, certification and business claims need separate review/);
+	assert.match(html, /id="sqa-business-category"[^>]+aria-describedby="sqa-business-guidance"/);
+	assert.match(html, /id="sqa-profiles-fieldset" hidden disabled/);
+	assert.match(html, /id="sqa-attributes-fieldset" hidden disabled/);
+	assert.match(app, /assessmentType: 'browser'/);
+	assert.match(app, /businessCategory: sqaUi.businessCategory.value/);
 });
 
 test('SQA frontend uses the authenticated API contract and safe DOM construction', () => {

@@ -86,6 +86,10 @@ test('SQA closeout uses supported session clearing only after control evidence i
  assert.equal(prepareSqaSynthesis(f.session,f.record),false,'Synthesis must retain control-recording tools until confirmed findings are reconciled.');
  assert.equal(clears,0);
  f.session.findings=[];
+ f.session.sqa.execution.strategy='sqa-single-reasoner-v1';
+ assert.equal(prepareSqaSynthesis(f.session,f.record),false,'Unfinished research must retain its tools after browser checks.');
+ assert.equal(clears,0);
+ delete f.session.sqa.execution.strategy;
  assert.equal(prepareSqaSynthesis(f.session,f.record),true);assert.equal(clears,1);
  assert.deepEqual(f.record.runtime.headlessRuntime.getTools().map(t=>t.name),['update_todo','finish_sqa_assessment']);
  assert.equal(f.session.todos[0].status,'pending');assert.equal(f.session.sqa.finalizedAt,undefined);

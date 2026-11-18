@@ -5,6 +5,8 @@ import { test } from 'node:test';
 import { createApplication } from './app.js';
 import { prepareHostDecision } from './hybridContinuation.js';
 import { hybridProfile } from './hybridConfig.js';
+import { SQA_STANDALONE_CAPABILITIES, standaloneProfileIdentity, standaloneResearchProfile } from './sqaStandaloneQualification.js';
+import { SQA_STANDALONE_STRATEGY } from './sqaStandaloneStrategy.js';
 import { PublicInputError } from './publicErrors.js';
 import { createInstanceAccess } from './instanceAccess.js';
 import { createSqaState, finishSqaAssessment } from './sqaService.js';
@@ -882,8 +884,28 @@ test('run creation with an environmentId snapshots the frozen environment onto t
 	assert.match((await body(refused)).error, /inactive \(deprecated\)/);
 });
 
+function qualifiedSqaFixture(t) {
+	const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-sqa-launch-'));
+	t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+	const env = {
+		QASE_SQA_STANDALONE_ENABLED: 'true',
+		QASE_SQA_REASONER_API_KEY: 'api-fixture-key',
+		QASE_SQA_SEARCH_URL: 'https://search.example.test/search',
+		QASE_SQA_QUALIFICATION_FILE: path.join(directory, 'fixture.json')
+	};
+	const profile = standaloneResearchProfile({}, env);
+	fs.writeFileSync(env.QASE_SQA_QUALIFICATION_FILE, JSON.stringify({
+		strategy: SQA_STANDALONE_STRATEGY, sdkVersion: profile.sdkVersion,
+		profileIdentity: standaloneProfileIdentity(profile, env), checkedAt: Date.now(),
+		jevCalls: 0, runId: 'test-only',
+		capabilities: Object.fromEntries(SQA_STANDALONE_CAPABILITIES.map(name => [name,{passed:true,evidenceRef:'api-fixture'}]))
+	}));
+	return env;
+}
+
 test('SQA catalog and authorized scope creation stay pending until evidence is evaluated', async t => {
-	const fixture = await startFixture();
+	const environment = {};
+	const fixture = await startFixture({ environment });
 	t.after(() => fixture.close());
 
 	const catalogResponse = await fixture.request('/api/sqa/catalog');
@@ -892,6 +914,18 @@ test('SQA catalog and authorized scope creation stay pending until evidence is e
 	assert.match(catalog.catalogVersion, /^2026\./);
 	assert.ok(catalog.controls.length >= 40);
 	assert.match(catalog.disclaimer, /not legal advice/i);
+
+	assert.equal(catalog.execution.strategy, SQA_STANDALONE_STRATEGY);
+	const unavailable = await fixture.request('/api/sqa/sessions', {
+		method: 'POST',
+		json: {
+			authorizationConfirmed: true,
+			profiles: ['core'],
+			target: { name: 'Example', release: '1.0', environment: 'staging' }
+		}
+	});
+	assert.equal(unavailable.status, 409);
+	assert.equal((await body(unavailable)).error, catalog.execution.blocker);
 
 	const unauthorized = await fixture.request('/api/sqa/sessions', {
 		method: 'POST',
@@ -916,6 +950,7 @@ test('SQA catalog and authorized scope creation stay pending until evidence is e
 	assert.equal(unconfirmedExpanded.status, 400);
 	assert.match((await body(unconfirmedExpanded)).error, /Confirm.*expanded SQA scope/);
 
+	Object.assign(environment, qualifiedSqaFixture(t));
 	const createdResponse = await fixture.request('/api/sqa/sessions', {
 		method: 'POST',
 		json: {
@@ -928,6 +963,7 @@ test('SQA catalog and authorized scope creation stay pending until evidence is e
 	});
 	assert.equal(createdResponse.status, 201);
 	const created = await body(createdResponse);
+	assert.equal(created.sqa.requestedExecutionStrategy,SQA_STANDALONE_STRATEGY);
         assert.equal(created.mode, 'sqa');
         assert.equal(created.sqa.scope.authorization.confirmed, true);
         assert.equal(created.sqa.assessment, undefined);
@@ -1010,7 +1046,7 @@ test('SQA rejects invalid explicit device and engine identifiers instead of sile
 });
 
 test('a pending SQA scope accepts its first target URL and starts the agent', async t => {
-	const fixture = await startFixture();
+	const fixture = await startFixture({ environment: qualifiedSqaFixture(t) });
 	t.after(() => fixture.close());
 
 	const createdResponse = await fixture.request('/api/sqa/sessions', {

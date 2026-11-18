@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { selectsModeReasoning, createModeReasoningRuntime, modeExplorationReadiness, MODE_REASONING_STRATEGY } from './modeReasoningRuntime.js';
+import { selectsModeReasoning, qualifiedModeProfile, createModeReasoningRuntime, modeExplorationReadiness, MODE_REASONING_STRATEGY } from './modeReasoningRuntime.js';
 import { hybridProfile } from './hybridConfig.js';
 import { createSqaState } from './sqaService.js';
 
@@ -21,7 +21,7 @@ test('native SQA progress exposes paged contracts without model calls or state c
 for(const mode of ['sqa','founder']) test(`${mode} reasoning is opt-in and saved selection survives flag rollback`,()=>{
  const session={mode,[mode]:{observations:[]},activities:[]};
  assert.equal(selectsModeReasoning(session,{}),false);
- assert.equal(selectsModeReasoning(session,{[`QASE_${mode.toUpperCase()}_REASONING_ENABLED`]:'true'}),true);
+ assert.equal(selectsModeReasoning(session,{[`QASE_${mode.toUpperCase()}_REASONING_ENABLED`]:'true',QASE_SQA_STANDALONE_ENABLED:'true'}),mode==='founder');
  session.activities.push({status:'done'});assert.equal(selectsModeReasoning(session,{[`QASE_${mode.toUpperCase()}_REASONING_ENABLED`]:'true'}),false);
  session[mode].execution={strategy:MODE_REASONING_STRATEGY};assert.equal(selectsModeReasoning(session,{}),true);
  session[mode].execution.strategy='unknown';assert.throws(()=>selectsModeReasoning(session,{}));
@@ -177,4 +177,11 @@ test('download, external-window and mutating links cannot inflate mandatory mode
  await f.runtime.wrapTool({name:'browser_snapshot',async run(){return {success:true,url:f.session.targetUrl,bodyText:'Observed home',links};}}).run({});
  assert.deepEqual(f.state.routes.map(r=>r.url),['https://fixture.test/','https://fixture.test/docs']);
  assert.equal(modeExplorationReadiness(f.session).requiredPages,2);
+});
+
+test('a queued standalone assessment cannot fall back if the flag is disabled',()=>{
+ const session={mode:'sqa',sqa:{requestedExecutionStrategy:'sqa-single-reasoner-v1'}};
+ assert.equal(selectsModeReasoning(session,{}),true);
+ assert.throws(()=>qualifiedModeProfile({}, {}, session),/standalone SQA flag is off/);
+ assert.throws(()=>qualifiedModeProfile({}, {QASE_SQA_STANDALONE_ENABLED:'true'}, session),/QASE_SQA_SEARCH_URL/);
 });

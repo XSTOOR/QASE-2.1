@@ -74,6 +74,53 @@ export function renderSqaReviewPanel({ session, role, api, refresh, selectRun, d
 		parent.append(wrap);
 		return control;
 	};
+	if (sqa.execution?.strategy === 'sqa-single-reasoner-v1') {
+		button('Download research progress', () => downloadMarkdown(prefix + '/research-progress?format=md', 'sqa-research-progress.md'));
+		if (reviewer && idle && !sqa.finalizedAt && sqa.execution.research?.requirements?.length) {
+			const panel = node('details');
+			panel.append(node('summary','Review applicability evidence'));
+			section.append(panel);
+			const form = node('form', '', 'sqa-review-form');
+			panel.append(form);
+			const select = (title, options) => {
+				const control = field(form, title, 'select');
+				for (const [value,label] of options) {
+					const option = node('option', label); option.value = value; control.append(option);
+				}
+				control.required = true;
+				return control;
+			};
+			const requirement = select('Researched requirement', sqa.execution.research.requirements.map(r => [r.id, r.framework + ' · ' + r.controlId]));
+			const feature = select('Observed project feature', []);
+			panel.ontoggle = async () => {
+				if (!panel.open || feature.options.length) return;
+				try {
+					const {research} = await api(prefix + '/research-progress');
+					for (const f of research.profile) {
+						const option = node('option', f.name + ' · ' + f.location); option.value = f.id; feature.append(option);
+					}
+				} catch (error) { message.textContent = error.message; }
+			};
+			const obligation = select('Obligation', [['contractual','Contractual'],['legal','Legal'],['certification','Certification requirement'],['recommended_practice','Recommended practice']]);
+			const determination = select('Document supports', [['INSUFFICIENT','Insufficient evidence'],['CONFIRMED_APPLICABLE','Applicability'],['NOT_APPLICABLE','Exclusion']]);
+			const jurisdiction = field(form, 'Jurisdiction or contractual scope'); jurisdiction.required=true; jurisdiction.maxLength=120;
+			const file = field(form, 'Reviewed document (plain text, up to 128 KB)'); file.type='file'; file.accept='.txt,text/plain'; file.required=true;
+			const excerpt = field(form, 'Exact supporting excerpt', 'textarea'); excerpt.required=true; excerpt.minLength=20; excerpt.maxLength=4000;
+			form.append(node('p','The server checks the excerpt against the document and retains their hashes and your scoped review decision.'));
+			form.onsubmit = event => event.preventDefault();
+			button('Save document review', async () => {
+				if (!form.reportValidity()) return;
+				const selected = file.files[0];
+				if (selected.size > 128000) throw new Error('The document exceeds 128 KB.');
+				await api(prefix + '/document-reviews', {method:'POST',body:JSON.stringify({
+					expectedRevision:revision,requirementId:requirement.value,featureId:feature.value,determination:determination.value,
+					obligation:obligation.value,jurisdiction:jurisdiction.value,documentText:await selected.text(),excerpt:excerpt.value
+				})});
+				form.reset();
+				await selectRun(session.id);
+			},form);
+		}
+	}
 	const change = async (action, reason) => {
 		const response = await api(`${prefix}/review/${action}`, { method: 'POST', body: JSON.stringify({ expectedRevision: revision, reason }) });
 		await refresh(response.sqa, { focusControl: action === 'reopen' });

@@ -18,7 +18,7 @@ function boundedRace(promise, signal) {
   });
 }
 
-export function createHybridModelRouter({ session, profile, telemetry, checkpoint, onUsage, fetchImpl, state = session.hybrid }) {
+export function createHybridModelRouter({ session, profile, telemetry, checkpoint, onUsage, fetchImpl, state = session.hybrid, reasonerOnly = false }) {
   const budget = profile.budgets;
   const accounting = createHybridBudgetLedger(state, telemetry);
   const deadlines = new Map();
@@ -33,7 +33,7 @@ export function createHybridModelRouter({ session, profile, telemetry, checkpoin
   };
   let activeClassifier = 0;
   const waiters = [];
-  const client = createJevClient({ apiKey: profile.classifier.apiKey, baseUrl: profile.classifier.endpoint, model: profile.classifier.model }, { fetchImpl, timeoutMs: budget.classifierTimeoutMs });
+  const client = reasonerOnly ? null : createJevClient({ apiKey: profile.classifier.apiKey, baseUrl: profile.classifier.endpoint, model: profile.classifier.model }, { fetchImpl, timeoutMs: budget.classifierTimeoutMs });
   const check = () => {
     if (ensureAutonomousCapacity(state, { durationMs: telemetry.tick() + 30000 })) Object.assign(budget, state.budgets);
     if (telemetry.tick() >= budget.durationMs) throw new HybridPause('HYBRID_TIME_BUDGET', 'Execution time budget exhausted.');
@@ -86,6 +86,7 @@ export function createHybridModelRouter({ session, profile, telemetry, checkpoin
       catch (error) { throw modelFailure(error); }
     },
     async classifier(observations, questions, signal, { onVerifiedUsage } = {}) {
+      if (reasonerOnly) throw new HybridPause('MODE_CLASSIFIER_FORBIDDEN', 'This execution strategy uses one reasoning model; classifier dispatch is forbidden.');
       signal?.throwIfAborted();
       if (accounting.unresolved('classifier') && profile.allowWithoutClassifier) {
         state.degradedClassification = true;

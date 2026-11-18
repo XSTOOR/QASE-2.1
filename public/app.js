@@ -1,4 +1,5 @@
 import { describeSqaLifecycle, groupSqaUnresolvedResults, sqaMissingEvidenceRequirements } from './sqaPresentation.js';
+import { renderSqaResearchReport } from './sqaResearchSections.js';
 import { renderSqaReviewPanel } from './sqaReviewView.js';
 import { sqaReportModel } from './sqaReportModel.js';
 import { evidenceInspectButton, renderSqaTraceability } from './sqaEvidenceView.js';
@@ -47,6 +48,7 @@ import { fallbackOptionsFor, availabilityMeta, describeQueue } from './deviceRun
 import { resolveActiveRuntimeEnvironment, viewForSelection } from './activeRuntimeEnvironment.js';
 import { chromeViewModel } from './browserChrome.js';
 import { SQA_REQUIRED_BROWSER_ATTRIBUTES, describeSqaScopeSelection } from './sqaScopeSelection.js';
+import { SQA_BUSINESS_CATEGORIES } from './sqaBusinessCategories.js';
 import { founderLaunchProblems } from './founderLaunch.js';
 import {
 	lastRunByCase, caseStatus, platformsOf, caseEnvLines,
@@ -4290,6 +4292,7 @@ function renderSqaReportTab() {
 	el.reportView.append(renderSqaVerdict(assessment, lifecycle), renderSqaOutcomeSummary(assessment, groups, unresolved), renderSqaReportActions(), notice, unresolved);
 	el.reportView.append(renderSqaCoverage(assessment));
 	if (assessment.executionBudget) el.reportView.append(renderSqaExecutionBudget(assessment.executionBudget));
+	if (assessment.researchReport) el.reportView.append(renderSqaResearchReport(assessment.researchReport));
 	el.reportView.append(
 		renderSqaControls(assessment.results ?? []),
 		renderSqaTraceability(sqaReportModel(assessment), { runId: state.session.id, api }),
@@ -4461,6 +4464,7 @@ function renderSqa() {
 	if (!assessment) return;
 
 	if (lifecycle.finalized) el.sqaView.append(renderSqaReportActions());
+	if (assessment.researchReport) el.sqaView.append(renderSqaResearchReport(assessment.researchReport));
 	el.sqaView.append(unresolved);
 	el.sqaView.append(renderSqaCoverage(assessment));
 	if (assessment.executionBudget) el.sqaView.append(renderSqaExecutionBudget(assessment.executionBudget));
@@ -6526,6 +6530,8 @@ const sqaUi = {
 	targetRelease: $('sqa-target-release'),
 	targetEnvironment: $('sqa-target-environment'),
 	scopeNotes: $('sqa-scope-notes'),
+	businessCategory: $('sqa-business-category'),
+	businessGuidance: $('sqa-business-guidance'),
 	expandedConfirmation: $('sqa-expanded-confirmation'),
 	expandedScope: $('sqa-expanded-scope'),
 	authorization: $('sqa-authorization'),
@@ -6556,13 +6562,26 @@ async function loadSqaCatalog() {
 }
 
 function paintSqaCatalog(catalog) {
+	const execution = catalog.execution;
+	const status = $('sqa-execution-status');
+	if (status) status.textContent = execution ? [
+		'Standalone SQA · ' + execution.model,
+		execution.qualified ? 'Standalone qualification current' : 'Standalone qualification pending',
+		execution.blocker
+	].filter(Boolean).join(' · ') : '';
 	const profiles = sqaValues(catalog.profiles);
 	const attributes = sqaValues(catalog.attributes);
 	const sources = sqaValues(catalog.sources);
 	const controls = sqaValues(catalog.controls);
 	sqaUi.disclaimer.textContent = catalog.disclaimer
 		?? 'This is a scoped engineering assessment and does not represent regulatory approval, an audit opinion, or certification.';
-	sqaUi.catalogVersion.textContent = `catalog ${catalog.catalogVersion} · ${controls.length} controls · ${sources.length} sources`;
+	sqaUi.catalogVersion.textContent = `Catalog ${catalog.catalogVersion} · Evidence from actual browser checks`;
+	sqaUi.businessCategory.replaceChildren(...Object.values(SQA_BUSINESS_CATEGORIES).map(category => {
+		const option = document.createElement('option');
+		option.value = category.id;
+		option.textContent = category.title;
+		return option;
+	}));
 
 	sqaUi.profileOptions.replaceChildren(...profiles.map(profile => {
 		const id = typeof profile === 'string' ? profile : profile.id;
@@ -6605,7 +6624,7 @@ function syncSqaSelectionSummary() {
 	}
 	const profiles = [...sqaUi.profileOptions.querySelectorAll('input:checked')].map(input => input.value);
 	const attributes = [...sqaUi.attributeOptions.querySelectorAll('input:checked')].map(input => input.value);
-	const preview = describeSqaScopeSelection(state.sqaCatalog, { profiles, attributes });
+	const preview = describeSqaScopeSelection(state.sqaCatalog, { profiles, attributes, assessmentType: 'browser' });
 	sqaUi.selectionSummary.textContent = preview.text;
 	if (sqaUi.scopeWarning) {
 		sqaUi.scopeWarning.hidden = !preview.expanded;
@@ -6628,6 +6647,7 @@ function syncSqaSelectionSummary() {
 function currentSqaScopePreview() {
 	if (!state.sqaCatalog) return undefined;
 	return describeSqaScopeSelection(state.sqaCatalog, {
+		assessmentType: 'browser',
 		profiles: [...sqaUi.profileOptions.querySelectorAll('input:checked')].map(input => input.value),
 		attributes: [...sqaUi.attributeOptions.querySelectorAll('input:checked')].map(input => input.value)
 	});
@@ -6665,6 +6685,8 @@ function sqaCatalogOption({ name, value, title, description = '', meta = '', che
 function syncSqaSubmitState() {
 	const missing = [];
 	if (!state.sqaCatalog) missing.push('load the assessment catalog');
+	const execution = state.sqaCatalog?.execution;
+	if (execution?.blocker) missing.push(execution.blocker);
 	try {
 		if (!['http:', 'https:'].includes(new URL(sqaUi.targetUrl.value.trim()).protocol)) throw new TypeError();
 	} catch { missing.push('enter a complete HTTP or HTTPS target URL'); }
@@ -6734,7 +6756,7 @@ async function openSqaStart({ targetUrl } = {}) {
 	if (!sqaUi.dialog.open) sqaUi.dialog.showModal();
 	if (matchMedia('(pointer: fine)').matches) setTimeout(() => sqaUi.targetUrl?.focus(), 0);
 
-	await refreshSqaCatalog();
+	await refreshSqaCatalog({ force: true });
 }
 
 function closeSqaStart() {
@@ -6744,6 +6766,12 @@ function closeSqaStart() {
 sqaUi.close.onclick = closeSqaStart;
 sqaUi.cancel.onclick = closeSqaStart;
 sqaUi.authorization.onchange = syncSqaSubmitState;
+sqaUi.businessCategory.onchange = () => {
+	const category = SQA_BUSINESS_CATEGORIES[sqaUi.businessCategory.value];
+	sqaUi.businessGuidance.textContent = category?.journeys?.length
+		? `Review focus: ${category.journeys.join(', ')}. Qase checks only observed, authorized features.`
+		: 'Choose the closest fit to guide the review toward relevant user journeys.';
+};
 sqaUi.expandedScope.onchange = syncSqaSubmitState;
 sqaUi.catalogRetry.onclick = () => void refreshSqaCatalog({ force: true });
 sqaUi.profileOptions.onchange = syncSqaSelectionSummary;
@@ -6782,7 +6810,7 @@ sqaUi.form.onsubmit = async event => {
 	const profiles = [...sqaUi.profileOptions.querySelectorAll('input:checked')].map(input => input.value);
 	if (!profiles.includes('core')) profiles.unshift('core');
 	const attributes = [...sqaUi.attributeOptions.querySelectorAll('input:checked')].map(input => input.value);
-	const scopePreview = describeSqaScopeSelection(state.sqaCatalog, { profiles, attributes });
+	const scopePreview = describeSqaScopeSelection(state.sqaCatalog, { profiles, attributes, assessmentType: 'browser' });
 	if (scopePreview.requiresRationale && !sqaUi.scopeNotes.value.trim()) {
 		setSqaFormError('Explain why the additional profiles or product characteristics apply in Review notes.');
 		sqaUi.customize.open = true;
@@ -6807,8 +6835,11 @@ sqaUi.form.onsubmit = async event => {
 		const result = await api('/sqa/sessions', {
 			method: 'POST',
 			body: JSON.stringify({
-				profiles,
-				attributes,
+				assessmentType: 'browser',
+				executionStrategy: state.sqaCatalog?.execution?.strategy,
+				businessCategory: sqaUi.businessCategory.value,
+				profiles: ['core'],
+				attributes: [...SQA_REQUIRED_BROWSER_ATTRIBUTES],
 				target,
 				scopeNotes: sqaUi.scopeNotes.value.trim(),
 				expandedScopeConfirmed: scopePreview.requiresConfirmation && sqaUi.expandedScope.checked,

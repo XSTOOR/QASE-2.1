@@ -358,22 +358,27 @@ test('QA launcher rejects all multi-configuration and batch requests, including 
 	} finally { await app.close(); }
 });
 
-test('busy QA startup does not persist a waiting run; repeated requests reuse one owned run', async () => {
-	const app = await startApp();
-	app.services.matrixOrchestrator.start = () => ({ ok: true });
-	try {
-		app.services.matrixOrchestrator.canStartImmediately = () => false;
-		const payload = { targetUrl: 'https://example.com', browserMode: 'automatic' };
-		const busy = await app.json('/api/qa-matrix-runs', { method: 'POST', json: payload });
-		assert.equal(busy.status, 503); assert.equal(busy.body.code, 'QA_CAPACITY_BUSY');
-		assert.equal((await app.services.matrix.list()).length, 0);
-		app.services.matrixOrchestrator.canStartImmediately = () => true;
-		const first = await app.json('/api/qa-matrix-runs', { method: 'POST', json: payload });
-		assert.equal(first.status, 201); assert.equal(first.body.items.length, 1);
-		assert.equal(first.body.items[0].browserCode, 'chrome');
-		assert.equal(first.body.items[0].device, 'Windows Desktop');
-		const second = await app.json('/api/qa-matrix-runs', { method: 'POST', json: payload });
-		assert.equal(second.status, 200); assert.equal(second.body.id, first.body.id); assert.equal(second.body.reused, true);
-		assert.equal((await app.services.matrix.list()).length, 1);
-	} finally { await app.close(); }
-});
+for (const [host, expectedDevice] of [
+	['darwin', 'iMac (27-inch Intel 2020)'],
+	['win32', 'Windows Desktop']
+]) {
+	test(`busy QA startup does not persist a waiting run; repeated ${host} requests reuse one owned run`, async () => {
+		const app = await startApp({ automaticBrowserOptions: { host } });
+		app.services.matrixOrchestrator.start = () => ({ ok: true });
+		try {
+			app.services.matrixOrchestrator.canStartImmediately = () => false;
+			const payload = { targetUrl: 'https://example.com', browserMode: 'automatic' };
+			const busy = await app.json('/api/qa-matrix-runs', { method: 'POST', json: payload });
+			assert.equal(busy.status, 503); assert.equal(busy.body.code, 'QA_CAPACITY_BUSY');
+			assert.equal((await app.services.matrix.list()).length, 0);
+			app.services.matrixOrchestrator.canStartImmediately = () => true;
+			const first = await app.json('/api/qa-matrix-runs', { method: 'POST', json: payload });
+			assert.equal(first.status, 201); assert.equal(first.body.items.length, 1);
+			assert.equal(first.body.items[0].browserCode, 'chrome');
+			assert.equal(first.body.items[0].device, expectedDevice);
+			const second = await app.json('/api/qa-matrix-runs', { method: 'POST', json: payload });
+			assert.equal(second.status, 200); assert.equal(second.body.id, first.body.id); assert.equal(second.body.reused, true);
+			assert.equal((await app.services.matrix.list()).length, 1);
+		} finally { await app.close(); }
+	});
+}

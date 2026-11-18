@@ -486,3 +486,18 @@ test('reviewer document saves preserve browser evidence and reject fabricated or
 	assert.deepEqual(later.evidence, saved.evidence);
 	assert.equal(candidate.sqa.reviewerAttestations.at(-1).role, 'owner');
 });
+
+test('direct concurrent SQA publishers both observe a failed durable write and can retry', async()=>{
+ const candidate=session();
+ let rejectCommit, writes=0;
+ const broken={async commit(){writes++;return new Promise((_,reject)=>{rejectCommit=reject;});}};
+ const both=[finishSqaAssessment(candidate,broken,fixedNow),finishSqaAssessment(candidate,broken,fixedNow)];
+ assert.equal(writes,1);
+ rejectCommit(new Error('publication write failed'));
+ const results=await Promise.allSettled(both);
+ assert.ok(results.every(row=>row.status==='rejected'&&row.reason.message==='publication write failed'));
+ assert.equal(candidate.sqa.finalizedAt,undefined);
+ const recovered=store();
+ await Promise.all([finishSqaAssessment(candidate,recovered,fixedNow),finishSqaAssessment(candidate,recovered,fixedNow)]);
+ assert.equal(recovered.commits.length,1);assert.equal(candidate.sqa.publishedVersions.length,1);
+});

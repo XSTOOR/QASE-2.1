@@ -1,6 +1,8 @@
+import { researchMarkdown } from '../public/sqaResearchSections.js';
 import { createHash } from 'node:crypto';
 import { sqaReportModel } from '../public/sqaReportModel.js';
 import { SQA_RELEASE_REPORT_CONTROL_IDS, isSqaPartialReleaseEvidence } from '../public/sqaEvidencePolicy.js';
+import { normalizeSqaBusinessCategory, SQA_BUSINESS_CATEGORIES } from '../public/sqaBusinessCategories.js';
 import {
 	SQA_CATALOG,
 	SQA_EVIDENCE_TYPES,
@@ -119,11 +121,12 @@ function normalizeObservation(observation, index) {
 export function validateSqaAssessmentInput(input, catalog = SQA_CATALOG) {
 	validateSqaCatalog(catalog);
 	assertPlainObject(input, 'SQA assessment input');
-	assertExactKeys(input, ['catalogVersion', 'target', 'assessedAt', 'profiles', 'attributes', 'scopeNotes', 'observations'], 'SQA assessment input');
+	assertExactKeys(input, ['catalogVersion', 'target', 'assessedAt', 'profiles', 'attributes', 'scopeNotes', 'observations', 'assessmentType', 'businessCategory'], 'SQA assessment input');
 	if (input.catalogVersion !== undefined && input.catalogVersion !== catalog.catalogVersion) {
 		throw new TypeError(`SQA catalog version ${input.catalogVersion} does not match ${catalog.catalogVersion}.`);
 	}
-	const scope = resolveSqaScope({ profiles: input.profiles, attributes: input.attributes }, catalog);
+	const scope = resolveSqaScope({ profiles: input.profiles, attributes: input.attributes, assessmentType: input.assessmentType }, catalog);
+	if (input.businessCategory !== undefined && scope.assessmentType !== 'browser') throw new TypeError('SQA businessCategory is supported for browser assessments only.');
 	const observations = input.observations ?? [];
 	if (!Array.isArray(observations) || observations.length > 1_000) {
 		throw new TypeError('SQA assessment observations must be an array with at most 1000 items.');
@@ -143,6 +146,7 @@ export function validateSqaAssessmentInput(input, catalog = SQA_CATALOG) {
 	}
 	return {
 		catalogVersion: catalog.catalogVersion,
+		...(scope.assessmentType === 'browser' ? { assessmentType: 'browser', businessCategory: normalizeSqaBusinessCategory(input.businessCategory) } : {}),
 		target: normalizeTarget(input.target),
 		assessedAt: normalizeTimestamp(input.assessedAt, 'SQA assessedAt', true),
 		profiles: scope.profiles,
@@ -266,7 +270,7 @@ function summarizeTechnicalChecks(results) {
  */
 export function evaluateSqaAssessment(input, catalog = SQA_CATALOG) {
 	const normalized = validateSqaAssessmentInput(input, catalog);
-	const scope = resolveSqaScope({ profiles: normalized.profiles, attributes: normalized.attributes }, catalog);
+	const scope = resolveSqaScope({ profiles: normalized.profiles, attributes: normalized.attributes, assessmentType: normalized.assessmentType }, catalog);
 	const observations = new Map(normalized.observations.map(observation => [observation.controlId, observation]));
 	const results = scope.applicableControls.map(control => {
 		const observation = observations.get(control.id) ?? {
@@ -366,6 +370,7 @@ export function evaluateSqaAssessment(input, catalog = SQA_CATALOG) {
 		assessmentSha256,
 		catalogVersion: catalog.catalogVersion,
 		assessedAt: normalized.assessedAt,
+		...(normalized.assessmentType === 'browser' ? { assessmentType: 'browser', businessCategory: normalized.businessCategory } : {}),
 		target: normalized.target,
 		profiles: normalized.profiles,
 		attributes: normalized.attributes,
@@ -394,7 +399,9 @@ export function evaluateSqaAssessment(input, catalog = SQA_CATALOG) {
 		frameworkCoverage: frameworkCoverage(results, catalog),
 		results,
 		outOfScope: scope.excludedControls,
-		disclaimer: catalog.disclaimer || SQA_NO_CERTIFICATION_DISCLAIMER
+		disclaimer: normalized.assessmentType === 'browser'
+			? 'This browser-only review covers the recorded pages, states and interactions. Standards references explain individual checks; they do not establish complete WCAG, ISO, regulatory compliance or certification. Organizational and documentary assurance is outside this scope.'
+			: catalog.disclaimer || SQA_NO_CERTIFICATION_DISCLAIMER
 	};
 }
 
@@ -447,6 +454,7 @@ export function buildSqaReportMarkdown(assessment) {
 		`- **Assessed at:** ${markdown(assessment.assessedAt)}`,
 		`- **Catalog:** ${markdown(assessment.catalogVersion)}`,
 		`- **Profiles:** ${assessment.profiles.map(markdown).join(', ')}`,
+		...(assessment.assessmentType === 'browser' ? [`- **Review type:** Browser-only web quality checks`, `- **Business category:** ${markdown(SQA_BUSINESS_CATEGORIES[assessment.businessCategory]?.title || 'General website or application')}`] : []),
 		`- **Verdict:** ${String(assessment.verdict).toUpperCase()}`,
                 `- **Residual risk:** ${markdown(assessment.risk?.level)} (${markdown(assessment.risk?.score)}%)`,
                 '',
@@ -588,5 +596,6 @@ export function buildSqaReportMarkdown(assessment) {
 			'- Framework mappings are an independently authored Qase crosswalk. The cited source publications and applicable legal or regulatory requirements remain authoritative.',
 			`- Final notice: ${markdown(assessment.disclaimer)}`
 		);
+        if (assessment.researchReport) lines.push('', researchMarkdown(assessment.researchReport));
         return lines.join('\n');
 }

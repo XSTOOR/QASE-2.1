@@ -860,8 +860,17 @@ function normalizeStringSelection(values, allowed, label, defaults = []) {
 }
 
 /** Resolve controls for selected profiles and product attributes. Core is always included. */
-export function resolveSqaScope({ profiles, attributes } = {}, catalog = SQA_CATALOG) {
+export function resolveSqaScope({ profiles, attributes, assessmentType = 'assurance' } = {}, catalog = SQA_CATALOG) {
 	validateSqaCatalog(catalog);
+	if (!['assurance', 'browser'].includes(assessmentType)) throw new TypeError('SQA assessmentType must be assurance or browser.');
+	if (assessmentType === 'browser') {
+		if (profiles !== undefined && (!Array.isArray(profiles) || profiles.some(id => id !== 'core')))
+			throw new TypeError('Browser SQA covers the core web checks only; use assurance for additional profiles.');
+		if (attributes !== undefined && (!Array.isArray(attributes) || attributes.some(id => !['web_application', 'user_interface'].includes(id))))
+			throw new TypeError('Browser SQA does not include additional assurance attributes.');
+		profiles = ['core'];
+		attributes = ['web_application', 'user_interface'];
+	}
 	const profileSet = new Set(Object.keys(catalog.profiles));
 	const attributeSet = new Set(catalog.attributes);
 	const selectedProfiles = normalizeStringSelection(profiles, profileSet, 'profiles', ['core']);
@@ -871,6 +880,10 @@ export function resolveSqaScope({ profiles, attributes } = {}, catalog = SQA_CAT
 	const applicableControls = [];
 	const excludedControls = [];
 	for (const control of catalog.controls) {
+		if (assessmentType === 'browser' && !SQA_TECHNICAL_CONTROL_IDS.includes(control.id)) {
+			excludedControls.push({ controlId: control.id, reason: 'Outside the selected browser-only review; documentary, organizational and regulatory assurance was not requested.' });
+			continue;
+		}
 		if (!control.applicability.profiles.some(profile => selectedProfiles.includes(profile))) continue;
 		const { mode, attributes: required } = control.applicability;
 		const applies = mode === 'always'
@@ -885,6 +898,7 @@ export function resolveSqaScope({ profiles, attributes } = {}, catalog = SQA_CAT
 
 	return {
 		catalogVersion: catalog.catalogVersion,
+		...(assessmentType === 'browser' ? { assessmentType } : {}),
 		profiles: selectedProfiles,
 		attributes: selectedAttributes,
 		applicableControls,

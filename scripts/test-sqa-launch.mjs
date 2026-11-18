@@ -8,7 +8,7 @@ const { values } = parseArgs({ options: { browser: { type: 'string', default: 'c
 const browserName = assertSqaTestBrowser(values.browser);
 const directory = path.resolve(values['output-dir'] ?? `test-results/sqa-launch/${Date.now()}`);
 await mkdir(directory, { recursive: true });
-const runtime = await createSqaTestServer(directory, { authRequired: true });
+const runtime = await createSqaTestServer(directory, { authRequired: true, qualifiedSqaLaunch: true });
 let browser, releaseEnvironment;
 try {
   await runtime.start();
@@ -45,6 +45,7 @@ try {
     if (await page.locator('#qa-start').isVisible()) await page.locator('#qa-close').click();
     await page.locator('#new-sqa').click();
     await page.locator('#sqa-catalog-state').waitFor({ state: 'hidden' });
+    assert.match(await page.locator('#sqa-execution-status').textContent(), /Standalone qualification current/);
   }
   async function completeDetails() {
     await page.locator('#sqa-target-url').fill('https://example.test/');
@@ -98,6 +99,9 @@ try {
   assert.equal(await page.locator('#sqa-submit').isDisabled(), true);
   assert.match(await page.locator('#sqa-launch-status').innerText(), /testing permission/);
   await page.locator('#sqa-authorization').check();
+  await page.locator('#sqa-business-category').selectOption('hr_hiring');
+  assert.match(await page.locator('#sqa-selection-summary').innerText(), /6 browser-verifiable checks/);
+  assert.equal(await page.locator('#sqa-profiles-fieldset').isHidden(), true);
   await page.screenshot({ path: `${directory}/desktop-ready.png` });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -116,6 +120,9 @@ try {
   const created = await response.json();
   assert.equal(created.mode, 'sqa');
   assert.equal(created.sqa.scope.target.release, 'launch-regression');
+  assert.equal(created.sqa.scope.assessmentType, 'browser');
+  assert.equal(created.sqa.scope.businessCategory, 'hr_hiring');
+  assert.equal(created.sqa.scope.applicableControlIds.length, 6);
   assert.equal(created.environmentSnapshot.device, 'iPad (10th Gen)');
   assert.equal(created.environmentSnapshot.browserCode, 'edge');
   await page.waitForURL(`**/#/runs/${created.id}`);

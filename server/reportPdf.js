@@ -1,3 +1,4 @@
+import { sqaResearchSections } from '../public/sqaResearchSections.js';
 import { chromium } from 'playwright';
 import { sqaReportModel } from '../public/sqaReportModel.js';
 import { buildFindingFixPrompt } from './fixPromptBuilder.js';
@@ -274,6 +275,9 @@ function buildSqaBody(session) {
 	const verdict = assessment.verdict ?? sqa.verdict ?? '\u2014';
 	const model = sqaReportModel(assessment);
 	const parts = ['<h1>SQA assessment</h1>', headerBlock(session, 'SQA', String(verdict).toUpperCase())];
+	for (const [heading, rows] of sqaResearchSections(assessment.researchReport)) {
+		parts.push('<section><h2>'+escapeHtml(heading)+'</h2>'+rows.filter(Boolean).map(row=>'<p>'+escapeHtml(row)+'</p>').join('')+'</section>');
+	}
 	if (model.technical) {
 		const technical = model.technical;
 		parts.push('<section><h2>Bounded technical smoke sample</h2><div class="outcome-line">' + statusPill(technical.verdict) + '</div>'

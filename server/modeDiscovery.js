@@ -1,3 +1,5 @@
+import { verifiedResearchBody } from './sqaResearchSource.js';
+import { standaloneSqa } from './sqaStandaloneStrategy.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {canonicalModeHash,legacyModeHash,modeReceiptHash} from './modeIntegrity.js';
 
@@ -113,10 +115,10 @@ export function modeWorkReadiness(session) {
   const feature=discovery.features.find(f=>f.id===id);if(!feature)return [];
   return [feature.location+feature.stateKey,...feature.controls.flatMap(c=>w.verification?.receipts.filter(e=>e.result.url===c.href).map(e=>c.href+(e.result.stateKey||'observed-route'))||[])];
  })));
- return { ready: discovery.ready && !state.recoveryRequired && !state.actions.some(a=>a.status==='uncertain') && workflows.length > 0 && !pending.length && !invalid.length && plannedSurfaces.size>=Math.min(2,surfaces.size) && !state.currentWorkflowId && Boolean(state.classifications.length),
+ return { ready: discovery.ready && !state.recoveryRequired && !state.actions.some(a=>a.status==='uncertain') && workflows.length > 0 && !pending.length && !invalid.length && plannedSurfaces.size>=Math.min(2,surfaces.size) && !state.currentWorkflowId && (standaloneSqa(session) || Boolean(state.classifications.length)),
   discoveryReady: discovery.ready, planned: workflows.length, attempted: workflows.filter(w => w.evidenceIds?.length).length,
   invalidProofIds:invalid,requiredWorkflowSurfaces:Math.min(2,surfaces.size),plannedSurfaces:plannedSurfaces.size,
-  pending: pending.map(w => ({ id: w.id, title: w.title, status: w.status })), classificationRequired: !state.classifications.length,
+  pending: pending.map(w => ({ id: w.id, title: w.title, status: w.status })), classificationRequired: !standaloneSqa(session) && !state.classifications.length,
   counts: Object.fromEntries(['planned', 'running', 'passed', 'failed', 'blocked', 'inconclusive'].map(status => [status, workflows.filter(w => w.status === status).length])) };
 }
 
@@ -204,12 +206,18 @@ export function createModeDiscovery({ session, state, invoke, checkpoint,toolNam
   return { success: d.status === 'ready', discovery: modeDiscoverySummary(session) };
  }));
  const strings = { type: 'array', minItems: 1, maxItems: 8, items: { type: 'string', maxLength: 500 } };
+ const standalonePlan = standaloneSqa(session);
+ const catalogIds = session.sqa?.scope?.applicableControlIds ?? [];
+ const catalogControls = standalonePlan
+  ? {type:'array',maxItems:Math.min(50,catalogIds.length),items:{type:'string',...(catalogIds.length?{enum:catalogIds}:{})},
+     description:'Optional internal QASE catalog IDs only. Omit for a researched workflow. Its requirements come from applicability_id.'}
+  : {...strings,maxItems:50};
  const plan = tool('mode_plan_work', 'After discovery, add 1–8 application-specific workflows referencing observed feature IDs. Preserve user requirements, canonical mode todos and prior work. Model planning is not execution.', {
   workflows: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'object', additionalProperties: false, properties: {
    id: { type: 'string', maxLength: 80 }, title: { type: 'string', maxLength: 180 }, feature_ids: strings, steps: strings,
-   expected_behavior: { type: 'string', maxLength: 1200 }, control_ids: {...strings,maxItems:50},
+   expected_behavior: { type: 'string', maxLength: 1200 }, ...(standaloneSqa(session)?{applicability_id:{type:'string',description:'Saved decision that links these features to researched requirements.'}}:{}), control_ids: catalogControls,
    depends_on: { type: 'array', maxItems: 8, items: { type: 'string' } }
-  }, required: ['id', 'title', 'feature_ids', 'steps', 'expected_behavior'] } }
+  }, required: ['id', 'title', 'feature_ids', 'steps', 'expected_behavior', ...(standalonePlan?['applicability_id']:[])] } }
  }, ['workflows'], async input => {
   const discovery = modeDiscoveryStatus(session);
   if (!discovery.ready) return fail('MODE_DISCOVERY_REQUIRED', 'Discover the application before planning.');
@@ -218,11 +226,36 @@ export function createModeDiscovery({ session, state, invoke, checkpoint,toolNam
   for (const w of input.workflows) {
    if(!w||typeof w!=='object'||typeof w.id!=='string'||typeof w.title!=='string'||typeof w.expected_behavior!=='string'||!Array.isArray(w.steps)||!Array.isArray(w.feature_ids)||w.control_ids!==undefined&&!Array.isArray(w.control_ids)||w.depends_on!==undefined&&!Array.isArray(w.depends_on))return fail('MODE_PLAN_INVALID','Use typed workflow fields and actual feature-ID arrays.');
    if (!w.id?.trim() || ids.has(w.id) || !w.title?.trim() || !w.expected_behavior?.trim() || !w.steps?.length || !w.feature_ids?.length || w.feature_ids.some(id => !discovery.features.some(f => f.id === id)) || w.depends_on?.some(id => !ids.has(id))) return fail('MODE_PLAN_INVALID', 'Use unique workflow IDs, actual feature IDs, nonempty steps/expectations, and earlier dependencies.');
-   if (session.mode === 'sqa' && w.control_ids?.some(id => !session.sqa.scope.applicableControlIds.includes(id))) return fail('MODE_CONTROL_SCOPE', 'Plan only controls in the assessment scope.');
+   if (session.mode === 'sqa' && w.control_ids?.some(id => !session.sqa.scope?.applicableControlIds?.includes(id))) return fail('MODE_CONTROL_SCOPE', standalonePlan?'Omit control_ids for research-led workflows. Supply the saved applicability_id; QASE resolves the publisher requirements from that decision.':'Plan only controls in the assessment scope.');
    if(w.id.length>80||w.title.length>180||w.expected_behavior.length>1200||w.steps.length>8||w.feature_ids.length>8||w.steps.some(s=>typeof s!=='string'||!s.trim()||s.length>500)||w.control_ids?.length>50||w.depends_on?.length>8)return fail('MODE_PLAN_INVALID','Workflow fields exceed their documented bounds.');
-   ids.add(w.id); next.push({ id:w.id,title:w.title,feature_ids:w.feature_ids,steps:w.steps,expected_behavior:w.expected_behavior,...(w.control_ids?{control_ids:w.control_ids}:{}),...(w.depends_on?{depends_on:w.depends_on}:{}),status: 'planned', plannedAt: Date.now(), evidenceIds: [] });
+   let researchLink;
+   if (standaloneSqa(session)) {
+    const research=state.research;
+    const sameTest = test => canonicalModeHash([[...test.feature_ids].sort(),test.steps,test.expected_behavior]);
+    if(next.some(prior=>prior.researchLink?.decisionId===w.applicability_id&&sameTest(prior)===sameTest(w))) return fail('SQA_DUPLICATE_WORKFLOW','This researched workflow is already planned for the same features.');
+    const decision=research?.applicability?.find(d=>d.id===w.applicability_id);
+    const {integrityHash,...payload}=decision||{};
+    if(!decision||decision.classification==='NOT_APPLICABLE'||canonicalModeHash(payload)!==integrityHash||!w.feature_ids.every(id=>decision.feature_ids.includes(id))) return fail('SQA_APPLICABILITY_REQUIRED','Link this workflow to an intact applicability decision for its observed features.');
+    const sources=decision.requirement_ids.map(id=>{
+     const requirement=research.requirements.find(r=>r.id===id);
+     const source=research.sources.find(s=>s.id===requirement?.sourceId);
+     if(!source||source.runId!==session.id)return null;
+     const content=verifiedResearchBody(source,session.id);
+     if(content===null||source.contentHash!==requirement.contentHash||!content.includes(requirement.quote)||!content.includes(requirement.controlId)||(!Number.isFinite(source.retrievedAt)||source.retrievedAt>Date.now()||Date.now()-source.retrievedAt>86400000))return null;
+     return {requirementId:id,sourceId:source.id,contentHash:source.contentHash};
+    });
+    if(!sources.length||sources.some(s=>!s))return fail('SQA_REQUIREMENT_REQUIRED','Refresh missing or outdated source evidence before planning.');
+    researchLink={decisionId:decision.id,decisionHash:integrityHash,sources};
+   }
+   ids.add(w.id); next.push({ ...(researchLink?{researchLink}:{}),id:w.id,title:w.title,feature_ids:w.feature_ids,steps:w.steps,expected_behavior:w.expected_behavior,...(w.control_ids?{control_ids:w.control_ids}:{}),...(w.depends_on?{depends_on:w.depends_on}:{}),status: 'planned', plannedAt: Date.now(), evidenceIds: [] });
   }
   if (next.length > 16) return fail('MODE_PLAN_LIMIT', 'The bounded plan allows at most 16 workflows; preserve completed work.');
+  if(standaloneSqa(session)){
+   const research=state.research;
+   research.planRevisions??=[];
+   research.planRevisions.push({revision:research.planRevisions.length+1,at:Date.now(),added:next.slice(state.workflows.length).map(w=>({workflowId:w.id,researchLink:w.researchLink}))});
+   research.stage='TEST_EXECUTION';
+  }
   state.workflows = next;state.phase='execution'; await checkpoint(); return { success: true, workflows: next.map(modeWorkflowSummary) };
  });
  const start = tool('mode_start_workflow', 'Activate a planned workflow before its browser checks. Completed workflows are never replayed; dependencies must be passed.', { id: { type: 'string' } }, ['id'], async ({ id }) => {
@@ -234,6 +267,7 @@ export function createModeDiscovery({ session, state, invoke, checkpoint,toolNam
   id: { type: 'string' }, disposition: { type: 'string', enum: ['verified', 'blocked', 'inconclusive'] }, reason: { type: 'string', maxLength: 1200 }
  }, ['id', 'disposition'], async ({ id, disposition, reason }) => {
   const w = state.workflows?.find(w => w.id === id);
+  if(w?.executionSteps?.some(s=>s.status!=='executed'||!state.evidence.some(e=>e.id===s.receipt?.modeEvidenceId&&e.digest===modeReceiptHash(e)&&receiptActivityValid(session,e))))return fail('MODE_STEP_UNCERTAIN','Reconcile delegated step receipts before closing the workflow.');
   if (!w || w.status !== 'running' || state.currentWorkflowId !== id) return fail('MODE_WORKFLOW_NOT_RUNNING', 'Activate the workflow before closing it.');
   const receipts = state.evidence.filter(e => e.workflowId === id && e.tool.startsWith('browser_') && e.digest === modeReceiptHash(e) && state.actions.some(a => a.id === e.actionId && a.status === 'done') && receiptActivityValid(session,e));
   const features=modeDiscoveryStatus(session).features.filter(f=>w.feature_ids.includes(f.id));
@@ -292,9 +326,30 @@ export function createModeDiscovery({ session, state, invoke, checkpoint,toolNam
  },['steps'],async({steps},context={})=>{
   if(!state.currentWorkflowId)return fail('MODE_WORKFLOW_REQUIRED','Start the observed workflow first.');
   if(!Array.isArray(steps)||!steps.length||steps.length>8||steps.some(s=>!batchNames.includes(s.tool)||!s.input||typeof s.input!=='object'||Array.isArray(s.input)||Object.keys(s.input).some(k=>!['url','selector','value','key','action','expected'].includes(k))||JSON.stringify(s.input).length>3000||s.tool==='browser_qa_check'&&!['inspect','navigation','responsive','forms','search','media','disclosure','accessibility','anchors','tabs','scroll','navigation_control'].includes(s.input.action)))return fail('MODE_STEPS_INVALID','Use 1–8 supported browser steps with bounded native inputs.');
-  return owned(async()=>{
+  if (!standaloneSqa(session)) return owned(async()=>{
    const results=[];
    for(const step of steps){context.signal?.throwIfAborted();const result=await invoke(step.tool,step.input,context.signal);results.push({tool:step.tool,success:result?.success!==false,modeEvidenceId:result?.modeEvidenceId,evidenceActivityId:result?.evidenceActivityId,url:result?.url||result?.inventory?.url,assertions:result?.assertions?.length});if(result?.success===false)return {success:false,results,error:result.error||'A child browser step failed; later steps were not executed.'};}
+   return {success:true,results};
+  });
+  // Keep the validated plan stable across checkpoint awaits.
+  steps=structuredClone(steps);
+  return owned(async()=>{
+   const results=[];
+   const workflow=state.workflows.find(w=>w.id===state.currentWorkflowId);
+   workflow.executionSteps??=[];
+   const batchKey=hash(steps);
+   for(const [index,step] of steps.entries()){
+    context.signal?.throwIfAborted();
+    const key=hash([batchKey,index]), prior=workflow.executionSteps.find(s=>s.key===key);
+    if(prior?.status==='executed'){const saved=state.evidence.find(e=>e.id===prior.receipt?.modeEvidenceId);if(!saved||saved.digest!==modeReceiptHash(saved)||!receiptActivityValid(session,saved))return fail('MODE_STEP_UNCERTAIN','The prior execution receipt is missing or invalid. No step was replayed.');if(!prior.receipt.success)return {success:false,results,error:'Previous step failed; revise the plan instead of replaying.'};results.push(prior.receipt);continue;}
+    if(prior) return fail('MODE_STEP_UNCERTAIN','A prior delegated step has no verified receipt; it was not replayed.');
+    const intent={key,status:'dispatching',at:Date.now()};workflow.executionSteps.push(intent);await checkpoint();
+    const result=await invoke(step.tool,step.input,context.signal);context.signal?.throwIfAborted();
+    if(!result?.modeEvidenceId)return fail('MODE_STEP_UNCERTAIN','The delegated step returned no durable receipt. Do not replay.');
+    const receipt={tool:step.tool,success:result?.success!==false,modeEvidenceId:result.modeEvidenceId,evidenceActivityId:result.evidenceActivityId,url:result.url||result.inventory?.url,assertions:result.assertions?.length};
+    intent.status='executed';intent.receipt=receipt;await checkpoint();results.push(receipt);
+    if(result.success===false)return {success:false,results,error:result.error||'A child browser step failed; later steps were not executed.'};
+   }
    return {success:true,results};
   });
  });

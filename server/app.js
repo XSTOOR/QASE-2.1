@@ -1,3 +1,4 @@
+import { researchMarkdown } from '../public/sqaResearchSections.js';
 import * as path from 'node:path';
 import { chooseAutomaticBrowser } from './automaticBrowser.js';
 import { createSingleRunAdmission } from './singleRunAdmission.js';
@@ -53,6 +54,10 @@ import { buildFeedbackSectionMarkdown } from './report.js';
 import { normalizeQaScopeSelection } from '../public/qaScopeCatalog.js';
 import { createConfiguredTelegramNotifier } from './telegramNotifier.js';
 import { resolveDisplayTimeZone, formatFeedbackTimestamp } from './displayTime.js';
+import { buildResearchReport } from './sqaResearchReport.js';
+import { SQA_STANDALONE_STRATEGY, standaloneSqa } from './sqaStandaloneStrategy.js';
+import { recordSqaDocumentReview } from './sqaDocumentReview.js';
+import { standaloneLaunchStatus, standaloneResearchProfile } from './sqaStandaloneQualification.js';
 import { createSqaState, createSqaTodoPlan, publicSqaCatalog, recordReviewerSqaObservation } from './sqaService.js';
 import { preflightSqaRuntime, preflightFounderRuntime } from './sqaRuntime.js';
 import { changeSqaReview, assertSqaReviewIdle, assertSqaReviewRevision } from './sqaReview.js';
@@ -795,8 +800,8 @@ export function createApplication(options = {}) {
 	});
 
 	app.get('/api/sqa/catalog', (_request, response) => {
-		response.set('Cache-Control', 'private, max-age=300');
-		response.json(publicSqaCatalog());
+		response.set('Cache-Control', 'no-store');
+		response.json({...publicSqaCatalog(), execution:standaloneLaunchStatus(standaloneResearchProfile(getConfig(), environment), environment)});
 	});
 
 	app.get('/api/qa/catalog', (_request, response) => {
@@ -2034,6 +2039,9 @@ export function createApplication(options = {}) {
 		let session;
 		try {
 			const sqa = publicInput(() => createSqaState(request.body ?? {}));
+			if (request.body?.executionStrategy !== undefined && request.body.executionStrategy !== SQA_STANDALONE_STRATEGY) {
+				throw new PublicInputError('New assessments require the standalone SQA strategy.', 422);
+			}
 			if (request.body?.device !== undefined && !isDeviceId(request.body.device)) {
 				throw new PublicInputError(`Unsupported SQA device "${String(request.body.device)}". Choose a device from the available catalog.`, 422);
 			}
@@ -2043,20 +2051,23 @@ export function createApplication(options = {}) {
 			const device = request.body?.device ?? DEFAULT_DEVICE_ID;
 			const deviceLandscape = request.body?.deviceLandscape === true;
 			const engine = request.body?.engine ?? 'chromium';
-			const environment = await resolveEnvironmentForRun(services, request.body?.environmentId);
-			const executionEngine = await preflightSqaRuntime({ environment, engine });
+			const selectedEnvironment = await resolveEnvironmentForRun(services, request.body?.environmentId);
+			const executionEngine = await preflightSqaRuntime({ environment: selectedEnvironment, engine });
+			const execution = standaloneLaunchStatus(standaloneResearchProfile(getConfig(), environment), environment);
+			if (execution.blocker) throw new PublicInputError(execution.blocker, 409);
+			sqa.requestedExecutionStrategy = SQA_STANDALONE_STRATEGY;
 			session = await services.runs.create(`SQA — ${sqa.scope.target.name}`, {
 				device, deviceLandscape, engine: executionEngine, ownerUserId: request.auth?.userId,
 				cohort: cohortFor(request.auth?.role).cohort,
-				environmentId: environment?.envId, environmentSnapshot: environment
+				environmentId: selectedEnvironment?.envId, environmentSnapshot: selectedEnvironment
 			});
 			session.mode = 'sqa';
 			session.sqa = sqa;
 			session.todos = createSqaTodoPlan(sqa);
 			session.device = device;
 			session.deviceLandscape = deviceLandscape;
-			session.environmentId = environment?.envId;
-			session.environmentSnapshot = environment;
+			session.environmentId = selectedEnvironment?.envId;
+			session.environmentSnapshot = selectedEnvironment;
 			// Persist the host-owned assessment plan before the metadata-only SQA
 			// creation event so PostgreSQL and local mode expose identical progress.
 			await services.runs.commit(session, 'todos', { todos: session.todos });
@@ -2230,6 +2241,23 @@ export function createApplication(options = {}) {
 			activeSqaReviews.delete(session.id);
 		}
 	}
+
+	app.get('/api/sessions/:id/sqa/research-progress', async (request, response) => {
+		const session = await requireSession(request, response);
+		if (!session) return;
+		if (!standaloneSqa(session)) return response.status(409).json({ error: 'A standalone SQA run is required.' });
+		try {
+			const research = buildResearchReport(session);
+			if (request.query.format === 'md') return response.type('text/markdown').send('# SQA research progress (unpublished)\n\n' + researchMarkdown(research));
+			response.json({ published: false, research });
+		} catch (error) { safeErrorResponse(request, response, error); }
+	});
+
+	app.post('/api/sessions/:id/sqa/document-reviews', (request, response) => withSqaReview(request, response, async session => {
+		assertSqaReviewRevision(session.sqa, request.body?.expectedRevision);
+		const receipt = await recordSqaDocumentReview(session, request.body, request.auth, services.runs);
+		response.json({ receipt, reviewRevision: session.sqa.reviewRevision });
+	}));
 
 	app.post('/api/sessions/:id/sqa/observations', (request, response) => withSqaReview(request, response, async session => {
 			if (request.body?.observation || session.sqa.reviewRevision) assertSqaReviewRevision(session.sqa, request.body?.expectedRevision);

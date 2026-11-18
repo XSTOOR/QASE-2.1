@@ -46,6 +46,8 @@ import { createHybridScenarioTool } from './hybridQaTools.js';
 import { watchTurn } from './runWatchdog.js';
 import { createSqaJevVerifier } from './sqaJevVerifier.js';
 import { selectsModeReasoning, qualifiedModeProfile, createModeReasoningRuntime } from './modeReasoningRuntime.js';
+import { SQA_STANDALONE_STRATEGY, standaloneSqa } from './sqaStandaloneStrategy.js';
+import { SQA_RESEARCH_TOOLS, standaloneResearchReadiness } from './sqaResearch.js';
 
 export { guardSqaBrowserTool } from './sqaBrowserBudget.js';
 
@@ -448,6 +450,7 @@ export function prepareSqaSynthesis(session, record) {
  const readiness=sqaFinishReadiness(session);
   if(readiness.pendingControlIds.length||readiness.incompletePassIds.length||readiness.authBlockedControlIds.length||readiness.activeActivities.length||readiness.findingControlConflicts.length||!modeExplorationReadiness(session).ready)return false;
  const runtime=record.runtime;
+ if(standaloneSqa(session)&&!standaloneResearchReadiness(session).ready)return false;
  if(typeof runtime.agentSession?.clear!=='function')return false;
  const tools=runtime.headlessRuntime.getTools().filter(t=>['update_todo','finish_sqa_assessment'].includes(t.name));
  if(tools.length!==2)return false;
@@ -674,8 +677,8 @@ async function constructRuntime(session, runStore) {
 	let hybridSettings;
 	if (isQualified) {
 		if (isHybrid && !session.hybrid && !hybridEnabled()) throw new Error('Hybrid QA is disabled for new runs.');
-		hybridSettings = isModeReasoning ? qualifiedModeProfile(settings) : hybridProfile(settings);
-		loadQualification(hybridSettings);
+		hybridSettings = isModeReasoning ? qualifiedModeProfile(settings, process.env, session) : hybridProfile(settings);
+		if (!isModeReasoning) loadQualification(hybridSettings);
 		settings = { ...settings, provider: 'custom', model: hybridSettings.reasoner.model, apiKey: hybridSettings.reasoner.apiKey, baseUrl: 'https://llm.drytis.ai/v1' };
 	}
 	// A saved model can go stale (retired/renamed on the gateway) between runs —
@@ -710,6 +713,7 @@ async function constructRuntime(session, runStore) {
 		}
 	}
 	const allowedTools = allowedToolNames(session.mode);
+	if (hybridSettings?.executionStrategy === SQA_STANDALONE_STRATEGY) for (const name of SQA_RESEARCH_TOOLS) allowedTools.add(name);
 	if(!isQualified&&initializeFounderReportGeneration(session,settings.provider)){
 		try{await runStore.commit(session,'founder.report_protocol',{protocol:session.founder.reportGeneration.protocol});}
 		catch(error){delete session.founder.reportGeneration;throw error;}
@@ -891,7 +895,8 @@ async function constructRuntime(session, runStore) {
 		if (isHybrid) sessionTools.push(createHybridScenarioTool(sessionTools.find(tool => tool.name === 'browser_qa_check')));
 		const headless = runtime.headlessRuntime;
 		if(usesFounderDraft(session))record.founderDraftSchema=founderReportToolSchema();
-		const registeredTools = [...ALL_TOOLS, ...sessionTools].filter(tool => allowedTools.has(tool.name) && (!record.hybrid || record.hybrid.allows(tool.name))).map(tool => {
+		const sdkTools = standaloneSqa(session) ? ALL_TOOLS.filter(tool => !SQA_RESEARCH_TOOLS.includes(tool.name)) : ALL_TOOLS;
+		const registeredTools = [...sdkTools, ...sessionTools].filter(tool => allowedTools.has(tool.name) && (!record.hybrid || record.hybrid.allows(tool.name))).map(tool => {
 			const legacyGuarded = guardSecurityPayloadTool(guardSqaBrowserTool(tool, session), session, settings.securityPayloadLimit);
 			const guardedTool = record.hybrid ? record.hybrid.wrapTool(legacyGuarded) : record.modeReasoning ? record.modeReasoning.wrapTool(legacyGuarded) : legacyGuarded;
 			if (guardedTool.name !== 'update_todo') return guardedTool;

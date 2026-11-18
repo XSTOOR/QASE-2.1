@@ -3,6 +3,7 @@ import { modeExplorationReadiness } from './modeReasoningRuntime.js';
 import {
 	AGENT_EVIDENCE_TYPES,
 	MAX_EVIDENCE_SUMMARY,
+	finishReadiness,
 	closePendingReviewerSqaControlsAsBlocked,
 	closePendingSqaControlsAsBlocked,
 	finishSqaAssessment,
@@ -10,7 +11,7 @@ import {
 	recordAgentSqaObservations,
 	pendingAgentSqaControlIds
 } from './sqaService.js';
-import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
+import { SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { readSqaWorkPage } from './sqaWorkPlan.js';
 import {
 	countSqaBrowserActivities,
@@ -26,9 +27,6 @@ const EVIDENCE_SUMMARY_SCHEMA = {
 	maxLength: MAX_EVIDENCE_SUMMARY,
 	description: `Control-specific factual summary, at most ${MAX_EVIDENCE_SUMMARY} characters. Omit credentials, personal data, and cookies. If too long, shorten it and resubmit using the same saved browser evidence.`
 };
-const PUBLIC_ONLY_SCOPE = /\b(public[- ]only|anonymous[- ]only|unauthenticated[- ]only|login[- ]only|auth(?:entication)? surface only|continue without (?:credentials|sign[- ]?in))\b/i;
-const AUTH_BLOCKED = /\b(behind authentication|authentication (?:is )?required|requires? (?:authentication|credentials|sign[- ]?in)|unauthenticated|no (?:login )?credentials?|cannot sign in|login (?:is )?required)\b/i;
-
 function pendingTechnicalControlIds(session) {
 	const applicable = new Set(session.sqa?.scope?.applicableControlIds ?? []);
 	const recorded = new Map((session.sqa?.observations ?? []).map(item => [item.controlId, item.status]));
@@ -41,60 +39,6 @@ function requireTechnicalControlsFirst(session, proposedControlIds) {
 	const pending = pendingTechnicalControlIds(session);
 	if (pending.length === 0 || proposedControlIds.every(controlId => SQA_TECHNICAL_CONTROL_IDS.includes(controlId))) return;
 	throw new TypeError(`Finish the six technical web controls first. Pending: ${pending.join(', ')}. Record non-technical controls only after these have results.`);
-}
-
-function finishReadiness(session, now = Date.now()) {
-	const observations = new Map((session.sqa?.observations ?? []).map(item => [item.controlId, item]));
-	const pendingControlIds = [];
-	const incompletePassIds = [];
-	for (const controlId of session.sqa?.scope?.applicableControlIds ?? []) {
-		const observation = observations.get(controlId);
-		if (!observation || observation.status === 'not_assessed') {
-			pendingControlIds.push(controlId);
-			continue;
-		}
-		if (observation.status === 'pass') {
-			const control = getSqaControl(controlId);
-			const complete = control.evidenceRequirements.every(requirement => (
-				observation.evidence?.filter(item => item.type === requirement.type).length >= requirement.minimum
-			));
-			if (!complete) incompletePassIds.push(controlId);
-		}
-	}
-	const activeActivities = (session.activities ?? []).filter(activity => (
-		activity.status === 'running'
-		&& activity.toolName !== 'finish_sqa_assessment'
-		&& Number.isFinite(Number(activity.ts))
-		&& now - Number(activity.ts) < 120_000
-	));
-	const incompleteTodos = (session.todos ?? []).filter(todo => (
-		todo.status !== 'completed'
-		&& !isPublicationTodo(todo, 'sqa')
-	));
-	const userScopeText = (session.messages ?? [])
-		.filter(message => message.role === 'user')
-		.map(message => message.text)
-		.join(' ');
-	const explicitlyPublicOnly = PUBLIC_ONLY_SCOPE.test(`${session.sqa?.scope?.scopeNotes ?? ''} ${userScopeText}`);
-	const authBlockedControlIds = explicitlyPublicOnly ? [] : (session.sqa?.observations ?? [])
-		.filter(item => SQA_TECHNICAL_CONTROL_IDS.includes(item.controlId)
-			&& item.status === 'blocked'
-			&& AUTH_BLOCKED.test(item.rationale ?? ''))
-		.map(item => item.controlId);
-	const findingControlConflicts = (session.findings ?? []).flatMap(finding => (
-		(finding.controlIds ?? [])
-			.filter(controlId => observations.get(controlId)?.status !== 'fail')
-			.map(controlId => ({ findingId: finding.id, title: finding.title, controlId,
-				observedStatus: observations.get(controlId)?.status ?? 'pending' }))
-	));
-	return {
-		pendingControlIds,
-		incompletePassIds,
-		activeActivities,
-		incompleteTodos,
-		authBlockedControlIds,
-		findingControlConflicts
-	};
 }
 
 export function createSqaTools(session, runStore, options = {}) {

@@ -4,6 +4,7 @@ import { sqaReportModel } from '../public/sqaReportModel.js';
 import { SQA_RELEASE_REPORT_CONTROL_IDS } from '../public/sqaEvidencePolicy.js';
 import { BROWSER_WORKFLOW_GUIDANCE } from './browserWorkflowPrompt.js';
 import { createHash } from 'node:crypto';
+import { SQA_BUSINESS_CATEGORIES } from '../public/sqaBusinessCategories.js';
 
 const severity = { critical: 0, high: 1, medium: 2, low: 3 };
 const priority = (a, b) => Number(b.mandatory) - Number(a.mandatory)
@@ -67,7 +68,14 @@ export function sqaWorkBrief(sqa) {
 	if (!plan) return '';
 	const active = plan.activeControls.map(({ requirements, ...control }) => ({ ...control,
 		requirements: requirements.map(({ id, type, minimum, owner }) => ({ id, type, minimum, owner })) }));
-	return `SQA work priority: ${plan.phase}. Pending browser controls: ${plan.pendingBrowserCount}; pending reviewer-only controls: ${plan.pendingReviewerOnlyCount}.
+	const business = SQA_BUSINESS_CATEGORIES[sqa.scope.businessCategory ?? 'general'];
+	const context = sqa.scope.assessmentType === 'browser'
+		? `Assessment scope: six browser-verifiable web checks. Standards references describe the checks; they do not establish full WCAG, ISO or regulatory compliance.
+Business category: ${business?.title ?? 'General business'}. Suggested journeys to look for: ${JSON.stringify(business?.journeys ?? [])}. These are discovery hints, not observed features, permission grants or expected results. Verify actual surfaces first; apply the same six evidence requirements to every category.
+Discover representative in-scope journeys before planning. Group related checks by observed workflow. Do not manufacture documentary controls or request policy documents for this browser-only scope. Missing safe forms or navigation controls remain explicit untested limitations, never passes.
+`
+		: '';
+	return `${context}SQA work priority: ${plan.phase}. Pending browser controls: ${plan.pendingBrowserCount}; pending reviewer-only controls: ${plan.pendingReviewerOnlyCount}.
 Detailed active controls: ${JSON.stringify(active)}
 Remaining browser planning index: ${JSON.stringify(plan.planningIndex)}
 Reviewer artifact requests: ${plan.reviewerRequests.length}. Full release reports require authorized review for ${SQA_RELEASE_REPORT_CONTROL_IDS.join(', ')}. Browser activity bundles support partial observations only for these objectives; record blocked until the complete report is supplied. Read mode_execution_progress only when the next workflow lacks needed contract detail. Do not prefetch the entire catalog or reviewer register before testing. Act on the active group and record supported results first. Further pages require the returned revision; restart at offset 0 after recording controls.

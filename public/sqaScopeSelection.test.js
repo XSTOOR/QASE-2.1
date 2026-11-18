@@ -42,3 +42,16 @@ test('malformed catalog entries do not enter the client preview', () => {
 	assert.equal(preview.expanded, false);
 	assert.match(preview.text, /^0 controls selected/);
 });
+
+
+test('browser review excludes documentary controls and never expands from hidden legacy choices', () => {
+	const preview = describeSqaScopeSelection(SQA_CATALOG, {
+		assessmentType: 'browser', profiles: ['medical', 'payment'], attributes: ['handles_personal_data']
+	});
+	assert.deepEqual(preview.profiles, ['core']);
+	assert.deepEqual(preview.attributes, SQA_REQUIRED_BROWSER_ATTRIBUTES);
+	assert.deepEqual(preview.applicableControlIds, SQA_TECHNICAL_CONTROL_IDS);
+	assert.equal(preview.requiresConfirmation, false);
+	assert.equal(preview.requiresRationale, false);
+	assert.match(preview.text, /^6 browser-verifiable checks/);
+});

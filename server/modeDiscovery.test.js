@@ -10,16 +10,17 @@ import {modeToolsForPhase} from './modeReasoningRuntime.js';
 import {prepareModeEvidenceReview} from './agent.js';
 import {inspectSqaEvidence} from './sqaEvidence.js';
 
-function fixture(mode = 'sqa') {
+function fixture(mode = 'sqa', standalone = false) {
  const session = { id: randomUUID(), mode, targetUrl: 'https://fixture.test/', [mode]: { observations: [] }, activities: [], todos: [] };
  const record = {};
- const runtime = createModeReasoningRuntime({ session, record, runStore: { async commit() {} }, profile: hybridProfile({ apiKey: 'fixture' }) });
+ const runtime = createModeReasoningRuntime({ session, record, runStore: { async commit() {} }, profile: {...hybridProfile({ apiKey: 'fixture' }), ...(standalone ? {executionStrategy:'sqa-single-reasoner-v1'} : {})} });
+ runtime.router.classifier=async()=>({next_action:{choice:'execute'},category:{choice:'usability'}});
  return { session, runtime, record, state: session[mode].execution };
 }
 function reordered(value){return Array.isArray(value)?value.map(reordered):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().reverse().map(k=>[k,reordered(value[k])])):value;}
 
-function wiredFixture(mode='sqa') {
- const f=fixture(mode);let page='/',mutations=0,failLast=false,toolFailure=false,noisy=false;
+function wiredFixture(mode='sqa', standalone=false) {
+ const f=fixture(mode,standalone);let page='/',mutations=0,failLast=false,toolFailure=false,noisy=false;
  f.session.sqa??={};f.session.sqa.scope={applicableControlIds:['SQA-WEB-004']};
  f.record.onModeToolResult=async({toolCallId,result})=>{f.session.activities.find(a=>a.id===toolCallId).status=result?.success===false?'failed':'done';};
  const inventory=()=>({url:'https://fixture.test'+page,stateKey:page,title:page,headings:[page],bodyText:'Rendered '+page,readiness:{ready:true},links:[...(noisy?Array.from({length:20},(_,i)=>({selector:'#outside-'+i,href:'https://outside.test/',label:'External'})):[]),...['/','/docs','/pricing'].filter(p=>p!==page).map(p=>({selector:'#'+p.replaceAll('/','-'),href:'https://fixture.test'+p,label:p}))],controls:[],forms:[],search:[]});
@@ -219,3 +220,61 @@ for (const mode of ['sqa', 'founder']) {
   assert.equal(modeExplorationReadiness(f.session).ready, false);
  });
 }
+
+test('a restored standalone plan yields an exportable scoped snapshot and altered evidence blocks it', async()=>{
+ const {createSqaResearch,standaloneResearchReadiness}=await import('./sqaResearch.js');
+ const {researchMarkdown}=await import('../public/sqaResearchSections.js');
+ const {createHash}=await import('node:crypto');
+ const f=wiredFixture('sqa',true);
+ await f.run('mode_discover_application');
+ const shortlink='https://www.w3.org/TR/Fixture-2/',api='https://api.w3.org/specifications/Fixture-2';
+ const edition=api+'/versions/20240101';
+ const content='Fixture Standard. abstract. F1. Visible control names should be discoverable.';
+ const responses=new Map([[shortlink,content],[api,JSON.stringify({shortname:'Fixture-2',shortlink,title:'Fixture Standard','series-version':'2',_links:{'latest-version':{href:edition}}})],
+  [edition,JSON.stringify({shortlink,title:'Fixture Standard',uri:'https://www.w3.org/TR/2024/REC-Fixture-2-20240101/',status:'Recommendation',date:'2024-01-01',_links:{self:{href:edition}}})]]);
+ const tools=createSqaResearch({session:f.session,checkpoint:async()=>{},retrieve:async url=>{
+  const document=responses.get(url);assert.ok(document);
+  return {url,finalUrl:url,content:document,contentHash:createHash('sha256').update(document).digest('hex'),retrievedAt:Date.now()};
+ }});
+ const invoke=(name,input)=>tools.find(t=>t.name===name).run(input);
+ const source=await invoke('web_fetch',{url:shortlink});
+ assert.equal(source.authority,'verified_official');
+ const {requirement}=await invoke('sqa_record_requirement',{source_id:source.sourceId,framework:'Fixture Standard',control_id:'F1',quote:'Visible control names should be discoverable.'});
+ const surfaces=modeDiscoveryStatus(f.session).features.filter(feature=>feature.kind==='surface');
+ for (const [i,feature] of surfaces.entries()) {
+  const {decision}=await invoke('sqa_record_applicability',{classification:'RECOMMENDED',obligation:'recommended_practice',feature_ids:[feature.id],requirement_ids:[requirement.id],jurisdiction:'Fixture only',rationale:'Observed interactive surface',assumptions:[]});
+  const id='scope-'+i;
+  const invalid=await f.run('mode_plan_work',{workflows:[{id,title:feature.name,feature_ids:[feature.id],applicability_id:decision.id,control_ids:[requirement.controlId],steps:['Check names'],expected_behavior:'Controls expose names'}]});
+  assert.equal(invalid.code,'MODE_CONTROL_SCOPE');assert.match(invalid.error,/Omit control_ids/);
+  assert.equal((await f.run('mode_plan_work',{workflows:[{id,title:'Inspect '+feature.name,feature_ids:[feature.id],applicability_id:decision.id,steps:['Check rendered names'],expected_behavior:'Controls expose names'}]})).success,true);
+  await f.run('mode_start_workflow',{id});await f.move(feature.location);
+  await f.run('mode_test_surface',{checks:['accessibility']});
+  assert.equal((await f.run('mode_close_workflow',{id,disposition:'verified'})).success,true);
+ }
+ const persisted=JSON.parse(JSON.stringify(f.session));
+ const result=standaloneResearchReadiness(persisted);
+ assert.deepEqual(result.blockers,[]);
+ assert.equal(result.ready,true);
+ assert.equal(result.report.metrics.testsWithEvidence,surfaces.length);
+ assert.equal(result.report.requirements[0].requirementResult,'NOT_VERIFIABLE');
+ const background=structuredClone(persisted);
+ background.sqa.execution.research.requirements[0].controlId='abstract';
+ const backgroundResult=standaloneResearchReadiness(background);
+ assert.equal(backgroundResult.ready,false);
+ assert.equal(backgroundResult.report.requirements[0].citationUse,'background');
+ assert.ok(backgroundResult.blockers.some(reason=>reason.includes('Background material')));
+ const {attachResearchReport}=await import('./sqaResearchReport.js');
+ const {buildSqaReportMarkdown,evaluateSqaAssessment}=await import('./sqaAssessment.js');
+ const {buildReportHtml}=await import('./reportPdf.js');
+ const scope=createSqaState({authorizationConfirmed:true,target:{name:'Fixture',release:'test',environment:'local'}}).scope;
+ const evaluated=evaluateSqaAssessment({target:scope.target,profiles:scope.profiles,attributes:scope.attributes,observations:[],assessedAt:new Date().toISOString()});
+ const attached=attachResearchReport(evaluated,result.report);
+ assert.equal(attached.passed,false);
+ assert.equal(attached.gates.at(-1).status,'blocked');
+ assert.ok(buildSqaReportMarkdown(attached).includes(source.contentHash));
+ assert.ok(buildReportHtml({...persisted,createdAt:Date.now(),sqa:{...persisted.sqa,assessment:attached}}).includes(source.contentHash));
+ assert.ok(researchMarkdown(result.report).includes(source.contentHash));
+ assert.equal(persisted.sqa.execution.telemetry.classifier.calls,0);
+ persisted.sqa.execution.workflows[0].verification.receipts[0].digest='altered';
+ assert.equal(standaloneResearchReadiness(persisted).ready,false);
+});

@@ -1170,22 +1170,23 @@
   <form class="modal-inner sqa-modal-inner" id="sqa-form">
     <header class="modal-head" data-path="~/qase/sqa/new">
       <div>
-        <h2 id="sqa-start-title">Review product quality</h2>
-        <p id="sqa-start-description">Check the product against a recommended quality baseline and collect evidence for anything that needs attention.</p>
+        <h2 id="sqa-start-title">Review website quality</h2>
+        <p id="sqa-start-description">Check how your website loads, navigates and behaves, with evidence for each result.</p>
       </div>
       <button class="btn btn-ghost btn-sm" type="button" id="sqa-close">Close</button>
     </header>
 
     <div class="modal-body sqa-modal-body">
       <div class="sqa-recommended">
-        <h3>Recommended quality review</h3>
-        <p>Qase includes the universal product-quality baseline and uses evidence it can observe directly.</p>
+        <h3>Universal web quality review</h3>
+        <p id="sqa-execution-status" role="status"></p>
+        <p>Six practical checks cover navigation, forms, accessibility basics, responsive layout, page loading and browser errors.</p>
         <p class="sqa-selection-summary" id="sqa-selection-summary" role="status" aria-live="polite">Loading the recommended scope…</p>
         <p class="sqa-scope-warning" id="sqa-scope-warning" role="alert" hidden></p>
         <ul class="sqa-selection-reasons" id="sqa-selection-reasons" aria-label="Why these controls are selected"></ul>
         <details class="sqa-boundary">
           <summary>About this review</summary>
-          <p id="sqa-catalog-disclaimer">This is readiness guidance, not certification or regulatory approval.</p>
+          <p id="sqa-catalog-disclaimer">Results describe the pages and interactions tested. This review does not certify regulatory compliance.</p>
         </details>
         <span class="sqa-catalog-meta" id="sqa-catalog-version" aria-live="polite"></span>
       </div>
@@ -1232,13 +1233,21 @@
           </label>
         </div>
           </fieldset>
-          <fieldset class="sqa-fieldset" id="sqa-profiles-fieldset" disabled>
+      <label class="field">
+        <span>Business category</span>
+        <select id="sqa-business-category" name="businessCategory" aria-describedby="sqa-business-guidance">
+          <option value="general">General website or application</option>
+        </select>
+        <small id="sqa-business-guidance">Choose the closest fit to guide the review toward relevant user journeys.</small>
+      </label>
+
+          <fieldset class="sqa-fieldset" id="sqa-profiles-fieldset" hidden disabled>
             <legend>Additional standards profiles</legend>
             <p>Add only profiles that apply to this product. The universal quality baseline is always included.</p>
             <div class="sqa-option-grid" id="sqa-profile-options"></div>
           </fieldset>
 
-          <fieldset class="sqa-fieldset" id="sqa-attributes-fieldset" disabled>
+          <fieldset class="sqa-fieldset" id="sqa-attributes-fieldset" hidden disabled>
             <legend>Product characteristics</legend>
             <p>Use these details when they materially change the quality controls that apply.</p>
             <div class="sqa-option-grid sqa-option-grid--compact" id="sqa-attribute-options"></div>
@@ -1247,16 +1256,16 @@
           <fieldset class="sqa-fieldset sqa-target-fields">
             <legend>Review notes</legend>
             <label class="field">
-              <span>Scope notes <small>(optional for the recommended scope)</small></span>
+              <span>Important workflows <small>(optional)</small></span>
               <textarea id="sqa-scope-notes" name="scopeNotes" rows="3" maxlength="4000" placeholder="In-scope workflows, exclusions, assumptions, and evidence locations…"></textarea>
-              <small>Required when additional profiles or product characteristics expand the recommended review.</small>
+              <small>Tell Qase which pages or workflows matter most, and any areas to avoid.</small>
             </label>
           </fieldset>
 
 
           <aside class="sqa-scope-guidance" id="sqa-scope-guidance" role="note">
             <strong>Evidence boundary</strong>
-            <p>Some standards require documents, approvals, security reports, or independent review that a browser test cannot provide. Qase labels those requirements <em>Evidence incomplete</em> instead of reporting a false failure.</p>
+            <p>This review checks observable website behavior. Organizational processes, legal compliance, certification and business claims need separate review. Missing access or untestable controls are reported explicitly.</p>
           </aside>
         </div>
       </details>

@@ -25,7 +25,22 @@ function applicableControlIds(catalog, profiles, attributes) {
  * authoritative; this mirrors catalog applicability only so the user can see
  * the exact control count and why controls are included before starting.
  */
-export function describeSqaScopeSelection(catalog, { profiles = [], attributes = [] } = {}) {
+export function describeSqaScopeSelection(catalog, { profiles = [], attributes = [], assessmentType = 'assurance' } = {}) {
+	if (assessmentType === 'browser') {
+		const browserControlIds = applicableControlIds(catalog, ['core'], [...SQA_REQUIRED_BROWSER_ATTRIBUTES])
+			.filter(id => /^SQA-WEB-00[1-6]$/.test(id));
+		return {
+			assessmentType, profiles: ['core'], attributes: [...SQA_REQUIRED_BROWSER_ATTRIBUTES],
+			applicableControlIds: browserControlIds, browserControlIds, baselineControlIds: browserControlIds,
+			additionalControlIds: [], additionalProfiles: [], optionalAttributes: [], expanded: false,
+			requiresRationale: false, requiresConfirmation: false, warning: '',
+			text: `${browserControlIds.length} browser-verifiable checks · Universal web review`,
+			reasons: [
+				'Checks cover page loading, navigation, forms, keyboard accessibility, browser diagnostics and responsive layout.',
+				'Your business category guides which observed journeys to explore. Results cover the tested pages and states.'
+			]
+		};
+	}
 	const selectedProfiles = uniqueStrings(['core', ...profiles]);
 	const selectedAttributes = uniqueStrings([...SQA_REQUIRED_BROWSER_ATTRIBUTES, ...attributes]);
 	const applicableIds = applicableControlIds(catalog, selectedProfiles, selectedAttributes);

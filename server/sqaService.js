@@ -1,15 +1,22 @@
+import { standaloneSqa } from './sqaStandaloneStrategy.js';
+import { standaloneResearchReadiness } from './sqaResearch.js';
 import { createHash } from 'node:crypto';
+import { attachResearchReport } from './sqaResearchReport.js';
+import { getConfig } from './config.js';
+import { profileIdentity } from './hybridConfig.js';
+import { loadStandaloneQualification, standaloneProfileIdentity, standaloneResearchProfile } from './sqaStandaloneQualification.js';
 import { evaluateSqaAssessment } from './sqaAssessment.js';
-import { SQA_CATALOG, getSqaControl, resolveSqaScope } from './sqaCatalog.js';
+import { SQA_CATALOG, SQA_TECHNICAL_CONTROL_IDS, getSqaControl, resolveSqaScope } from './sqaCatalog.js';
 import { redact } from './secrets.js';
 import { PublicInputError, publicInput } from './publicErrors.js';
 import { assertSqaSize, preserveSqaPublication } from './sqaHistory.js';
 import { evidenceDigest } from './sqaEvidence.js';
 import { acceptedSqaReviewEvidence, isSubmittedSqaReference } from './sqaReviewEvidence.js';
 import { isSqaInternalEvidence, SQA_RELEASE_REPORT_CONTROL_IDS } from '../public/sqaEvidencePolicy.js';
-import { publicationTodos } from './finalizationGuard.js';
+import { isPublicationTodo, publicationTodos } from './finalizationGuard.js';
 import { sqaExecutionBudget } from './sqaBrowserBudget.js';
 import { modeSqaEvidenceActivityIds,modeSqaHasFailedAssertions,modeDiscoveryRequired,modeExplorationReadiness } from './modeDiscovery.js';
+import { normalizeSqaBusinessCategory } from '../public/sqaBusinessCategories.js';
 
 const AGENT_EVIDENCE_TYPES = new Set([
 	'assessment_record', 'configuration_record', 'security_report', 'test_result', 'wcag_report'
@@ -68,6 +75,7 @@ function target(input = {}) {
 function assessmentInput(sqa, assessedAt = new Date().toISOString()) {
 	return {
 		catalogVersion: sqa.scope.catalogVersion,
+		...(sqa.scope.assessmentType === 'browser' ? { assessmentType: 'browser', businessCategory: sqa.scope.businessCategory ?? 'general' } : {}),
 		target: sqa.scope.target,
 		assessedAt,
 		profiles: sqa.scope.profiles,
@@ -96,10 +104,12 @@ export function createSqaState(input = {}, now = () => Date.now()) {
 	const attributes = Array.isArray(input.attributes)
 		? [...new Set([...SQA_BROWSER_REVIEW_ATTRIBUTES, ...input.attributes])]
 		: input.attributes === undefined ? [...SQA_BROWSER_REVIEW_ATTRIBUTES] : input.attributes;
-	const resolved = resolveSqaScope({ profiles: input.profiles, attributes });
+	const resolved = resolveSqaScope({ profiles: input.profiles, attributes, assessmentType: input.assessmentType });
+	const businessCategory = input.businessCategory !== undefined || input.assessmentType === 'browser'
+		? normalizeSqaBusinessCategory(input.businessCategory) : undefined;
 	const authorizedAt = new Date(now()).toISOString();
 	const scopeNotes = text(input.scopeNotes, 'SQA scope notes', 4_000);
-	const baseline = resolveSqaScope({ profiles: ['core'], attributes: [...SQA_BROWSER_REVIEW_ATTRIBUTES] });
+	const baseline = resolveSqaScope({ profiles: ['core'], attributes: [...SQA_BROWSER_REVIEW_ATTRIBUTES], assessmentType: input.assessmentType });
 	const baselineIds = new Set(baseline.applicableControls.map(control => control.id));
 	const additionalControlIds = resolved.applicableControls
 		.map(control => control.id)
@@ -114,6 +124,7 @@ export function createSqaState(input = {}, now = () => Date.now()) {
 	}
 	const scope = {
 		catalogVersion: resolved.catalogVersion,
+		...(resolved.assessmentType === 'browser' ? { assessmentType: 'browser', businessCategory } : {}),
 		profiles: resolved.profiles,
 		attributes: resolved.attributes,
 		target: target(input.target),
@@ -177,6 +188,7 @@ export function normalizePendingSqaState(input) {
 	if (input.scope?.catalogVersion !== SQA_CATALOG.catalogVersion || missingBrowserReviewScope) {
 		const resolved = resolveSqaScope({
 			profiles: input.scope?.profiles,
+			assessmentType: input.scope?.assessmentType,
 			attributes: [...new Set([...SQA_BROWSER_REVIEW_ATTRIBUTES, ...existingAttributes])]
 		});
 		const applicableIds = new Set(resolved.applicableControls.map(control => control.id));
@@ -656,8 +668,74 @@ export async function closePendingSqaControlsAsBlocked(session, reason, runStore
 	return session.sqa.assessment.results.filter(result => closedControlIds.includes(result.controlId));
 }
 
+const PUBLIC_ONLY_SCOPE = /\b(public[- ]only|anonymous[- ]only|unauthenticated[- ]only|login[- ]only|auth(?:entication)? surface only|continue without (?:credentials|sign[- ]?in))\b/i;
+const AUTH_BLOCKED = /\b(behind authentication|authentication (?:is )?required|requires? (?:authentication|credentials|sign[- ]?in)|unauthenticated|no (?:login )?credentials?|cannot sign in|login (?:is )?required)\b/i;
+
+export function finishReadiness(session, now = Date.now()) {
+	const observations = new Map((session.sqa?.observations ?? []).map(item => [item.controlId, item]));
+	const pendingControlIds = [];
+	const incompletePassIds = [];
+	for (const controlId of session.sqa?.scope?.applicableControlIds ?? []) {
+		const observation = observations.get(controlId);
+		if (!observation || observation.status === 'not_assessed') {
+			pendingControlIds.push(controlId);
+			continue;
+		}
+		if (observation.status === 'pass') {
+			const control = getSqaControl(controlId);
+			const complete = control.evidenceRequirements.every(requirement => (
+				observation.evidence?.filter(item => item.type === requirement.type).length >= requirement.minimum
+			));
+			if (!complete) incompletePassIds.push(controlId);
+		}
+	}
+	const activeActivities = (session.activities ?? []).filter(activity => (
+		activity.status === 'running'
+		&& activity.toolName !== 'finish_sqa_assessment'
+		&& Number.isFinite(Number(activity.ts))
+		&& now - Number(activity.ts) < 120_000
+	));
+	const incompleteTodos = (session.todos ?? []).filter(todo => (
+		todo.status !== 'completed'
+		&& !isPublicationTodo(todo, 'sqa')
+	));
+	const userScopeText = (session.messages ?? [])
+		.filter(message => message.role === 'user')
+		.map(message => message.text)
+		.join(' ');
+	const explicitlyPublicOnly = PUBLIC_ONLY_SCOPE.test(`${session.sqa?.scope?.scopeNotes ?? ''} ${userScopeText}`);
+	const authBlockedControlIds = explicitlyPublicOnly ? [] : (session.sqa?.observations ?? [])
+		.filter(item => SQA_TECHNICAL_CONTROL_IDS.includes(item.controlId)
+			&& item.status === 'blocked'
+			&& AUTH_BLOCKED.test(item.rationale ?? ''))
+		.map(item => item.controlId);
+	const findingControlConflicts = (session.findings ?? []).flatMap(finding => (
+		(finding.controlIds ?? [])
+			.filter(controlId => observations.get(controlId)?.status !== 'fail')
+			.map(controlId => ({ findingId: finding.id, title: finding.title, controlId,
+				observedStatus: observations.get(controlId)?.status ?? 'pending' }))
+	));
+	return {
+		pendingControlIds,
+		incompletePassIds,
+		activeActivities,
+		incompleteTodos,
+		authBlockedControlIds,
+		findingControlConflicts
+	};
+}
+
 /** Recompute and persist the final deterministic assessment. */
+const pendingPublications = new WeakMap();
 export async function finishSqaAssessment(session, runStore, now = () => Date.now()) {
+	if (pendingPublications.has(session)) return pendingPublications.get(session);
+	const pending = persistAssessment(session, runStore, now);
+	pendingPublications.set(session, pending);
+	try { return await pending; }
+	finally { pendingPublications.delete(session); }
+}
+
+async function persistAssessment(session, runStore, now) {
 	if (session?.mode !== 'sqa' || !session.sqa) {
 		throw new TypeError('This run is not an SQA assessment.');
 	}
@@ -665,12 +743,28 @@ export async function finishSqaAssessment(session, runStore, now = () => Date.no
 		if (session.sqa.assessment) return session.sqa.assessment;
 		throw new TypeError('This SQA assessment is finalized and cannot be recalculated without an authorized reopen.');
 	}
+	let researchReport;
+	if (standaloneSqa(session)) {
+		const readiness = standaloneResearchReadiness(session, now());
+		if (!readiness.ready) throw new TypeError(readiness.reason);
+		const unresolved = Object.entries(finishReadiness(session, now())).filter(([, items]) => items.length);
+		if (unresolved.length) throw new TypeError('Standalone assessment has unresolved ' + unresolved.map(([group])=>group).join(', '));
+		const profile = standaloneResearchProfile(getConfig());
+		loadStandaloneQualification(profile);
+		const state = session.sqa.execution;
+		const identity = state.profileIdentityVersion === 'standalone-v1' ? standaloneProfileIdentity(profile) : profileIdentity(profile);
+		if (state.profileIdentity !== identity) throw new Error('The publication qualification must match the execution profile.');
+		if (['cancelled','interrupted','awaiting_input','error'].includes(session.status) || state.recoveryRequired)
+			throw new Error('Resume and reconcile this run before publishing its research.');
+		researchReport = readiness.report;
+	}
 	if(modeDiscoveryRequired(session)&&!modeExplorationReadiness(session).ready)throw new TypeError('SQA publication requires intact discovery, completed evidence-backed workflows, verified browser state and classification.');
 	const previous = session.sqa;
 	const previousTodos = session.todos;
 	const normalized = normalizePendingSqaState(previous);
 	const assessedAt = new Date(now()).toISOString();
-	const assessment = evaluateSqaAssessment(assessmentInput(normalized, assessedAt));
+	const evaluated = evaluateSqaAssessment(assessmentInput(normalized, assessedAt));
+	const assessment = researchReport ? attachResearchReport(evaluated, researchReport) : evaluated;
 	assessment.executionBudget = sqaExecutionBudget(session);
 	session.sqa = {
 		...normalized,

@@ -79,3 +79,13 @@ test('qualified SQA phase brief retains exact reviewer requirements with less re
  s.sqa.observations.push({controlId:'SQA-CHG-001',status:'blocked'});
  assert.doesNotMatch(buildModeExecutionContext(s).split('Pending scoped controls')[1],/SQA-CHG-001/,'Resolved controls remain in scope but do not demand another investigation.');
 });
+
+test('standalone inference retains the citation ID and the actual requested page of a large retrieved source',()=>{
+ const session={id:'research',mode:'sqa',sqa:{execution:{strategy:'sqa-single-reasoner-v1',research:{sources:[{id:'doc',contentHash:'hash',finalUrl:'https://example.test/standard'}]}}}};
+ const value={success:true,sourceId:'doc',contentHash:'hash',url:'https://example.test/standard',authority:'unverified',offset:24000,nextOffset:48000,content:'excerpt '.repeat(2000)+'Exact quoted passage.'};
+ const message={role:'tool',toolCallId:'fetch-call',content:JSON.stringify(value)};
+ const result=projectModeMessages([message],session);
+ assert.equal(result[0].toolCallId,message.toolCallId);
+ const projected=JSON.parse(result[0].content);
+ assert.equal(projected.sourceId,'doc');assert.equal(projected.content,value.content);assert.equal(projected.nextOffset,48000);
+});
