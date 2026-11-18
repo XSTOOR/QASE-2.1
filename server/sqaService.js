@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { attachResearchReport } from './sqaResearchReport.js';
 import { getConfig } from './config.js';
 import { profileIdentity } from './hybridConfig.js';
-import { loadStandaloneQualification, standaloneProfileIdentity, standaloneResearchProfile } from './sqaStandaloneQualification.js';
+import { requireStandaloneExecution, standaloneProfileIdentity, standaloneResearchProfile } from './sqaStandaloneQualification.js';
 import { evaluateSqaAssessment } from './sqaAssessment.js';
 import { SQA_CATALOG, SQA_TECHNICAL_CONTROL_IDS, getSqaControl, resolveSqaScope } from './sqaCatalog.js';
 import { redact } from './secrets.js';
@@ -750,7 +750,7 @@ async function persistAssessment(session, runStore, now) {
 		const unresolved = Object.entries(finishReadiness(session, now())).filter(([, items]) => items.length);
 		if (unresolved.length) throw new TypeError('Standalone assessment has unresolved ' + unresolved.map(([group])=>group).join(', '));
 		const profile = standaloneResearchProfile(getConfig());
-		loadStandaloneQualification(profile);
+		requireStandaloneExecution(session,profile);
 		const state = session.sqa.execution;
 		const identity = state.profileIdentityVersion === 'standalone-v1' ? standaloneProfileIdentity(profile) : profileIdentity(profile);
 		if (state.profileIdentity !== identity) throw new Error('The publication qualification must match the execution profile.');

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { SQA_STANDALONE_STRATEGY, standaloneSqa } from './sqaStandaloneStrategy.js';
 import { ResearchInputError, createSqaResearch, SQA_RESEARCH_TOOLS, standaloneResearchReadiness } from './sqaResearch.js';
-import { loadStandaloneQualification, standaloneProfileIdentity, standaloneResearchProfile } from './sqaStandaloneQualification.js';
+import { requireStandaloneExecution, standaloneProfileIdentity, standaloneResearchProfile } from './sqaStandaloneQualification.js';
 import {canonicalModeHash,legacyModeHash,modeReceiptHash} from './modeIntegrity.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { hybridProfile, loadQualification, profileIdentity } from './hybridConfig.js';
@@ -51,7 +51,7 @@ export function qualifiedModeProfile(settings, env = process.env, session) {
   profile.budgets = { ...profile.budgets, reasonerTokens: number('QASE_MODE_REASONER_TOKENS', 1000000, 2000000), reasonerCalls: number('QASE_MODE_REASONER_CALLS', 80, 200), outputTokens: number('QASE_MODE_OUTPUT_TOKENS', 8192, 16000), browserActions: number('QASE_MODE_BROWSER_ACTIONS', 200, 500) };
   if (requestedStandalone && env.QASE_SQA_STANDALONE_ENABLED !== 'true') throw new Error('The standalone SQA flag is off.');
   if (useStandalone) {
-    loadStandaloneQualification(profile,env);
+    requireStandaloneExecution(session,profile,env);
     profile.executionStrategy = SQA_STANDALONE_STRATEGY;
   } else loadQualification(profile); // Legacy runs retain their original contract.
   return profile;

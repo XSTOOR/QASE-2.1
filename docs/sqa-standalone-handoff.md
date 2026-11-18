@@ -92,3 +92,30 @@ do not establish live end-to-end publication, documentary review, cross-sector
 coverage, or process restart recovery. The standalone activation gate requires
 a current receipt from full qualification of the exact SDK/model/search
 configuration. Keep activation disabled until those capabilities pass.
+
+## Qualify a staging configuration
+
+From the checkout used by the staging server, run the configuration check.
+The optional environment file may supply the approved search URL, gateway
+credential and receipt destination. Process settings take precedence.
+
+```powershell
+node scripts/qualify-sqa-standalone.mjs --check --env-file 'PATH-TO-STAGING-ENV'
+```
+
+For the live trial, use the same arguments without `--check` and set
+`QASE_LIVE_SYSTEM_QUALIFICATION=true` in the invoking shell. Allow up to
+15 minutes and live Opus usage. No running dashboard is required.
+The runner creates a disposable loopback registration form and a private run
+store. In separate worker processes it stops after a verified failed browser
+check, resumes the persisted run with a sample scope document, then reopens
+the published assessment and renders Markdown and PDF. Search must lead to an
+official source cited by the executed check.
+
+The runner prints the evidence directory under `.qase/validation/standalone`.
+Only a completed trial replaces `QASE_SQA_QUALIFICATION_FILE` (default
+`.qase/qualifications/sqa-standalone.json`). Configure the server with the
+same profile, search endpoint and receipt and enable standalone SQA to try the
+normal UI launch. The receipt expires after 24 hours. This trial covers one
+registration form and one technical requirement. Wider business and regional
+coverage needs separate validation.

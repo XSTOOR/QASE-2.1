@@ -348,7 +348,7 @@
     },
     {
       "path": "docs/sqa-standalone-handoff.md",
-      "sha256": "eee7b513bcb8d144d7a8ba0ce43408056cb4bfd2016e10b875a50d06ed61b117"
+      "sha256": "8d5d21b8721acce14ad1647147be1029b6f0f397220d8575eb530f890f2a7637"
     },
     {
       "path": "docs/sqa.md",
@@ -1315,6 +1315,10 @@
       "sha256": "99eea2c3d686e7c4e22cf615cbe7872b5b366a91cbf22e2b0e1e37a7d2339427"
     },
     {
+      "path": "scripts/qualify-sqa-standalone.mjs",
+      "sha256": "48069999d66fac51e49d6dd43249114225648d5d3bb737f5b5a88d803e021747"
+    },
+    {
       "path": "scripts/qualify-studio-demo.mjs",
       "sha256": "c658869218f19b4d75a1f889d1f2d1f9d48ae3cbcb6c8e0e6abc37d7e2c0e2a9"
     },
@@ -1365,6 +1369,10 @@
     {
       "path": "scripts/sqa-test-runtime.mjs",
       "sha256": "b0792909c0c467bc70dd6235f7744303b3a0c48b0febcd3f90c716d998bf790c"
+    },
+    {
+      "path": "scripts/standalone-trial-worker.mjs",
+      "sha256": "5c417dca39356c6d67ea4ca9e23959010a5e11414d2ac049d98fe44c92f410e3"
     },
     {
       "path": "scripts/start-jev-local.mjs",
@@ -2664,7 +2672,7 @@
     },
     {
       "path": "server/modeReasoningRuntime.js",
-      "sha256": "7d9c84165ec202a8888a99081b8781f76d066392c7e35f0ceea4dcb5c4202e13"
+      "sha256": "865f4ca5a259d557c9ed3f29dd4963ce381620516e169d3c920a865621096d66"
     },
     {
       "path": "server/modeReasoningRuntime.test.js",
@@ -3504,7 +3512,7 @@
     },
     {
       "path": "server/sqaService.js",
-      "sha256": "840aa940c213887878453499ca75a98b5264f2a9e3ebfa6ddc86294e8891a2dd"
+      "sha256": "c41b6b135d197c92ff5c9f6eec6a0d7be1e4de765b1846c5708403ee10998cc8"
     },
     {
       "path": "server/sqaService.test.js",
@@ -3528,7 +3536,7 @@
     },
     {
       "path": "server/sqaStandaloneQualification.js",
-      "sha256": "140a8fff93ebf1c04810d2ae6cb9243c9185c2d03da476a1454d69a3d7079263"
+      "sha256": "0d2f6767b8df0338b51d58bce99e1692e83fd2b43288f53340636a41ef04153b"
     },
     {
       "path": "server/sqaStandaloneQualification.test.js",
@@ -3541,6 +3549,10 @@
     {
       "path": "server/sqaStandaloneStrategy.test.js",
       "sha256": "62fbf2ed1446d5ba3c339c86115475150d28a5d8214b42a6b58c81dba5d66e20"
+    },
+    {
+      "path": "server/sqaStandaloneTrial.test.js",
+      "sha256": "cdafafc3c79a52c2f41902e18ae4a83e5ab9d14f7008f2aac35f669417364364"
     },
     {
       "path": "server/sqaTools.js",
