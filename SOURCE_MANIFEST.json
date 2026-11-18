@@ -996,7 +996,7 @@
     },
     {
       "path": "public/sqaResearchSections.js",
-      "sha256": "6728915e02dc997ed9a5b5bb3d79f178555b3e818c435b09105aa2104bb7c5f9"
+      "sha256": "e988a67ca429601d8554e9130cfcdf509ab3310d509bad36cf04820c44ca063a"
     },
     {
       "path": "public/sqaReviewView.js",
@@ -1324,7 +1324,7 @@
     },
     {
       "path": "scripts/qualify-system-ui.mjs",
-      "sha256": "11e04b68b6721c6de8b37e71de86ffc45b21c053ccf5d06798d444f7b87f332e"
+      "sha256": "04e361278b0d54fe8c36059080a335951abbd871ea22fc3a1d04ed2ac91be82f"
     },
     {
       "path": "scripts/qualify-welcome.mjs",
@@ -1364,7 +1364,7 @@
     },
     {
       "path": "scripts/sqa-test-runtime.mjs",
-      "sha256": "fd3bbf4d31b861f80b9c4bc17de102d843dec948380363a65769d64f93b8dbf0"
+      "sha256": "b0792909c0c467bc70dd6235f7744303b3a0c48b0febcd3f90c716d998bf790c"
     },
     {
       "path": "scripts/start-jev-local.mjs",
@@ -3460,7 +3460,7 @@
     },
     {
       "path": "server/sqaResearch.test.js",
-      "sha256": "8880f972b55121c5d584ae4a26e556151901882c074c46b15acf5c48b06414b6"
+      "sha256": "0af42f7b5f095afec6b2d6c4f46e48bb4070fbdc15faadfcbc7dc13ef3cc6648"
     },
     {
       "path": "server/sqaResearchReport.js",
