@@ -321,6 +321,20 @@ test('a blocked latest run does not prevent safe recovery of another owner run',
 	assert.ok(harness.log.some(([event, actor]) => event === 'actor' && actor.actorUserId === 'user-b'));
 });
 
+test('boot recovery reconciles a logged receipt before resuming a hybrid run', async () => {
+	const reservation = { id: 'saved', status: 'pending', tokens: 150 };
+	const session = interruptedSession({ qaExecutionMode: 'hybrid', hybrid: {
+		modelBudget: {
+			roles: { reasoner: { legacyCalls: 0, reservations: [reservation] } },
+			receiptLog: [{ role: 'reasoner', reservationId: 'saved', inputTokens: 120, outputTokens: 30 }]
+		}
+	} });
+	const harness = makeHarness({ sessions: [session], listInterrupted: async () => [session] });
+	assert.equal(await harness.resumeAll(), 1);
+	assert.equal(reservation.status, 'settled');
+	assert.deepEqual(harness.turns.map(item => item.id), [session.id]);
+});
+
 test('a failed recovery turn is never logged or counted as successfully resumed', async () => {
 	const session = interruptedSession();
 	const harness = makeHarness({ sessions: [session], listInterrupted: async () => [session] });

@@ -117,8 +117,12 @@ try {
   await page.waitForFunction(() => document.querySelector('#resume-run')?.disabled && document.querySelector('#journey-run-title')?.textContent.includes('usage review'));
   assert.equal(await page.locator('#timer-chip').textContent(), '02:17');
   assert.match(await page.locator('#journey-run-description').textContent(), /reconciliation/);
+  // A booted run has its saved reservation but no runtime status event yet.
+  session.hybrid.recovery = {};
+  session.hybrid.modelBudget = { roles: { reasoner: { reservations: [{ id: 'lost-on-restart', status: 'pending', tokens: 123 }] } } };
   await page.reload();
-  await page.waitForFunction(() => document.querySelector('#timer-chip')?.textContent === '02:17');
+  await page.waitForFunction(() => document.querySelector('#timer-chip')?.textContent === '02:17'
+    && document.querySelector('#journey-run-title')?.textContent.includes('usage review'));
   assert.equal(await page.locator('#resume-run').isDisabled(), true);
   // A missing receipt must offer a reviewable setup, never replay uncertain
   // work, inherit credentials/results, or silently create another paid run.
@@ -131,6 +135,7 @@ try {
   assert.deepEqual(session, savedRun);
   await page.goto(`${base}/#/runs/${session.id}`);
   await page.waitForFunction(() => document.querySelector('#resume-run')?.disabled);
+  delete session.hybrid.modelBudget;
   // Completing a run must preserve the route and selected tab on desktop/mobile.
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });

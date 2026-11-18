@@ -62,7 +62,7 @@ import { assertAppliedSqaReviewEvidence, changeSqaReviewEvidence, isSqaReviewerA
 import { publicQaTestCatalog } from './qaTestCatalog.js';
 import { validateQaSelectedTests, validateSecurityAuthorization } from './appQaSelection.js';
 import { selectQaExecutionMode, hybridProfile, loadQualification } from './hybridConfig.js';
-import { hybridRecoveryProblem, reconcileHybridUsageBeforeResume } from './hybridRecoveryGate.js';
+import { hybridRecoveryProblem, publicHybridRecovery, reconcileHybridUsageBeforeResume } from './hybridRecoveryGate.js';
 import { buildFounderProgress, founderContinuationTask } from './founderProgress.js';
 import { inspectFounderEvidence, verifiedFounderObservationIds } from './founderEvidence.js';
 import { getConfig } from './config.js';
@@ -2156,6 +2156,8 @@ export function createApplication(options = {}) {
 		);
 		response.json({
 			...session,
+			...(session.mode === 'qa' && session.qaExecutionMode === 'hybrid' && session.hybrid
+				? { hybrid: { ...session.hybrid, recovery: publicHybridRecovery(session) } } : {}),
 			...(session.mode==='founder'?{founderProgress:buildFounderProgress(session,{running:liveState.running,resuming:founderContinuations.has(session.id),stopping:founderContinuations.get(session.id)?.cancelled})}:{}),
 			...(session.mode === 'founder' && session.founder?.finalizedAt ? { founderVerifiedObservations: verifiedFounderObservationIds(session) } : {}),
 			durationSeconds,

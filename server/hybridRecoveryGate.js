@@ -1,17 +1,31 @@
+const validReceiptCounts = entry => [entry.inputTokens, entry.outputTokens].every(value => Number.isSafeInteger(value) && value >= 0);
+const loggedReceipts = budget => Array.isArray(budget?.receiptLog) ? budget.receiptLog : [];
+
 /** Read-only preflight: do not reopen a browser or spend model budget merely
  * to rediscover a durable condition that prevents safe continuation. */
-export function hybridRecoveryProblem(session) {
+export function hybridRecoveryProblem(session, { considerLoggedReceipts = false } = {}) {
   if (session?.mode !== 'qa' || session.qaExecutionMode !== 'hybrid' || !session.hybrid) return null;
   const state = session.hybrid;
   for (const [role, data] of Object.entries(state.modelBudget?.roles || {})) {
     if (role === 'classifier' && state.allowWithoutClassifier === true) continue;
-    if (data.legacyCalls > 0 || data.reservations?.some(item => item.status === 'uncertain' || (session.status !== 'running' && item.status === 'pending'))) {
+    const unresolved = data.reservations?.some(item => {
+      const needsReceipt = item.status === 'uncertain' || (session.status !== 'running' && item.status === 'pending');
+      if (!needsReceipt) return false;
+      return !considerLoggedReceipts || !loggedReceipts(state.modelBudget).some(entry =>
+        entry?.role === role && entry.reservationId === item.id && validReceiptCounts(entry));
+    });
+    if (data.legacyCalls > 0 || unresolved) {
       return { code: 'HYBRID_USAGE_UNRESOLVED', reason: 'usage_unverified', message: 'A model usage receipt is missing for this run. Your progress is preserved. Ask the operator to reconcile the provider usage (exact host receipts) for this run, or start a new test run; usage must be reconciled before this run can resume.' };
     }
   }
   if (state.budgets && state.telemetry?.elapsedMs >= state.budgets.durationMs) return { code: 'HYBRID_TIME_BUDGET', reason: 'budget_reached', message: 'This run reached its approved time budget. Review saved progress before starting a new test with an approved budget.' };
   if (state.budgetFinalizing && session.status === 'done' && session.report) return { code: 'HYBRID_COVERAGE_CLOSED', reason: 'coverage_closed', message: 'This run has published its budget closeout report. Start a new test for the remaining scope; its saved report and evidence are preserved. Continuing here cannot reopen exploration or increase the approved budget.' };
   return null;
+}
+
+export function publicHybridRecovery(session) {
+  const problem = hybridRecoveryProblem(session, { considerLoggedReceipts: true });
+  return { ...session.hybrid?.recovery, ...(problem ? { resumeBlockedReason: problem.reason } : {}) };
 }
 
 /** #18637 — heal-before-gate on a resume attempt. The stop race persisted
@@ -36,11 +50,10 @@ export async function reconcileHybridUsageBeforeResume(session) {
  * not been constructed yet. Mutates session.hybrid in place. */
 function healFromReceiptLog(state) {
   const budget = state.modelBudget;
-  const log = budget.receiptLog ?? [];
   let healed = 0;
-  for (const entry of log) {
-    const role = budget.roles?.[entry.role];
-    if (!role || ![entry.inputTokens, entry.outputTokens].every(value => Number.isSafeInteger(value) && value >= 0)) continue;
+  for (const entry of loggedReceipts(budget)) {
+    const role = budget.roles?.[entry?.role];
+    if (!role || !validReceiptCounts(entry)) continue;
     const item = role.reservations?.find(item => item.id === entry.reservationId);
     if (!item || ['settled', 'not_dispatched'].includes(item.status)) continue;
     item.status = 'settled';

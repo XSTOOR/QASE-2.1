@@ -11,7 +11,7 @@ import { assertionSummary, scenarioSummary } from './hybridSummaries.js';
 import { createHybridRouteExecution } from './hybridRouteExecution.js';
 import { createHybridNavigationDecision } from './hybridNavigationDecision.js';
 import { checkPrimaryViewport } from './qaViewport.js';
-import { hybridRecoveryProblem } from './hybridRecoveryGate.js';
+import { publicHybridRecovery } from './hybridRecoveryGate.js';
 import { hybridRoutePolicy } from './hybridRoutePolicy.js';
 import { observeHybridAuthentication, needsHybridAuthQuestion, hasConfirmedAccess } from './hybridAuth.js';
 import { prepareHostDecision, hostCloseoutCalls } from './hybridContinuation.js';
@@ -65,9 +65,8 @@ export function publicHybridState(session) {
   let completion;
   try { completion = hybridCompletion(session); } catch { /* report malformed states as pending verification */ }
   const inputTrials = (state.evidence || []).map(item => item.result?.formTesting).filter(item => item?.mode === 'live_non_submitting');
-  const problem = hybridRecoveryProblem(session);
   const depth = hybridRoutePolicy(state);
-  const recovery = { ...state.recovery, ...(problem ? { resumeBlockedReason: problem.reason } : {}) };
+  const recovery = publicHybridRecovery(session);
   return { version: state.version, status: state.status, executionPolicy: state.executionPolicy, reasoner: state.reasoner, classifier: state.classifier,
     authentication: state.authentication ? { status: state.authentication.status, verificationMethod: state.authentication.verificationMethod, required: state.authentication.required, origin: state.authentication.origin, attemptedAt: state.authentication.attemptedAt } : undefined,
     currentScenarioId: state.currentScenarioId, discovery: state.discovery ? { status: applicationDiscoveryStatus(session).status, features: state.discovery.features.length, observations: state.discovery.observations.length, limitations: state.discovery.limitations } : undefined, viewport: state.viewport, counts: completion?.counts, coverage: completion?.coverage || 0, accountability:completion?.accountability,

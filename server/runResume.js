@@ -12,7 +12,7 @@
  * run inside the original owner's actor context.
  */
 
-import { hybridRecoveryProblem } from './hybridRecoveryGate.js';
+import { hybridRecoveryProblem, reconcileHybridUsageBeforeResume } from './hybridRecoveryGate.js';
 import { usesFounderDraft } from './founderReportDraft.js';
 
 const MAX_AUTO_RESUME_ATTEMPTS = 3;
@@ -164,6 +164,7 @@ export function createRunResume(overrides = {}) {
 			// A durable accounting/closeout blocker cannot be repaired by restoring
 			// an SDK snapshot. Check BEFORE constructing the runtime/browser and
 			// before consuming a recovery attempt. Keep scanning for another safe run.
+			await reconcileHybridUsageBeforeResume(session);
 			const recoveryProblem = hybridRecoveryProblem(session);
 			if (recoveryProblem) {
 				logger.info?.('runresume.blocked', { runId: session.id, errorCode: recoveryProblem.code });

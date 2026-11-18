@@ -1343,16 +1343,36 @@ test('runtime initialization failures retain the user message and return the est
 	assert.equal(session.status, 'error');
 });
 
-test('unreconciled hybrid usage rejects resume before appending messages or starting runtime/browser work', async t => {
+test('an interrupted hybrid snapshot explains the missing receipt and rejects resume without starting work', async t => {
 	const fixture = await startFixture(); t.after(() => fixture.close());
 	const session = fixture.services.runs.create();
 	Object.assign(session, { mode: 'qa', qaExecutionMode: 'hybrid', status: 'interrupted', targetUrl: 'https://example.test/',
-		hybrid: { modelBudget: { roles: { classifier: { legacyCalls: 0, reservations: [{ id: 'unknown', status: 'uncertain', tokens: 123 }] } } } } });
+		hybrid: { modelBudget: { roles: { reasoner: { legacyCalls: 0, reservations: [{ id: 'unknown', status: 'pending', tokens: 123 }] } } } } });
 	const before = JSON.stringify(session);
+	const snapshot = await body(await fixture.request(`/api/sessions/${session.id}`));
+	assert.equal(snapshot.hybrid.recovery.resumeBlockedReason, 'usage_unverified');
 	const response = await fixture.request(`/api/sessions/${session.id}/message`, { method: 'POST', json: { text: 'continue' } });
 	assert.equal(response.status, 409); assert.equal((await body(response)).code, 'HYBRID_USAGE_UNRESOLVED');
 	assert.equal(fixture.state.ensureCalls.length, 0); assert.equal(fixture.state.runCalls.length, 0);
 	assert.equal(JSON.stringify(session), before);
+});
+
+test('an interrupted hybrid snapshot permits recovery when the exact usage receipt is already logged', async t => {
+	const fixture = await startFixture(); t.after(() => fixture.close());
+	const session = fixture.services.runs.create();
+	const reservation = { id: 'saved', status: 'pending', tokens: 123 };
+	Object.assign(session, { qaExecutionMode: 'hybrid', status: 'interrupted',
+		hybrid: { modelBudget: {
+			roles: { reasoner: { legacyCalls: 0, reservations: [reservation] } },
+			receiptLog: [{ role: 'reasoner', reservationId: 'saved', inputTokens: 110, outputTokens: 13 }]
+		} } });
+	const snapshot = await body(await fixture.request(`/api/sessions/${session.id}`));
+	assert.equal(snapshot.hybrid.recovery.resumeBlockedReason, undefined);
+	assert.equal(reservation.status, 'pending', 'Reading the dashboard cannot mutate the saved ledger.');
+	const response = await fixture.request(`/api/sessions/${session.id}/message`, { method: 'POST', json: { text: 'continue' } });
+	assert.equal(response.status, 200);
+	assert.equal(reservation.status, 'settled');
+	await fixture.whenIdle();
 });
 
 test('a completed hybrid budget closeout does not spend another model call republishing the same report', async t => {
