@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util';
 import { chromium } from 'playwright';
 import { createApplication } from '../server/app.js';
 import { buildReportMarkdown } from '../server/report.js';
+import { qualifiedSqaLauncherFixture } from './sqa-test-runtime.mjs';
 
 const { values } = parseArgs({ options: { 'launch-only': { type: 'boolean', default: false } } });
 const launchOnly = values['launch-only'];
@@ -44,7 +45,8 @@ const services = {
 	bugs: { async list(){ return []; }, async get(){ return null; }, async create(input){ return input; }, async update(){ return null; }, async remove(){ return null; } },
 	readiness:{check:async()=>({ready:true})}, lifecycle:{close:async()=>{}}
 };
-const application = createApplication({services,environment:{NODE_ENV:'production'}});
+const fixtureEnvironment = {NODE_ENV:'production'};
+const application = createApplication({services,environment:fixtureEnvironment});
 const server = await new Promise(resolve=>{const s=application.app.listen(0,'127.0.0.1',()=>resolve(s));});
 const streams = new Map();
 server.on('request', (request, response) => {
@@ -70,6 +72,18 @@ try{
  const seed=await services.runs.create('UI qualification workspace',{targetUrl,status:'idle'});
  await page.goto(`${base}/#/runs/${seed.id}`);await page.locator('#auth-gate').waitFor({state:'hidden'});
  await page.locator('#qa-start').waitFor({state:'hidden'});
+ await page.locator('#new-sqa').click();
+ await page.locator('#sqa-target-url').fill(targetUrl);
+ await page.locator('#sqa-authorization').check();
+ await page.locator('#sqa-execution-status').getByText(/QASE_SQA_SEARCH_URL/).waitFor();
+ assert.equal(await page.locator('#sqa-submit').isDisabled(),true);
+ assert.equal(turns.length,0);
+ assert.equal(sessions.size,1);
+ checks.push('Unconfigured SQA explains the missing search endpoint and prevents launch.');
+ await page.locator('#sqa-close').click();
+ Object.assign(fixtureEnvironment,await qualifiedSqaLauncherFixture(output));
+ await page.reload();
+ await page.locator('#auth-gate').waitFor({state:'hidden'});
  for(const mode of ['sqa','founder']){
   await page.locator(`#new-${mode}`).click();await page.locator(`#${mode}-start[open]`).waitFor();
   assert.equal(await page.locator(`#${mode}-submit`).isDisabled(),true);
@@ -92,7 +106,9 @@ try{
   await page.waitForFunction(mode=>!document.querySelector(`#${mode}-submit`).disabled,mode);
   await page.locator(`#${mode}-submit`).click();await page.locator(`#${mode}-start`).waitFor({state:'hidden'});
   await page.locator(`#tab-${mode}`).waitFor({state:'visible'});
-  const session=[...sessions.values()].find(s=>s.mode===mode);assert.ok(session?.[mode].scope.authorization.confirmed);
+  const created=[...sessions.values()].filter(s=>s.mode===mode);
+  assert.equal(created.length,1);
+  const session=created[0];assert.ok(session[mode].scope.authorization.confirmed);
   if(mode==='sqa'){
    assert.ok(['web_application','user_interface'].every(attribute=>session.sqa.scope.attributes.includes(attribute)),'Recommended website review must include its browser-app attributes.');
    assert.ok(['001','002','003','004','005','006'].every(suffix=>session.sqa.scope.applicableControlIds.includes(`SQA-WEB-${suffix}`)),'The six browser smoke controls must not disappear from the default scope.');

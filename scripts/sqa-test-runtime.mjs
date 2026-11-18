@@ -54,24 +54,27 @@ export async function launchSqaTestBrowser(browser) {
 	return engine.type.launch({ headless: true, ...engine.launch });
 }
 
+export async function qualifiedSqaLauncherFixture(directory) {
+	await mkdir(directory, { recursive: true });
+	const standalone = {
+		QASE_SQA_STANDALONE_ENABLED: 'true',
+		QASE_SQA_REASONER_API_KEY: 'sqa-launch-browser-fixture',
+		QASE_SQA_SEARCH_URL: 'https://search.example.test/search',
+		QASE_SQA_QUALIFICATION_FILE: path.resolve(directory, 'standalone-launch-fixture.json')
+	};
+	const profile = standaloneResearchProfile({}, standalone);
+	await writeFile(standalone.QASE_SQA_QUALIFICATION_FILE, JSON.stringify({
+		strategy: SQA_STANDALONE_STRATEGY, sdkVersion: profile.sdkVersion,
+		profileIdentity: standaloneProfileIdentity(profile, standalone), checkedAt: Date.now(),
+		jevCalls: 0, runId: 'launcher-test-only',
+		capabilities: Object.fromEntries(SQA_STANDALONE_CAPABILITIES.map(name=>[name,{passed:true,evidenceRef:'launcher-fixture'}]))
+	}),{mode:0o600});
+	return standalone;
+}
+
 export async function createSqaTestServer(directory, { authRequired = false, envFile, hybridQa = false, jevNavigation = false, qualifiedSqaLaunch = false } = {}) {
 	await mkdir(directory, { recursive: true });
-	const standalone = {};
-	if (qualifiedSqaLaunch) {
-		Object.assign(standalone, {
-			QASE_SQA_STANDALONE_ENABLED: 'true',
-			QASE_SQA_REASONER_API_KEY: 'sqa-launch-browser-fixture',
-			QASE_SQA_SEARCH_URL: 'https://search.example.test/search',
-			QASE_SQA_QUALIFICATION_FILE: path.resolve(directory, 'standalone-launch-fixture.json')
-		});
-		const profile = standaloneResearchProfile({}, standalone);
-		await writeFile(standalone.QASE_SQA_QUALIFICATION_FILE, JSON.stringify({
-			strategy: SQA_STANDALONE_STRATEGY, sdkVersion: profile.sdkVersion,
-			profileIdentity: standaloneProfileIdentity(profile, standalone), checkedAt: Date.now(),
-			jevCalls: 0, runId: 'launcher-test-only',
-			capabilities: Object.fromEntries(SQA_STANDALONE_CAPABILITIES.map(name=>[name,{passed:true,evidenceRef:'launcher-fixture'}]))
-		}),{mode:0o600});
-	}
+	const standalone = qualifiedSqaLaunch ? await qualifiedSqaLauncherFixture(directory) : {};
 
 	const probe = createServer();
 	await new Promise((resolve, reject) => { probe.once('error', reject); probe.listen(0, '127.0.0.1', resolve); });
