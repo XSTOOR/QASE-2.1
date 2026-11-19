@@ -4,7 +4,6 @@ import { redact } from './secrets.js';
 import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { FOUNDER_CATEGORIES } from './founderSchema.js';
 import { buildJevFounderReport } from './jevFounderReport.js';
-import { runJevQa } from './jevQaRunner.js';
 import { jevDiagnosticCandidates } from './jevDiagnostics.js';
 export { jevDiagnosticCandidates } from './jevDiagnostics.js';
 
@@ -107,10 +106,6 @@ export function installJevRuntime(runtime, { session, runStore, configuration, o
     runtime.agentSession.continueWithLatestUserMessage([{ role: 'user', content: task }], { objective: task, mode: 'Execution' });
     if (!session.targetUrl) {
       yield* ask('What is the full authorized website URL to review?', ['Provide the target URL']);
-      return;
-    }
-    if (session.mode === 'qa') {
-      yield* runJevQa({ session, runStore, invoke, decide, diagnosticCandidates: jevDiagnosticCandidates, signal, maxPages, remainingDecisions: () => decisionLimit - count });
       return;
     }
     yield { type: 'chat_text', content: 'JEV will select from observed browser actions and assess captured evidence. The report will distinguish the tested sample from unavailable checks.\n' };

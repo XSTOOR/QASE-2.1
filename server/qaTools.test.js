@@ -29,20 +29,6 @@ const finding = {
 	evidence: 'The microphone track state is ended.'
 };
 
-test('partial results require gaps, keep runtime integrity and never hide high severity', async () => {
-	const partial = { ...report, verdict: 'partial', not_covered: ['Authentication not executed.'] };
-	const valid = fixture();
-	assert.equal((await valid.finish.run(partial)).success, true);
-	assert.equal(valid.session.report.verdict, 'partial');
-	assert.match(buildReportMarkdown(valid.session), /Completed with gaps/);
-	assert.equal((await fixture().finish.run({ ...partial, not_covered: [] })).success, false);
-	const missingIdentity = fixture({ runtimeFacts: {} });
-	await missingIdentity.finish.run(partial);
-	assert.equal(missingIdentity.session.report.verdict, 'blocked');
-	const high = fixture({ findings: [{ ...finding }] });
-	await high.finish.run(partial);
-	assert.equal(high.session.report.verdict, 'fail');
-});
 
 test('SQA findings require scoped control links and persist only validated links', async () => {
 	const sqa = createSqaState({
@@ -60,23 +46,6 @@ test('SQA findings require scoped control links and persist only validated links
 	assert.deepEqual(target.session.findings[0].controlIds, ['SQA-WEB-003']);
 });
 
-test('QA finding to Markdown workflow preserves evidence, redacts vaulted data, and fails high-impact defects', async t => {
-	const target = fixture();
-	storeSecrets(target.session.id, { password: 'qa-test-private-password' });
-	t.after(() => clearSecrets(target.session.id));
-	assert.equal((await target.finding.run({ ...finding, evidence: `${finding.evidence} qa-test-private-password` })).success, true);
-	const published = await target.finish.run(report);
-	assert.equal(published.success, true);
-	assert.equal(published.verdict, 'fail');
-	assert.equal(target.session.report.bySeverity.high, 1);
-	assert.deepEqual(target.commits.map(item => item.type), ['finding', 'report']);
-	const markdown = buildReportMarkdown(target.session);
-	assert.match(markdown, /Meeting microphone fails to start/);
-	assert.match(markdown, /microphone audio track is live/);
-	assert.match(markdown, /\*\*Verdict:\*\* Fail/);
-	assert.equal(JSON.stringify(target.session).includes('qa-test-private-password'), false);
-	assert.equal(markdown.includes('qa-test-private-password'), false);
-});
 
 test('report markdown includes token usage when counted and omits the line otherwise', () => {
 	const counted = fixture({ tokenUsage: {
@@ -127,116 +96,16 @@ test('report markdown carries the environment snapshot when the run selected one
 	assert.doesNotMatch(buildReportMarkdown(fixture().session), /undefined/);
 });
 
-test('QA rejects malformed model findings and reports without mutating durable state', async () => {
-	const target = fixture();
-	for (const value of [undefined, null, [], {}, { ...finding, title: {} }, { ...finding, actual: ' ' }, { ...finding, severity: 'urgent' }]) {
-		assert.equal((await target.finding.run(value)).success, false);
-	}
-	for (const value of [undefined, null, [], {}, { ...report, verdict: 'approved' }, { ...report, summary: ' ' }, { ...report, covered: [{}] }]) {
-		assert.equal((await target.finish.run(value)).success, false);
-	}
-	assert.equal(target.session.findings.length, 0);
-	assert.equal(target.session.report, undefined);
-	assert.equal(target.commits.length, 0);
-});
 
-test('QA finish requires completed work and model force cannot bypass it', async () => {
-	const target = fixture({ todos: [{ text: 'Verify microphone permission rejection', status: 'pending' }] });
-	assert.equal('force' in target.finish.parametersSchema.properties, false);
-	const result = await target.finish.run({ ...report, force: true });
-	assert.equal(result.success, false);
-	assert.equal(result.remaining_count, 1);
-	assert.equal(target.session.report, undefined);
-	assert.equal(target.commits.length, 0);
-});
 
 // #17997: validation failures must name the actual cause. E2E hybrid run
 // a3418492 showed the generic message sending the agent into a 6-call retry
 // loop during budget closeout.
-test('QA finish rejects bad verdicts and empty summaries with actionable errors', async () => {
-	const target = fixture();
-	const badVerdict = await target.finish.run({ ...report, verdict: 'passed' });
-	assert.equal(badVerdict.success, false);
-	assert.match(badVerdict.error, /verdict "passed"/);
-	assert.match(badVerdict.error, /pass_with_issues/);
-	const missingSummary = await target.finish.run({ verdict: 'pass' });
-	assert.equal(missingSummary.success, false);
-	assert.match(missingSummary.error, /nonempty summary/);
-	const nonObject = await target.finish.run('finish');
-	assert.equal(nonObject.success, false);
-	assert.match(nonObject.error, /object with a verdict/);
-	assert.equal(target.session.report, undefined);
-});
 
-test('QA cannot publish success without a plan, successful browser evidence, or declared coverage', async () => {
-	for (const overrides of [{ todos: [] }, { activities: [] }, { activities: [{ toolName: 'browser_open', status: 'failed' }] }]) {
-		const target = fixture(overrides);
-		assert.equal((await target.finish.run(report)).success, false);
-		assert.equal(target.session.report, undefined);
-	}
-	const target = fixture();
-	assert.equal((await target.finish.run({ ...report, covered: [] })).success, false);
-	// Phase D3: unverified runtime downgrades to BLOCKED instead of PASS.
-	const unverified = fixture({ runtimeFacts: undefined });
-	delete unverified.session.runtimeFacts;
-	const blocked = await unverified.finish.run(report);
-	assert.equal(blocked.success, true);
-	assert.equal(unverified.session.report.verdict, 'blocked');
-	assert.ok(unverified.session.report.notCovered.some(line => line.includes('Device runtime could not be verified')));
-});
 
-test('QA waits for ongoing tools and cannot finalize SQA or Founder runs', async () => {
-	const target = fixture({ activities: [{ id: 'running-mic', toolName: 'browser_media_probe', status: 'running', ts: Date.now() }] });
-	const result = await target.finish.run(report);
-	assert.equal(result.success, false);
-	assert.deepEqual(result.active_activity_ids, ['running-mic']);
-	for (const mode of ['sqa', 'founder']) {
-		assert.equal((await fixture({ mode }).finish.run(report)).success, false);
-	}
-});
 
-test('a running activity left behind by a dead process no longer blocks publishing', async () => {
-	// Production incident: browser_click stayed "running" for hours after a
-	// restart, rejecting finish_qa_report 24 times in a row.
-	const stale = fixture({ activities: [
-		{ id: 'stuck-click', toolName: 'browser_click', status: 'running', ts: Date.now() - 130_000 },
-		{ id: 'done-wait', toolName: 'browser_wait', status: 'done', ts: Date.now() - 200_000 }
-	] });
-	const result = await stale.finish.run(report);
-	assert.equal(result.success, true);
-	assert.equal(stale.session.report.verdict, 'pass');
-	assert.equal(stale.commits.length, 1);
 
-	const timeless = fixture({ activities: [
-		{ id: 'ancient-click', toolName: 'browser_click', status: 'running' },
-		{ id: 'done-snapshot', toolName: 'browser_snapshot', status: 'done', ts: Date.now() - 200_000 }
-	] });
-	assert.equal((await timeless.finish.run(report)).success, true);
-});
 
-test('a blocked QA report records unavailable checks without inventing browser evidence', async () => {
-	const target = fixture({ todos: [], activities: [] });
-	assert.equal((await target.finish.run({ verdict: 'blocked', summary: 'The meeting needs an authorized test account.' })).success, false);
-	const result = await target.finish.run({
-		verdict: 'blocked', summary: 'The meeting needs an authorized test account.',
-		not_covered: ['Meeting prejoin and microphone: an authorized meeting URL and test account were unavailable.']
-	});
-	assert.equal(result.success, true);
-	assert.equal(result.verdict, 'blocked');
-	assert.deepEqual(target.session.report.covered, []);
-	assert.equal(target.session.report.notCovered.length, 1);
-});
-
-test('QA storage failure cannot leave a phantom finding or completed report', async () => {
-	const target = fixture();
-	const previous = structuredClone(target.session);
-	const tools = createQaTools(target.session, { async commit() { throw new Error('persistence unavailable'); } });
-	await assert.rejects(tools[0].run(finding), /persistence unavailable/);
-	assert.deepEqual(target.session, previous);
-	await assert.rejects(tools[1].run(report), /persistence unavailable/);
-	assert.deepEqual(target.session, previous);
-	assert.equal((await target.finish.run(report)).success, true);
-});
 
 test('report markdown states the execution level from recorded facts, never the request', () => {
 	const recorded = fixture({
@@ -277,57 +146,7 @@ test('report markdown marks environment runs without a level NOT AVAILABLE FOR R
 const CHROME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.7390.65 Safari/537.36';
 const FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0';
 
-test('R2: runtime identity matching the selection does not block a passing run', async () => {
-	const target = fixture({
-		environmentSnapshot: { envId: 'ENV-WIN-CHROME-141', platform: 'windows', browser: 'Chrome', browserCode: 'chrome', browserVersion: '141', os: 'Windows', osVersion: '11' },
-		runtimeFacts: { executionLevel: 'SIMULATED', userAgent: CHROME_UA, capturedAt: new Date().toISOString() }
-	});
-	const published = await target.finish.run({ ...report, verdict: 'pass' });
-	assert.equal(published.success, true);
-	assert.equal(target.session.report.runtimeIdentity?.browserCode, 'chrome');
-	assert.equal(target.session.report.runtimeIdentity?.browserVersionAuthoritative, true);
-});
 
-test('R2: Chrome executing when Firefox was selected downgrades the verdict to BLOCKED', async () => {
-	const target = fixture({
-		environmentSnapshot: { envId: 'ENV-WIN-FIREFOX-141', platform: 'windows', browser: 'Firefox', browserCode: 'firefox', browserVersion: '141', os: 'Windows', osVersion: '11' },
-		runtimeFacts: { executionLevel: 'SIMULATED', userAgent: CHROME_UA, capturedAt: new Date().toISOString() }
-	});
-	const published = await target.finish.run({ ...report, verdict: 'pass' });
-	assert.equal(published.success, true);
-	assert.equal(published.verdict, 'blocked');
-	assert.ok(
-		(target.session.report.notCovered ?? []).some((line) => /Runtime identity mismatch/.test(String(line))),
-		'block reason names the mismatch'
-	);
-});
 
-test('R2: browser version drift (selected 140, runtime reports 141) blocks', async () => {
-	const target = fixture({
-		environmentSnapshot: { envId: 'ENV-WIN-CHROME-140', platform: 'windows', browser: 'Chrome', browserCode: 'chrome', browserVersion: '151', os: 'Windows', osVersion: '11' },
-		runtimeFacts: { executionLevel: 'SIMULATED', userAgent: CHROME_UA, capturedAt: new Date().toISOString() }
-	});
-	const published = await target.finish.run({ ...report, verdict: 'pass' });
-	assert.equal(published.verdict, 'blocked');
-	assert.ok((target.session.report.notCovered ?? []).some((line) => /version mismatch/.test(String(line))));
-});
 
-test('R2: runs without an environment or observable facts keep the legacy behavior', async () => {
-	const noEnv = fixture({ runtimeFacts: { executionLevel: 'SIMULATED', userAgent: CHROME_UA } });
-	assert.equal((await noEnv.finish.run({ ...report, verdict: 'pass' })).success, true);
-	const noFacts = fixture({ environmentSnapshot: { envId: 'ENV-X', platform: 'windows', browserCode: 'chrome', browserVersion: '141' }, runtimeFacts: undefined });
-	delete noFacts.session.runtimeFacts;
-	const published = await noFacts.finish.run({ ...report, verdict: 'pass' });
-	// No observable identity → runtimeConnected check fails → blocked (pre-R2 behavior).
-	assert.equal(published.verdict, 'blocked');
-});
 
-test('R2: report markdown carries the runtime-observed browser identity', async () => {
-	const observed = fixture({
-		environmentSnapshot: { envId: 'ENV-MAC-FIREFOX-141', platform: 'macos', browser: 'Firefox', browserCode: 'firefox', browserVersion: '141', os: 'macOS', osVersion: '15' },
-		runtimeFacts: { executionLevel: 'SIMULATED', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14.7; rv:141.0) Gecko/20100101 Firefox/141.0', capturedAt: new Date().toISOString() }
-	});
-	await observed.finish.run({ ...report, verdict: 'pass' });
-	const markdown = buildReportMarkdown(observed.session);
-	assert.match(markdown, /Runtime browser \(observed\):\*\* firefox 141\.0, Gecko engine/);
-});

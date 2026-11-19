@@ -3,8 +3,7 @@ import * as path from 'node:path';
 import { availableParallelism, cpus, totalmem } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { ALL_TOOLS, CleanSlateNodeAgentRuntime, createNodeProviderConfiguration } from '@cleanslate/sdk';
-import { autonomous } from './hybridAutonomy.js';
-import { pauseForBudgetApproval } from './hybridContinuation.js';
+import { runQaTurn } from './qa/index.js';
 import { chromium } from 'playwright';
 import { attachBrowserBridge } from './browserBridge.js';
 import { createBrowserTools } from './browserTools.js';
@@ -39,10 +38,7 @@ import {
 import { guardSecurityPayloadTool } from './securityPayloadBudget.js';
 import { applyUsage, attachUsageCapture, createEmptyOutputGuard, createUsageLedger, createUsageLogger } from './usageCapture.js';
 import { installJevRuntime } from './jevRuntime.js';
-import { hybridEnabled, hybridProfile, loadQualification } from './hybridConfig.js';
-import { createHybridRuntime, hybridRegressionSuggestions } from './hybridQaRuntime.js';
 import { createHybridUsageTransport } from './hybridUsageTransport.js';
-import { createHybridScenarioTool } from './hybridQaTools.js';
 import { watchTurn } from './runWatchdog.js';
 import { createSqaJevVerifier } from './sqaJevVerifier.js';
 import { selectsModeReasoning, qualifiedModeProfile, createModeReasoningRuntime } from './modeReasoningRuntime.js';
@@ -671,14 +667,11 @@ async function constructRuntime(session, runStore) {
 
 	let settings = getConfig();
 	const credentialSourceSettings = settings;
-	const isHybrid = session.mode === 'qa' && session.qaExecutionMode === 'hybrid';
 	const isModeReasoning = selectsModeReasoning(session);
-	const isQualified = isHybrid || isModeReasoning;
+	const isQualified = isModeReasoning;
 	let hybridSettings;
 	if (isQualified) {
-		if (isHybrid && !session.hybrid && !hybridEnabled()) throw new Error('Hybrid QA is disabled for new runs.');
-		hybridSettings = isModeReasoning ? qualifiedModeProfile(settings, process.env, session) : hybridProfile(settings);
-		if (!isModeReasoning) loadQualification(hybridSettings);
+		hybridSettings = qualifiedModeProfile(settings, process.env, session);
 		settings = { ...settings, provider: 'custom', model: hybridSettings.reasoner.model, apiKey: hybridSettings.reasoner.apiKey, baseUrl: 'https://llm.drytis.ai/v1' };
 	}
 	// A saved model can go stale (retired/renamed on the gateway) between runs —
@@ -725,9 +718,6 @@ async function constructRuntime(session, runStore) {
 		allowedTools.add(FOUNDER_FORM_REVIEW);
 	}
 	if (isModeReasoning) for (const name of ['mode_discover_application','mode_read_discovery','mode_plan_work','mode_run_workflow','mode_start_workflow','mode_close_workflow','mode_test_surface','mode_execute_steps','mode_verify_recovery','mode_load_tools','classify_mode_observations', 'mode_execution_progress',...(session.mode==='founder'?['draft_founder_report_section']:[])]) allowedTools.add(name);
-	if (isHybrid) allowedTools.add('browser_authenticate');
-	if (isHybrid && session.hybrid?.navigationDecisionVersion === 1) allowedTools.add('qa_choose_navigation');
-	if (isHybrid) for (const name of ['qa_discover_application','qa_read_discovery','qa_work_schedule','qa_investigate_scenario','qa_plan_scenarios', 'qa_start_scenario', 'qa_close_scenario', 'qa_assert_snapshot', 'qa_assert_diagnostics', 'qa_ledger', 'qa_read_evidence', 'browser_qa_scenario', 'qa_route_frontier', 'qa_test_routes', 'qa_load_tools', 'classify_qa_observations', 'rank_qa_candidates']) allowedTools.add(name);
 	const problem = getPublicConfig().problem;
 	if (problem) {
 		throw new Error(`${problem} Open Settings and add the endpoint details.`);
@@ -779,17 +769,13 @@ async function constructRuntime(session, runStore) {
 	};
 	const usageLogger = createUsageLogger();
 	record.turnUsage = turnUsage;
-	if (isHybrid) {
-		record.hybrid = createHybridRuntime({ session, runStore, profile: hybridSettings, record, onUsage: usage => harvestUsage({ ...usage, model: hybridSettings.classifier.model }, false) });
-		session.hybrid.regressionSuggestions ??= await hybridRegressionSuggestions(session, runStore);
-	}
 
 	if (isModeReasoning) record.modeReasoning = createModeReasoningRuntime({ session, runStore, profile: hybridSettings, record, onUsage: usage => harvestUsage({ ...usage, model: hybridSettings.classifier.model }, false) });
 
 	let usageTransport, runtime;
 	try {
 		if (isQualified) {
-			usageTransport = await createHybridUsageTransport(hybridSettings, { onUsage: usage => { harvestUsage({ ...usage, model: hybridSettings.reasoner.model }, false); (record.hybrid || record.modeReasoning).usage(usage); } });
+			usageTransport = await createHybridUsageTransport(hybridSettings, { onUsage: usage => { harvestUsage({ ...usage, model: hybridSettings.reasoner.model }, false); record.modeReasoning.usage(usage); } });
 			configuration.providers.custom = { ...configuration.providers.custom, baseUrl: usageTransport.baseUrl, apiKey: usageTransport.apiKey };
 		}
 		runtime = new CleanSlateNodeAgentRuntime({
@@ -809,7 +795,7 @@ async function constructRuntime(session, runStore) {
 				? record.founderSynthesis ? buildFounderSynthesisContext(session) : buildFounderContext(session, liveBrowserUrl(record))
 				: session.mode === 'sqa'
 					? record.sqaSynthesis ? buildSqaSynthesisContext(session) : buildSqaContext(session, liveBrowserUrl(record))
-					: record.hybrid ? record.hybrid.context(liveBrowserUrl(record)) : buildQaContext(session, liveBrowserUrl(record)),
+					: buildQaContext(session, liveBrowserUrl(record)),
 				session
 				);
 				if(record.modeReasoning||session.founder?.reportGeneration){
@@ -874,7 +860,7 @@ async function constructRuntime(session, runStore) {
 			isCancelled: () => Boolean(record.controller?.signal.aborted)
 		});
 		if (isQualified) allowedTools.delete('run_sqa_smoke_workflow');
-		const sessionTools = [...modeTools, ...createBrowserTools(() => record.bridge), ...(record.sqaSmokeWorkflow ? [record.sqaSmokeWorkflow.tool] : []), ...(record.hybrid?.tools || []), ...(record.modeReasoning?.tools || [])]
+		const sessionTools = [...modeTools, ...createBrowserTools(() => record.bridge), ...(record.sqaSmokeWorkflow ? [record.sqaSmokeWorkflow.tool] : []), ...(record.modeReasoning?.tools || [])]
 			.filter(tool => allowedTools.has(tool.name));
 		if (record.founderPageReview) sessionTools.push(record.founderPageReview.tool);
 		if (allowedTools.has(FOUNDER_FORM_REVIEW)) sessionTools.push(createFounderFormTool((input, signal) => record.bridge.founderFormReview(input, {
@@ -892,13 +878,12 @@ async function constructRuntime(session, runStore) {
 				return activity.id;
 			}
 		})));
-		if (isHybrid) sessionTools.push(createHybridScenarioTool(sessionTools.find(tool => tool.name === 'browser_qa_check')));
 		const headless = runtime.headlessRuntime;
 		if(usesFounderDraft(session))record.founderDraftSchema=founderReportToolSchema();
 		const sdkTools = standaloneSqa(session) ? ALL_TOOLS.filter(tool => !SQA_RESEARCH_TOOLS.includes(tool.name)) : ALL_TOOLS;
-		const registeredTools = [...sdkTools, ...sessionTools].filter(tool => allowedTools.has(tool.name) && (!record.hybrid || record.hybrid.allows(tool.name))).map(tool => {
+		const registeredTools = [...sdkTools, ...sessionTools].filter(tool => allowedTools.has(tool.name)).map(tool => {
 			const legacyGuarded = guardSecurityPayloadTool(guardSqaBrowserTool(tool, session), session, settings.securityPayloadLimit);
-			const guardedTool = record.hybrid ? record.hybrid.wrapTool(legacyGuarded) : record.modeReasoning ? record.modeReasoning.wrapTool(legacyGuarded) : legacyGuarded;
+			const guardedTool = record.modeReasoning ? record.modeReasoning.wrapTool(legacyGuarded) : legacyGuarded;
 			if (guardedTool.name !== 'update_todo') return guardedTool;
 			if (session.mode === 'founder') {
 			const canonicalPlan = createFounderReviewTodos();
@@ -939,7 +924,6 @@ async function constructRuntime(session, runStore) {
 		for (const tool of registeredTools) {
 			headless.toolsByName.set(tool.name, tool);
 		}
-		record.hybrid?.registerToolCatalog(registeredTools.map(tool => tool.name));
 		// Do not advertise blocked filesystem/shell tools or another mode's finalizer.
 		runtime.getToolDescriptions = () => isQualified||usesFounderDraft(session)||session.mode==='sqa' ? '\nUse the supplied native tool schemas and only tools advertised for this mode.\n' : `\n\nAvailable browser and assessment tools:\n${registeredTools
 			.map(tool => `- ${tool.name}: ${tool.description}\n  Parameters: ${JSON.stringify(tool.parametersSchema)}`)
@@ -995,7 +979,6 @@ async function constructRuntime(session, runStore) {
 				yield { type: 'tool_result', toolName, toolCallId, input, result: { success: false, code: 'FOUNDER_PAGE_REVIEW_BUSY', error: 'Wait for the active Founder page review to finish saving its evidence.' } };
 				return;
 			}
-			await record.hybrid?.awaitToolDispatch(signal);
 			const activity = await record.onToolStart?.(toolName, input, toolCallId);
 			if (record.modeReasoning && activity) {
 				const parts = await record.modeReasoning.withActivity(activity, async () => {
@@ -1061,13 +1044,12 @@ async function constructRuntime(session, runStore) {
 			if (!activity || !['done', 'failed'].includes(activity.status)) throw new Error('Founder page check was not durably saved.');
 			return { activityId, result };
 		};
-		if (isQualified) record[isHybrid?'invokeHybridTool':'invokeModeTool'] = async (toolName, input, signal) => {
-			if (!['browser_open', 'browser_get_url', 'browser_snapshot', 'browser_qa_check', 'browser_qa_scenario', 'browser_diagnostics',...(!isHybrid?['browser_fill','browser_click','browser_key']:[])].includes(toolName)) throw new Error('This tool is not approved for route composition.');
+		if (isQualified) record.invokeModeTool = async (toolName, input, signal) => {
+			if (!['browser_open', 'browser_get_url', 'browser_snapshot', 'browser_qa_check', 'browser_qa_scenario', 'browser_diagnostics','browser_fill','browser_click','browser_key'].includes(toolName)) throw new Error('This tool is not approved for route composition.');
 			let result;
 			for await (const part of headless.executeTool(toolName, input, randomUUID(), signal)) {
 				if (part.type === 'tool_result') { result = part.result; await record.onNestedToolResult?.(part); }
 			}
-			if (record.hybridPause) throw record.hybridPause;
 			signal?.throwIfAborted();
 			return result || { success: false, error: 'The approved SDK tool returned no receipt.' };
 		};
@@ -1090,7 +1072,7 @@ async function constructRuntime(session, runStore) {
 		record.bridge = bridge;
 		if (isQualified) {
 			runtime.cleanSlateService.chat = usageTransport.wrapChat(runtime.cleanSlateService.chat.bind(runtime.cleanSlateService));
-			(record.hybrid || record.modeReasoning).wrapChat(runtime.cleanSlateService);
+			record.modeReasoning.wrapChat(runtime.cleanSlateService);
 		}
 		if (settings.provider === 'jev') {
 			// The native controller already owns deterministic synthesis; never
@@ -1102,7 +1084,6 @@ async function constructRuntime(session, runStore) {
 		if (isQualified && !record.waitingSnapshotRestored && ['interrupted', 'awaiting_input', 'error'].includes(session.status)) {
 			const snapshot = loadRunSnapshot(session.id);
 			if (snapshot) runtime.restoreSessionSnapshot(snapshot);
-			if (isHybrid) session.hybrid.recovery = { ...session.hybrid.recovery, verificationRequired: true };
 		}
 		record.dispose = () => {
 			usageTransport?.dispose();
@@ -1134,6 +1115,8 @@ async function constructRuntime(session, runStore) {
  * asked a blocking question.
  */
 export async function runTurn(session, input, runStore, deviceRuntime) {
+	// QA mode runs on the host-orchestrated QA engine (server/qa/), not the SDK loop.
+	if (session.mode === 'qa') return runQaTurn(session, input, runStore);
 	const record = await ensureRuntime(session, runStore);
 	if (record.running) throw new Error('This session is already running. Stop it first.');
 	let settleTurn;
@@ -1328,7 +1311,7 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 	// the moment, not the transcript, and a reloaded page should show what the
 	// agent said rather than what it was mulling over an hour ago.
 	const appendThinking = content => {
-		if (record.hybrid || record.modeReasoning) return;
+		if (record.modeReasoning) return;
 		if (!content) {
 			return;
 		}
@@ -1521,7 +1504,6 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 			await rememberFounderEvidence(session, runStore, { toolName: part.toolName, activityId: id, result, currentUrl: liveBrowserUrl(record) });
 		}
 		if (part.toolName === 'browser_open' && ok) bridge.startFrames();
-		if (session.qaExecutionMode === 'hybrid' && ['browser_open', 'browser_qa_check', 'browser_qa_scenario'].includes(part.toolName)) await bridge.captureFrame();
 		runStore.markExecutionStarted?.(session);
 	};
 
@@ -1611,7 +1593,6 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 	const abortModel = () => modelController.abort(controller.signal.reason);
 	controller.signal.addEventListener('abort', abortModel, { once: true });
 	if (controller.signal.aborted) abortModel();
-	const hybridSegmentStart = record.hybrid?.segmentProgress();
 	const modeSegmentStart = record.modeReasoning?.progress();
 
 	try {
@@ -1623,7 +1604,6 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 		}
 		if (sqaCloseoutFailure) { await pauseSqaCloseout(); return; }
 		if (founderPublicationFailure) { await pauseFounderPublication(); return; }
-		if (record.hybrid) await record.hybrid.beginTurn(controller.signal);
 		if (record.modeReasoning) await record.modeReasoning.beginTurn(controller.signal);
 		if(record.modeReasoning&&!hostContinuation&&incompleteAttempt===0&&retryAttempt===0){
 			const requests=record.modeReasoning.state.requests??=[];
@@ -1739,7 +1719,6 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 					snapshots.maybePersist();
 					if (await trySqaBudgetCloseout(result) || sqaCloseoutFailure) break streamLoop;
 					if (await tryFounderDraftPublication() || founderPublicationFailure) break streamLoop;
-					if (record.hybridPause) break streamLoop;
 					if(ok&&['record_sqa_control','record_sqa_blockers'].includes(part.toolName)&&prepareSqaSynthesis(session,record)){
 						handoffToSqaSynthesis=true;break streamLoop;
 					}
@@ -1799,15 +1778,7 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 		// The loop ends either because the work is done or because ask_question
 		// suspended it. Only the runtime knows which.
 		const pending = runtime.getPendingQuestion();
-		const budgetDecision = controller.signal.aborted && record.hybrid && !successfulFinalizer ? await pauseForBudgetApproval(session, runtime, record.hybridPause) : null;
-		if (budgetDecision?.automatic && !record.userStopRequested) {
-			automaticCloseout = true; continueIncompleteRun = true; record.hybridPause = undefined;
-			await runStore.setStatus(session, 'running', 'Finalizing the executed checks and recording remaining limitations.');
-		} else if (budgetDecision && !budgetDecision.automatic) {
-			session.pendingQuestion = { toolCallId: budgetDecision.id, ...normaliseQuestion(budgetDecision.input), hybridDecision: 'budget', credentialLike: false };
-			await runStore.commit(session, 'question', { question: session.pendingQuestion });
-			await runStore.setStatus(session, 'awaiting_input', 'Execution budget reached. Approve continuation or choose an explicit gap report.');
-		} else if (successfulFinalizer) {
+		if (successfulFinalizer) {
 			await completeRun(); deleteRunSnapshot(session.id);
 		} else if (controller.signal.aborted) {
 			// #16225 follow-up: a loop abort is a model-gateway failure, not a
@@ -1820,8 +1791,7 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 				clearSecrets(session.id);
 				deleteRunSnapshot(session.id);
 			} else {
-				if (record.hybridPause) await runStore.setStatus(session, 'interrupted', record.hybridPause.message);
-				else await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
+				await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
 				deleteRunSnapshot(session.id);
 			}
 		} else if (sqaCloseoutFailure) {
@@ -1840,11 +1810,9 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 			continueIncompleteRun=true;
 			await runStore.setStatus(session,'running',record.founderSynthesis&&usesFounderDraft(session)?'Founder report section saved. Continuing the remaining report sections.':'Continuing the next workflow or evidence review from the verified mode checkpoint.');
 		} else if (pending) {
-			const hostDecision = session.hybrid?.pendingDecision?.id === pending.toolCallId ? session.hybrid.pendingDecision : null;
 			session.pendingQuestion = {
 				toolCallId: pending.toolCallId,
-				...normaliseQuestion(pending.question),
-				...(hostDecision ? { hybridDecision: hostDecision.kind, credentialLike: hostDecision.kind === 'credentials' } : {})
+				...normaliseQuestion(pending.question)
 			};
 			await runStore.commit(session, 'question', { question: session.pendingQuestion });
 			await runStore.setStatus(session, 'awaiting_input');
@@ -1855,19 +1823,6 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 			// invoking ask_question. No QA run has started yet, so continuing
 			// automatically would only repeat the request and lock the composer.
 			await runStore.setStatus(session, 'awaiting_input', 'Waiting for a target URL.');
-		} else if (record.hybrid && !record.hybridPause) {
-			const segment = await record.hybrid.continueSegment(hybridSegmentStart);
-			if (segment.continue) {
-				continueIncompleteRun = true;
-				await runStore.setStatus(session, 'running', 'Continuing remaining QA work from the verified scenario checkpoint.');
-			} else {
-				session.hybrid.pauseReason = 'HYBRID_NO_PROGRESS: Three SDK segments produced no new execution evidence or scenario progress. Saved work remains incomplete; no successful report was inferred.';
-				await runStore.setStatus(session, 'interrupted', session.hybrid.pauseReason);
-			}
-		} else if (record.hybrid) {
-			await record.hybrid.endTurn('paused');
-			persistRunSnapshot(session.id, runtime.getSessionSnapshot(), session.ownerUserId);
-			await runStore.setStatus(session, 'interrupted', session.hybrid.pauseReason || 'Hybrid QA checkpointed before completion. Continue to verify state and resume.');
 		} else if (record.modeReasoning) {
 			if (await record.modeReasoning.continueSegment(modeSegmentStart)) {
 				continueIncompleteRun = true;
@@ -1898,17 +1853,9 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 			await trySqaBudgetCloseout();
 			await tryFounderDraftPublication();
 		}
-		const budgetDecision = record.hybrid && !successfulFinalizer ? await pauseForBudgetApproval(session, runtime, record.hybridPause || error) : null;
 		if (successfulFinalizer) {
 			await completeRun();
 			deleteRunSnapshot(session.id);
-		} else if (budgetDecision?.automatic && !record.userStopRequested) {
-			automaticCloseout = true; continueIncompleteRun = true; record.hybridPause = undefined;
-			await runStore.setStatus(session, 'running', 'Finalizing the executed checks and recording remaining limitations.');
-		} else if (budgetDecision && !budgetDecision.automatic) {
-			session.pendingQuestion = { toolCallId: budgetDecision.id, ...normaliseQuestion(budgetDecision.input), hybridDecision: 'budget', credentialLike: false };
-			await runStore.commit(session, 'question', { question: session.pendingQuestion });
-			await runStore.setStatus(session, 'awaiting_input', 'Execution budget reached. Approve continuation or choose an explicit gap report.');
 		} else if (controller.signal.aborted) {
 			if (record.emptyLoopAbort) {
 				const message = 'The model gateway returned empty responses for several turns in a row. The run was stopped to prevent a retry loop — try again, or pick a different model in Settings.';
@@ -1917,19 +1864,13 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 				clearSecrets(session.id);
 				deleteRunSnapshot(session.id);
 			} else {
-				if (record.hybridPause) await runStore.setStatus(session, 'interrupted', record.hybridPause.message);
-				else await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
+				await runStore.setStatus(session, 'interrupted', 'Stopped by user.');
 				deleteRunSnapshot(session.id);
 			}
 		} else if (sqaCloseoutFailure) {
 			await pauseSqaCloseout();
 		} else if (founderPublicationFailure) {
 			await pauseFounderPublication();
-		} else if (record.hybrid) {
-			session.hybrid.pauseReason = error.code ? `${error.code}: ${sanitizeErrorDetail(error)}` : 'Reasoner interrupted; progress checkpointed.';
-			await record.hybrid.endTurn('paused');
-			persistRunSnapshot(session.id, runtime.getSessionSnapshot(), session.ownerUserId);
-			await runStore.setStatus(session, 'interrupted', session.hybrid.pauseReason);
 		} else if (record.modeReasoning) {
 			record.modeReasoning.state.pauseReason = error.code || 'MODE_REASONER_INTERRUPTED';
 			persistRunSnapshot(session.id, runtime.getSessionSnapshot(), session.ownerUserId);
@@ -1957,11 +1898,6 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 		record.onModePublished = undefined;
 		record.onModeToolResult = undefined;
 		record.onFounderDraftResult = undefined;
-		if (record.hybrid) {
-			const status = successfulFinalizer ? 'done' : automaticCloseout ? 'running' : session.status === 'awaiting_input' && session.hybrid.pendingDecision ? 'awaiting_input' : controller.signal.aborted ? (record.hybridPause ? 'paused' : 'cancelled') : session.status === 'awaiting_input' ? 'awaiting_input' : continueIncompleteRun ? 'running' : 'paused';
-			await record.hybrid.endTurn(status);
-			if (status !== 'done') persistRunSnapshot(session.id, runtime.getSessionSnapshot(), session.ownerUserId);
-		}
 		if (record.modeReasoning) {
 			await record.modeReasoning.endTurn(successfulFinalizer ? 'done' : controller.signal.aborted ? 'cancelled' : continueIncompleteRun ? 'running' : session.status);
 			if (!successfulFinalizer) persistRunSnapshot(session.id, runtime.getSessionSnapshot(), session.ownerUserId);
@@ -2053,7 +1989,7 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 	if (controller.signal.aborted && !(automaticCloseout && !record.userStopRequested)) {
 		// A host budget handoff is waiting for the owner, not a user stop.
 		// Preserve its native pending question and vault for the same run.
-		if (session.status !== 'awaiting_input' || session.hybrid?.pendingDecision?.kind !== 'budget') await stoppedBeforeContinuation();
+		await stoppedBeforeContinuation();
 		return;
 	}
 
@@ -2081,8 +2017,7 @@ async function driveTurn(session, { task, resumeAnswer, retryAttempt = 0, incomp
 				: 'Continue the unfinished Founder review now. Read the current Progress section, immediately complete the remaining route/surface inventory, representative workflow, diagnostics, and evidence-backed category observations without repeating finished work. Ask for critical founder context or an authenticated/public-only scope decision only when genuinely required. Then complete the evidence-linked strategy through the advertised report tools; never invent customer, analytics, market, or revenue facts.'
 			: session.mode === 'sqa'
 				? 'Continue the unfinished SQA assessment now. Read the current Progress section and immediately perform each remaining browser-first technical check. The host automatically closes reviewer-only prerequisites after the final browser-backed result; do not enumerate them. If authentication blocks representative scoped workflows, call ask_question for vaulted credentials or an explicit public-only scope decision before publishing. Do not repeat recorded checks. Call finish_sqa_assessment only after the plan and every control are complete. Never invent documentary evidence or claim certification.'
-				: record.hybrid ? `The SDK segment ended, but QASE has not completed this run. Preserve the same session and browser owner. Remaining authoritative work: ${JSON.stringify(session.hybrid.sdkContinuation?.remaining || {})}. Use qa_route_frontier and execute pending routes with default checks; otherwise activate each remaining supported scenario and execute its matching fixed check. Close only evidence-accounted outcomes. Never replay uncertain actions. Publish only when the host completion gate permits it.`
-					: 'Continue the unfinished QA run now. Do not stop with a progress update or a description of what you will do next. Immediately use the next required tool, complete every remaining test-plan item without repeating finished work, and call finish_qa_report when the run is complete. Only call ask_question if user input is genuinely required.';
+				: 'Continue the unfinished QA run now. Do not stop with a progress update or a description of what you will do next. Immediately use the next required tool, complete every remaining test-plan item without repeating finished work, and call finish_qa_report when the run is complete. Only call ask_question if user input is genuinely required.';
 		// No asynchronous gap between releasing this turn and acquiring the next.
 		record.running = false;
 		record.controller = undefined;

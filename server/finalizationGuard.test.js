@@ -4,9 +4,8 @@ import { guardFinalization, isPublicationTodo, publicationTodos } from './finali
 import { createSqaState } from './sqaService.js';
 import { createSqaTools } from './sqaTools.js';
 import { createFounderTools } from './founderTools.js';
-import { createQaTools } from './qaTools.js';
 
-for (const [mode, factory] of [['qa',createQaTools],['sqa',createSqaTools],['founder',createFounderTools]]) test(`${mode} cancelled finalizer cannot publish even an existing artifact`, async () => {
+for (const [mode, factory] of [['sqa',createSqaTools],['founder',createFounderTools]]) test(`${mode} cancelled finalizer cannot publish even an existing artifact`, async () => {
   const session = { mode, report: {ts:1}, [mode]: { finalizedAt:'fixture', assessment:{}, report:{} } };
   let commits=0;
   const finalizer=factory(session,{async commit(){commits++;}},{isCancelled:()=>true}).at(-1);

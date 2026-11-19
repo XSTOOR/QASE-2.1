@@ -1,21 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { guardFinalization } from './finalizationGuard.js';
 import { redact } from './secrets.js';
 import { isEngineId } from './browserEngines.js';
 import { verifyRuntimeIdentity } from './runtimeIdentity.js';
-import { validateHybridFinding, validateHybridReport } from './qaCompletionGate.js';
-import { publicHybridState } from './hybridQaRuntime.js';
 import {modeDiscoveryRequired,validateModeFinding} from './modeDiscovery.js';
 
 /**
- * The two tools the SDK's registry does not ship, because they are specific to
- * this surface: a structured way to file a defect, and a way to declare the run
- * finished with a verdict. Both are built per session so they can write
- * straight into the session the dashboard is rendering.
+ * report_finding: the structured defect tool used by SQA (QA mode runs on the
+ * QA engine in server/qa/). Also exports the runtime-integrity helpers used
+ * when reconciling historical QA reports.
  */
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
-const VERDICTS = ['pass', 'pass_with_issues', 'partial', 'fail', 'blocked'];
 const MAX_LIST_ITEMS = 100;
 
 function validInput(input) {
@@ -117,7 +112,7 @@ export function attestationFor(session) {
 	};
 }
 
-export function createQaTools(session, runStore, { deviceRuntime, captureRuntimeFacts, isCancelled } = {}) {
+export function createQaTools(session, runStore) {
 	const reportFinding = {
 		name: 'report_finding',
 		description: 'Files one confirmed defect found while testing the site. Call once per distinct defect, as soon as you have confirmed it. Never include credentials or other secrets in any field.',
@@ -126,7 +121,6 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 			type: 'object',
 			properties: {
 				...(modeDiscoveryRequired(session)?{mode_evidence_id:{type:'string',description:'Intact receipt ID containing the actual failed host assertion.'},assertion_name:{type:'string',description:'Exact failed assertion name in that receipt.'}}:{}),
-				...(session.qaExecutionMode === 'hybrid' ? { scenario_id: { type: 'string' }, assertion_id: { type: 'string' } } : {}),
 				title: { type: 'string', description: 'One line naming the defect, written from the user\'s point of view.' },
 				severity: { type: 'string', enum: SEVERITIES, description: 'User impact: critical blocks the core flow, high breaks an important flow, medium is a real but survivable defect, low is polish, info is an observation.' },
 				category: { type: 'string', description: 'Area of the defect, e.g. authentication, forms, navigation, console, network, accessibility, layout, performance, content.' },
@@ -144,23 +138,9 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 			required: ['title', 'severity', 'expected', 'actual']
 		},
 		async run(input) {
-			let hybridEvidence;
 			if(modeDiscoveryRequired(session)){
 				try{const binding=validateModeFinding(session,input||{});const existing=session.findings.find(f=>f.evidence===binding.evidence);if(existing)return {success:true,finding_id:existing.id,total_findings:session.findings.length};input={...input,...binding};}
 				catch(error){return {success:false,error:error.message};}
-			}
-			if (session.qaExecutionMode === 'hybrid') {
-				try { hybridEvidence = validateHybridFinding(session, input || {}); }
-				catch (error) { return { success: false, error: error.message }; }
-				const existing = session.findings.find(item => {
-					if(item.hybridEvidence?.assertionId === hybridEvidence.assertionId || item.hybridEvidence?.failureKey === hybridEvidence.failureKey)return true;
-					// Old checkpoints used a key without the surface URL. Recompute
-					// from intact evidence rather than discarding or duplicating them.
-					if(!item.hybridEvidence)return false;
-					try{return validateHybridFinding(session,{scenario_id:item.hybridEvidence.scenarioId,assertion_id:item.hybridEvidence.assertionId}).failureKey===hybridEvidence.failureKey;}catch{return false;}
-				});
-				if (existing) return { success: true, finding_id: existing.id, total_findings: session.findings.length };
-				input = { ...input, expected: hybridEvidence.expected, actual: hybridEvidence.actual, url: hybridEvidence.url, evidence: hybridEvidence.evidence };
 			}
 			if (!validInput(input) || !['title', 'expected', 'actual'].every(field => hasText(input[field]))) {
 				return { success: false, error: 'report_finding requires nonempty title, expected, and actual strings.' };
@@ -201,25 +181,17 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 				statusTs: findingTs,
 				statusNote: ''
 			});
-			if (hybridEvidence) finding.hybridEvidence = hybridEvidence;
 
 			if (!finding.title) {
 				return { success: false, error: 'report_finding requires a title.' };
 			}
 
 			const previousFindings = session.findings;
-			const previousHybridFindings = session.hybrid?.confirmedFindings;
-			const previousObservations = session.hybrid?.observations;
-			if (hybridEvidence) {
-				session.hybrid.confirmedFindings = [...(previousHybridFindings || []), { findingId: finding.id, evidence: hybridEvidence }];
-				session.hybrid.observations = previousObservations.map(item => item.assertionId === hybridEvidence.assertionId ? { ...item, status: 'confirmed', findingId: finding.id } : item);
-			}
 			session.findings = [...previousFindings, finding];
 			try {
 				await runStore.commit(session, 'finding', { finding });
 			} catch (error) {
 				session.findings = previousFindings;
-				if (hybridEvidence) { session.hybrid.confirmedFindings = previousHybridFindings; session.hybrid.observations = previousObservations; }
 				throw error;
 			}
 			return {
@@ -232,231 +204,5 @@ export function createQaTools(session, runStore, { deviceRuntime, captureRuntime
 		}
 	};
 
-const finishReport = {
-	name: 'finish_qa_report',
-	description: 'Ends the test run and publishes the report. Call exactly once, after every planned check is done and every defect has been filed with report_finding.',
-	category: 'qa',
-	parametersSchema: {
-		type: 'object',
-		properties: {
-			verdict: { type: 'string', enum: VERDICTS, description: 'pass when nothing of substance broke, pass_with_issues when defects exist but the core flows work, partial when testing ran but selected coverage is incomplete, fail when a core flow is broken, blocked when testing could not proceed.' },
-			summary: { type: 'string', description: 'A short paragraph a product owner could read: what was tested, what state the site is in.' },
-			covered: { type: 'array', items: { type: 'string' }, description: 'The areas and flows actually exercised.' },
-			not_covered: { type: 'array', items: { type: 'string' }, description: 'Anything planned but skipped, and why.' },
-			recommendations: { type: 'array', items: { type: 'string' }, description: 'What to fix or investigate first.' },
-			security_outcomes: {
-				type: 'array',
-				description: 'Required when the run selected security checks. One entry per security check: pass only with concrete positive browser evidence, fail only with a filed finding, not_tested with a mandatory reason. Unavailable checks (MITM, DoS) are always not_tested with their unavailability reason.',
-				items: {
-					type: 'object',
-					properties: {
-						check: { type: 'string', enum: ['security_authentication', 'security_authorization', 'security_input_validation', 'security_sql_injection', 'security_mitm', 'security_dos'] },
-						outcome: { type: 'string', enum: ['pass', 'fail', 'not_tested'] },
-						reason: { type: 'string', description: 'Mandatory for not_tested; for pass/fail a one-line evidence pointer.' }
-					},
-					required: ['check', 'outcome']
-				}
-			}
-		},
-		required: ['verdict', 'summary']
-	},
-		async run(input) {
-			if (session.mode === 'sqa' || session.mode === 'founder') {
-				return { success: false, error: 'finish_qa_report is available only in QA mode. Use this mode\'s dedicated finalization tool.' };
-			}
-			// #17997: one actionable error per failure cause — the old generic
-			// "requires a valid verdict and a nonempty summary" hid the real
-			// reason (bad verdict enum vs empty summary vs bad shape) and sent
-			// agents into retry loops during budget closeout.
-			if (!validInput(input)) {
-				return { success: false, error: 'finish_qa_report requires an object with a verdict and a summary.' };
-			}
-			if (!VERDICTS.includes(input.verdict)) {
-				return { success: false, error: `finish_qa_report verdict "${String(input.verdict)}" is not one of the allowed values: ${VERDICTS.join(', ')}. pass is only correct when no defects were found AND coverage is complete — use pass_with_issues when defects exist, partial when coverage is incomplete.` };
-			}
-			if (!hasText(input.summary)) {
-				return { success: false, error: 'finish_qa_report requires a nonempty summary string describing what was tested and the site\'s state.' };
-			}
-			if (session.qaExecutionMode === 'hybrid') {
-				try { input = validateHybridReport(session, input); }
-				catch (error) { return { success: false, error: error.message, ...(String(error.code||'').startsWith('HYBRID_')?{code:error.code}:{}), ...(error.code === 'HYBRID_DEPTH_PENDING' ? { coverage: error.coverage } : {}) }; }
-			}
-			for (const field of ['covered', 'not_covered', 'recommendations']) {
-				if (input[field] !== undefined && (!Array.isArray(input[field]) || !input[field].every(hasText))) {
-					return { success: false, error: `${field} must be an array of nonempty strings.` };
-				}
-			}
-			// Security honesty contract: when the run selected security checks,
-			// every one of them gets an explicit outcome; not_tested requires a
-			// reason; unavailable checks (MITM/DoS) can never be pass/fail; a
-			// pass must not contradict the findings ledger.
-			const selectedSecurity = (session.selectedTests ?? []).filter(id => typeof id === 'string' && id.startsWith('security_'));
-			if (selectedSecurity.length > 0) {
-				const outcomes = Array.isArray(input.security_outcomes) ? input.security_outcomes : [];
-				const UNAVAILABLE_REASONS = {
-					security_mitm: 'Not implemented — requires an agreed, configured MITM scenario.',
-					security_dos: 'Not implemented — requires an agreed, configured DoS scenario.'
-				};
-				const entries = new Map();
-				for (const entry of outcomes) {
-					if (!validInput(entry) || !selectedSecurity.includes(entry.check)
-						|| !['pass', 'fail', 'not_tested'].includes(entry.outcome)) {
-						return { success: false, error: 'security_outcomes entries must reference this run\'s selected security checks with an outcome of pass, fail, or not_tested.' };
-					}
-					if (entries.has(entry.check)) {
-						return { success: false, error: `security_outcomes lists ${entry.check} more than once.` };
-					}
-					if (UNAVAILABLE_REASONS[entry.check] && entry.outcome !== 'not_tested') {
-						return { success: false, error: `${entry.check} is not implemented and can only be not_tested with its reason.` };
-					}
-					if (entry.outcome === 'not_tested' && !hasText(entry.reason)) {
-						return { success: false, error: `security_outcomes: ${entry.check} is not_tested and requires a reason.` };
-					}
-					entries.set(entry.check, entry);
-				}
-				const missing = selectedSecurity.filter(id => !entries.has(id));
-				if (missing.length > 0) {
-					return { success: false, error: `security_outcomes must include every selected security check. Missing: ${missing.join(', ')}.` };
-				}
-			}
-			const remainingTodos = Array.isArray(session.todos)
-				? session.todos.filter(item => item && item.text && item.status !== 'completed')
-				: [];
-			// Model-supplied flags cannot authorize skipping the host's completion gate.
-			if (session.qaExecutionMode !== 'hybrid' && remainingTodos.length > 0) {
-				return {
-					success: false,
-					error: 'finish_qa_report cannot be called until every plan item is completed. Work the remaining items, mark them completed with update_todo, then call finish_qa_report again. If a plan item genuinely cannot be executed, mark it completed with a short note explaining why it was skipped.',
-					remaining_plan_items: remainingTodos.map(item => ({ text: item.text, status: item.status })),
-					remaining_count: remainingTodos.length
-				};
-			}
-			// A genuinely in-flight tool still gates publication, but an activity
-			// left "running" by a crashed or restarted process can never settle —
-			// so mirror the 120 s recency window the SQA and Founder finalizers
-			// use instead of blocking the report forever.
-			const now = Date.now();
-			const activeActivities = (session.activities ?? []).filter(activity => (
-				activity.status === 'running'
-				&& activity.toolName !== 'finish_qa_report'
-				&& Number.isFinite(Number(activity.ts))
-				&& now - Number(activity.ts) < 120_000
-			));
-			if (activeActivities.length > 0) {
-				return { success: false, error: 'QA checks are still running. Wait for their tool results before publishing.', active_activity_ids: activeActivities.map(item => item.id) };
-			}
-			// Phase D3 · result integrity: any failed runtime verification
-			// downgrades the verdict to BLOCKED — a run whose device runtime
-			// cannot be verified is never reported PASS. The downgrade happens
-			// AFTER the structural gates (plan, browser evidence, coverage)
-			// so a broken run still cannot publish any report at all.
-			const hasPlan = session.qaExecutionMode === 'hybrid' ? Boolean(session.hybrid?.scenarios?.length) : (session.todos ?? []).some(item => hasText(item?.text) && item.status === 'completed');
-			const structuralOk = hasPlan
-				&& (session.activities ?? []).some(activity => activity.status === 'done' && String(activity.toolName ?? '').startsWith('browser_'))
-				&& (input.covered?.length ?? 0) > 0;
-			// The browser is lazy-created during the turn. Capture its live identity
-			// BEFORE verifying/publishing, not only in the agent's finally block.
-			if (isCancelled?.()) return { success: false, error: 'This execution was cancelled; no new report can be published.' };
-			try { await captureRuntimeFacts?.(); } catch { /* Missing evidence still fails closed below. */ }
-			if (isCancelled?.()) return { success: false, error: 'This execution was cancelled; no new report can be published.' };
-			const integrity = runtimeIntegrity(session);
-			let verdict = input.verdict;
-			if (verdict !== 'blocked' && structuralOk && !integrity.ok) {
-				verdict = 'blocked';
-				input = {
-					...input,
-					not_covered: [
-						...(input.not_covered ?? []),
-						`Blocked: ${integrity.reason} (failed checks: ${integrity.failedChecks.join(', ')})`
-					]
-				};
-			}
-			if (verdict === 'blocked') {
-				if (!input.not_covered?.length) {
-					return { success: false, error: 'A blocked report must explain the unavailable checks and concrete blocking prerequisite in not_covered.' };
-				}
-			} else {
-				if (!hasPlan) {
-					return { success: false, error: 'A completed QA report requires a test plan. Create and execute the plan with update_todo before publishing.' };
-				}
-				if (!(session.activities ?? []).some(activity => activity.status === 'done' && String(activity.toolName ?? '').startsWith('browser_'))) {
-					return { success: false, error: 'A completed QA report requires a successful browser observation from this run.' };
-				}
-				if (!input.covered?.length) {
-					return { success: false, error: 'A completed QA report must list the areas actually exercised in covered.' };
-				}
-			}
-			if (verdict === 'partial' && !input.not_covered?.length) {
-				return { success: false, error: 'A partial report must identify its coverage gaps in not_covered.' };
-			}
-			if (verdict === 'pass' && session.findings.length > 0) verdict = 'pass_with_issues';
-			if (['pass_with_issues', 'partial'].includes(verdict)
-				&& session.findings.some(finding => ['critical', 'high'].includes(finding.severity))) verdict = 'fail';
-			const report = redact(session.id, {
-				ts: Date.now(),
-				verdict,
-				summary: boundedText(input.summary, 20_000),
-				covered: boundedList(input.covered),
-				notCovered: boundedList(input.not_covered),
-				// R2 #14491: runtime-authoritative identity (observed browser
-				// brand/version/engine/platform) travels on every report.
-				runtimeIdentity: integrity.identity ?? undefined,
-				recommendations: boundedList(input.recommendations),
-				targetUrl: session.targetUrl,
-				findings: session.findings.length,
-				securityOutcomes: Array.isArray(input.security_outcomes) && input.security_outcomes.every(validInput)
-					? input.security_outcomes.map(entry => ({
-						check: entry.check,
-						outcome: entry.outcome,
-						...(hasText(entry.reason) ? { reason: boundedText(entry.reason, 2_000) } : {})
-					}))
-					: undefined,
-				executionEvidence: session.jev?.qa?.version === 2 ? {
-					controller: 'coverage-decisions-v2',
-					routes: session.jev.qa.visits.length,
-					scenarios: session.jev.qa.checks.length,
-					executedScenarios: session.jev.qa.executedScenarios,
-					observations: session.jev.qa.observations,
-					nativeConstraintAssertions: session.jev.qa.nativeConstraintAssertions,
-					stopReason: session.jev.qa.stopReason,
-					coverage: session.jev.qa.coverage,
-					totalAssertions: session.jev.qa.checks.reduce((sum, check) => sum + (check.assertions?.length || 0), 0),
-					failedAssertions: session.jev.qa.checks.flatMap(check => check.assertions || []).filter(item => item.outcome === 'fail').length,
-					omittedCheckRecords: Math.max(0, session.jev.qa.checks.filter(check => check.assertions?.length || check.success === false || check.trials?.length || check.samples?.length || check.omitted).length - 250),
-					issueReview: (session.jev.qa.issueReview ?? []).map(issue => ({
-						key: boundedText(issue.key, 200), title: boundedText(issue.title, 1000), url: boundedText(issue.url, 8192),
-						category: boundedText(issue.category, 200), severity: boundedText(issue.severity, 30),
-						expected: boundedText(issue.expected, 5000), actual: boundedText(issue.actual, 5000), evidence: boundedText(issue.evidence, 10000),
-						status: ['confirmed', 'excluded'].includes(issue.status) ? issue.status : 'unresolved',
-						reason: boundedText(issue.reason, 2000), modelConfidence: issue.modelConfidence,
-						verification: issue.verification, findingId: boundedText(issue.findingId, 200) || undefined
-					})),
-					checks: session.jev.qa.checks.filter(check => check.assertions?.length || check.success === false || check.trials?.length || check.samples?.length || check.omitted).slice(0, 250).map(check => ({
-						id: check.id, action: check.action, url: check.url, success: check.success, durationMs: check.durationMs,
-						assertions: check.assertions, limitations: check.limitations, error: check.error, gaps: check.gaps, executionComplete: check.executionComplete,
-						trials: check.trials, interactions: check.interactions, samples: check.samples, remainingScroll: check.remainingScroll, omitted: check.omitted
-					}))
-				} : undefined,
-				hybridQa: session.qaExecutionMode === 'hybrid' ? publicHybridState(session) : undefined,
-				attestation: attestationFor(session),
-				bySeverity: SEVERITIES.reduce((counts, severity) => {
-					counts[severity] = session.findings.filter(finding => finding.severity === severity).length;
-					return counts;
-				}, {})
-			});
-
-			const previousReport = session.report;
-			session.report = report;
-			try {
-				await runStore.commit(session, 'report', { report });
-			} catch (error) {
-				if (previousReport === undefined) delete session.report;
-				else session.report = previousReport;
-				throw error;
-			}
-			return { success: true, published: true, verdict: report.verdict, findings: report.findings };
-		}
-	};
-
-	return [reportFinding, guardFinalization(finishReport, session, { isCancelled })];
+	return [reportFinding];
 }

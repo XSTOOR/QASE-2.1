@@ -1,4 +1,3 @@
-import { ensureAutonomousCapacity } from './hybridAutonomy.js';
 import { CancellationTokenSource } from '@cleanslate/sdk';
 import { createJevClient, prepareJevRequest } from './jevClient.js';
 import { redact } from './secrets.js';
@@ -35,19 +34,16 @@ export function createHybridModelRouter({ session, profile, telemetry, checkpoin
   const waiters = [];
   const client = reasonerOnly ? null : createJevClient({ apiKey: profile.classifier.apiKey, baseUrl: profile.classifier.endpoint, model: profile.classifier.model }, { fetchImpl, timeoutMs: budget.classifierTimeoutMs });
   const check = () => {
-    if (ensureAutonomousCapacity(state, { durationMs: telemetry.tick() + 30000 })) Object.assign(budget, state.budgets);
     if (telemetry.tick() >= budget.durationMs) throw new HybridPause('HYBRID_TIME_BUDGET', 'Execution time budget exhausted.');
     for (const role of ['reasoner', 'classifier']) {
       if (accounting.unresolved(role) && !(role === 'classifier' && profile.allowWithoutClassifier)) throw new HybridPause('HYBRID_USAGE_UNRESOLVED', `${role} has an unverified prior usage receipt. Progress is saved; usage must be reconciled before continuing.`);
       const metric = telemetry.metrics[role];
-      if (ensureAutonomousCapacity(state, { [`${role}Tokens`]: metric.inputTokens + metric.outputTokens + metric.reservedTokens })) Object.assign(budget, state.budgets);
       if (metric.inputTokens + metric.outputTokens + metric.reservedTokens > budget[`${role}Tokens`]) throw new HybridPause('HYBRID_MODEL_BUDGET', `${role} provider usage plus pending reservations exceeded its token budget. Progress is saved; start a new run with an explicitly approved budget.`);
     }
   };
   function reserve(role, inputTokens) {
     check();
     if (accounting.unresolved(role)) throw new HybridPause('HYBRID_USAGE_UNRESOLVED', `${role} has unverified usage; another request cannot be dispatched.`);
-    if (ensureAutonomousCapacity(state, { [`${role}Tokens`]: telemetry.metrics[role].inputTokens + telemetry.metrics[role].outputTokens + telemetry.metrics[role].reservedTokens + inputTokens + budget.outputTokens, [`${role}Calls`]: telemetry.metrics[role].calls + 1 })) Object.assign(budget, state.budgets);
     const metric = telemetry.metrics[role], maxCalls = role === 'reasoner' ? budget.reasonerCalls : budget.classifierCalls;
     const maxTokens = role === 'reasoner' ? budget.reasonerTokens : budget.classifierTokens;
     const reserve = inputTokens + budget.outputTokens;

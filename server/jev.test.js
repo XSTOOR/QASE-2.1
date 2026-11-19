@@ -124,7 +124,7 @@ function fixture(mode = 'qa', overrides = {}) {
   } });
   return { runtime, session, calls, requested: () => requested };
 }
-for (const mode of ['qa', 'sqa', 'founder']) test(`native ${mode} controller publishes its artifact through existing finalizer validation`, async () => {
+for (const mode of ['sqa', 'founder']) test(`native ${mode} controller publishes its artifact through existing finalizer validation`, async () => {
   const f = fixture(mode);
   for await (const part of f.runtime.run('Review the authorized page.', new AbortController().signal)) assert.ok(part.type);
   const artifact = mode === 'qa' ? f.session.report : mode === 'sqa' ? f.session.sqa.assessment : f.session.founder.report;
@@ -132,24 +132,6 @@ for (const mode of ['qa', 'sqa', 'founder']) test(`native ${mode} controller pub
   assert.ok(f.requested() > 0);
   assert.ok(f.calls.some(item => item.name === 'browser_snapshot'));
   await assert.rejects(f.runtime.cleanSlateService.chat(), /native JEV controller/);
-});
-test('completed browser checks with missing workflows publish partial, not blocked or pass', async () => {
-  const f = fixture('qa', { selectedTests: ['console_health', 'forms', 'authentication'] });
-  for await (const _ of f.runtime.run('Review.', new AbortController().signal)) { /* consume */ }
-  assert.equal(f.session.report.verdict, 'partial');
-  assert.ok(f.session.report.notCovered.some(item => item.includes('forms')));
-  assert.ok(f.session.report.covered.some(item => item.includes('console_health (tested)')));
-});
-test('missing browser diagnostics cannot produce a passing console-health report', async () => {
-  const f = fixture();
-  const execute = f.runtime.headlessRuntime.executeTool;
-  f.runtime.headlessRuntime.executeTool = async function* (name, input, id) {
-    if (name === 'browser_diagnostics') yield { type: 'tool_result', toolName: name, toolCallId: id, result: { success: false, error: 'Renderer unavailable' } };
-    else yield* execute(name, input, id);
-  };
-  for await (const _ of f.runtime.run('Review.', new AbortController().signal)) { /* consume */ }
-  assert.equal(f.session.report.verdict, 'blocked');
-  assert.ok(f.session.report.notCovered.some(item => item.includes('console_health')));
 });
 test('JEV config defaults and probes use decisions and never expose the key', async () => {
   const previous = { ...process.env };

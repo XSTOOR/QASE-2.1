@@ -49,7 +49,7 @@ test('a resumed answer is not failed by the previous awaiting-input turn monitor
 });
 
 function runtimeFixture(overrides = {}) {
-	const session = { id: randomUUID(), mode: 'qa', targetUrl: 'https://example.test', messages: [], activities: [], todos: [], findings: [], secretNames: [], ...overrides };
+	const session = { id: randomUUID(), mode: 'founder', targetUrl: 'https://example.test', messages: [], activities: [], todos: [], findings: [], secretNames: [], ...overrides };
 	const record = {
 		runtime: { async *run() {}, getPendingQuestion: () => undefined },
 		bridge: { hasPage: () => false, captureFrame: async () => {}, stopFrames() {} }
@@ -136,85 +136,7 @@ function founderSynthesisFixture() {
 	return { ...fixture, headless, clearCount: () => clears };
 }
 
-test('a turn harvests provider token usage into the run and persists it once', async () => {
-	const { session, record, store, statuses } = runtimeFixture();
-	const commits = [];
-	store.commit = async (s, type, payload) => { commits.push({ type, payload }); };
-	// Real usage arrives through the wrapped logProviderReportedUsage hook...
-	record.runtime.cleanSlateService = {
-		logProviderReportedUsage(diagnostics, usage) { /* SDK original */ }
-	};
-	// ...and an estimate through the injectable logger's debug line.
-	record.runtime.run = async function* () {
-		this.logger?.debug?.('[CleanSlateService] provider=Custom API model=m stage=complete elapsedMs=1 inputChars=4000 estimatedInputTokens=1000 outputChars=800 estimatedOutputTokens=200');
-		yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true } };
-	};
-	// The wrapper is attached in ensureRuntime, which the fixture bypasses, so
-	// attach here exactly as ensureRuntime does.
-	record.turnUsage = { reports: [], estimates: [] };
-	const release = attachUsageCapture(record.runtime.cleanSlateService, {
-		onUsage: usage => record.turnUsage.reports.push(usage)
-	});
-	record.releaseUsageCapture = release;
-	record.runtime.logger = createUsageLogger({
-		onEstimate: usage => record.turnUsage.estimates.push(usage)
-	});
-	session.findings = [{ severity: 'high', title: 'Broken form', actual: 'HTTP 500' }];
-	session.report = { ts: 456, verdict: 'fail', summary: 'Tested.' };
 
-	await runTurn(session, { task: 'Count my tokens' }, store);
-
-	assert.equal(session.status, 'done');
-	assert.ok(session.tokenUsage, 'token usage recorded');
-	assert.equal(session.tokenUsage.inputTokens, 1000);
-	assert.equal(session.tokenUsage.outputTokens, 200);
-	assert.equal(session.tokenUsage.totalTokens, 1200);
-	assert.equal(session.tokenUsage.estimated, true, 'estimate marked when no real report');
-	const usageCommits = commits.filter(commit => commit.type === 'usage');
-	assert.ok(usageCommits.length >= 1, 'usage committed at least once');
-	assert.deepEqual(usageCommits.at(-1).payload.usage, session.tokenUsage, 'last usage commit carries the final totals');
-
-	// A real provider report on a later turn adds to the earlier estimate.
-	record.turnUsage.reports.push({ inputTokens: 500, outputTokens: 50, totalTokens: 550, cachedInputTokens: 5 });
-	record.turnUsage.estimates.length = 0;
-	record.runtime.run = async function* () {
-		yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true } };
-	};
-	await runTurn(session, { task: 'More tokens' }, store);
-	assert.equal(session.tokenUsage.inputTokens, 1500, 'totals accumulate across turns');
-	assert.equal(session.tokenUsage.estimated, true, 'an earlier estimated call remains marked');
-	release();
-});
-
-test('real usage commits live during the stream, before turn end', async () => {
-	const { session, record, store } = runtimeFixture();
-	const commits = [];
-	store.commit = async (s, type, payload) => { commits.push({ type, payload }); };
-	record.turnUsage = { reports: [], estimates: [] };
-
-	// Two model calls stream; the second finishes late in the stream, well
-	// before the turn (and the loop) ends. The finalizer publishes so the turn
-	// ends like a real completed run (no auto-continuation).
-	record.runtime.run = async function* () {
-		record.onUsageHarvested({ inputTokens: 10000, outputTokens: 2000, totalTokens: 12000, callId: 'call-a', estimated: false });
-		yield { type: 'chat_text', content: 'working…' };
-		record.onUsageHarvested({ inputTokens: 5000, outputTokens: 1000, totalTokens: 6000, callId: 'call-b', estimated: false });
-		yield { type: 'chat_text', content: 'still working…' };
-		session.report = { ts: 789, verdict: 'fail', summary: 'Tested.' };
-		yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true } };
-	};
-
-	await runTurn(session, { task: 'Long run' }, store);
-
-	assert.equal(session.status, 'done');
-	assert.equal(session.tokenUsage.inputTokens, 15000, 'inputs accumulate');
-	assert.equal(session.tokenUsage.outputTokens, 3000, 'outputs accumulate');
-	assert.equal(session.tokenUsage.totalTokens, 18000, 'total is in + out');
-	assert.ok(commits.some(commit => commit.type === 'usage' && commit.payload.usage.inputTokens === 10000),
-		'first call committed live before the turn ended');
-	assert.ok(commits.some(commit => commit.type === 'usage' && commit.payload.usage.inputTokens === 15000),
-		'second call committed live before the turn ended');
-});
 
 test('duplicate usage reports are idempotent — a repeated call id is never counted twice', async () => {
 	const { session, record, store } = runtimeFixture();
@@ -275,66 +197,9 @@ test('usage is preserved when a model call fails mid-stream', async () => {
 	assert.equal(session.tokenUsage.outputTokens, 400);
 });
 
-test('usage ledger survives auto-continuation turns — replayed reports are not re-counted', async () => {
-	const { session, record, store } = runtimeFixture();
-	let attempt = 0;
-	// A prose-only stream triggers the automatic continuation path, which
-	// re-enters runTurn for the SAME run. The replayed call-b report must be
-	// dropped by the run-scoped ledger, not counted a second time.
-	record.runtime.run = async function* () {
-		attempt += 1;
-		if (attempt === 1) {
-			record.onUsageHarvested({ inputTokens: 5000, outputTokens: 1000, totalTokens: 6000, callId: 'call-b', estimated: false });
-			yield { type: 'chat_text', content: 'still working…' };
-			return;
-		}
-		// Same report surfacing again in the continuation turn.
-		record.onUsageHarvested({ inputTokens: 5000, outputTokens: 1000, totalTokens: 6000, callId: 'call-b', estimated: false });
-		record.onUsageHarvested({ inputTokens: 700, outputTokens: 300, totalTokens: 1000, callId: 'call-c', estimated: false });
-		session.report = { ts: 791, verdict: 'fail', summary: 'Continuation finished.' };
-		yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true } };
-	};
-
-	await runTurn(session, { task: 'Run with continuation' }, store);
-
-	assert.equal(session.status, 'done');
-	assert.equal(attempt, 2, 'run went through one automatic continuation');
-	assert.equal(session.tokenUsage.inputTokens, 5700, 'replayed call-b not re-counted across continuation turns');
-	assert.equal(session.tokenUsage.outputTokens, 1300);
-	assert.equal(session.tokenUsage.totalTokens, 7000);
-});
-test('exact SQA verifier receipts cannot erase primary model estimates in the same run', async () => {
-	const { session, record, store } = runtimeFixture();
-	const service = { logProviderReportedUsage() {}, logProviderTiming() {} };
-	const release = attachUsageCapture(service, { estimateMissing: true, onUsage: usage => record.onUsageHarvested(usage) });
-	record.runtime.run = async function* () {
-		service.logProviderTiming('complete', { model: 'primary', estimatedInputTokens: 1000 }, 0, 1, 800);
-		record.onUsageHarvested({ model: 'jev-1.13', inputTokens: 70, outputTokens: 30, callId: 'verifier-1' });
-		yield { type: 'chat_text', content: 'Working through the evidence.' };
-		service.logProviderTiming('complete', { model: 'primary', estimatedInputTokens: 1200 }, 0, 1, 320);
-		record.onUsageHarvested({ model: 'jev-1.13', inputTokens: 50, outputTokens: 10, callId: 'verifier-2' });
-		record.onUsageHarvested({ model: 'jev-1.13', inputTokens: 50, outputTokens: 10, callId: 'verifier-2' });
-		const exact = { model: 'primary', estimatedInputTokens: 1500 };
-		service.logProviderReportedUsage(exact, { inputTokens: 1400, outputTokens: 100 });
-		service.logProviderTiming('complete', exact, 0, 1, 450);
-		session.report = { ts: 790, verdict: 'fail', summary: 'Tested again.' };
-		yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true } };
-	};
-	try {
-		await runTurn(session, { task: 'Count mixed usage' }, store);
-		assert.equal(session.status, 'done');
-		assert.equal(session.tokenUsage.inputTokens, 3720);
-		assert.equal(session.tokenUsage.outputTokens, 420);
-		assert.equal(session.tokenUsage.estimated, true);
-		assert.deepEqual(session.tokenUsage.byModel, {
-			primary: { inputTokens: 3600, outputTokens: 380 },
-			'jev-1.13': { inputTokens: 120, outputTokens: 40 }
-		});
-	} finally { release(); }
-});
 
 test('each mode exposes only its own finalizer and browser capabilities', () => {
-	for (const [mode, finalizer] of [['qa', 'finish_qa_report'], ['sqa', 'finish_sqa_assessment'], ['founder', 'finish_founder_review']]) {
+	for (const [mode, finalizer] of [['sqa', 'finish_sqa_assessment'], ['founder', 'finish_founder_review']]) {
 		const names = allowedToolNames(mode);
 		assert.equal(names.has('browser_media'), true);
 		assert.equal(names.has('browser_test_meeting_link'), true);
@@ -385,39 +250,6 @@ test('a stale saved model falls back to the provider default with a warning and 
 	}
 });
 
-test('the real SDK registry and advertised descriptions enforce each mode boundary', async () => {
-	const saved = process.env.QASE_API_KEY;
-	process.env.QASE_API_KEY ||= 'qualification-placeholder';
-	try {
-		for (const mode of ['qa','sqa','founder']) {
-			const live = {};
-			const session = {id:randomUUID(),mode,secretNames:[],activities:[],findings:[],todos:[],messages:[]};
-			const record = await ensureRuntime(session, {liveFor:()=>live,publish(){},commit:async()=>{}});
-			try {
-				const names=record.runtime.headlessRuntime.getTools().map(tool=>tool.name);
-				assert.deepEqual(new Set(names),allowedToolNames(mode));
-				const descriptions=record.runtime.getToolDescriptions();
-				if (mode === 'founder') {
-					const todo = record.runtime.headlessRuntime.getTools().find(tool => tool.name === 'update_todo');
-					const items = createFounderReviewTodos().map(item => ({ content: item.text, status: 'completed' }));
-					for (const invalid of [items.slice(1), [...items].reverse(), items.map((item,index) => index === 2 ? {...item,content:'Test microphone workflow'} : item)]) {
-						const result = await todo.run({ items: invalid }, {});
-						assert.equal(result.success, false);
-						assert.equal(result.code, 'FOUNDER_CANONICAL_PLAN_REQUIRED');
-						assert.deepEqual(result.canonical_plan, createFounderReviewTodos());
-					}
-					assert.equal((await todo.run({ items }, {})).success, true);
-				}
-				for (const denied of ['run_command','read_file','write_file',...(mode==='sqa'?['finish_qa_report']:[])]) {
-					assert.ok(!descriptions.includes(`- ${denied}:`));
-					const parts=[];
-					for await (const part of record.runtime.headlessRuntime.executeTool(denied,{},'blocked-test')) parts.push(part);
-					assert.equal(parts[0].result.success,false);
-				}
-			} finally {record.dispose();}
-		}
-	} finally {if(saved===undefined)delete process.env.QASE_API_KEY;else process.env.QASE_API_KEY=saved;}
-});
 
 test('the real configured-provider SDK persists the new Founder report protocol before registering its staged finalizer',async()=>{
  const saved={...process.env};const keys=['QASE_PROVIDER','QASE_BASE_URL','QASE_API_KEY','QASE_FOUNDER_REASONING_ENABLED'];
@@ -674,7 +506,7 @@ test('media evidence summaries fit Founder evidence limits and retain the latest
 	assert.ok(summariseResult('browser_test_meeting_link',{url:'https://example.test/'+'a'.repeat(4000),joined:false}).length<=1000);
 });
 
-for (const [mode, finalizer] of [['qa', 'finish_qa_report'], ['sqa', 'finish_sqa_assessment'], ['founder', 'finish_founder_review']]) {
+for (const [mode, finalizer] of [['sqa', 'finish_sqa_assessment'], ['founder', 'finish_founder_review']]) {
 	test(`${mode} publication stops the model before a later provider failure can corrupt run status`, async () => {
 		const session = { id: randomUUID(), mode, targetUrl: 'https://example.test', messages: [], activities: [], secretNames: [] };
 		let readAfterPublication = false;
@@ -708,44 +540,7 @@ for (const [mode, finalizer] of [['qa', 'finish_qa_report'], ['sqa', 'finish_sqa
 	});
 }
 
-test('QA completion posts the actual findings after progress text and before done, once per report', async () => {
-	const fixture = runtimeFixture({ findings: [{ severity: 'high', title: 'Contact form fails', actual: 'HTTP 500 on submit' }] });
-	let version = 1;
-	fixture.record.runtime.run = async function* () {
-		yield { type: 'chat_text', content: 'I will publish the report now.' };
-		fixture.session.report = { ts: version, verdict: 'fail', summary: 'Public pages checked.', covered: ['Home', 'Contact'] };
-		yield { type: 'tool_result', toolName: 'finish_qa_report', toolCallId: 'finish', result: { success: true, published: true } };
-	};
-	const setStatus = fixture.store.setStatus;
-	fixture.store.setStatus = async (s, status, detail) => {
-		if (status === 'done') assert.ok(s.messages.some(m => m.kind === 'qa-report' && m.text.includes('Contact form fails')));
-		await setStatus(s, status, detail);
-	};
-	await runTurn(fixture.session, { task: 'Complete QA' }, fixture.store);
-	assert.equal(fixture.session.messages.at(-1).kind, 'qa-report');
-	assert.match(fixture.session.messages.at(-1).text, /HTTP 500/);
-	await runTurn(fixture.session, { task: 'Repeat finalization' }, fixture.store);
-	assert.equal(fixture.session.messages.filter(m => m.kind === 'qa-report').length, 1);
-	version++;
-	await runTurn(fixture.session, { task: 'Run QA again' }, fixture.store);
-	assert.equal(fixture.session.messages.filter(m => m.kind === 'qa-report').length, 2);
-});
 
-test('a terminal run deletes its restart-safe credential material', async t => {
-	const fixture = runtimeFixture();
-	t.after(() => clearSecrets(fixture.session.id));
-	storeSecrets(fixture.session.id, { qa_password: 'terminal-private-value' });
-	fixture.session.secretNames = ['QA_PASSWORD'];
-	fixture.record.runtime.run = async function* () {
-		fixture.session.report = { ts: 123, verdict: 'pass' };
-		yield { type: 'tool_result', toolName: 'finish_qa_report', toolCallId: 'finish', result: { success: true, published: true } };
-	};
-
-	await runTurn(fixture.session, { task: 'Complete QA' }, fixture.store);
-	assert.equal(fixture.session.status, 'done');
-	assert.deepEqual(fixture.session.secretNames, []);
-	assert.equal(resolveSecrets(fixture.session.id, '{{QA_PASSWORD}}'), '{{QA_PASSWORD}}');
-});
 
 test('graceful model cancellation stops without launching an automatic continuation', async () => {
 	const fixture = runtimeFixture();
@@ -776,25 +571,6 @@ test('a recreated runtime restores the saved pending-question snapshot', () => {
 	assert.deepEqual(calls, [snapshot]);
 });
 
-test('an answer without a restorable SDK question continues as a recovery task', async () => {
-	const fixture = runtimeFixture({
-		status: 'awaiting_input',
-		pendingQuestion: { toolCallId: 'ask-1', question: 'May I join the live meeting?' }
-	});
-	let recoveryTask;
-	fixture.record.runtime.resumePendingQuestion = async function* () {
-		throw new Error('must not resume missing SDK state');
-	};
-	fixture.record.runtime.run = async function* (task) {
-		recoveryTask = task;
-		fixture.session.report = { ts: 99, verdict: 'pass' };
-		yield { type: 'tool_result', toolName: 'finish_qa_report', toolCallId: 'finish', result: { success: true, published: true } };
-	};
-	await runTurn(fixture.session, { resumeAnswer: 'Yes, join it.' }, fixture.store);
-	assert.match(recoveryTask, /May I join the live meeting/);
-	assert.match(recoveryTask, /Yes, join it/);
-	assert.equal(fixture.session.status, 'done');
-});
 
 test('plural credentials in an SQA question select the secure credential form', async () => {
 	for (const question of [
@@ -978,17 +754,6 @@ test('SQA retries a gateway stream that ends with a bare terminated error', asyn
 	assert.ok(fixture.statuses.some(item => item.detail?.includes('interrupted')));
 });
 
-test('QA provider disconnect behavior is unchanged', async () => {
-	const fixture = runtimeFixture();
-	let calls = 0;
-	fixture.record.runtime.run = async function* () {
-		calls++;
-		throw new Error('Connection error: socket hang up');
-	};
-	await runTurn(fixture.session, { task: 'Run QA' }, fixture.store);
-	assert.equal(calls, 1);
-	assert.equal(fixture.session.status, 'error');
-});
 
 test('SQA does not retry authentication failures disguised as connection errors', async () => {
 	const fixture = runtimeFixture({
@@ -1037,7 +802,7 @@ for (const mode of ['sqa', 'founder']) {
 	});
 }
 
-for (const mode of ['qa', 'sqa', 'founder']) {
+for (const mode of ['sqa', 'founder']) {
 	test(`${mode} stale report cannot mark an unfinalized follow-up successful`, async () => {
 		const fixture = runtimeFixture({ mode, ...(mode === 'qa' ? { report: { ts: 1, verdict: 'pass' } } : { [mode]: { finalizedAt: '2026-09-09T00:00:00.000Z' } }) });
 		await runTurn(fixture.session, { task: 'Retest', incompleteAttempt: Number.MAX_SAFE_INTEGER }, fixture.store);
@@ -1618,42 +1383,7 @@ test('a user stop still ends interrupted when completions are healthy', async ()
 	release();
 });
 
-test('hybrid prose-only turns continue the same SDK session rather than marking unfinished work interrupted', async () => {
-  const { session, record, store } = runtimeFixture({ qaExecutionMode: 'hybrid', hybrid: { scenarios: [] } });
-  const checkpoints = []; let calls = 0;
-  record.hybrid = { segmentProgress() { return "fixture"; }, async continueSegment() { return { continue: true }; }, async beginTurn() {}, async endTurn(status) { checkpoints.push(status); }, context() { return ''; } };
-  record.runtime.getSessionSnapshot = () => ({});
-  record.runtime.run = async function* () {
-    calls++;
-    if (calls === 1) { yield { type: 'chat_text', content: 'The next scoped test is ready.' }; return; }
-    session.report = { ts: 42, verdict: 'partial', summary: 'Fixture finished with explicit gaps.' };
-    yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true } };
-  };
-  await runTurn(session, { task: 'Finish the scoped tests.' }, store);
-  assert.equal(calls, 2); assert.equal(session.status, 'done');
-  assert.deepEqual(checkpoints, ['running', 'done']);
-});
 
-for (const throws of [false, true]) test(`a hybrid budget abort that ${throws ? 'throws' : 'ends normally'} checkpoints a native approval question`, async () => {
-  const { hybridProfile } = await import('./hybridConfig.js');
-  const { session, record, store } = runtimeFixture({ qaExecutionMode: 'hybrid', ownerUserId: 'owner', hybrid: {
-    continuationPolicyVersion: 1, budgets: hybridProfile({ apiKey: 'fixture-key' }, {}).budgets,
-    telemetry: { reasoner: {}, classifier: {} }, scenarios: [], modelBudget: { roles: {} }
-  } });
-  const checkpoints = [];
-  record.hybrid = { segmentProgress() { return "fixture"; }, async continueSegment() { return { continue: true }; }, async beginTurn() {}, async endTurn(status) { checkpoints.push(status); }, context() { return ''; } };
-  record.runtime.getSessionSnapshot = () => ({});
-  record.runtime.agentSession = { pauseForQuestion() {} };
-  record.runtime.run = async function* () {
-    record.hybridPause = Object.assign(new Error('Fixture time budget reached'), { code: 'HYBRID_TIME_BUDGET' });
-    record.controller.abort(record.hybridPause);
-    if (throws) throw record.hybridPause;
-  };
-  await runTurn(session, { task: 'Run the scoped tests.' }, store);
-  assert.equal(session.status, 'awaiting_input'); assert.equal(session.pendingQuestion.hybridDecision, 'budget');
-  assert.equal(session.pendingQuestion.credentialLike, false);
-  assert.equal(checkpoints.at(-1), 'awaiting_input'); assert.equal(session.hybrid.budgets.reasonerTokens, 300000);
-});
 
 // #17935 — premature Review Failed: transient SDK failures must be retried,
 // not terminal-errored.
@@ -1755,65 +1485,10 @@ test('#17987 resume after stall completes from saved evidence and does not dupli
 // outstanding required scenarios is PARTIAL (lifecycle outcome), never
 // completed, regardless of how the turn ended.
 
-test('#17988 QA run done with outstanding required scenarios derives outcome PARTIAL', async () => {
-	const { session, record, store } = runtimeFixture();
-	// Hybrid-style ledger with two required scenarios, one still planned.
-	session.qaExecutionMode = 'hybrid';
-	session.hybrid = { scenarios: [
-		{ id: 's1', category: 'navigation', status: 'passed', assertions: [{ id: 'a1', outcome: 'pass', evidenceRef: 'e1' }], executedActionIds: ['x1'], evidenceRefs: ['e1'] },
-		{ id: 's2', category: 'forms', status: 'planned', assertions: [], executedActionIds: [] }
-	], evidence: [{ id: 'e1', runId: session.id, success: true, digest: 'd', result: {} }] };
-	session.report = { ts: 800, verdict: 'partial', summary: 'Coverage gaps.', notCovered: ['forms scenario not executed'] };
-	record.runtime.run = async function* () {
-		yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true, verdict: 'partial' } };
-	};
-	await runTurn(session, { task: 'finish' }, store);
-	assert.equal(session.status, 'done');
-	// The lifecycle must record PARTIAL, not completed: s2 never reached a
-	// verified terminal outcome.
-	assert.equal(session.lifecycle?.outcome, 'partial', 'done run with planned scenario must derive outcome partial');
-});
 
-test('#17988 QA run done with all required scenarios terminal derives outcome COMPLETED', async () => {
-	const { session, record, store } = runtimeFixture();
-	session.qaExecutionMode = 'hybrid';
-	session.hybrid = { scenarios: [
-		{ id: 's1', category: 'navigation', status: 'passed', assertions: [{ id: 'a1', outcome: 'pass', evidenceRef: 'e1' }], executedActionIds: ['x1'] },
-		{ id: 's2', category: 'forms', status: 'blocked', assertions: [], executedActionIds: [], uncertainty: ['credentials unavailable'] }
-	], evidence: [{ id: 'e1', runId: session.id, success: true, digest: 'd', result: {} }] };
-	session.report = { ts: 801, verdict: 'pass', summary: 'All done.' };
-	record.runtime.run = async function* () {
-		yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true, verdict: 'pass' } };
-	};
-	await runTurn(session, { task: 'finish' }, store);
-	assert.equal(session.status, 'done');
-	assert.equal(session.lifecycle?.outcome, 'completed', 'all-scenarios-terminal run derives completed');
-});
 
-for (const stopped of [false, true]) test(`automatic hard-limit closeout ${stopped ? 'honors a simultaneous user stop' : 'finishes without an approval question'}`, async () => {
-  const { session, record, store } = runtimeFixture({ qaExecutionMode: 'hybrid', ownerUserId: 'owner', hybrid: {
-    continuationPolicyVersion: 2, executionPolicy: { mode: 'autonomous', limits: {} }, scenarios: [], modelBudget: { roles: {} }
-  } });
-  let calls = 0;
-  record.hybrid = { segmentProgress() { return "fixture"; }, async continueSegment() { return { continue: true }; }, async beginTurn() {}, async endTurn() {}, context() { return ''; } };
-  record.runtime.getSessionSnapshot = () => ({});
-  record.runtime.run = async function* () {
-    calls++;
-    if (calls === 1) {
-      record.hybridPause = Object.assign(new Error('Fixture configured limit'), { code: 'HYBRID_MODEL_BUDGET' });
-      record.controller.abort(record.hybridPause);
-      if (stopped) record.userStopRequested = true;
-      throw record.hybridPause;
-    }
-    session.report = { ts: 88, verdict: 'blocked', summary: 'Configured limit reached; no passing coverage claimed.' };
-    yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true } };
-  };
-  await runTurn(session, { task: 'Run the authorized tests.' }, store);
-  assert.equal(session.status, stopped ? 'interrupted' : 'done'); assert.equal(calls, stopped ? 1 : 2);
-  assert.equal(session.pendingQuestion, undefined);
-});
 
-for (const mode of ['qa', 'sqa', 'founder']) test(`${mode} continuation retains device ownership and releases it exactly once`, async () => {
+for (const mode of ['sqa', 'founder']) test(`${mode} continuation retains device ownership and releases it exactly once`, async () => {
   const f = runtimeFixture({ mode }); let segments = 0, selections = 0; const releases = [];
   const devices = { async selectForRun() { selections++; return { executionLevel: 'SIMULATED', provider: 'fixture', deviceSession: { sessionId: 'device-fixture' } }; }, async completeSession(id) { releases.push(id); } };
   f.record.runtime.run = async function* () {
@@ -1858,10 +1533,3 @@ test('device selection is single-owner and cancellation before selection returns
   assert.equal(f.session.status,'interrupted');assert.equal(f.record.running,false);
 });
 
-test('checkpoint cleanup failure releases the runtime lock and device lease', async()=>{
-  const f=runtimeFixture();let released=0;
-  f.record.hybrid={segmentProgress(){return 'fixture';},async beginTurn(){},async continueSegment(){return {continue:true};},async endTurn(){throw new Error('Injected checkpoint failure');}};
-  const devices={async selectForRun(){return {deviceSession:{sessionId:'fixture'}};},async completeSession(){released++;}};
-  await assert.rejects(runTurn(f.session,{task:'Fixture'},f.store,devices),/checkpoint failure/);
-  assert.equal(f.record.running,false);assert.equal(f.record.controller,undefined);assert.equal(released,1);
-});

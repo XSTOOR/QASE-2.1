@@ -4,7 +4,6 @@ import http from 'node:http';
 import { once } from 'node:events';
 import { chromium } from 'playwright';
 import { runJevBrowserCheck } from './jevBrowserChecks.js';
-import { assessJevExecution, jevRouteCandidates } from './jevQaRunner.js';
 
 test('a disclosure on the wrong page is refused before dispatch, then a fresh actual control executes',async t=>{
  const browser=await chromium.launch();t.after(()=>browser.close());const page=await browser.newPage();
@@ -53,18 +52,6 @@ test('responsive cancellation restores the viewport without starting additional 
   assert.deepEqual(widths, [390, 1440]);
 });
 
-test('coverage planner uses only fresh observed safe links, never invented routes or destructive actions', () => {
-  const inventory = { url: 'https://site.test/', links: [
-    { href: 'https://site.test/help', label: 'Help', selector: '#help' },
-    { href: 'https://site.test/delete', label: 'Delete', selector: '#delete' },
-    { href: 'https://elsewhere.test/help', label: 'Other', selector: '#other' },
-    { href: 'https://site.test/?change=1', label: 'Go', selector: '#go' },
-    { href: 'https://site.test/#section', label: 'Section', selector: '#section' },
-    { href: 'https://site.test/download', label: 'Download', selector: '#download', download: true }
-  ] };
-  assert.deepEqual(jevRouteCandidates(inventory, inventory.url).map(item => item.url), ['https://site.test/help']);
-  assert.equal(jevRouteCandidates(inventory, inventory.url, [], ['https://site.test/help']).length, 0);
-});
 
 test('a decided navigation refuses a replaced link after preview capture', { timeout: 20000 }, async t => {
   const requests = [];
@@ -97,14 +84,6 @@ test('a decided navigation refuses a replaced link after preview capture', { tim
   assert.ok(!requests.some(url => ['/plans', '/rates'].includes(url)));
 });
 
-test('coverage gate cannot credit page counts as executed navigation or responsive tests', () => {
-  const execution = { visits: [{ url: 'https://site.test/', title: 'Test', diagnosticsComplete: true }], checks: [], remainingRoutes: 8 };
-  const result = assessJevExecution(['navigation', 'responsive', 'console_health'], execution);
-  assert.deepEqual(result.outcomes.map(item => item.status), ['not_tested', 'not_tested', 'tested']);
-  assert.match(result.notCovered.join(' '), /8 additional observed safe routes/);
-  const forms = assessJevExecution(['forms'], { ...execution, checks: [{ success: true, action: 'forms', fields: [{ type: 'email' }], assertions: [{ check: 'forms', outcome: 'pass' }] }] });
-  assert.equal(forms.outcomes[0].status, 'partial');
-});
 
 test('local search executes real filtering, restores input and distinguishes failures from guarded dependencies', { timeout: 30000 }, async t => {
   const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());

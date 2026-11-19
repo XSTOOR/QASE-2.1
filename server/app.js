@@ -19,10 +19,7 @@ import { runWithRequestActor } from './requestActor.js';
 import { authThrottleKey, createAuthThrottle } from './authThrottle.js';
 import { InviteError } from './invites.js';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
-import { prepareHybridAuthGrant, recordHybridAnswer } from './hybridAuth.js';
-import { initializeHybridState } from './hybridQaRuntime.js';
-import { projectQaEvidence } from './qaEvidence.js';
-import { applyHostDecision } from './hybridContinuation.js';
+import { publicQaState, createQaState } from './qa/engine.js';
 import {
 	FOUNDER_CATEGORIES,
 	FOUNDER_CAVEAT,
@@ -66,8 +63,6 @@ import { inspectSqaEvidence } from './sqaEvidence.js';
 import { assertAppliedSqaReviewEvidence, changeSqaReviewEvidence, isSqaReviewerArtifact, readSqaReviewerFile } from './sqaReviewEvidence.js';
 import { publicQaTestCatalog } from './qaTestCatalog.js';
 import { validateQaSelectedTests, validateSecurityAuthorization } from './appQaSelection.js';
-import { selectQaExecutionMode, hybridProfile, loadQualification } from './hybridConfig.js';
-import { hybridRecoveryProblem, publicHybridRecovery, reconcileHybridUsageBeforeResume } from './hybridRecoveryGate.js';
 import { buildFounderProgress, founderContinuationTask } from './founderProgress.js';
 import { inspectFounderEvidence, verifiedFounderObservationIds } from './founderEvidence.js';
 import { getConfig } from './config.js';
@@ -194,6 +189,19 @@ function configuredFrameAncestors(environment) {
  * Creates the HTTP application without listening or installing process signal
  * handlers. Startup stays in index.js; tests can provide in-memory services.
  */
+/** Optional QA test account supplied at launch: stored in the run vault, never persisted in plain text. */
+function validateTestAccount(value) {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Test account must be an object.');
+	const text = (field, max) => typeof value[field] === 'string' ? value[field].trim().slice(0, max) : '';
+	const username = text('username', 320), password = typeof value.password === 'string' ? value.password.slice(0, 4096) : '';
+	if (!username && !password) return undefined;
+	if (!username || !password) throw new TypeError('Provide both the test-account username and password, or neither.');
+	if (value.authorized !== true) throw new TypeError('Confirm that QASE may sign in with this test account.');
+	const url = field => { const raw = text(field, 2000); if (!raw) return undefined; const parsed = new URL(raw); if (!['http:', 'https:'].includes(parsed.protocol)) throw new TypeError(`${field} must be an http(s) URL.`); return parsed.href; };
+	return { username, password, loginUrl: url('loginUrl'), expectedUrl: url('expectedUrl') };
+}
+
 export function createApplication(options = {}) {
 	const services = assertApplicationServices(options.services);
 	const environment = options.environment ?? process.env;
@@ -910,25 +918,7 @@ export function createApplication(options = {}) {
 		response.json(await services.configuration.testConnection(request.body ?? {}));
 	});
 
-	app.post('/api/config/hybrid/qualification', async (request, response) => {
-		if (!requireOperator(request, response)) return;
-		if (!['owner', 'admin', 'developer'].includes(request.auth?.role)) {
-			response.status(403).json({ error: 'This action is limited to instance operators.' });
-			return;
-		}
-		if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body) || Object.keys(request.body).length) {
-			response.status(400).json({ error: 'This check uses the saved account configuration. Send an empty object.' });
-			return;
-		}
-		if (typeof services.configuration.qualifyHybrid !== 'function') {
-			response.status(503).json({ error: 'Model qualification is unavailable on this server. Ask the operator to run npm run qualify:hybrid-gateway.' });
-			return;
-		}
-		try {
-			const config = await services.configuration.qualifyHybrid();
-			response.status(config.hybridQa?.status === 'qualification_running' ? 202 : 200).json(config);
-		} catch (error) { safeErrorResponse(request, response, error); }
-	});
+
 
 	app.get('/api/devices', (_request, response) => {
 		response.json({
@@ -1993,14 +1983,14 @@ export function createApplication(options = {}) {
 			const engine = isEngineId(request.body?.engine) ? request.body.engine : 'chromium';
 			let selectedTests;
 			let securityAuthorization;
-			let qaExecutionMode;
+			let testAccount;
 			try {
 				selectedTests = validateQaSelectedTests(request.body?.selectedTests);
 				securityAuthorization = validateSecurityAuthorization(request.body?.securityAuthorization, selectedTests);
-				qaExecutionMode = selectQaExecutionMode(request.body?.qaExecutionMode);
+				// Every QA run uses the QA engine; the legacy field is accepted for old clients.
+				if (request.body?.qaExecutionMode !== undefined && !['hybrid', 'legacy'].includes(request.body.qaExecutionMode)) throw new Error('Unknown QA execution mode.');
 				if (request.body?.allowTestWrites !== undefined && typeof request.body.allowTestWrites !== 'boolean') throw new Error('Test-write authorization must be a boolean.');
-				if (request.body?.allowTestWrites === true && qaExecutionMode !== 'hybrid') throw new Error('Test-write authorization is available only for hybrid QA.');
-				if (qaExecutionMode === 'hybrid') loadQualification(hybridProfile(getConfig()));
+				testAccount = validateTestAccount(request.body?.testAccount);
 			} catch (error) {
 				response.status(400).json({ error: error instanceof Error ? error.message : 'Invalid test selection.' });
 				return;
@@ -2013,7 +2003,7 @@ export function createApplication(options = {}) {
 				engine === 'chromium' ? undefined : `QA — ${engine}`,
 				{
 					device, deviceLandscape, engine, ownerUserId: request.auth?.userId,
-					cohort, selectedTests, securityAuthorization, qaExecutionMode,
+					cohort, selectedTests, securityAuthorization, qaExecutionMode: 'hybrid',
 					...(scopeSelection ? { scopeSelection } : {}),
 					environmentId: environment?.envId,
 					environmentSnapshot: environment,
@@ -2022,12 +2012,13 @@ export function createApplication(options = {}) {
 					...(scopeSelection ? { scopeSelection } : {})
 				}
 			);
-			const jevNavigation = qaExecutionMode === 'hybrid' && process.env.QASE_HYBRID_JEV_NAVIGATION_ENABLED === 'true';
-			if (jevNavigation || request.body?.allowTestWrites === true) {
-				const state = initializeHybridState(session, hybridProfile(getConfig()), { jevNavigation });
-				if (request.body?.allowTestWrites === true) state.writeAuthorization = { enabled: true, runId: session.id, ownerUserId: session.ownerUserId, grantedAt: Date.now(), maximumSubmissions: 10, trials: [] };
-				await services.runs.commit(session, 'hybrid.state', {});
+			session.hybrid = createQaState({ allowWrites: request.body?.allowTestWrites === true,
+				auth: testAccount ? { authorized: true, loginUrl: testAccount.loginUrl, expectedUrl: testAccount.expectedUrl } : undefined });
+			if (testAccount) {
+				await services.secrets.store(session.id, { QA_USERNAME: testAccount.username, QA_PASSWORD: testAccount.password });
+				session.secretNames = await services.secrets.names(session.id);
 			}
+			await services.runs.commit(session, 'hybrid.state', {});
 			track('run_created', { mode: session.mode, ...cohortFor(request.auth?.role) });
 			response.status(201).json(session);
 		} catch (error) {
@@ -2167,8 +2158,7 @@ export function createApplication(options = {}) {
 		);
 		response.json({
 			...session,
-			...(session.mode === 'qa' && session.qaExecutionMode === 'hybrid' && session.hybrid
-				? { hybrid: { ...session.hybrid, recovery: publicHybridRecovery(session) } } : {}),
+			...(session.mode === 'qa' && session.hybrid ? { hybrid: publicQaState(session) ?? session.hybrid } : {}),
 			...(session.mode==='founder'?{founderProgress:buildFounderProgress(session,{running:liveState.running,resuming:founderContinuations.has(session.id),stopping:founderContinuations.get(session.id)?.cancelled})}:{}),
 			...(session.mode === 'founder' && session.founder?.finalizedAt ? { founderVerifiedObservations: verifiedFounderObservationIds(session) } : {}),
 			durationSeconds,
@@ -2341,10 +2331,14 @@ export function createApplication(options = {}) {
 	app.get('/api/sessions/:id/qa-evidence', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
-		if (session.mode !== 'qa' || session.qaExecutionMode !== 'hybrid') {
-			return response.status(404).json({ error: 'Browser assertion evidence is unavailable for this run.' });
+		if (session.mode !== 'qa' || !publicQaState(session)) {
+			return response.status(404).json({ error: 'Browser evidence is unavailable for this run.' });
 		}
-		response.set('Cache-Control', 'no-store').json(projectQaEvidence(session));
+		response.set('Cache-Control', 'no-store').json({
+			state: publicQaState(session),
+			findings: (session.findings ?? []).map(({ id, title, severity, category, url, viewports, selector, artifactId, source }) => ({ id, title, severity, category, url, viewports, selector, artifactId, source })),
+			dismissed: session.report?.qaEngine?.dismissed ?? []
+		});
 	});
 
 	app.get('/api/sessions/:id/sqa/evidence/:controlId/:index', async (request, response) => {
@@ -2476,12 +2470,6 @@ export function createApplication(options = {}) {
 		// even though its VERIFIED receipt was durably logged. Reconcile from the
 		// durable receipt log before gating; only genuinely unaccounted usage
 		// (no receipt, no log entry) stays blocked.
-		await reconcileHybridUsageBeforeResume(session);
-		const recoveryProblem = hybridRecoveryProblem(session);
-		if (recoveryProblem) {
-			response.status(409).json({ error: recoveryProblem.message, code: recoveryProblem.code });
-			return;
-		}
 
 		const url = extractUrl(text);
 		if (session.mode === 'founder' && !session.targetUrl && !url) {
@@ -2496,7 +2484,6 @@ export function createApplication(options = {}) {
 			}
 		}
 		await services.runs.addMessage(session, { role: 'user', text });
-		recordHybridAnswer(session, text);
 		if (url && !session.targetUrl) {
 			session.targetUrl = url;
 			// Keep the engine tag when the host-based default title replaces it later.
@@ -2587,13 +2574,7 @@ export function createApplication(options = {}) {
 				recordFounderPublicOnlyDecision(session);
 				answer = FOUNDER_PUBLIC_ONLY_ANSWER;
 			}
-			try {
-				const applied = applyHostDecision(session, answer);
-				if (session.pendingQuestion.hybridDecision && !applied) { response.status(409).json({ error: 'This host decision has already been answered. Refresh the saved run.' }); return; }
-			}
-			catch (error) { response.status(400).json({ error: error.message }); return; }
 			await services.runs.addMessage(session, { role: 'user', text: answer, kind: 'answer' });
-			recordHybridAnswer(session, answer);
 			if (founderLaunch) {
 				session.pendingQuestion = undefined;
 				await services.runs.commit(session, 'question', { question: null });
@@ -2634,25 +2615,19 @@ export function createApplication(options = {}) {
 		}
 
 		const applyCredentials = async () => {
-			let authGrant;
-			try { authGrant = prepareHybridAuthGrant(session, request.body); }
-			catch (error) { response.status(400).json({ error: error.message }); return; }
 			const names = await services.secrets.store(session.id, fields);
 			if (names.length === 0) {
 				response.status(400).json({ error: 'No usable credentials supplied.' });
 				return;
 			}
 			session.secretNames = await services.secrets.names(session.id);
-			if (authGrant) session.hybrid.authentication = authGrant;
-			if (authGrant && session.hybrid.pendingDecision?.kind === 'credentials') session.hybrid.pendingDecision = undefined;
 
 			const note = String(request.body?.note ?? '').trim();
 			const placeholders = names.map(name => `{{${name}}}`).join(', ');
 			const answer = [
 				'The credentials are stored in the host vault. You will not be shown the values.',
 				founderLaunch && 'The owner approved test-account sign-in on the declared target. Continue read-only review after sign-in; other origins remain out of scope.',
-				authGrant?.loginEndpoint && `The owner approved exactly this sign-in API endpoint for one credential POST: ${authGrant.loginEndpoint}. This does not authorize other writes or navigation outside the target origin.`,
-				authGrant ? 'The owner authorized one test-account sign-in on the target origin. Open the observed sign-in page, then use browser_authenticate with no arguments. Continue read-only testing after verified access. Other writes remain forbidden.' : `Fill the sign-in form using these literal placeholders as the browser_fill value: ${placeholders}.`,
+				`Fill the sign-in form using these literal placeholders as the browser_fill value: ${placeholders}.`,
 				'The host substitutes the real secret at the keyboard. Never print, repeat or report a credential value.',
 				note && `Note from the user: ${note}`
 			].filter(Boolean).join(' ');

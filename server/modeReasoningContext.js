@@ -1,5 +1,5 @@
 import { standaloneSqa } from './sqaStandaloneStrategy.js';
-import { compactCompletedRounds } from './hybridContext.js';
+import { compactCompletedRounds } from './modeContextCompaction.js';
 import path from 'node:path';
 import {modeDiscoverySummary,modeWorkReadiness,modeExplorationReadiness} from './modeDiscovery.js';
 import {FOUNDER_CATEGORIES} from './founderSchema.js';

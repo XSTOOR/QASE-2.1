@@ -79,43 +79,6 @@ test('local Founder updates serialize, roll back failed writes and preserve corr
 	assert.equal(await fs.readFile(file, 'utf8'), '{corrupt');
 });
 
-test('QA completion message survives a real JSON store reload', async t => {
-	const originalDirectory = process.cwd();
-	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'qase-chat-store-'));
-	t.after(async () => {
-		process.chdir(originalDirectory);
-		await fs.rm(directory, { recursive: true, force: true });
-	});
-	process.chdir(directory);
-	const first = await import(`./store.js?qa-write=${Date.now()}`);
-	const session = first.createSession('QA completion persistence');
-	session.targetUrl = 'https://example.test';
-	session.findings = [{ severity: 'high', title: 'Submit fails', actual: 'HTTP 500' }];
-	const record = {
-		runtime: {
-			async *run() {
-				session.report = { ts: 123, verdict: 'fail', summary: 'Tested the form.' };
-				yield { type: 'tool_result', toolName: 'finish_qa_report', result: { success: true, published: true } };
-			},
-			getPendingQuestion: () => undefined
-		},
-		bridge: { hasPage: () => false, captureFrame: async () => {}, stopFrames() {} }
-	};
-	const adapter = {
-		...first, liveFor: () => record, listLive: () => [],
-		commit: first.emit, publish() {}
-	};
-	await runTurn(session, { task: 'Complete QA' }, adapter);
-	first.flushSessions();
-	const second = await import(`./store.js?qa-read=${Date.now()}`);
-	second.loadSessions();
-	const restored = second.getSession(session.id);
-	assert.equal(restored.status, 'done');
-	assert.equal(restored.messages.filter(message => message.kind === 'qa-report').length, 1);
-	assert.equal(restored.messages.at(-1).id, 'qa-report-123');
-	assert.match(restored.messages.at(-1).text, /Submit fails — HTTP 500/);
-	second.flushSessions();
-});
 
 test('local JSON persistence round-trips token usage for a completed run', async t => {
 	const originalDirectory = process.cwd();

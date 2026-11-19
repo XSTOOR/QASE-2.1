@@ -15,7 +15,7 @@ function interruptedSession(overrides = {}) {
 		status: 'interrupted',
 		interruptedFromRun: true,
 		autoResumeCount: 0,
-		mode: 'qa',
+		mode: 'sqa',
 		ownerUserId: 'user-a',
 		targetUrl: 'https://example.dev/',
 		messages: [],
@@ -287,53 +287,8 @@ test('resume fails activities still running from before the restart so publish c
 	assert.equal(done.status, 'done', 'settled activities are untouched');
 });
 
-test('an unresolved hybrid receipt never constructs a runtime, spends a retry or reports a resume', async () => {
-	for (const role of ['reasoner', 'classifier']) {
-		const session = interruptedSession({ qaExecutionMode: 'hybrid', hybrid: {
-			modelBudget: { roles: { [role]: { legacyCalls: 0, reservations: [{ id: 'lost', status: 'pending', tokens: 6090 }] } } },
-			evidence: [{ id: 'saved-evidence' }]
-		} });
-		const before = structuredClone(session);
-		const harness = makeHarness({ sessions: [session], listInterrupted: async () => [session] });
-		harness.api.ensureRuntime = () => { throw Error('Must not construct a runtime for a blocked run.'); };
-		assert.equal(await harness.resumeAll(), 0);
-		assert.equal(await harness.resumeAll(), 0, 'Another boot scan cannot forgive the missing receipt.');
-		assert.deepEqual(session, before, 'Preserve exposure, evidence and recovery attempts.');
-		assert.deepEqual(harness.restored, []); assert.deepEqual(harness.turns, []);
-		assert.equal(harness.log.filter(([event]) => event === 'runresume.blocked').length, 2);
-		assert.equal(harness.log.find(([event]) => event === 'runresume.blocked')[1].errorCode, 'HYBRID_USAGE_UNRESOLVED');
-		assert.equal(harness.log.some(([event]) => event === 'runresume.resumed' || event === 'runresume.runtime-failed'), false);
-	}
-});
 
-test('a blocked latest run does not prevent safe recovery of another owner run', async () => {
-	const blocked = interruptedSession({ id: 'blocked', qaExecutionMode: 'hybrid', hybrid: {
-		modelBudget: { roles: { classifier: { legacyCalls: 1 } } }
-	} });
-	const safe = interruptedSession({ id: 'safe', ownerUserId: 'user-b' });
-	const harness = makeHarness({ sessions: [blocked, safe], snapshots: [
-		{ sessionId: blocked.id, ownerUserId: blocked.ownerUserId, savedAt: 2 },
-		{ sessionId: safe.id, ownerUserId: safe.ownerUserId, savedAt: 1 }
-	] });
-	assert.equal(await harness.resumeAll(), 1);
-	assert.deepEqual(harness.turns.map(item => item.id), ['safe']);
-	assert.equal(blocked.autoResumeCount, 0);
-	assert.ok(harness.log.some(([event, actor]) => event === 'actor' && actor.actorUserId === 'user-b'));
-});
 
-test('boot recovery reconciles a logged receipt before resuming a hybrid run', async () => {
-	const reservation = { id: 'saved', status: 'pending', tokens: 150 };
-	const session = interruptedSession({ qaExecutionMode: 'hybrid', hybrid: {
-		modelBudget: {
-			roles: { reasoner: { legacyCalls: 0, reservations: [reservation] } },
-			receiptLog: [{ role: 'reasoner', reservationId: 'saved', inputTokens: 120, outputTokens: 30 }]
-		}
-	} });
-	const harness = makeHarness({ sessions: [session], listInterrupted: async () => [session] });
-	assert.equal(await harness.resumeAll(), 1);
-	assert.equal(reservation.status, 'settled');
-	assert.deepEqual(harness.turns.map(item => item.id), [session.id]);
-});
 
 test('a failed recovery turn is never logged or counted as successfully resumed', async () => {
 	const session = interruptedSession();

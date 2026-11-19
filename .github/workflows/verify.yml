@@ -71,8 +71,8 @@ jobs:
             ${{ runner.temp }}/qase-verification.log
           if-no-files-found: warn
           retention-days: 7
-      - name: Verify dashboard navigation and secure credential handoff
-        run: node scripts/qualify-live-preview.mjs
+      - name: Verify the QA engine end to end against the seeded-defect QA Lab
+        run: node --test server/qa/engine.integration.test.js
       - name: Verify account access and one-use recovery without external services
         run: |
           node scripts/test-auth-browser.mjs

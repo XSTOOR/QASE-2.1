@@ -7,12 +7,10 @@ import { runJevAccessibility } from './jevAccessibility.js';
 import { runJevAnchors, runJevTabs, runJevNavigationControl, isolated } from './jevInteractions.js';
 import { responsiveWidths } from './qaViewport.js';
 import { settleQaControl, qaPageReadiness } from './qaRenderReadiness.js';
-import { runLiveFormChecks } from './qaLiveForms.js';
 import { featureStateKey, legacyFeatureStateKey } from './qaFeatureState.js';
 
-import { MENU_MOTION, runMenuMotion } from './qaMenuMotion.js';
 
-export const JEV_BROWSER_CHECKS = ['inspect', 'navigation', 'responsive', 'forms', 'search', 'media', 'disclosure', 'accessibility', 'dismiss_overlay', 'anchors', 'tabs', 'scroll', 'navigation_control', 'open_test_form', 'submit_test_form', MENU_MOTION];
+export const JEV_BROWSER_CHECKS = ['inspect', 'navigation', 'responsive', 'forms', 'search', 'media', 'disclosure', 'accessibility', 'dismiss_overlay', 'anchors', 'tabs', 'scroll', 'navigation_control', 'open_test_form'];
 const risky = /delete|remove|logout|log.?out|sign.?out|reset|cancel|purchase|checkout|payment|subscribe|send|invite|publish|deploy|save|create|destroy|revoke|confirm|unsubscribe/i;
 const trim = value => String(value ?? '').slice(0, 1500);
 const sameUrl = (a, b) => new URL(a).href.replace(/\/$/, '') === new URL(b).href.replace(/\/$/, '');
@@ -603,7 +601,7 @@ async function dismissOverlay(page, input) {
   return { assertions: [assertion('navigation', 'Observed dialog closes after its close control is activated', closed, 'The original dialog becomes hidden or is detached; any replacement is inspected separately', { label: overlay.close.label, closed })], inventory: await inspectJevPage(page) };
 }
 
-export async function runJevBrowserCheck(page, input, { signal, navigationGuard, menuMotion, saveMotionFrame, authorizeControl, onAction, onViewport, responsiveBoundaries = false, liveForms = false, requireLiveForms = false, protectInputs, executeTestForm } = {}) {
+export async function runJevBrowserCheck(page, input, { signal, navigationGuard, authorizeControl, onAction, onViewport, responsiveBoundaries = false, protectInputs } = {}) {
   const startedAt = Date.now();
   if (!page || page.isClosed()) return { success: false, dispatched: false, action: input?.action, error: 'No live browser page.' };
   if (!JEV_BROWSER_CHECKS.includes(input?.action)) return { success: false, dispatched: false, error: 'Unknown QA scenario.' };
@@ -629,12 +627,10 @@ export async function runJevBrowserCheck(page, input, { signal, navigationGuard,
     }
     let result;
     switch (input.action) {
-      case MENU_MOTION: result = await runMenuMotion(page, menuMotion, { authorizeControl, protectInputs, signal, saveFrame: saveMotionFrame }); break;
-      case 'submit_test_form': result = executeTestForm ? await executeTestForm(input.selector, signal) : { success: false, assertions: [], gaps: ['No test-write authorization is available.'] }; break;
       case 'inspect': result = { inventory: await inspectJevPage(page), assertions: [] }; break;
       case 'navigation': result = await navigation(page, input, onAction, navigationGuard, signal); break;
       case 'responsive': result = await responsive(page, { authorizeControl, signal, onAction, onViewport, responsiveBoundaries }); break;
-      case 'forms': result = liveForms ? await runLiveFormChecks(page, { signal, onAction, protectInputs }) : requireLiveForms ? { fields: [], assertions: [], gaps: ['The runtime could not verify HTTP, WebSocket and service-worker isolation; live inputs were not modified.'] } : await forms(page); break;
+      case 'forms': result = await forms(page); break;
       case 'search': result = await search(page); break;
       case 'media': result = await media(page); break;
       case 'disclosure': result = await disclosure(page, input, onAction); break;

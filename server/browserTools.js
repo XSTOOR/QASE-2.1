@@ -2,7 +2,6 @@
 import { SECURITY_CHECK_IDS } from './securityChecks.js';
 import { INTERACTION_ACTIONS } from './interactionApi.js';
 import { JEV_BROWSER_CHECKS } from './jevBrowserChecks.js';
-import { MENU_MOTION } from './qaMenuMotion.js';
 
 export function createBrowserTools(getBridge) {
 	return [
@@ -13,19 +12,13 @@ export function createBrowserTools(getBridge) {
 				if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['offset', 'limit'].includes(key)) || input.offset !== undefined && (!Number.isInteger(input.offset) || input.offset < 0 || input.offset > 1000000) || input.limit !== undefined && (!Number.isInteger(input.limit) || input.limit < 1000 || input.limit > 12000)) return { success: false, error: 'Use an offset from 0 to 1000000 and a limit from 1000 to 12000 characters.' };
 				return getBridge().readPageContent(input);
 			} },
-		{ name: 'browser_authenticate', category: 'browser', description: 'Perform one explicitly authorized test-account sign-in using host-vault credentials. No credential values, endpoints or selectors are accepted from the model. Open the observed sign-in page first. The host waits for its rendered form, then allows one same-origin auth POST or an exact API endpoint explicitly approved in the secure form. Other writes remain blocked. Failed access requires a user recovery decision. Login access is not a full authentication/security test.',
-			parametersSchema: { type: 'object', properties: {}, additionalProperties: false },
-			async run(input = {}) { if (Object.keys(input).length) return { success: false, error: 'Sign-in takes no model-supplied credentials or permissions.' }; return getBridge().authenticate(); } },
 		{
 			name: 'browser_qa_check', category: 'browser',
 			description: 'Fixed evidence-producing checks, never model scripts. inspect gives settled inventory (zero assertions). navigation requires BOTH selector of an observed unique safe anchor and expected equal to its exact absolute href; it tests click/back/forward. disclosure/dismiss_overlay/navigation_control require selector. navigation_control exercises an observed safe navigation-region button and restores the source. responsive/forms/search/media/accessibility/anchors/tabs/scroll need only action. Forms use detached native validation, never submission. Results include assertions and limitations.',
 			parametersSchema: { type: 'object', additionalProperties: false, properties: { action: { type: 'string', enum: JEV_BROWSER_CHECKS }, selector: { type: 'string', description: 'REQUIRED for navigation/disclosure/dismiss_overlay/navigation_control: unique CSS selector from the current observed inventory.' }, expected: { type: 'string', description: 'REQUIRED for navigation: exact observed absolute anchor href, NOT a prose expectation.' }, restore: { type: 'boolean', description: 'Restore a disclosure after observing its revealed links.' } }, required: ['action'] },
 			async run(input, context) {
 				if (!JEV_BROWSER_CHECKS.includes(input?.action) || (input.restore !== undefined && typeof input.restore !== 'boolean') || ['selector', 'expected'].some(key => input[key] !== undefined && (typeof input[key] !== 'string' || input[key].length > 4000)) || (['navigation', 'navigation_control', 'disclosure', 'dismiss_overlay'].includes(input.action) && !input.selector) || (input.action === 'navigation' && !input.expected)) return { success: false, dispatched: false, error: 'Provide a supported action and observed selector/expected URL for navigation.' };
-				if (input.action === MENU_MOTION && (!context?.qaseMenuMotion || Object.keys(input).length !== 1)) {
-					return { success: false, dispatched: false, error: 'Menu motion takes only the action and host-approved scenario.' };
-				}
-				return getBridge().runQaCheck(input, context?.qaseNavigationGuard, context?.qaseMenuMotion);
+				return getBridge().runQaCheck(input, context?.qaseNavigationGuard);
 			}
 		},
 		{

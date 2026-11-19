@@ -111,20 +111,6 @@ test('QA macros honor the active run cancellation before dispatch and after queu
   bridge.dispose();
 });
 
-test('hybrid context blocks target writes and WebSocket connections before forwarding', async () => {
-  const { service, context } = fakeService();
-  const session = { id: 'hybrid-policy', qaExecutionMode: 'hybrid', targetUrl: service.activePage.url(), messages: [] };
-  const bridge = await attachBrowserBridge(session, service, fakeRunStore());
-  await service.ensurePage();
-  let forwarded = false, aborted = false;
-  await context.routeHandler({ request: () => ({ method: () => 'POST', url: () => 'https://app.example.test/records', resourceType: () => 'fetch' }), continue: async () => { forwarded = true; }, abort: async () => { aborted = true; } });
-  assert.equal(forwarded, false); assert.equal(aborted, true);
-  let connected = false, closed = false;
-  await context.webSocketHandler({ connectToServer() { connected = true; }, async close() { closed = true; } });
-  assert.equal(connected, false); assert.equal(closed, true);
-  assert.ok(bridge.securityBlocks.some(item => item.code === 'HYBRID_WRITE_REQUEST_BLOCKED'));
-  bridge.dispose();
-});
 
 test('diagnostics capture uncaught exceptions and failed requests once, with provenance and clear semantics', async () => {
   const { service } = fakeService();
@@ -386,28 +372,6 @@ test('browser bridge coalesces concurrent captures and does not publish identica
 	bridge.dispose();
 });
 
-test('hybrid preview reads the existing page without SDK ensurePage or viewport mutation and skips active QA timers', async () => {
-	const session = { id: 'preview-hybrid', qaExecutionMode: 'hybrid', targetUrl: 'https://app.example.test/', messages: [] };
-	const { service } = fakeService(), runStore = fakeRunStore();
-	let screenshots = 0;
-	service.screenshot = async () => { throw new Error('SDK screenshot must not prepare or restore the page'); };
-	service.activePage.screenshot = async options => {
-		assert.equal(options.timeout, 1200); assert.equal(options.animations, 'allow'); assert.equal(options.caret, 'initial');
-		screenshots++; return Buffer.from('read-only-preview');
-	};
-	const bridge = await attachBrowserBridge(session, service, runStore, { policy: createBrowserPolicy({ getTargetUrl: () => session.targetUrl, environment: { NODE_ENV: 'test' } }) });
-	bridge.qaOperationActive = true;
-	await bridge.captureFrame(); assert.equal(screenshots, 0);
-	await bridge.captureFrame({ withinQaCheck: true }); assert.equal(screenshots, 1);
-	assert.equal(bridge.qaOperationActive, true, 'Preview reads cannot release execution ownership.');
-	const frame = runStore.events.find(event => event.type === 'frame').payload.frame;
-	assert.equal(frame.url, service.activePage.url()); assert.equal(frame.title, 'Target');
-	assert.deepEqual(frame.viewport, { width: 1440, height: 900 });
-	service.activePage.screenshot = async () => { throw new Error('Fixture screenshot timeout'); };
-	await bridge.captureFrame({ withinQaCheck: true });
-	assert.equal(bridge.getLastFrame(), frame, 'Failed preview keeps the last honest frame, without failing the QA action.');
-	bridge.dispose();
-});
 
 test('context route teardown errors cannot escape and kill the server; unexpected dispatch failures remain blocked', async () => {
   const { service, context } = fakeService(), runStore = fakeRunStore();

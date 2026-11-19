@@ -140,37 +140,6 @@ test('legacy reconciliation requires every exact receipt; aggregate totals alone
   assert.equal(f.telemetry.metrics.reasoner.calls, 3); assert.equal(f.telemetry.metrics.reasoner.inputTokens, 76666);
 });
 
-test('offline repair dry-run preserves history; explicit apply backs up history and changes no limits or evidence', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-budget-repair-test-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const f = fixture(); delete f.session.hybrid.modelBudget;
-  Object.assign(f.telemetry.metrics.reasoner, { calls: 3, inputTokens: 76666, outputTokens: 551, reservedTokens: 234321, usageReported: true });
-  Object.assign(f.session, { mode: 'qa', qaExecutionMode: 'hybrid', status: 'interrupted', findings: [{ id: 'preserved' }] });
-  f.session.hybrid.budgets = structuredClone(f.profile.budgets);
-  f.session.hybrid.evidence = [{ id: 'real-existing-evidence' }];
-  const receipts = [[23966, 104], [24249, 46], [28451, 401]].map(([inputTokens, outputTokens], i) => ({ event: 'token_usage_commit', runId: f.session.id, callId: `exact-${i}`, inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, estimated: false }));
-  const log = path.join(root, 'host.log'), history = path.join(root, '.qase', 'sessions.json');
-  fs.mkdirSync(path.dirname(history)); fs.writeFileSync(history, JSON.stringify([f.session]));
-  fs.writeFileSync(log, receipts.map(item => JSON.stringify(item)).join('\n'));
-  const before = fs.readFileSync(history, 'utf8'), script = fileURLToPath(new URL('../scripts/reconcile-hybrid-budget.mjs', import.meta.url));
-  const server = net.createServer(socket => socket.end());
-  t.after(() => new Promise(resolve => { server.closeAllConnections?.(); server.close(resolve); }));
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  const port = String(server.address().port);
-  const run = args => spawnSync(process.execPath, [script, f.session.id, log, ...args], { cwd: root, encoding: 'utf8', timeout: 15000, env: { ...process.env, NODE_ENV: 'development', QASE_RUN_STORE: 'local', PORT: port } });
-  const dry = run([]); assert.equal(dry.status, 0, dry.stderr); assert.equal(fs.readFileSync(history, 'utf8'), before);
-  assert.equal(JSON.parse(dry.stdout).applied, false);
-  const online = run(['--apply']); assert.notEqual(online.status, 0); assert.match(online.stderr, /Stop the local server/);
-  assert.equal(fs.readFileSync(history, 'utf8'), before);
-  await new Promise(resolve => server.close(resolve));
-  const apply = run(['--apply']); assert.equal(apply.status, 0, apply.stderr);
-  const result = JSON.parse(apply.stdout), saved = JSON.parse(fs.readFileSync(history, 'utf8'))[0];
-  assert.equal(result.applied, true); assert.equal(result.runStarted, false); assert.equal(fs.readFileSync(result.backup, 'utf8'), before);
-  assert.deepEqual(saved.hybrid.budgets, f.profile.budgets); assert.deepEqual(saved.hybrid.evidence, f.session.hybrid.evidence); assert.deepEqual(saved.findings, f.session.findings);
-  assert.equal(saved.status, 'interrupted'); assert.equal(saved.hybrid.telemetry.reasoner.calls, 3); assert.equal(saved.hybrid.telemetry.reasoner.reservedTokens, 0);
-  assert.equal(saved.hybrid.modelBudget.roles.reasoner.reconciliation.receipts.length, 3);
-  const duplicate = run(['--apply']); assert.notEqual(duplicate.status, 0); assert.match(duplicate.stderr, /Complete exact host receipts/);
-});
 
 test('configured classifier degradation retains unresolved exposure but does not silently dispatch more requests', async () => {
   const f = fixture(); f.profile.allowWithoutClassifier = true; let requests = 0;

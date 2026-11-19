@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { createApplication } from './app.js';
-import { prepareHostDecision } from './hybridContinuation.js';
 import { hybridProfile } from './hybridConfig.js';
 import { SQA_STANDALONE_CAPABILITIES, standaloneProfileIdentity, standaloneResearchProfile } from './sqaStandaloneQualification.js';
 import { SQA_STANDALONE_STRATEGY } from './sqaStandaloneStrategy.js';
@@ -615,37 +614,7 @@ test('standard QA run creation accepts a catalog-validated test selection', asyn
 	assert.match((await body(duplicate)).error, /Duplicate standard test/);
 });
 
-test('hybrid creation is disabled by default and cannot be enabled by request-body flags', async t => {
-  const old = process.env.QASE_HYBRID_QA_ENABLED; delete process.env.QASE_HYBRID_QA_ENABLED;
-  t.after(() => { if (old === undefined) delete process.env.QASE_HYBRID_QA_ENABLED; else process.env.QASE_HYBRID_QA_ENABLED = old; });
-  const fixture = await startFixture(); t.after(() => fixture.close());
-  const response = await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'hybrid', enabled: true, capabilities: { qualified: true } } });
-  assert.equal(response.status, 400); assert.match((await body(response)).error, /disabled/);
-  assert.equal((await body(await fixture.request('/api/sessions'))).length, 0);
-  assert.equal((await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'legacy' } })).status, 201);
-  assert.equal((await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'legacy', allowTestWrites: true } })).status, 400);
-  assert.equal((await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'legacy', allowTestWrites: 'true' } })).status, 400);
-});
 
-test('hybrid test-write authorization is pinned by the owner request and ignores forged grant fields', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-api-write-grant-'));
-  const env = { QASE_HYBRID_QA_ENABLED: 'true', QASE_LOCK_MODEL: 'false', QASE_HYBRID_QUALIFICATION_FILE: path.join(root, 'qualification.json') };
-  const old = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]])); Object.assign(process.env, env);
-  t.after(() => { for (const [key, value] of Object.entries(old)) if (value === undefined) delete process.env[key]; else process.env[key] = value; fs.rmSync(root, { recursive: true, force: true }); });
-  const settings = { apiKey: 'api-write-fixture', provider: 'jev', model: 'jev-1.13' };
-  await withUserConfiguration(settings, async () => {}, async () => {
-    const profile = hybridProfile(settings);
-    fs.writeFileSync(env.QASE_HYBRID_QUALIFICATION_FILE, JSON.stringify({ sdkVersion: HYBRID_SDK_VERSION, profileIdentity: profileIdentity(profile), checkedAt: Date.now(), capabilities: Object.fromEntries(REQUIRED_CAPABILITIES.map(name => [name, { passed: true }])) }));
-    const fixture = await startFixture(); t.after(() => fixture.close());
-    const result = await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'hybrid', selectedTests: ['forms'], allowTestWrites: true, writeAuthorization: { ownerUserId: 'forged', maximumSubmissions: 100000 } } });
-    assert.equal(result.status, 201);
-    const created = await body(result), grant = created.hybrid.writeAuthorization;
-    assert.equal(grant.runId, created.id); assert.equal(grant.ownerUserId, created.ownerUserId); assert.notEqual(grant.ownerUserId, 'forged');
-    assert.equal(grant.maximumSubmissions, 10); assert.equal(grant.enabled, true);
-    const readonly = await body(await fixture.request('/api/sessions', { method: 'POST', json: { qaExecutionMode: 'hybrid', selectedTests: ['forms'], writeAuthorization: { enabled: true } } }));
-    assert.equal(readonly.hybrid?.writeAuthorization, undefined);
-  });
-});
 
 test('standard QA run creation persists a whitelisted coverage scope selection', async t => {
 	const fixture = await startFixture();
@@ -1379,49 +1348,8 @@ test('runtime initialization failures retain the user message and return the est
 	assert.equal(session.status, 'error');
 });
 
-test('an interrupted hybrid snapshot explains the missing receipt and rejects resume without starting work', async t => {
-	const fixture = await startFixture(); t.after(() => fixture.close());
-	const session = fixture.services.runs.create();
-	Object.assign(session, { mode: 'qa', qaExecutionMode: 'hybrid', status: 'interrupted', targetUrl: 'https://example.test/',
-		hybrid: { modelBudget: { roles: { reasoner: { legacyCalls: 0, reservations: [{ id: 'unknown', status: 'pending', tokens: 123 }] } } } } });
-	const before = JSON.stringify(session);
-	const snapshot = await body(await fixture.request(`/api/sessions/${session.id}`));
-	assert.equal(snapshot.hybrid.recovery.resumeBlockedReason, 'usage_unverified');
-	const response = await fixture.request(`/api/sessions/${session.id}/message`, { method: 'POST', json: { text: 'continue' } });
-	assert.equal(response.status, 409); assert.equal((await body(response)).code, 'HYBRID_USAGE_UNRESOLVED');
-	assert.equal(fixture.state.ensureCalls.length, 0); assert.equal(fixture.state.runCalls.length, 0);
-	assert.equal(JSON.stringify(session), before);
-});
 
-test('an interrupted hybrid snapshot permits recovery when the exact usage receipt is already logged', async t => {
-	const fixture = await startFixture(); t.after(() => fixture.close());
-	const session = fixture.services.runs.create();
-	const reservation = { id: 'saved', status: 'pending', tokens: 123 };
-	Object.assign(session, { qaExecutionMode: 'hybrid', status: 'interrupted',
-		hybrid: { modelBudget: {
-			roles: { reasoner: { legacyCalls: 0, reservations: [reservation] } },
-			receiptLog: [{ role: 'reasoner', reservationId: 'saved', inputTokens: 110, outputTokens: 13 }]
-		} } });
-	const snapshot = await body(await fixture.request(`/api/sessions/${session.id}`));
-	assert.equal(snapshot.hybrid.recovery.resumeBlockedReason, undefined);
-	assert.equal(reservation.status, 'pending', 'Reading the dashboard cannot mutate the saved ledger.');
-	const response = await fixture.request(`/api/sessions/${session.id}/message`, { method: 'POST', json: { text: 'continue' } });
-	assert.equal(response.status, 200);
-	assert.equal(reservation.status, 'settled');
-	await fixture.whenIdle();
-});
 
-test('a completed hybrid budget closeout does not spend another model call republishing the same report', async t => {
-	const fixture = await startFixture(); t.after(() => fixture.close());
-	const session = fixture.services.runs.create();
-	Object.assign(session, { mode: 'qa', qaExecutionMode: 'hybrid', status: 'done', report: { verdict: 'partial', summary: 'Preserve this report.' }, hybrid: { budgetFinalizing: true } });
-	const before = JSON.stringify(session);
-	const response = await fixture.request(`/api/sessions/${session.id}/message`, { method: 'POST', json: { text: 'complete the remaining parts' } });
-	assert.equal(response.status, 409); const result = await body(response);
-	assert.equal(result.code, 'HYBRID_COVERAGE_CLOSED'); assert.match(result.error, /Start a new test/);
-	assert.equal(fixture.state.ensureCalls.length, 0); assert.equal(fixture.state.runCalls.length, 0);
-	assert.equal(JSON.stringify(session), before);
-});
 
 test('answers and credentials require pending input and never expose raw credential values', async t => {
 	const fixture = await startFixture();
@@ -1457,41 +1385,7 @@ test('answers and credentials require pending input and never expose raw credent
 	await fixture.whenIdle();
 });
 
-test('hybrid secure access requires consent, stores no values in transcript, and remembers a declined scope', async t => {
-  const fixture = await startFixture(); t.after(() => fixture.close());
-  const session = fixture.services.runs.create();
-  Object.assign(session, { mode: 'qa', qaExecutionMode: 'hybrid', targetUrl: 'https://example.test/', hybrid: { authentication: { status: 'unrequested', required: true } }, pendingQuestion: { question: 'Test account credentials?', credentialLike: true } });
-  const fields = { QA_USERNAME: 'test@example.invalid', QA_PASSWORD: 'fixture-only-password' };
-  assert.equal((await fixture.request(`/api/sessions/${session.id}/credentials`, { method: 'POST', json: { fields } })).status, 400);
-  assert.equal((await fixture.services.secrets.names(session.id)).length, 0);
-  assert.ok(session.pendingQuestion);
-  assert.equal((await fixture.request(`/api/sessions/${session.id}/credentials`, { method: 'POST', json: { fields, authorizeLogin: true, expectedUrl: 'https://outside.test/' } })).status, 400);
-  const result = await fixture.request(`/api/sessions/${session.id}/credentials`, { method: 'POST', json: { fields, authorizeLogin: true, expectedUrl: 'https://example.test/dashboard' } });
-  assert.equal(result.status, 200); await fixture.whenIdle();
-  assert.equal(session.hybrid.authentication.status, 'approved'); assert.equal(session.hybrid.authentication.maxSubmissions, 1);
-  assert.match(fixture.state.runCalls.at(-1).options.resumeAnswer, /browser_authenticate/);
-  assert.ok(!JSON.stringify({ session, events: fixture.state.events, calls: fixture.state.runCalls }).includes(fields.QA_PASSWORD));
-  session.pendingQuestion = { credentialLike: true };
-  assert.equal((await fixture.request(`/api/sessions/${session.id}/answer`, { method: 'POST', json: { answer: 'Continue public-only. No credentials.' } })).status, 200);
-  await fixture.whenIdle(); assert.equal(session.hybrid.authentication.status, 'declined');
-});
 
-test('the owned answer endpoint requires explicit displayed continuation approval before extending budgets', async t => {
-  const fixture = await startFixture(); t.after(() => fixture.close());
-  const session = fixture.services.runs.create();
-  Object.assign(session, { mode: 'qa', qaExecutionMode: 'hybrid', status: 'awaiting_input', targetUrl: 'https://example.test/',
-    hybrid: { continuationPolicyVersion: 1, budgets: hybridProfile({}, {}).budgets, exploration: { maxPages: 8 }, scenarios: [], modelBudget: { roles: {} }, telemetry: { reasoner: { inputTokens: 190000, outputTokens: 1000 } } } });
-  const decision = prepareHostDecision(session, { closing: true });
-  session.pendingQuestion = { toolCallId: decision.id, hybridDecision: 'budget', credentialLike: false };
-  assert.equal((await fixture.request(`/api/sessions/${session.id}/answer`, { method: 'POST', json: { answer: 'continue' } })).status, 400);
-  assert.equal(session.hybrid.budgets.reasonerTokens, 300000); assert.equal(fixture.state.runCalls.length, 0);
-  assert.equal((await fixture.request(`/api/sessions/${session.id}/answer`, { method: 'POST', json: { answer: decision.input.options[0] } })).status, 200);
-  await fixture.whenIdle();
-  assert.equal(session.hybrid.budgets.reasonerTokens, 600000); assert.equal(session.hybrid.telemetry.reasoner.inputTokens, 190000);
-  assert.equal(session.hybrid.budgetApprovals.length, 1); assert.equal(fixture.state.runCalls.length, 1);
-  assert.equal((await fixture.request(`/api/sessions/${session.id}/answer`, { method: 'POST', json: { answer: decision.input.options[0] } })).status, 409);
-  assert.equal(session.hybrid.budgetApprovals.length, 1); assert.equal(fixture.state.runCalls.length, 1);
-});
 
 test('Founder credential refusal persists a public-only boundary and cannot re-open the login gate', async t => {
 	const fixture = await startFixture();
@@ -1564,25 +1458,7 @@ test('stop, report, configuration, malformed JSON, and API 404 contracts remain 
 	assert.deepEqual(await body(await fixture.request('/api/unknown')), { error: 'API route not found.' });
 });
 
-test('hybrid qualification renewal uses only saved operator configuration and rejects cross-origin and payload overrides',async t=>{
- const memory=createMemoryServices();let calls=0;
- memory.services.configuration.qualifyHybrid=async()=>{calls++;return{hybridQa:{available:false,status:'qualification_running'}};};
- const fixture=await startFixture({memory});t.after(()=>fixture.close());
- const accepted=await fixture.request('/api/config/hybrid/qualification',{method:'POST',json:{}});
- assert.equal(accepted.status,202);assert.equal((await body(accepted)).hybridQa.status,'qualification_running');assert.equal(calls,1);
- const override=await fixture.request('/api/config/hybrid/qualification',{method:'POST',json:{apiKey:'untrusted',endpoint:'https://outside.test/'}});
- assert.equal(override.status,400);assert.equal(calls,1);
- const crossOrigin=await fixture.request('/api/config/hybrid/qualification',{method:'POST',json:{},headers:{origin:'https://outside.test'}});
- assert.equal(crossOrigin.status,403);assert.equal(calls,1);
-});
 
-for(const role of ['pilot','viewer','unknown'])test(`${role} users cannot trigger billable qualification checks`,async t=>{
- const memory=createMemoryServices();let calls=0;
- memory.services.configuration.qualifyHybrid=async()=>{calls++;return{};};
- const access={mount(app){app.use('/api',(request,_response,next)=>{request.auth={...TEST_TENANT,role};next();});}};
- const fixture=await startFixture({memory,access});t.after(()=>fixture.close());
- assert.equal((await fixture.request('/api/config/hybrid/qualification',{method:'POST',json:{}})).status,403);assert.equal(calls,0);
-});
 
 test('SSE stays live without login sessions and removes its subscription on disconnect', { timeout: 5_000 }, async t => {
 	const fixture = await startFixture();

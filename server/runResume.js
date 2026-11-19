@@ -12,7 +12,6 @@
  * run inside the original owner's actor context.
  */
 
-import { hybridRecoveryProblem, reconcileHybridUsageBeforeResume } from './hybridRecoveryGate.js';
 import { usesFounderDraft } from './founderReportDraft.js';
 
 const MAX_AUTO_RESUME_ATTEMPTS = 3;
@@ -161,14 +160,19 @@ export function createRunResume(overrides = {}) {
 
 			if (!isResumable(session)) continue;
 
-			// A durable accounting/closeout blocker cannot be repaired by restoring
-			// an SDK snapshot. Check BEFORE constructing the runtime/browser and
-			// before consuming a recovery attempt. Keep scanning for another safe run.
-			await reconcileHybridUsageBeforeResume(session);
-			const recoveryProblem = hybridRecoveryProblem(session);
-			if (recoveryProblem) {
-				logger.info?.('runresume.blocked', { runId: session.id, errorCode: recoveryProblem.code });
-				continue;
+			// QA runs resume on the QA engine from their saved phase checkpoint;
+			// there is no SDK snapshot or runtime to restore.
+			if (session.mode === 'qa') {
+				session.autoResumeCount = (session.autoResumeCount ?? 0) + 1;
+				session.interruptedFromRun = false;
+				try {
+					await withRequestActor({ actorUserId: candidate.ownerUserId ?? session.ownerUserId })(() => api.runTurn(session, { recovery: true }));
+				} catch (error) {
+					logger.warn?.('runresume.turn-failed', { runId: session.id, error: String(error) });
+					return 0;
+				}
+				logger.info?.('runresume.resumed', { runId: session.id, engine: 'qa' });
+				return 1;
 			}
 
 			let snapshot = await Promise.resolve()

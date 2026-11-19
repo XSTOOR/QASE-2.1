@@ -45,6 +45,9 @@ export function buildFindingFixPrompt(finding, { targetUrl, mode } = {}) {
 		: '  (no explicit steps recorded — reproduce from the description)';
 
 	const modeLabel = mode === 'sqa' ? 'SQA assessment' : mode === 'founder' ? 'Founder review' : 'QA run';
+	const selector = safeText(finding.selector);
+	const viewports = Array.isArray(finding.viewports) ? finding.viewports.map(safeText).filter(Boolean) : [];
+	const fix = safeText(finding.fix);
 
 	return [
 		`# Fix request — [${severity.toUpperCase()}] ${title}`,
@@ -53,6 +56,8 @@ export function buildFindingFixPrompt(finding, { targetUrl, mode } = {}) {
 		'',
 		`Area: ${category}`,
 		`URL:  ${url}`,
+		selector ? `Element: ${selector}` : '',
+		viewports.length ? `Viewports: ${viewports.join(', ')}` : '',
 		'',
 		'## Reproduction (observed from the browser)',
 		steps,
@@ -60,6 +65,7 @@ export function buildFindingFixPrompt(finding, { targetUrl, mode } = {}) {
 		`Expected: ${expected}`,
 		`Actual:   ${actual}`,
 		evidence ? `\nEvidence captured during the run:\n${evidence}` : '',
+		fix ? `\n## Suggested fix\n${fix}` : '',
 		'',
 		'## What I need from you',
 		'1. Reproduce the defect once locally in the same browser context (device, viewport, auth state) before touching code. Do not skip this step.',

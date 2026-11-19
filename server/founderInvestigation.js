@@ -1,5 +1,5 @@
 import { compactModeEnvelopes } from './modeReasoningContext.js';
-import { compactCompletedRounds } from './hybridContext.js';
+import { compactCompletedRounds } from './modeContextCompaction.js';
 import { redact } from './secrets.js';
 import { usesFounderDraft } from './founderReportDraft.js';
 import { canonicalModeHash } from './modeIntegrity.js';

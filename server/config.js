@@ -6,8 +6,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { PublicInputError } from './publicErrors.js';
 import { fileURLToPath } from 'node:url';
 import { createJevClient, JEV_ENDPOINT, JEV_MODEL, JEV_CAPABILITIES, validateJevConfiguration } from './jevClient.js';
-import { hybridProfile } from './hybridConfig.js';
-import { hybridQualificationService } from './hybridQualificationService.js';
+import { qaModelSettings } from './qa/models.js';
 
 /**
  * UI asset version (ticket #16228 follow-up / #15766 round-3 rule): derived
@@ -225,9 +224,11 @@ export async function validateModelUsability(candidate, options = {}) {
 /** The same settings with the key reduced to a hint. Safe to send to a browser. */
 export function getPublicConfig() {
 	const config = getConfig();
-	const hybrid = hybridQualificationService.availability(hybridProfile(config));
+	const qaModels = qaModelSettings(process.env, config);
 	return {
-		hybridQa: { ...hybrid, reasoner: 'drytis/claude-opus-4.7', classifier: 'jev-1.13' },
+		// QA runs never wait on a qualification step; models are optional helpers.
+		hybridQa: { enabled: true, qualified: true, available: true, status: 'ready', reasoner: qaModels.reasoner.model, classifier: qaModels.jev.model,
+			reasonerConfigured: qaModels.reasoner.enabled, classifierConfigured: qaModels.jev.enabled },
 		provider: config.provider,
 		modelLocked: process.env.QASE_LOCK_MODEL === 'true',
 		...(config.provider === 'jev' ? { modelCapabilities: JEV_CAPABILITIES } : {}),
