@@ -60,10 +60,10 @@ function originAllowed(url, origins) {
 export function primaryProfile(session) {
 	const environment = session.environmentSnapshot;
 	const emulation = environment ? environmentEmulationOptions(environment) : contextOptionsFor(session.device ?? 'desktop', { landscape: session.deviceLandscape === true });
-	if (!emulation?.viewport) return { ...VIEWPORTS.desktop, name: 'primary', label: `Primary (${VIEWPORTS.desktop.label})` };
+	if (!emulation?.viewport) return { ...VIEWPORTS.desktop };
 	return {
-		name: 'primary',
-		label: `Primary (${environment?.device ?? session.device ?? 'device'} ${emulation.viewport.width}×${emulation.viewport.height})`,
+		name: emulation.isMobile ? 'device' : 'desktop',
+		label: `${environment?.device ?? session.device ?? 'Device'} ${emulation.viewport.width}×${emulation.viewport.height}`,
 		viewport: emulation.viewport,
 		deviceScaleFactor: emulation.deviceScaleFactor ?? 1,
 		isMobile: Boolean(emulation.isMobile),

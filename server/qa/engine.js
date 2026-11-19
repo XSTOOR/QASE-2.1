@@ -204,7 +204,8 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 				limitation(id, `${PHASES.find(([key]) => key === id)[1]} was skipped because the run time budget was reached.`, ['crawl', 'motion', 'security'].includes(id));
 			} else {
 				detail = await work(phaseDeadline(id));
-				state.phases[id] = { status: 'done', detail: detail ?? undefined, endedAt: Date.now() };
+				// A phase that decided not to run (e.g. no model configured) reports "skipped …".
+				state.phases[id] = { status: /^skipped/i.test(detail ?? '') ? 'skipped' : 'done', detail: detail ?? undefined, endedAt: Date.now() };
 			}
 		} catch (error) {
 			if (stopped()) {

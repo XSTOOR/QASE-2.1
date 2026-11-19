@@ -947,6 +947,14 @@
       <details class="qa-launch-options">
         <summary>Advanced options</summary>
         <label class="field qa-write-permission"><span><input id="qa-allow-test-writes" type="checkbox"> Allow test data writes</span><small>Use an isolated test account. Qase may submit clearly marked test records, which can persist. Account changes, payments, messages and destructive actions are excluded.</small></label>
+        <fieldset class="field qa-test-account" id="qa-test-account">
+          <legend>Test account (optional)</legend>
+          <small>Add a test account to include pages behind sign-in. QASE signs in once; the password is stored only in this run's encrypted vault and never reaches a model.</small>
+          <label class="field"><span>Username or email</span><input id="qa-account-username" type="text" autocomplete="off" spellcheck="false"></label>
+          <label class="field"><span>Password</span><input id="qa-account-password" type="password" autocomplete="new-password"></label>
+          <label class="field"><span>Sign-in page URL (optional)</span><input id="qa-account-login-url" type="url" placeholder="https://example.com/login"></label>
+          <label class="field"><span><input id="qa-account-consent" type="checkbox"> I own this test account and authorize QASE to sign in with it</span></label>
+        </fieldset>
       </details>
       </section>
       <section class="journey-step" data-journey-panel="1" aria-labelledby="journey-coverage-title" hidden>
@@ -954,7 +962,7 @@
       <details class="qa-agent-status" id="qa-execution-mode-field">
         <summary>Execution settings</summary>
         <input id="qa-execution-mode" type="hidden" name="qaExecutionMode" value="hybrid">
-        <strong id="qa-selected-agent">Hybrid QA · Opus reasoning + JEV classification</strong>
+        <strong id="qa-selected-agent">QA engine · automated checks + reasoning model + JEV verification</strong>
         <small id="qa-hybrid-availability" role="status" aria-live="polite"></small>
       </details>
       <div class="journey-presets" role="group" aria-label="Test environment"><button type="button" id="journey-focused" aria-pressed="true"><strong>Recommended browser</strong><small>Use an available browser configuration.</small></button><button type="button" id="journey-custom" aria-pressed="false"><strong>Choose browser and device</strong><small>Test one configuration per run.</small></button></div>

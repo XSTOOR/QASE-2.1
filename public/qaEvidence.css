@@ -351,3 +351,13 @@ html[data-theme="dark"] body.studio-workspace[data-page="results"] #results-page
   .qe-metrics > div:nth-child(2) { border-inline-end: 0; }
   .qe-metrics > div:nth-child(n + 3) { border-top: 1px solid var(--border); }
 }
+
+/* QA engine results */
+.qe-phases { list-style: none; padding: 0; display: grid; gap: 6px; }
+.qe-phase small { color: var(--text-muted); }
+.qe-finding-group h4 { margin: 14px 0 6px; font-size: 13px; text-transform: none; }
+.qe-finding { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 0 0 8px; background: var(--surface-1); }
+.qe-finding p { margin: 6px 0; overflow-wrap: anywhere; }
+.qe-finding .qe-path { display: block; color: var(--text-muted); overflow-wrap: anywhere; }
+.qe-finding-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.qe-finding-shot { display: block; max-width: 100%; max-height: 360px; margin-top: 8px; border: 1px solid var(--border); border-radius: 6px; object-fit: contain; }

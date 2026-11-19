@@ -648,6 +648,8 @@ function matrixBrowserBudget() {
 
 export async function ensureRuntime(session, runStore) {
 	const record = runStore.liveFor(session.id);
+	// QA runs use the QA engine (server/qa/), which owns its own browser and models.
+	if (session.mode === 'qa') return record;
 	if (record.initializingRuntime) return record.initializingRuntime;
 	if (record.runtime) return record;
 	// All callers share construction, including its failure. Never create two

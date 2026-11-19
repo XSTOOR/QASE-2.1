@@ -128,7 +128,8 @@ const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQ
 
 export function labHandler(request, response, { prefix = '' } = {}) {
 	const url = new URL(request.url, 'http://lab');
-	const path = url.pathname.slice(prefix.length) || '/';
+	// Mounted under Express, the prefix is already stripped from request.url.
+	const path = (prefix && url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) : url.pathname) || '/';
 	const origin = request.headers.origin;
 	response.setHeader('X-Powered-By', 'Express 4.17.1');
 	if (origin) { response.setHeader('Access-Control-Allow-Origin', origin); response.setHeader('Access-Control-Allow-Credentials', 'true'); }

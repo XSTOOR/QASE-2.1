@@ -70,7 +70,6 @@ import { qaPlanProgress, qaExecutionModeLabel, qaLauncherModeLabel, qaLauncherSe
 import { renderHybridQa, hybridLaunchOptions, hybridScenarioProgress, hybridAvailabilityMessage, holdPrimaryPreview, viewportStatusText } from './hybridQaView.js';
 import { renderModeReasoning } from './modeReasoningView.js';
 import { focusedBrowserConfiguration, qaBrowserStatus, renderQaBrowserStatus } from './qaBrowserStatus.js';
-import { renewHybridQualification } from './hybridQualification.js';
 
 /**
  * Qase dashboard.
@@ -1405,7 +1404,7 @@ async function startRun() { openQaStart(); }
 
 async function createQaRun({
 	targetUrl, device, deviceLandscape, selectedTests, securityAuthorization,
-	kickoffText, engine = 'chromium', coreFlowsOnly = false, environmentId, scopeSelection, qaExecutionMode, testCaseId, allowTestWrites = false
+	kickoffText, engine = 'chromium', coreFlowsOnly = false, environmentId, scopeSelection, qaExecutionMode, testCaseId, allowTestWrites = false, testAccount
 }) {
 	void markOnboarded();
 	const session = await api('/sessions', {
@@ -1417,6 +1416,7 @@ async function createQaRun({
 			selectedTests,
 			...(qaExecutionMode ? { qaExecutionMode } : {}),
 			...(allowTestWrites ? { allowTestWrites: true } : {}),
+			...(testAccount ? { testAccount } : {}),
 			...(testCaseId ? { testCaseId } : {}),
 			...(securityAuthorization ? { securityAuthorization } : {}),
 			...(environmentId ? { environmentId } : {}),
@@ -6272,16 +6272,6 @@ if (qaUi.dialog) {
 			qaUi.matrix.fieldset?.scrollIntoView({ block: 'start' });
 			qaUi.matrix.search?.focus({ preventScroll: true });
 		} else if (action === 'reload') await loadQaMatrixCatalog();
-		else if (action === 'config') {
-			if (qaQualificationChecking) return;
-			qaQualificationChecking = true;
-			const button = event.currentTarget;
-			button.disabled = true; button.textContent = 'Checking compatibility…';
-			try {
-				await renewHybridQualification({ api, onConfig: config => { paintConfig(config); syncQaSubmitState(); } });
-			} catch (error) { setQaFormError(error.message); }
-			finally { qaQualificationChecking = false; syncQaSelectionSummary(); syncQaSubmitState(); }
-		}
 	}
 	$('qa-browser-status-action').addEventListener('click', handleQaBrowserAction);
 	$('qa-launch-browser-action').addEventListener('click', handleQaBrowserAction);
@@ -6459,6 +6449,12 @@ if (qaUi.dialog) {
 			setQaFormError('The selected configurations are no longer available. Reload the catalog and pick again.');
 			return;
 		}
+		const accountUser = $('qa-account-username')?.value.trim(), accountPassword = $('qa-account-password')?.value ?? '';
+		if (Boolean(accountUser) !== Boolean(accountPassword) || (accountUser && !$('qa-account-consent')?.checked)) {
+			setQaFormError('For a signed-in test, enter both the username and password and confirm the authorization, or leave the test account empty.');
+			return;
+		}
+		const testAccount = accountUser ? { username: accountUser, password: accountPassword, loginUrl: $('qa-account-login-url')?.value.trim() || undefined, authorized: true } : undefined;
 		// Exactly one request and one item. No parent runs, batches or version fan-out.
 		qaUi.submit.dataset.busy = 'true';
 		qaUi.submit.disabled = true;
@@ -6470,7 +6466,9 @@ if (qaUi.dialog) {
 			const hybridOptions = hybridLaunchOptions({ config: state.config, mode: qaUi.executionMode?.value, envIds: selectedEnvIds, configurations: qaMatrixState.index });
 			if (hybridOptions) {
 				await createQaRun({ targetUrl, device, deviceLandscape, selectedTests, securityAuthorization, kickoffText,
-					scopeSelection: scopeValues, testCaseId: qaUi._testCaseId, allowTestWrites: $('qa-allow-test-writes')?.checked === true, ...hybridOptions });
+					scopeSelection: scopeValues, testCaseId: qaUi._testCaseId, allowTestWrites: $('qa-allow-test-writes')?.checked === true, testAccount, ...hybridOptions });
+				for (const id of ['qa-account-username', 'qa-account-password', 'qa-account-login-url']) $(id).value = '';
+				$('qa-account-consent').checked = false;
 				qaUi.targetUrl.value = ''; $('qa-goal').value = '';
 				closeQaStart({ updateRoute: false });
 				toast('QA test started.');

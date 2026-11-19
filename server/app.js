@@ -12,6 +12,7 @@ import { engineRegistryResolved, isEngineId } from './browserEngines.js';
 import { probeTargetReachability } from './targetReachability.js';
 import { assertApplicationServices } from './contracts.js';
 import { mountDemoSite } from './demoSite.js';
+import { labHandler } from './qa/fixtureSite.js';
 import { mountDefectFixtures, listDefectFixtures, getDefectFixture, fixtureExpectation } from './defectFixtures.js';
 import { verifyFixtureAgainstProfile } from './defectFixtureRunner.js';
 import { createOperationalControls } from './operations.js';
@@ -392,6 +393,8 @@ export function createApplication(options = {}) {
 	// emulated form factor (viewport/touch), never fabricated.
 	if (demoEnabled) {
 		mountDefectFixtures(app);
+		// Seeded-defect QA Lab for trying the QA engine (see server/qa/fixtureSite.js).
+		app.use('/demo/qa-lab', (request, response) => labHandler(request, response, { prefix: '/demo/qa-lab' }));
 		mountDemoSite(app);
 	}
 
