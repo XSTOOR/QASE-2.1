@@ -1,3 +1,4 @@
+import { compareMenuFrames } from './menuFrameComparison.js';
 export const MENU_MOTION = 'menu_motion';
 
 // Only the original operator instruction opts in. A later model message,
@@ -48,14 +49,24 @@ export async function runMenuMotion(page, { label, url } = {}, { authorizeContro
     const deadlineMs = menu.reduced ? REDUCED_MS : NORMAL_MS;
     const motion = { label, panel: menu.panelId, preference: menu.reduced ? 'reduce' : 'no-preference', deadlineMs,
       trials: [], screenshots: [] };
+    const frames = [];
     const frame = async phase => {
       if (!saveFrame) return;
       signal?.throwIfAborted();
       try {
-        const bytes = await page.screenshot({ type: 'jpeg', quality: 75, animations: 'allow', timeout: 1500 });
+        const region = await page.evaluate(id => {
+          const box = document.getElementById(id)?.getBoundingClientRect();
+          if (!box || box.x < 0 || box.y < 0 || box.right > innerWidth || box.bottom > innerHeight) return null;
+          const x = Math.ceil(box.x), y = Math.ceil(box.y);
+          return [x, y, Math.floor(box.right) - x, Math.floor(box.bottom) - y];
+        }, menu.panelId);
+        const bytes = await page.screenshot({ type: 'jpeg', quality: 75, scale: 'css', animations: 'allow', timeout: 1500 });
         signal?.throwIfAborted();
         const artifact = await saveFrame(bytes, phase);
-        if (artifact?.artifactId) motion.screenshots.push({ phase, artifactId: artifact.artifactId, capturedAt: artifact.capturedAt });
+        if (artifact?.artifactId) {
+          motion.screenshots.push({ phase, artifactId: artifact.artifactId, capturedAt: artifact.capturedAt });
+          frames.push({ bytes, region });
+        }
       } catch (error) {
         if (signal?.aborted) throw signal.reason ?? error;
       }
@@ -80,11 +91,29 @@ export async function runMenuMotion(page, { label, url } = {}, { authorizeContro
       ? `Panel reaches opacity ≥ ${OPEN} within ${deadlineMs} ms without intermediate opacity`
       : `Panel reaches opacity ≥ ${OPEN} within ${deadlineMs} ms through an observed CSS opacity transition`;
     const actual = `${describeResult(first.reason)}. First: ${trialSummary(first)}. Second: ${trialSummary(second)}.`;
-    return { limitations, motion, assertions: [{
+    const assertions = [{
       check: MENU_MOTION, name: 'Menu reaches the visible state with its motion preference', expected, actual,
       outcome: pass ? 'pass' : 'fail',
       ...(!pass ? { reproduction: { confirmed: true, observations: 2, kind: 'menu-opacity', first: first.reason, second: second.reason } } : {})
-    }] };
+    }];
+    if (saveFrame) {
+      motion.visual = await compareMenuFrames(frames, signal);
+      if (motion.visual.outcome !== 'inconclusive') {
+        const [firstChange, secondChange] = motion.visual.changedFractions;
+        const visualAssertion = {
+          check: MENU_MOTION, name: 'Menu opening visibly changes the panel pixels',
+          expected: 'A repeatable change from the closed screenshot within the menu bounds',
+          actual: motion.visual.reason, outcome: motion.visual.outcome
+        };
+        if (motion.visual.outcome === 'fail') {
+          visualAssertion.reproduction = {
+            confirmed: true, observations: 2, kind: 'menu-pixels', first: firstChange, second: secondChange
+          };
+        }
+        assertions.push(visualAssertion);
+      }
+    }
+    return { limitations, motion, assertions };
   } finally {
     await button.dispose().catch(() => {});
   }

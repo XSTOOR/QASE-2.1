@@ -1,7 +1,9 @@
 """Compare the two opening frames in each controlled Playwright fixture run."""
 
 import argparse
+import base64
 import json
+import sys
 from pathlib import Path
 
 import cv2
@@ -82,7 +84,32 @@ def unavailable(capture, error):
     return {'variant': capture['variant'], 'outcome': 'inconclusive', 'reason': str(error)}
 
 
+def compare_live(sample):
+    x, y, w, h = sample['region']
+    regions = []
+    for frame in sample['frames']:
+        data = np.frombuffer(base64.b64decode(frame, validate=True), dtype=np.uint8)
+        image = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        if image is None or min(x, y) < 0 or min(w, h) < 8 or y+h > image.shape[0] or x+w > image.shape[1]:
+            return {'outcome': 'inconclusive', 'reason': 'The whole menu must be visible in all three frames.'}
+        regions.append(image[y:y+h, x:x+w])
+    closed, first, second = regions
+    def fraction(a, b):
+        return float(np.mean(pixel_delta(a, b) >= MIN_CHANNEL_DELTA))
+    fractions = [fraction(closed, opened) for opened in (first, second)]
+    if max(fractions) <= 0.0001:
+        outcome, reason = 'fail', 'Both openings looked unchanged from the closed panel.'
+    elif min(fractions) >= MIN_CHANGED_FRACTION and fraction(first, second) <= min(fractions) * MAX_NORMALIZED_ERROR:
+        outcome, reason = 'pass', 'Both openings produced a repeatable visible change.'
+    else:
+        outcome, reason = 'inconclusive', 'The pixel change was too small or inconsistent to verify.'
+    return {'outcome': outcome, 'reason': reason, 'changedFractions': fractions, 'opencv': cv2.__version__}
+
+
 def main():
+    if sys.argv[1:] == ['--live']:
+        print(json.dumps(compare_live(json.load(sys.stdin))))
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('manifest', type=Path)
     args = parser.parse_args()

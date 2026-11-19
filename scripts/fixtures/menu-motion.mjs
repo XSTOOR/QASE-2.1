@@ -1,6 +1,6 @@
 // An explicit visual contract: the same closed panel opens with a CSS opacity
 // transition. The seeded defect stops at 0.55; reduced motion removes it.
-export function menuMotionFixture({ broken = false, ambiguous = false, network = false } = {}) {
+export function menuMotionFixture({ broken = false, ambiguous = false, network = false, covered = false } = {}) {
   const button = '<button type="button" id="menu-toggle" aria-expanded="false" aria-controls="main-menu">Main menu</button>';
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13,6 +13,7 @@ button { color: white; background: #284c75; margin-bottom: 12px; }
 nav { max-width: 320px; background: white; opacity: 0; pointer-events: none; transition: opacity 240ms linear; }
 nav[aria-hidden="false"] { opacity: ${broken ? 0.55 : 1}; pointer-events: auto; }
 nav a { display: block; margin: 5px; color: #254e83; }
+${covered ? 'nav {position:relative} nav[aria-hidden="false"]::after {content:"";position:absolute;inset:-1px;background:#f3f7fc;pointer-events:none}' : ''}
 @media (prefers-reduced-motion: reduce) { nav { transition: none; } }
 </style></head>
 <body><header><h1>Menu motion fixture</h1><p>Open the menu to reveal its navigation links.</p>

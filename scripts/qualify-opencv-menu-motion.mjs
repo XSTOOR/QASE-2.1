@@ -17,6 +17,7 @@ const { values } = parseArgs({ options: {
 const engines = [...new Set(values.browser ?? ['chromium', 'firefox', 'webkit'])];
 engines.forEach(assertSqaTestBrowser);
 const python = values.python ?? 'python';
+if (values.python) process.env.QASE_OPENCV_PYTHON = path.resolve(values.python);
 const output = path.resolve(values['output-dir'] ?? `test-results/redesign/opencv-menu-motion/${Date.now()}`);
 const comparator = fileURLToPath(new URL('./compare-menu-motion-frames.py', import.meta.url));
 const runProcess = promisify(execFile);
@@ -34,15 +35,7 @@ async function capture(browser, engine, preference, variant) {
     const isolation = createQaInputIsolation();
     isolation.attach(context);
     const page = await context.newPage();
-    await page.setContent(menuMotionFixture({ broken: variant === 'stuck-opacity' }));
-    if (variant === 'covered-menu') {
-      await page.addStyleTag({ content: `
-        #main-menu { position: relative; }
-        #main-menu[aria-hidden="false"]::after {
-          content: ""; position: absolute; inset: -1px; background: #f3f7fc; pointer-events: none;
-        }
-      ` });
-    }
+    await page.setContent(menuMotionFixture({ broken: variant === 'stuck-opacity', covered: variant === 'covered-menu' }));
     await page.evaluate(() => document.fonts.ready);
     const box = await page.locator('#main-menu').boundingBox();
     assert.ok(box, 'The fixture menu must occupy a measurable region.');
@@ -66,6 +59,11 @@ async function capture(browser, engine, preference, variant) {
     const domOutcome = result.assertions[0]?.outcome;
     assert.equal(domOutcome, variant === 'stuck-opacity' ? 'fail' : 'pass', result.skipped ?? JSON.stringify(result.assertions));
     assert.equal(result.motion.screenshots.length, 3, 'Expected three captured frames.');
+    if (variant !== 'stuck-opacity') {
+      const expected = variant === 'covered-menu' ? 'fail' : 'pass';
+      assert.equal(result.motion.visual.outcome, expected, JSON.stringify(result.motion.visual));
+      assert.equal(result.assertions[1]?.outcome, expected);
+    }
     return {
       variant, viewport: [viewport.width, viewport.height], region, frames, domOutcome,
       trials: result.motion.trials.map(({ visibleAtMs, finalOpacity }) => ({ visibleAtMs, finalOpacity }))

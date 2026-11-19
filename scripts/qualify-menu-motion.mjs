@@ -19,17 +19,17 @@ const { values } = parseArgs({ options: {
 const engines = values.browser ?? (values['env-file'] ? ['chromium'] : ['chromium', 'firefox']);
 engines.forEach(assertSqaTestBrowser);
 const variants = values['live-variant'] ?? ['healthy', 'defective'];
-assert.ok(variants.every(variant => ['healthy', 'defective'].includes(variant)));
+assert.ok(variants.every(variant => ['healthy', 'defective', 'covered'].includes(variant)));
 const output = path.resolve(values['output-dir'] ?? `test-results/redesign/phase-7/${Date.now()}`);
 await mkdir(output, { recursive: true });
 const requests = [];
 const fixture = createServer((request, response) => {
   requests.push(request.method);
   const route = request.url?.split('?')[0];
-  const recognized = ['/', '/healthy', '/defective', '/ambiguous', '/network'].includes(route);
+  const recognized = ['/', '/healthy', '/defective', '/covered', '/ambiguous', '/network'].includes(route);
   const readOnly = ['GET', 'HEAD'].includes(request.method);
   const html = recognized
-    ? menuMotionFixture({ broken: route === '/defective', ambiguous: route === '/ambiguous', network: route === '/network' })
+    ? menuMotionFixture({ broken: route === '/defective', covered: route === '/covered', ambiguous: route === '/ambiguous', network: route === '/network' })
     : '<!doctype html><html lang="en"><title>Fixture information</title><main><h1>Fixture information</h1><a href="./healthy">Home</a></main></html>';
   response.writeHead(readOnly ? 200 : 405, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
   response.end(readOnly && request.method === 'GET' ? html : undefined);
@@ -145,8 +145,12 @@ async function launchLive(runtime, engine, variant) {
     const evidence = await get(`/sessions/${summary.runId}/qa-evidence`);
     const motion = evidence.scenarios.find(item => item.category === 'menu_motion');
     summary.motion = motion?.motion;
-    summary.assertion = motion?.assertions[0];
-    const broken = variant === 'defective';
+    summary.assertion = variant === 'covered' ? motion?.assertions.find(item=>item.name==='Menu opening visibly changes the panel pixels') : motion?.assertions[0];
+    if (variant === 'covered') {
+      assert.equal(summary.motion?.visual?.outcome,'fail');
+      assert.ok(summary.motion.trials.every(trial=>trial.reason==='met'));
+    }
+    const broken = variant !== 'healthy';
     assert.equal(summary.assertion?.outcome, broken ? 'fail' : 'pass', JSON.stringify({ motion, gap: run.report?.notCovered }));
     assert.equal(summary.motion.screenshots.length, 3);
     if (broken) {
@@ -162,6 +166,7 @@ async function launchLive(runtime, engine, variant) {
     const view = page.locator('#qa-report-evidence .qe-scenario').filter({ hasText: 'Menu transition' });
     await view.getByText('Timing and screenshots', { exact: true }).click();
     await view.getByText(/Standard motion · 650 ms deadline/).waitFor();
+    if (variant === 'covered') await view.getByText(/Visual comparison · fail/).waitFor();
     const screenshot = view.getByRole('link', { name: 'Open screenshot · Before opening', exact: true });
     const artifact = await page.request.get(new URL(await screenshot.getAttribute('href'), runtime.base).href);
     assert.equal(artifact.status(), 200);

@@ -242,6 +242,7 @@ function present(root, session, evidence, { live, view, preview, redraw, error, 
     const details = summary('Timing and screenshots', `motion-${scenarioId}`);
     const preference = motion.preference === 'reduce' ? 'Reduced motion enabled' : 'Standard motion';
     details.append(create('p', '', `${preference} · ${motion.deadlineMs} ms deadline`));
+    if (motion.visual) details.append(create('p', '', `Visual comparison · ${motion.visual.outcome} · ${motion.visual.reason}`));
     for (const [index, trial] of motion.trials.entries()) {
       const elapsed = trial.visibleAtMs === null ? 'No stable visible state' : `Visible at ${trial.visibleAtMs} ms`;
       const samples = summary(`Opening ${index + 1} · ${elapsed} · final opacity ${trial.finalOpacity}`, `motion-trial-${scenarioId}-${index}`);

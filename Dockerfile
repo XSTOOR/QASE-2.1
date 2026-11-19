@@ -21,7 +21,7 @@ COPY --from=verified-source /source/package.json /source/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts \
     && npx playwright install --with-deps chromium firefox webkit \
     && apt-get update -qq \
-    && apt-get install -y --no-install-recommends xvfb \
+    && apt-get install -y --no-install-recommends xvfb python3-opencv python-is-python3 \
     && rm -rf /var/lib/apt/lists/* \
     && npm cache clean --force
 

@@ -96,7 +96,7 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "c579a651d18f5e178eecbf86fced9b76cd7dbf290df942d06abce5959dd98dc3"
+      "sha256": "6a58f77084714ce1e5cbf12db9b5d73f05d2e37fb4821db512fe2e732d815a37"
     },
     {
       "path": "docs/auth-architecture-2026-09-10.md",
@@ -796,7 +796,7 @@
     },
     {
       "path": "public/qaEvidenceView.js",
-      "sha256": "384ebd62a8aa2993655ef617dad93dd80523d7ef5f520cc20e5672f0ad894c6a"
+      "sha256": "c1e4d748fd771882149bffd2f231fdf0d01ed409531a2ac45fece2d0cfffda02"
     },
     {
       "path": "public/qaExecutionView.js",
@@ -1128,7 +1128,7 @@
     },
     {
       "path": "scripts/compare-menu-motion-frames.py",
-      "sha256": "db5ab5fc03c45313cd5b33461669a573c51400261013690ae985e73a4dfd01a9"
+      "sha256": "1de58cd56a7aa944be6c5814c3d5cdeea30c59d5721b93e98f00dda21f169288"
     },
     {
       "path": "scripts/data-governance.mjs",
@@ -1160,7 +1160,7 @@
     },
     {
       "path": "scripts/fixtures/menu-motion.mjs",
-      "sha256": "00fb198c0772f0cf4a4a5850831345701b19118205a222d2082b3eb4ecebb357"
+      "sha256": "67a57120d7f7a952a42799bd039a7015a755f0a232420307d5916d87fdfd627a"
     },
     {
       "path": "scripts/fixtures/preview-ui-server.mjs",
@@ -1292,11 +1292,11 @@
     },
     {
       "path": "scripts/qualify-menu-motion.mjs",
-      "sha256": "c455391781ab69d0632354e5f86fbb81c0f11e1a5c05848f665c70d98af84440"
+      "sha256": "cdff86f2597eb17511757111a28dd4d1ec18990156c71fffec9c5f8389fed09e"
     },
     {
       "path": "scripts/qualify-opencv-menu-motion.mjs",
-      "sha256": "39c01611ec86d36f558124114da4eef166286a2b2f853db5acc5e8360b3d2c6a"
+      "sha256": "0efbe4c93e1a9fe96b991a3d059164768c81ace7a50b609a261dbed0bb7cb1fb"
     },
     {
       "path": "scripts/qualify-qa-scheduler.mjs",
@@ -2635,6 +2635,10 @@
       "sha256": "35caad26c817353ecefcd25ae828a9f71b210c838d147723f88ece16952fb101"
     },
     {
+      "path": "server/menuFrameComparison.js",
+      "sha256": "bc0907ac72c08b82886dcc43fdeaaf327179f3e83be59fbc170b8f81a564f04b"
+    },
+    {
       "path": "server/mobileAudit.js",
       "sha256": "66a93c98f3661c960224170de44c43f30fda9c5fb29bd70e7394a85c75df0158"
     },
@@ -3128,7 +3132,7 @@
     },
     {
       "path": "server/qaMenuMotion.js",
-      "sha256": "5ba3ba2d18363e47d3f3c71c3d5db158c9d488bf58a874284d441a8232666c73"
+      "sha256": "07c928e29bfcc8513166659d439a6a1956914af3d80983ccb4ea07d5b5b9f76b"
     },
     {
       "path": "server/qaMenuMotion.test.js",
