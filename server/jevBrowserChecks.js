@@ -19,8 +19,13 @@ const sameUrl = (a, b) => new URL(a).href.replace(/\/$/, '') === new URL(b).href
 const assertion = (check, name, passed, expected, actual) => ({ check, name, outcome: passed ? 'pass' : 'fail', expected, actual: trim(typeof actual === 'string' ? actual : JSON.stringify(actual)) });
 
 export async function settleJevPage(page) {
-  await page.waitForLoadState('domcontentloaded', { timeout: 8000 });
-  await page.waitForFunction(() => document.body && document.readyState !== 'loading', undefined, { timeout: 8000 });
+  try {
+    await page.waitForLoadState('domcontentloaded', { timeout: 8000 });
+    await page.waitForFunction(() => document.body && document.readyState !== 'loading', undefined, { timeout: 8000 });
+  } catch (error) {
+    if (error.name === 'TimeoutError') error.code = 'QA_DOCUMENT_LOAD_TIMEOUT';
+    throw error;
+  }
   // Wait for rendering to settle, not for an arbitrary minimum run duration.
   await page.evaluate(() => new Promise(resolve => {
     let timer;
@@ -192,7 +197,13 @@ async function navigation(page, input, onAction, guard, signal) {
       signal?.throwIfAborted();
       await handle.click({ timeout: 5000 });
     } finally { await handle.dispose().catch(() => {}); }
-    await page.waitForURL(url => !sameUrl(url.href, source), { timeout: 7000, waitUntil: 'domcontentloaded' });
+    try {
+      await page.waitForURL(url => !sameUrl(url.href, source), { timeout: 7000, waitUntil: 'domcontentloaded' });
+    } catch (error) {
+      if (signal?.aborted || error.name !== 'TimeoutError') throw error;
+      return { success: false, code: 'QA_NAVIGATION_LOAD_TIMEOUT', assertions: [], source,
+        error: 'The link was activated, but its destination did not finish loading before the deadline.' };
+    }
     await settleJevPage(page);
     await onAction?.({ phase: 'after', action: 'click', selector: input.selector });
     landed = page.url();
@@ -639,6 +650,10 @@ export async function runJevBrowserCheck(page, input, { signal, navigationGuard,
     return { success: true, action: input.action, url, ...(input.selector ? { selector: input.selector } : {}), ...result, durationMs: Date.now() - startedAt };
   } catch (error) {
     if (signal?.aborted) throw signal.reason;
+    if (input.action === 'inspect' && error.code === 'QA_DOCUMENT_LOAD_TIMEOUT') {
+      return { success: false, action: input.action, url, code: error.code, assertions: [],
+        error: 'Timed out waiting for the document to load before inspection.', durationMs: Date.now() - startedAt };
+    }
     return { success: false, action: input.action, url, ...(input.selector ? { selector: input.selector } : {}), error: trim(error.message?.split('\nCall log:')[0]), durationMs: Date.now() - startedAt };
   }
 }

@@ -5735,6 +5735,8 @@ function setQaFormError(message = '') {
 /** Test selection lives on the qaUi object itself so it survives any
  *  re-render of the dialog chrome while the user configures the run. */
 qaUi.selectedTests = new Set();
+const publicSmokeTests = new Set(['navigation', 'responsive', 'console_health', 'broken_links', 'media']);
+const publicSmokeScope = new Set(['desktop-layout', 'mobile-layout', 'console-errors', 'navigation', 'accessibility']);
 
 /** All selectable test inputs, both categories. Unavailable checks are never
  *  rendered as inputs, so they can never enter a selection. */
@@ -5848,6 +5850,12 @@ function syncQaSelectionSummary() {
 	browserAction.disabled = browser.state === 'loading' || qaUi.submit?.dataset.busy === 'true';
 	browserAction.textContent = browser.actionLabel || '';
 	$('qa-launch-retry-checks').hidden = !state.qaTestCatalogFailed;
+	const smoke = $('qa-public-smoke');
+	smoke.disabled = qaUi.testsFieldset.disabled || !qaSelectableInputs().some(input => publicSmokeTests.has(input.value));
+	$('qa-public-smoke-status').hidden = smoke.disabled
+		|| qaSelectableInputs().some(input => input.checked !== publicSmokeTests.has(input.value))
+		|| [...qaUi.scopeOptions.querySelectorAll('.qa-scope')].some(input => input.checked !== publicSmokeScope.has(input.value))
+		|| $('qa-allow-test-writes').checked;
 	const summary = $('qa-selection-summary');
 	if (!summary) return;
 	const blockedReason = qaLaunchBlockedReason();
@@ -6309,6 +6317,7 @@ if (qaUi.dialog) {
 	}, true);
 	// URL typing re-evaluates Start gating live (#15013).
 	qaUi.targetUrl?.addEventListener('input', () => syncQaSubmitState());
+	$('qa-allow-test-writes')?.addEventListener('change', syncQaSelectionSummary);
 	qaUi.close.onclick = () => closeQaStart();
 	qaUi.cancel.onclick = () => closeQaStart();
 	qaUi.dialog.addEventListener('cancel', event => {
@@ -6330,13 +6339,22 @@ if (qaUi.dialog) {
 	// browser compatibility tracks the engine checkboxes instead.
 	if (qaUi.scopeOptions) {
 		const scopeBoxes = () => [...qaUi.scopeOptions.querySelectorAll('.qa-scope')];
+		$('qa-public-smoke').addEventListener('click', () => {
+			for (const input of qaSelectableInputs()) input.checked = publicSmokeTests.has(input.value);
+			for (const box of scopeBoxes()) box.checked = publicSmokeScope.has(box.value);
+			$('qa-allow-test-writes').checked = false;
+			syncUiuxParent();
+			refreshQaSelection();
+		});
 		qaUi.scopeSelectAll?.addEventListener('click', () => {
 			for (const box of scopeBoxes()) box.checked = true;
 			syncUiuxParent();
+			syncQaSelectionSummary();
 		});
 		qaUi.scopeDeselectAll?.addEventListener('click', () => {
 			for (const box of scopeBoxes()) box.checked = false;
 			syncUiuxParent();
+			syncQaSelectionSummary();
 		});
 		const uiuxParent = document.getElementById('qa-uiux-parent');
 		const uiuxGroup = document.getElementById('qa-scope-group-uiux');

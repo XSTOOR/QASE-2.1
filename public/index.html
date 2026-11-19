@@ -934,6 +934,12 @@
         <small><button type="button" class="link-btn" id="qa-demo-fill">Use the demo site</button></small>
       </label>
       <label class="field journey-goal"><span>What should work? <small>Optional</small></span><textarea id="qa-goal" rows="2" maxlength="2000" placeholder="From Solutions, open Pricing. The page should show “Plans and pricing.”"></textarea><small>Include the steps and the expected result. To check a menu transition on the target page, add a line like “Menu motion: Menu” using the button’s exact name.</small></label>
+      <div class="qa-recommended">
+        <h3>First time testing this app?</h3>
+        <p>Start with navigation, links, responsive layout, browser errors, media and basic accessibility.</p>
+        <button class="btn btn-ghost btn-sm" id="qa-public-smoke" type="button" disabled>Use public smoke checks</button>
+        <p id="qa-public-smoke-status" role="status" aria-live="polite" hidden>Public smoke checks selected.</p>
+      </div>
       <section class="qe-launch-browser" id="qa-launch-browser" aria-label="Browser for this run" aria-live="polite">
         <div><strong id="qa-launch-browser-title">Checking browsers…</strong><p id="qa-launch-browser-detail"></p></div>
         <button class="btn btn-ghost btn-sm" id="qa-launch-browser-action" type="button" hidden></button>
@@ -1021,8 +1027,8 @@
             <div class="scope-children">
               <label class="check"><input class="qa-scope" type="checkbox" value="desktop-layout" checked title="desktop layout and responsive behaviour across viewport widths"><span>Desktop layout &amp; responsive behaviour</span></label>
               <label class="check"><input class="qa-scope" type="checkbox" value="mobile-layout" checked title="mobile layout using an emulated phone viewport"><span>Mobile layout</span></label>
-              <label class="check"><input class="qa-scope" type="checkbox" value="ui-consistency" checked title="UI consistency: buttons, fonts, colors, spacing, forms, cards, navigation consistent across pages"><span>UI consistency</span></label>
-              <label class="check"><input class="qa-scope" type="checkbox" value="content-validation" checked title="content validation: text, labels, headings, messages, placeholders correct, readable, properly presented"><span>Content &amp; text validation</span></label>
+              <label class="check"><input class="qa-scope" type="checkbox" value="ui-consistency" checked title="UI consistency: buttons, fonts, colors, spacing, forms, cards, navigation consistent across pages"><span>UI consistency <small>Provide a design reference or specific visual expectations.</small></span></label>
+              <label class="check"><input class="qa-scope" type="checkbox" value="content-validation" checked title="content validation: text, labels, headings, messages, placeholders correct, readable, properly presented"><span>Content &amp; text validation <small>Provide the expected copy and where it should appear.</small></span></label>
               <div class="scope-browser-row" title="Checks run on the single browser and device selected for this test.">
                 <span class="check"><input class="qa-browser-inline" type="checkbox" checked disabled aria-label="Check behavior on the selected browser"><span>Selected browser behavior</span></span>
                 <small>uses your selected test environment</small>

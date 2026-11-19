@@ -287,6 +287,9 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
         }
         if (discoveryStatus.required && discoveryStatus.status === 'blocked') {
           await checkpoint();
+          if (state.discovery.entryLoadTimedOut) {
+            throw new HybridPause('QA_DISCOVERY_BLOCKED', 'The target document timed out on two readiness checks. Progress is saved. Verify that the target loads from this host before resuming.');
+          }
           throw new HybridPause('QA_DISCOVERY_BLOCKED', 'Application discovery could not verify its entry surface or alternative paths. Progress is saved; resolve the recorded access, loading or navigation constraint before planning.');
         }
         telemetry.event('model_context_projected', { originalBytes: Buffer.byteLength(JSON.stringify(clean)), projectedBytes: Buffer.byteLength(JSON.stringify(prepared.messages)), messages: prepared.messages.length });
@@ -435,7 +438,11 @@ export function createHybridRuntime({ session, runStore, profile, record, onUsag
             else await ledger.close(scenario.id, 'inconclusive', result.skipped || result.limitations || 'The fixed check produced no category-specific host assertions.');
           }
           let classification;
-          if ((['browser_qa_check', 'browser_qa_scenario'].includes(tool.name) && (result?.assertions?.some(item => item.outcome === 'fail') || result?.gaps?.length || result?.success === false && !(clickGuard && result.code === 'QA_CONTROL_STALE'))) || (tool.name === 'browser_diagnostics' && diagnosticFailures(result, result.url || session.targetUrl).length)) {
+          const discoveryLoadTimeout = discovering && (
+            input.action === 'inspect' && result?.code === 'QA_DOCUMENT_LOAD_TIMEOUT'
+            || input.action === 'navigation' && result?.code === 'QA_NAVIGATION_LOAD_TIMEOUT'
+          );
+          if ((['browser_qa_check', 'browser_qa_scenario'].includes(tool.name) && (result?.assertions?.some(item => item.outcome === 'fail') || result?.gaps?.length || result?.success === false && !discoveryLoadTimeout && !(clickGuard && result.code === 'QA_CONTROL_STALE'))) || (tool.name === 'browser_diagnostics' && diagnosticFailures(result, result.url || session.targetUrl).length)) {
             classification = await tools.find(item => item.name === 'classify_qa_observations').run({ evidence_ids: [evidence.id] }, { signal: activeSignal });
           }
           telemetry.browserTiming(input?.action || tool.name, action.completedAt - action.ts);

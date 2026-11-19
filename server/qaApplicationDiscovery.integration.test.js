@@ -21,9 +21,14 @@ for (const checkScope of [['navigation','search','forms','responsive'], ['respon
  t.after(()=>{for(const[k,v]of Object.entries(saved))if(v===undefined)delete process.env[k];else process.env[k]=v;fs.rmSync(root,{recursive:true,force:true});});
  const settings={provider:'jev',model:'jev-1.13',baseUrl:JEV_ENDPOINT,apiKey:env.JEV_API_KEY,headless:true};
  fs.writeFileSync(env.QASE_HYBRID_QUALIFICATION_FILE,JSON.stringify({sdkVersion:HYBRID_SDK_VERSION,profileIdentity:profileIdentity(hybridProfile(settings)),checkedAt:Date.now(),capabilities:Object.fromEntries(REQUIRED_CAPABILITIES.map(n=>[n,{passed:true}]))}));
- let writes=0;
+ let writes=0, workspaceVisits=0;
  const server=http.createServer((req,res)=>{
   if(req.method!=='GET')writes++;
+  if(req.url==='/workspace')workspaceVisits++;
+  if(checkScope.includes('navigation') && req.url==='/'){
+   res.setHeader('Content-Type','text/html');res.end('<!doctype html><h1>Start here</h1><a href="/workspace">Workspace</a>');
+   return;
+  }
   res.setHeader('Content-Type','text/html');res.end(`<!doctype html><title>Workspace</title><nav><button id="projects">Projects</button><button id="meeting">Meeting</button><button id="about">About</button></nav><main><h1>Workspace</h1><div id="panel"><button>Overview</button></div></main><script>
   projects.onclick=()=>panel.innerHTML='<button id="details">Details</button><input type="search" aria-label="Search projects">';
   meeting.onclick=()=>panel.innerHTML='<button>Start meeting</button><button>Schedule</button>';
@@ -42,10 +47,33 @@ for (const checkScope of [['navigation','search','forms','responsive'], ['respon
   const tool=record.hybrid.tools.find(t=>t.name==='qa_discover_application');
   assert.equal(prepareHybridInference([], {tools:record.hybrid.tools},session).options.tools.some(t=>t.name==='qa_plan_scenarios'),false);
   await assert.rejects(record.hybrid.ledger.start(session.hybrid.scenarios[0].id),/discovery/i);
+  if (checkScope.includes('navigation')) {
+   await record.invokeHybridTool('browser_open', { url: session.targetUrl }, controller.signal);
+   const page = record.bridge.service.activePage;
+   t.mock.method(page, 'waitForLoadState', async () => {
+    throw Object.assign(new Error('Fixture document is still loading'), { name: 'TimeoutError' });
+   }, { times: 1 });
+   const waitForUrl = page.waitForURL.bind(page);
+   t.mock.method(page, 'waitForURL', async (...args) => {
+    await waitForUrl(...args);
+    throw Object.assign(new Error('Fixture destination exceeded the deadline'), { name: 'TimeoutError' });
+   }, { times: 1 });
+  }
   const first=tool.run({}, {signal:controller.signal});
   await assert.rejects(tool.run({}, {signal:controller.signal}),/ownership/);
   const result=await first;
   assert.equal(result.discovery.ready,true,JSON.stringify(result.discovery));
+  if (checkScope.includes('navigation')) {
+   const checks = session.hybrid.evidence.filter(item => item.result?.action === 'inspect');
+   assert.equal(checks[0].result.code, 'QA_DOCUMENT_LOAD_TIMEOUT');
+   assert.equal(checks[1].success, true);
+   assert.ok(!session.hybrid.classifications.some(item => JSON.stringify(item).includes(checks[0].id)));
+   const timeout = session.hybrid.evidence.find(item => item.result?.code === 'QA_NAVIGATION_LOAD_TIMEOUT');
+   assert.ok(timeout);
+   assert.equal(session.hybrid.discovery.probes.find(probe => probe.evidenceId === timeout.id)?.outcome, 'limited');
+   assert.ok(!session.hybrid.classifications.some(item => JSON.stringify(item).includes(timeout.id)));
+   assert.equal(workspaceVisits, 1, 'The original link must not be clicked again during discovery');
+  }
   const d=applicationDiscoveryStatus(session);
   assert.ok(d.probes>=2);assert.ok(new Set(d.features.map(f=>f.stateKey)).size>=3,'Same-URL panels must remain separate states.');
   assert.ok(d.features.some(f=>f.kind==='search'));assert.equal(session.hybrid.scenarios.some(s=>s.assertions.length),false,'Discovery cannot fabricate executed scenarios.');

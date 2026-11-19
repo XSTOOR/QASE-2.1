@@ -175,6 +175,12 @@ export function createApplicationDiscovery({ session, invoke, checkpoint }) {
             await invoke('browser_snapshot', {}, context.signal);
           } else if (!current.url || current.url === 'about:blank') await invoke('browser_open', { url: session.targetUrl }, context.signal);
           let result = await invoke('browser_qa_check', { action: 'inspect' }, context.signal);
+          delete d.entryLoadTimedOut;
+          if (result.code === 'QA_DOCUMENT_LOAD_TIMEOUT') {
+            context.signal?.throwIfAborted();
+            result = await invoke('browser_qa_check', { action: 'inspect' }, context.signal);
+            d.entryLoadTimedOut = result.code === 'QA_DOCUMENT_LOAD_TIMEOUT';
+          }
           for (let step = 0; step < 3; step++) {
             context.signal?.throwIfAborted();
             let inv = result.inventory;
@@ -194,6 +200,12 @@ export function createApplicationDiscovery({ session, invoke, checkpoint }) {
             const feature = featureRouteFromTransition(parent, result, access(session));
             if (feature && !session.hybrid.exploration.routes.some(r => r.id === feature.id)) session.hybrid.exploration.routes.push(feature);
             await checkpoint();
+            if (result.code === 'QA_NAVIGATION_LOAD_TIMEOUT') {
+              // A late load can be inspected without clicking the link again.
+              result = await invoke('browser_qa_check', { action: 'inspect' }, context.signal);
+              if (result.inventory?.url !== control.href || !result.inventory.readiness?.ready) break;
+              continue;
+            }
             // A pre-dispatch refusal is safe to inspect afresh. A dispatched
             // uncertain outcome is never replayed by discovery.
             if (result.success === false && result.dispatched !== false) break;
@@ -202,6 +214,7 @@ export function createApplicationDiscovery({ session, invoke, checkpoint }) {
           d.completedAccess = access(session);
           d.proofEvidenceIds = d.observations.filter(o => o.authenticationContext === access(session)).slice(-12).map(o => o.evidenceId);
           d.limitations = ['Bounded discovery is not exhaustive coverage. New states extend the inventory during testing; missing requested features remain in the plan.', ...d.probes.filter(p => p.authenticationContext === access(session) && p.outcome === 'limited').map(p => `Navigation probe ${p.label || p.selector} needs investigation; evidence ${p.evidenceId}.`)];
+          if (result.code === 'QA_DOCUMENT_LOAD_TIMEOUT') d.limitations.push(result.error);
           d.status = 'ready';
           if (!applicationDiscoveryStatus(session).ready) { d.status = 'blocked'; d.limitations.push('The entry surface or viable alternative navigation could not be verified. No execution plan was authorized.'); }
           if (applicationDiscoveryStatus(session).ready) bindDiscoveredPlan(session);
