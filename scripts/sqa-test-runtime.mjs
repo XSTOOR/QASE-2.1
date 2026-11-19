@@ -72,7 +72,7 @@ export async function qualifiedSqaLauncherFixture(directory) {
 	return standalone;
 }
 
-export async function createSqaTestServer(directory, { authRequired = false, envFile, hybridQa = false, jevNavigation = false, qualifiedSqaLaunch = false } = {}) {
+export async function createSqaTestServer(directory, { authRequired = false, envFile, qualifiedSqaLaunch = false } = {}) {
 	await mkdir(directory, { recursive: true });
 	const standalone = qualifiedSqaLaunch ? await qualifiedSqaLauncherFixture(directory) : {};
 
@@ -105,8 +105,6 @@ export async function createSqaTestServer(directory, { authRequired = false, env
 		server = spawn(process.execPath, args, {
 			cwd: directory, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
 			env: { ...isolatedSqaEnvironment(), ...standalone, PORT: String(port), QASE_PUBLIC_URL: base, QASE_AUTH_REQUIRED: String(authRequired),
-				...(hybridQa ? { QASE_HYBRID_QA_ENABLED: 'true', QASE_HYBRID_MAX_PAGES: '3', QASE_HYBRID_DURATION_MS: '480000' } : {}),
-				...(jevNavigation ? { QASE_HYBRID_JEV_NAVIGATION_ENABLED: 'true' } : {}),
 				...(envFile ? { NODE_ENV: 'development', QASE_ALLOW_PRIVATE_NETWORK: 'true', QASE_BROWSER_ALLOWED_PRIVATE_HOSTS: '127.0.0.1' } : {}) }
 		});
 		let launchError;

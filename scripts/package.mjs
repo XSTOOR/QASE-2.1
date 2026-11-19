@@ -134,7 +134,7 @@ for (const required of [
 	'integrations/drytis/README.md',
 	'scripts/data-governance.mjs',
 	'SOURCE_MANIFEST.json', 'public/release.json', 'public/runCard.css', 'public/runCard.js',
-	'DEPLOYMENT_PROMPT.md', 'RELEASE_NOTES.md', 'deploy/production/compose.yaml',
+	'RELEASE_NOTES.md', 'deploy/production/compose.yaml',
 	'docs/enterprise-migration/phase-10-data-governance.md'
 ]) {
 	if (!listing.includes(required)) {
@@ -147,4 +147,4 @@ const size = (fs.statSync(output).size / 1024).toFixed(0);
 console.log(`\n  ${path.basename(output)}  ${size} KB  ${listing.length} archive entries`);
 console.log('  No API key, no run history, no node_modules.\n');
 fs.writeFileSync(`${output}.sha256`, `${createHash('sha256').update(fs.readFileSync(output)).digest('hex')}  ${path.basename(output)}\n`);
-console.log('  Read DEPLOYMENT_PROMPT.md; verify SOURCE_MANIFEST.json before building.\n');
+console.log('  Read docs/OPERATIONS.md; verify SOURCE_MANIFEST.json before building.\n');

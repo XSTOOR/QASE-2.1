@@ -1,3 +1,8 @@
+/**
+ * Model profile for the qualified SQA/Founder "mode reasoning" runtime
+ * (reasoner + JEV classifier through the SDK usage transport). QA mode does
+ * not use this file; it has its own optional model layer in server/qa/models.js.
+ */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -10,7 +15,6 @@ export const OPUS_MODEL = 'drytis/claude-opus-4.7';
 export const OPUS_ENDPOINT = 'https://llm.drytis.ai/v1/chat/completions';
 export const HYBRID_SDK_VERSION = JSON.parse(readFileSync(path.join(path.dirname(createRequire(import.meta.url).resolve('@cleanslate/sdk')), '..', 'package.json'), 'utf8')).version;
 export const REQUIRED_CAPABILITIES = ['text', 'streaming', 'nativeTools', 'multipleTools', 'continuation', 'cancellation', 'timeout', 'usage', 'structured', 'image', 'sdkLoop', 'sdkUsage', 'jev'];
-export const hybridEnabled = () => process.env.QASE_HYBRID_QA_ENABLED === 'true';
 const limit = (value, fallback, max) => Number.isFinite(Number(value)) && Number(value) > 0 ? Math.min(max, Math.floor(Number(value))) : fallback;
 
 export function hybridProfile(settings = {}, env = process.env) {
@@ -54,20 +58,6 @@ export function validateQualification(profile, report, now = Date.now()) {
   return true;
 }
 
-/** Credential-free availability for the launcher. Never return raw gateway or
- * configuration errors; qualification and the feature flag remain mandatory. */
-export function hybridAvailability(profile, { enabled = hybridEnabled(), readQualification = loadQualification } = {}) {
-  if (!enabled) return { enabled: false, qualified: false, available: false, status: 'disabled', reason: 'Hybrid QA is disabled by the server operator.' };
-  try {
-    const report = readQualification(profile);
-    return { enabled: true, qualified: true, available: true, status: 'ready', checkedAt: report.checkedAt, expiresAt: report.checkedAt + 86400000 };
-  } catch (error) {
-    const expired = error.code === 'HYBRID_QUALIFICATION_EXPIRED';
-    return { enabled: true, qualified: false, available: false, status: expired ? 'qualification_expired' : 'qualification_required',
-      reason: expired ? 'The model compatibility check expired. Select “Check model compatibility” to renew it; your test setup is kept.' : 'Model compatibility must be verified before testing. Select “Check model compatibility” to run the gateway and SDK checks.' };
-  }
-}
-
 export function loadQualification(profile) {
   let report;
   try { report = JSON.parse(readFileSync(qualificationPath(profile), 'utf8')); }
@@ -88,13 +78,4 @@ export function qualificationPath(profile) {
       ? path.join(process.env.QASE_ARTIFACT_DIR, 'qualifications', 'hybrid')
       : path.join('.qase', 'qualifications', 'hybrid'));
   return path.resolve(process.env.QASE_HYBRID_QUALIFICATION_FILE || path.join(directory, `${profileIdentity(profile)}.json`));
-}
-
-export function selectQaExecutionMode(value, enabled = hybridEnabled()) {
-  if (value === undefined) return enabled ? 'hybrid' : 'legacy';
-  // Explicit API rollback remains available; the launcher always sends hybrid.
-  if (value === 'legacy') return 'legacy';
-  if (value !== 'hybrid') throw new TypeError('Unknown QA execution mode.');
-  if (!enabled) throw new TypeError('Hybrid QA is disabled for new runs.');
-  return 'hybrid';
 }

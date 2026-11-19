@@ -482,7 +482,10 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 
 		// 9. Visual review
 		await phase('visual', async deadline => {
-			if (!models.visionAvailable()) return 'skipped (no vision model)';
+			if (!models.visionAvailable()) {
+				if (models.state.reasoner.enabled) limitation('visual', `AI visual review was unavailable (reasoning model error: ${models.state.reasoner.lastError ?? 'budget reached'}).`);
+				return models.state.reasoner.enabled ? 'skipped (reasoning model unavailable)' : 'skipped (no reasoning model configured)';
+			}
 			const result = await reviewVisuals({ models, shots, filmstrips, save, signal, deadline, maxCalls: options.visualShots + 4, known: state.candidates.map(item => item.title) });
 			addCandidates(result.candidates);
 			state.coverage.visualReviews = result.calls;

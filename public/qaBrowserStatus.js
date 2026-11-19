@@ -28,7 +28,7 @@ export function qaBrowserStatus({ fetchState, configurations = [], envIds = [], 
   if (!envIds.length) return recommended
     ? result('blocked', 'Choose a browser for this run', 'Use the recommended browser, or open customization to choose your own.', 'recommended', 'Use recommended browser')
     : result('blocked', 'No supported browser is ready', 'Check your installed browsers or execution provider, then refresh the list. Nothing will run until a browser is available.', 'reload', 'Refresh browser list');
-  if (hybrid && envIds.length > 1) return result('blocked', `${envIds.length} browsers selected`, 'Hybrid testing currently runs one browser at a time. Use one recommended browser; your custom coverage is kept for later.', 'recommended', 'Use one recommended browser');
+  if (hybrid && envIds.length > 1) return result('blocked', `${envIds.length} browsers selected`, 'A QA run tests one browser configuration at a time. Use one recommended browser; your custom coverage is kept for later.', 'recommended', 'Use one recommended browser');
   const selected = envIds.map(id => configurations.find(row => row.envId === id));
   const invalid = selected.find(row => !row || row.availability !== 'AVAILABLE');
   if (selected.some(row => !row || row.availability !== 'AVAILABLE')) return result('blocked', 'The selected browser is no longer available', invalid?.availabilityReason || 'Refresh browser details or choose another available browser.', recommended ? 'recommended' : 'reload', recommended ? 'Use recommended browser' : 'Refresh browser list');
@@ -38,7 +38,7 @@ export function qaBrowserStatus({ fetchState, configurations = [], envIds = [], 
   const title = [row.browser || 'Browser', row.browserVersion].filter(Boolean).join(' ');
   const device = [row.device, [row.os, row.osVersion].filter(Boolean).join(' ')].filter(Boolean).join(' · ');
   const execution = ({ browser_emulation: 'Browser emulation. Physical-device coverage requires a separate run.', simulator: 'Browser-engine simulation.', emulator: 'Emulated device.', physical_device: 'Physical device.', virtual_machine: 'Virtual machine.' })[row.executionType] || 'Execution follows the selected environment.';
-  return result('ready', title, `${device ? `${device}. ` : ''}${execution} Ready for ${hybrid ? 'one hybrid' : 'this'} test run.`, 'change', 'Change browser');
+  return result('ready', title, `${device ? `${device}. ` : ''}${execution} Ready for this test run.`, 'change', 'Change browser');
 }
 
 export function renderQaBrowserStatus(model, document) {

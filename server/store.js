@@ -328,8 +328,6 @@ export function createSession(title = 'New test run', options = {}) {
 		/** Selected standard QA test ids; undefined = full coverage. */
 		selectedTests: options.selectedTests ? [...options.selectedTests] : undefined,
 		qaExecutionMode: options.qaExecutionMode === 'hybrid' ? 'hybrid' : undefined,
-		// Execution contracts are pinned at creation; saved runs keep theirs.
-		qaDiscoveryVersion: options.qaExecutionMode === 'hybrid' ? 1 : undefined,
 		/** Security testing authorization for runs with security checks. */
 		securityAuthorization: options.securityAuthorization
 			? structuredClone(options.securityAuthorization)
@@ -393,8 +391,7 @@ export function listSessions({ limit = 100, ownerUserId, unbounded = false } = {
 			pausedSeconds: session.pausedSeconds ?? 0,
 			durationSeconds: activeDurationSeconds(session),
 			findingCount: session.findings.length,
-			...(session.qaExecutionMode === 'hybrid' && session.hybrid ? { qaExecutionMode: 'hybrid', scenarioTotal: session.hybrid.scenarios?.length || 0,
-				scenarioExecuted: session.hybrid.scenarios?.filter(item => ['passed', 'failed'].includes(item.status)).length || 0 } : {}),
+			...(session.qaExecutionMode === 'hybrid' ? { qaExecutionMode: 'hybrid' } : {}),
 			messageCount: session.messages.length,
 			...(session.report?.verdict ? { reportVerdict: session.report.verdict } : {}),
 			...(session.mode === 'sqa' && session.sqa?.assessment?.verdict ? { sqaVerdict: session.sqa.assessment.verdict } : {}),

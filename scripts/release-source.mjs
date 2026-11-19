@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 
 // The repository, source ZIP and verified Docker source use one inventory.
 export const RELEASE_DIRECTORIES = ['public', 'server', 'scripts', 'docs', 'deploy', 'load', 'integrations', '.github'];
-export const RELEASE_FILES = ['package.json', 'package-lock.json', 'README.md', 'DEPLOYMENT_PROMPT.md', 'RELEASE_NOTES.md', '.env.example',
+export const RELEASE_FILES = ['package.json', 'package-lock.json', 'README.md', 'RELEASE_NOTES.md', '.env.example',
   '.gitignore', '.gitattributes', '.dockerignore', '.nvmrc', 'Dockerfile', 'run-jev.command'];
 
 export function writeSourceManifest(root, { directories = RELEASE_DIRECTORIES, files = RELEASE_FILES } = {}) {

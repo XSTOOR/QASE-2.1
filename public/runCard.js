@@ -7,8 +7,8 @@ export function runCardDetails(run, profiles = []) {
  const device = clean(snapshot.device) || clean(profile?.label) || (run.device === 'desktop' ? 'Desktop' : clean(run.device));
  const browser = clean(snapshot.browser) || ({ chromium: 'Chromium', firefox: 'Firefox', webkit: 'WebKit' }[run.engine] ?? clean(run.engine));
  const environment = [device, browser ? [browser, clean(snapshot.browserVersion)].filter(Boolean).join(' ') : ''].filter(Boolean).join(' · ');
- const hybrid = run.qaExecutionMode === 'hybrid' && Number.isFinite(run.scenarioTotal);
- const rawTotal = hybrid ? run.scenarioTotal : run.todoTotal, rawCompleted = hybrid ? run.scenarioExecuted : run.todoCompleted;
+ // QA engine runs record their phases as plan items, so one progress source serves every mode.
+ const rawTotal = run.todoTotal, rawCompleted = run.todoCompleted;
  const total = Number.isFinite(rawTotal) ? Math.max(0, Math.floor(rawTotal)) : 0;
  const completed = Math.min(total, Math.max(0, Number.isFinite(rawCompleted) ? Math.floor(rawCompleted) : 0));
  return {

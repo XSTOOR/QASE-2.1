@@ -120,8 +120,7 @@ older server version ignores the new columns safely.
 ## 8. Backup & retention
 
 - Local store: `.qase/` on the persistent volume — covered by platform volume
-  snapshots. A restore drill is still outstanding (see
-  `docs/production-readiness-report-2026-09-10.md`).
+  snapshots. Perform and record a restore drill before relying on them.
 - Retention is **manual, not automatic**:
   - Local store (the deployed mode): `npm run prune:local` sweeps sessions
     older than `QASE_RUN_RETENTION_DAYS` (default 30) plus their snapshots and

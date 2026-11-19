@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CleanSlateNodeAgentRuntime, createNodeProviderConfiguration } from '@cleanslate/sdk';
-import { hybridProfile, OPUS_MODEL, OPUS_ENDPOINT, hybridEnabled, profileIdentity } from './hybridConfig.js';
+import { hybridProfile, OPUS_MODEL, OPUS_ENDPOINT, profileIdentity } from './hybridConfig.js';
 import { createHybridUsageTransport, exactStreamUsage } from './hybridUsageTransport.js';
 import { attachUsageCapture, createUsageLedger, applyUsage } from './usageCapture.js';
 import { createHybridModelRouter } from './hybridModelRouter.js';
@@ -161,11 +161,6 @@ test('loopback is authenticated, fixed-destination and unavailable outside an ac
   assert.notEqual(profileIdentity(p), profileIdentity({ ...p, usageTransport: 'unqualified-adapter' }));
 });
 
-test('hybrid remains disabled by default independently of transport availability', () => {
-  const saved = process.env.QASE_HYBRID_QA_ENABLED;
-  try { delete process.env.QASE_HYBRID_QA_ENABLED; assert.equal(hybridEnabled(), false); }
-  finally { if (saved !== undefined) process.env.QASE_HYBRID_QA_ENABLED = saved; }
-});
 
 test('wrong models, malformed events and repeated authorized requests fail without releasing tools', async t => {
   let upstream = 0;

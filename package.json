@@ -33,6 +33,7 @@
     "test:dashboard": "node scripts/qualify-dashboard.mjs",
     "test:studio-demo": "node scripts/qualify-studio-demo.mjs",
     "qualify:agent": "node scripts/qualify-agent.mjs",
+    "qualify:qa-live": "node scripts/qualify-qa-live.mjs",
     "install-browser": "playwright install chromium firefox webkit",
     "package": "node scripts/package.mjs",
     "test:auth": "node scripts/test-auth-browser.mjs",

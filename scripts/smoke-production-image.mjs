@@ -21,7 +21,7 @@ try {
   const environment = {
     NODE_ENV: 'production', QASE_HOST: '0.0.0.0', PORT: '5173', QASE_PUBLIC_URL: 'https://fixture.example.invalid',
     QASE_AUTH_REQUIRED: 'true', QASE_OPEN_REGISTRATION: 'false', QASE_RUN_STORE: 'local', QASE_EXECUTION_MODE: 'local',
-    QASE_ARTIFACT_DIR: '/app/evidence', QASE_HYBRID_QA_ENABLED: 'false', QASE_HEADLESS: 'true',
+    QASE_ARTIFACT_DIR: '/app/evidence', QASE_HEADLESS: 'true',
     QASE_PROVIDER: 'custom', QASE_BASE_URL: 'https://llm.drytis.ai/v1', QASE_MODEL: 'drytis/claude-opus-4.7',
     QASE_API_KEY: 'ci-fixture-not-a-real-credential', QASE_BOOTSTRAP_ORGANIZATION_ID: randomUUID(),
     QASE_BOOTSTRAP_PROJECT_ID: randomUUID(), QASE_BOOTSTRAP_USER_ID: randomUUID(),
