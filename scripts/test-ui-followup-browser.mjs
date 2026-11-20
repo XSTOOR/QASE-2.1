@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { request } from 'playwright';
 import { assertSqaTestBrowser, createSqaTestServer, launchSqaTestBrowser } from './sqa-test-runtime.mjs';
-import { createFounderBrowserFixture } from './founder-browser-fixture.mjs';
+import { createFounderReviewFixture } from '../server/founder/fixtureReview.js';
 import { createSqaRunState } from '../server/sqa/engine.js';
 import { buildSqaReport } from '../server/sqa/report.js';
 
@@ -42,7 +42,7 @@ const quality = complianceFixture('Controlled compliance UI fixture', [{ status:
 assert.equal(quality.report.verdict, 'not_assessed');
 const failedQuality = complianceFixture('Controlled failed compliance UI fixture', [{ status: 'fail', observed: 'The privacy policy has no section for children.', fix: 'Add a children section with the COPPA notice items.', decidedBy: 'agent' }, { status: 'pass', observed: 'Every image has alternative text.', url: 'https://fixture.test/', decidedBy: 'agent' }]);
 assert.equal(failedQuality.report.verdict, 'non_compliant');
-const founder = await createFounderBrowserFixture();
+const founder = await createFounderReviewFixture();
 const qa = { id: randomUUID(), mode: 'qa', title: 'Ordinary completed QA fixture', targetUrl: 'https://fixture.test/', status: 'done', createdAt: now, updatedAt: now, messages: [], activities: [], findings: [], todos: [], secretNames: [], report: { verdict: 'pass', summary: 'Controlled display fixture only.', generatedAt: new Date(now).toISOString() } };
 
 async function openReport(session) {
@@ -118,16 +118,17 @@ try {
   await openReport(founder);
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: width < 500 ? 844 : 1000 });
-    assert.ok(await page.locator('#report-view .founder-copy').first().evaluate(node => parseFloat(getComputedStyle(node).fontSize) >= 14));
-    assert.ok(await page.locator('#report-view .founder-evidence-note').first().evaluate(node => parseFloat(getComputedStyle(node).fontSize) >= 12));
-    assert.ok(await page.locator('#report-view .founder-scope strong').first().evaluate(node => parseFloat(getComputedStyle(node).fontSize) >= 14));
-    assert.ok(await page.locator('#report-view .founder-status').first().evaluate(node => parseFloat(getComputedStyle(node).fontSize) >= 12));
+    assert.ok(await page.locator('#report-view .fdr-rec-title').first().evaluate(node => parseFloat(getComputedStyle(node).fontSize) >= 14));
+    assert.ok(await page.locator('#report-view .fdr-rec-meta').first().evaluate(node => parseFloat(getComputedStyle(node).fontSize) >= 12));
+    assert.ok(await page.locator('#report-view .fdr-score strong').first().evaluate(node => parseFloat(getComputedStyle(node).fontSize) >= 20));
+    assert.match(await page.locator('#report-view .fdr-rec-group.is-now').first().innerText(), /Do now[\s\S]*Publish a pricing page/);
+    assert.equal(await page.locator('#report-view .fdr-lens').count(), 10);
     assert.ok(await page.locator('#tab-founder').evaluate(node => node.scrollWidth <= node.clientWidth + 1), 'The Founder tab and its status badge must not clip each other.');
     assert.ok(await page.evaluate(() => document.querySelector('#tabs').getBoundingClientRect().bottom <= document.querySelector('#pane-report').getBoundingClientRect().top + 1), 'Wrapped report tabs must not cover report content.');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await page.screenshot({ path: path.join(output, `founder-${width}.png`), animations: 'disabled' });
   }
-  checks.push('Founder body and evidence notes retain readable sizes after brand overrides at desktop and mobile widths.');
+  checks.push('The Founder review shows readiness, do-now recommendations and all ten lenses with readable sizes and no overflow at 1440/390/320px.');
   await openReport(qa);
   assert.equal(await page.locator('#results-page-status').innerText(), 'Complete');
   assert.equal(await page.locator('#results-page-findings').innerText(), '0 findings');
@@ -138,14 +139,14 @@ try {
   await page.waitForFunction(() => document.body.dataset.page === 'run' && !document.body.dataset.pageLoading);
   await page.locator('#new-founder').click();
   await page.locator('#founder-target-url').fill('https://fixture.test/');
-  await page.locator('#founder-detected-context').waitFor({ state: 'visible' });
+  await page.locator('#founder-goals').waitFor({ state: 'visible' });
   for (const theme of ['light', 'dark']) {
     await page.evaluate(theme => document.documentElement.dataset.theme = theme, theme);
-    assert.ok(await contrast('#founder-detected-context') >= 4.5, `${theme} context notice must be readable`);
-    await page.screenshot({ path: path.join(output, `founder-context-${theme}.png`), animations: 'disabled' });
+    assert.ok(await contrast('#founder-launch-status') >= 4.5, `${theme} launch status must be readable`);
+    await page.screenshot({ path: path.join(output, `founder-launcher-${theme}.png`), animations: 'disabled' });
   }
-  await page.locator('#founder-close').click();
-  checks.push('The Founder context notice meets 4.5:1 text contrast in both light and dark themes.');
+  await page.locator('#founder-cancel').click();
+  checks.push('The Founder launcher brief fields and readiness status are readable in light and dark themes.');
 
   await page.locator('#sidebar-open-settings').click();
   const customOption = await page.locator('#cfg-model option').filter({ hasText: /^Custom model ID/ }).first().getAttribute('value');

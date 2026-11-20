@@ -4,10 +4,10 @@ JEV (TypeSafe Decisions, `jev-1.13`) is used in two ways:
 
 - **QA mode** (any provider): the QA engine sends every candidate defect to
   JEV for verification and severity grading. See [QA-ENGINE.md](QA-ENGINE.md).
-- **JEV-only instance** (`QASE_PROVIDER=jev`): Founder runs on the JEV
-  decision controller described below instead of a generative model. QA runs
-  use the QA engine with JEV verification. SQA (compliance testing) never uses
-  JEV; it needs the reasoning model.
+- **JEV-only instance** (`QASE_PROVIDER=jev`): QA runs use the QA engine with
+  JEV verification. SQA (compliance testing) and Founder (business review)
+  never use JEV; they use the reasoning model, and without one they report
+  from measured evidence (see [sqa.md](sqa.md), [founder-mode.md](founder-mode.md)).
 
 The native JEV adapter uses `jev-1.13` at
 `https://llm.drytis.ai/typesafe/api/alpha/decisions`. The gateway resolves the
@@ -43,36 +43,12 @@ requested answer types, candidate membership, model identity, probabilities,
 and token usage, bounds body sizes and timeouts, disables redirects, and
 supports cancellation. It does not automatically retry billable requests.
 
-`server/jevRuntime.js` replaces the SDK's generative run loop for the JEV
-provider while retaining the existing approved tool executor, browser bridge,
-session activity stream, credential redaction, and mode-specific finalizers.
-No package files in `node_modules` are patched. A JEV-only instance lock keeps
-saved user preferences from silently selecting another model. SDK auxiliary
-generation fails explicitly; test-case auto-generation uses the existing
-deterministic fallback from recorded run evidence.
-
-The host constructs candidate actions from fresh DOM snapshots. JEV chooses
-among observed same-origin links and a limited set of reversible disclosure
-controls. Query URLs, known destructive/account/commerce actions, and external
-destinations are excluded. Existing network policies still apply. The host
-persists attempted actions before execution to avoid repeating them after a
-restart. Each invocation reacquires browser evidence. Founder retains its
-bounded six-action sampler (`QASE_JEV_MAX_ACTIONS`). QA does not use this controller. The default decision limit is forty per
-invocation (`QASE_JEV_MAX_DECISIONS`); prior invocations do not consume a new
-turn's entire budget. All limits have hard upper bounds.
-
-Founder mode classifies all review lenses against sampled DOM and diagnostics.
-Unobserved business facts remain unknown, and recommendations use explicit,
-low-confidence evidence-collection templates. These are not free-form model
-strategy generation, validated market claims, or a complete user-journey review.
-Missing product context triggers the existing structured question flow.
-
-This is a deliberate change in review capability: the Decisions API cannot
-generate arbitrary text, tool arguments, new test scenarios, or a bespoke
-strategy document. The UI and reports describe the bounded scope explicitly.
+The JEV decision controller that once drove Founder mode on JEV-only
+instances (`jevRuntime.js` and its browser samplers) was removed with the old
+Founder pipeline. Founder is now a stage engine on the reasoning model.
 
 ## Verification
 
 ```sh
-node --test server/jev.test.js server/jevBrowserChecks.test.js server/jevAccessibility.test.js
+node --test server/qa/*.test.js   # includes the JEV verification of QA findings
 ```

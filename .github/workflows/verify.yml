@@ -84,13 +84,10 @@ jobs:
           for browser in chromium firefox webkit; do
             node scripts/test-ui-followup-browser.mjs --browser "$browser"
           done
-      - name: Verify Founder completion and mode launchers
-        run: |
-          node scripts/test-founder-completion-browser.mjs
-          node scripts/test-founder-progress-browser.mjs
-          node scripts/test-founder-reader-browser.mjs
-          node scripts/test-founder-actions-browser.mjs
-          node scripts/qualify-system-ui.mjs --launch-only
+      - name: Verify mode launchers
+        run: node scripts/qualify-system-ui.mjs --launch-only
+      - name: Verify the Founder business review end to end
+        run: node scripts/test-founder-browser.mjs --browser chromium --output-dir test-results/phase8/founder-chromium
       - name: Verify SQA compliance testing end to end
         run: node scripts/test-sqa-browser.mjs --browser chromium --output-dir test-results/phase8/sqa-chromium
       - name: Retain mode browser diagnostics
@@ -99,16 +96,9 @@ jobs:
         with:
           name: qase-mode-browser-${{ github.sha }}
           path: |
-            test-results/founder-completion/*.png
-            test-results/founder-completion/*.json
-            test-results/founder-completion/*.log
             test-results/system-mode-ui/result.json
             test-results/integration/phase5-recovery-browser/*.png
             test-results/integration/phase5-recovery-browser/*.json
-            test-results/founder-reader/*.png
-            test-results/founder-reader/*.json
-            test-results/founder-actions/*.png
-            test-results/founder-actions/*.json
             test-results/phase8/**/*.png
             test-results/phase8/**/result.json
             test-results/auth/*.png

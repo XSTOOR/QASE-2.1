@@ -320,9 +320,9 @@ export function createLocalApplicationServices(options = {}) {
 			// checkpoints (phase boundaries, questions, the report); their frequent
 			// progress updates are batched so a large history file is not rewritten
 			// synchronously on every event.
-			const engineRun = session.mode === 'qa' || session.mode === 'sqa';
+			const engineRun = ['qa', 'sqa', 'founder'].includes(session.mode);
 			const engineDurable = engineRun && (payload.checkpoint === true || ['report', 'question'].includes(type));
-			emit(session, type, payload, { durable: engineRun ? engineDurable : session.qaExecutionMode === 'hybrid' || session.mode === 'founder' });
+			emit(session, type, payload, { durable: engineRun ? engineDurable || type === 'founder.finalized' : session.qaExecutionMode === 'hybrid' });
 			return session;
 		},
 		async setFindingStatus(session, findingId, patch) {
@@ -414,7 +414,7 @@ export function createLocalApplicationServices(options = {}) {
 			return updateActivity(session, id, patch);
 		},
 		async setStatus(session, status, detail) {
-			setStatus(session, status, detail, { durable: session.mode === 'founder' });
+			setStatus(session, status, detail, { durable: ['done', 'error', 'interrupted', 'awaiting_input'].includes(status) });
 		},
 		markReportPhase,
 		markExecutionStarted,

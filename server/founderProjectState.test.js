@@ -6,7 +6,6 @@ import {
 	reconcileSelections,
 	createFounderProjectStateService
 } from './founderProjectState.js';
-import { createFounderState } from './founderService.js';
 
 function finalizedFounderSession() {
 	const session = {

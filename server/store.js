@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { normalizeFounderState } from './founderService.js';
+import { normalizeFounderState } from './founder/state.js';
 import { invalidTransition, recordLifecyclePhase } from './runLifecycle.js';
 import { DEFAULT_DEVICE_ID, isDeviceId } from './deviceProfiles.js';
 import { isEngineId } from './browserEngines.js';

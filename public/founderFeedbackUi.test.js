@@ -9,7 +9,7 @@ import { readFile } from 'node:fs/promises';
  * for founder runs. */
 
 const app = await readFile('public/app.js', 'utf8');
-const founderView = await readFile('public/founderView.js', 'utf8');
+const founderView = await readFile('public/founderReviewView.js', 'utf8');
 
 test('#16653 feedbackEligible covers every mode including founder', () => {
 	const start = app.indexOf('function feedbackEligible');
@@ -33,28 +33,19 @@ test('#16653 founder terminal event syncs feedback state', () => {
 	assert.match(body, /FEEDBACK_TERMINAL_STATUSES/, 'sync must be gated on terminal statuses');
 });
 
-test('#16653 founderView renders Provide/View Feedback button', () => {
-	const start = founderView.indexOf('function renderFounderReportActions');
-	const body = founderView.slice(start, founderView.indexOf('function appendFounderCompletedReport'));
-	assert.ok(start >= 0, 'renderFounderReportActions must exist');
-	assert.match(body, /Provide Feedback/, 'button label (blank state)');
-	assert.match(body, /View Feedback/, 'button label (submitted state)');
-	assert.match(body, /onProvideFeedback/, 'must invoke the controller callback');
-	assert.match(body, /getFeedbackRating/, 'label state reads the rating record');
+test('#16653 the Founder review renders a Provide/View Feedback button', () => {
+	assert.match(founderView, /actions\.feedbackRated \? 'View Feedback' : 'Provide Feedback'/);
+	assert.match(founderView, /actions\.onProvideFeedback/);
 });
 
-test('#16653 founder completed report embeds USER FEEDBACK section', () => {
-	const start = founderView.indexOf('function appendFounderCompletedReport');
-	const body = founderView.slice(start, founderView.indexOf('function renderSavedProjectState'));
+test('#16653 the Founder report tab embeds the USER FEEDBACK section and the controller wires feedback', () => {
+	const start = app.indexOf('renderReportTab() {');
+	const body = app.slice(start, app.indexOf('clearReport()', start));
+	assert.match(body, /renderFounderReview\(session, founderViewActions\(\)\)/);
 	assert.match(body, /renderReportFeedbackSection/, 'completed report must render the feedback section');
-	assert.match(body, /getFeedbackRating/, 'section reads the submitter record');
-});
-
-test('#16653 founderView receives feedback wiring from the controller', () => {
-	const start = app.indexOf('const founderView = createFounderView({');
-	const body = app.slice(start, app.indexOf('});', start));
-	assert.match(body, /onProvideFeedback: \(\) => openFeedbackModal\(\)/, 'modal opener wired');
-	assert.match(body, /renderReportFeedbackSection/, 'report section renderer wired');
+	const actions = app.slice(app.indexOf('function founderViewActions'), app.indexOf('function founderViewActions') + 600);
+	assert.match(actions, /onProvideFeedback: \(\) => openFeedbackModal\(\)/, 'modal opener wired');
+	assert.match(actions, /feedbackRated: Boolean\(getFeedbackRating\(session\.id\)\)/, 'label state reads the rating record');
 });
 
 test('#16653 modal run meta is mode-aware', () => {

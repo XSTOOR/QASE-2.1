@@ -8,8 +8,9 @@
  */
 import { buildFindingFixPrompt } from './fixPromptBuilder.js';
 import { isSqaComplianceRun, renderSqaReportCard } from './sqaComplianceView.js';
+import { isFounderReviewRun, renderFounderRecCard, renderFounderReportCard } from './founderReviewView.js';
 
-export const QA_MESSAGE_KINDS = new Set(['qa-step', 'qa-finding', 'qa-report', 'sqa-report']);
+export const QA_MESSAGE_KINDS = new Set(['qa-step', 'qa-finding', 'qa-report', 'sqa-report', 'founder-report', 'founder-rec']);
 
 const SEVERITY_LABEL = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low', info: 'Info' };
 const VERDICT = {
@@ -20,9 +21,9 @@ const VERDICT = {
 	blocked: { label: 'Blocked', tone: 'fail', line: 'The site could not be tested.' }
 };
 
-/** True for QA and compliance engine messages this module renders. */
+/** True for QA, compliance and Founder engine messages this module renders. */
 export function isQaConversationMessage(message, session) {
-	const engineRun = session?.mode === 'qa' || isSqaComplianceRun(session);
+	const engineRun = session?.mode === 'qa' || isSqaComplianceRun(session) || isFounderReviewRun(session);
 	return engineRun && QA_MESSAGE_KINDS.has(message?.kind) && ['agent', 'assistant'].includes(message.role);
 }
 
@@ -144,6 +145,8 @@ export function renderQaMessageBody(message, session, actions = {}, { markdown, 
 	}
 	if (message.kind === 'qa-report' && session.report) return renderReportCard(session, message, actions, doc);
 	if (message.kind === 'sqa-report' && session.report) return renderSqaReportCard(session, message, actions, doc);
+	if (message.kind === 'founder-report' && session.founder?.report) return renderFounderReportCard(session, message, actions, doc);
+	if (message.kind === 'founder-rec' && session.founder?.report) return renderFounderRecCard(session, message, actions, doc);
 	const body = el(doc, 'div', 'msg-body md');
 	body.innerHTML = markdown ? markdown(message.text ?? '') : '';
 	if (!markdown) body.textContent = message.text ?? '';

@@ -5,7 +5,7 @@ import {
 	TenantInactiveError,
 	createPostgresRunRepository
 } from './runRepository.js';
-import { createFounderState } from '../founderService.js';
+import { createFounderRunState } from '../founder/engine.js';
 
 const TENANT = Object.freeze({
 	organizationId: '4a7f5cf0-813d-4e3c-8d5d-4b4b9fc88c01',
@@ -181,11 +181,7 @@ function session(overrides = {}) {
 function founderSession(overrides = {}) {
 	return session({
 		mode: 'founder',
-		founder: createFounderState({
-			authorizationConfirmed: true,
-			target: { name: 'Drytis Studio', release: '1.0.0', environment: 'staging' },
-			productContext: { stage: 'growth', targetCustomer: 'Software teams' }
-		}, () => NOW),
+		founder: createFounderRunState({ targetUrl: 'https://studio.test/', name: 'Drytis Studio', brief: { stage: 'growth', audience: 'Software teams' } }),
 		...overrides
 	});
 }
@@ -453,7 +449,7 @@ test('known metadata events skip child writes while unknown events retain the sa
 	const metadataEvents = [
 		'browser', 'context', 'question', 'run.recovered', 'run.stop_requested',
 		'secrets', 'session', 'sqa', 'sqa.created', 'founder.created', 'founder.target_bound',
-		'founder.observation', 'founder.finalized', 'status', 'task_complete',
+		'founder.state', 'founder.finalized', 'status', 'task_complete',
 		'drytis.review.created', 'drytis.review.start_requested', 'drytis.review.start_completed', 'drytis.review.start_failed',
 		'drytis.review.stop_requested', 'drytis.review.stopped',
 		'drytis.blackbox.started', 'drytis.blackbox.queued', 'drytis.blackbox.failed', 'drytis.blackbox.settled',

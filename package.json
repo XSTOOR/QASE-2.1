@@ -13,7 +13,7 @@
     "worker": "node server/worker.js",
     "control-plane": "node server/controlPlane/index.js",
     "cell-heartbeat": "node server/cellHeartbeatController.js",
-    "test": "node --test --test-concurrency=2 server/*.test.js server/qa/*.test.js server/sqa/*.test.js server/postgres/*.test.js server/controlPlane/*.test.js public/*.test.js",
+    "test": "node --test --test-concurrency=2 server/*.test.js server/qa/*.test.js server/sqa/*.test.js server/founder/*.test.js server/postgres/*.test.js server/controlPlane/*.test.js public/*.test.js",
     "validate:matrix": "node scripts/validate-matrix.mjs",
     "db:migrate": "node scripts/migrate.mjs",
     "control:db:migrate": "node scripts/migrate-control-plane.mjs",
@@ -41,7 +41,8 @@
     "test:ui": "node scripts/test-ui-responsive.mjs",
     "test:welcome": "node scripts/qualify-welcome.mjs",
     "test:acceptance": "node scripts/test-acceptance.mjs",
-    "test:sqa": "node scripts/test-sqa-browser.mjs"
+    "test:sqa": "node scripts/test-sqa-browser.mjs",
+    "test:founder": "node scripts/test-founder-browser.mjs"
   },
   "engines": {
     "node": ">=22 <25"

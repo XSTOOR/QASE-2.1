@@ -20,21 +20,6 @@ import { authThrottleKey, createAuthThrottle } from './authThrottle.js';
 import { InviteError } from './invites.js';
 import { sanitizeErrorDetail } from './errorSanitizer.js';
 import { publicQaState, createQaState } from './qa/engine.js';
-import {
-	FOUNDER_CATEGORIES,
-	FOUNDER_CAVEAT,
-	FOUNDER_LEVELS,
-	FOUNDER_OBSERVATION_TYPES,
-	FOUNDER_SCHEMA_VERSION
-} from './founderSchema.js';
-import {
-	buildFounderReportMarkdown,
-	createFounderReviewTodos,
-	createFounderState,
-	FOUNDER_PUBLIC_ONLY_ANSWER,
-	recordFounderPublicOnlyDecision
-} from './founderService.js';
-import { detectFounderProjectContext } from './founderContext.js';
 import { createFounderActions } from './founderActions.js';
 import { FounderHandoffError } from './founderHandoff.js';
 import { computeMatrixCoverage } from './matrixCoverage.js';
@@ -55,8 +40,8 @@ import { createSqaRunState, isSqaEngineSession } from './sqa/engine.js';
 import { buildSqaMarkdown } from './sqa/report.js';
 import { publicQaTestCatalog } from './qaTestCatalog.js';
 import { validateQaSelectedTests, validateSecurityAuthorization } from './appQaSelection.js';
-import { buildFounderProgress, founderContinuationTask } from './founderProgress.js';
-import { inspectFounderEvidence, verifiedFounderObservationIds } from './founderEvidence.js';
+import { createFounderRunState, isFounderEngineSession, normalizeBrief } from './founder/engine.js';
+import { buildFounderMarkdown } from './founder/report.js';
 import { getConfig } from './config.js';
 import { renderReportPdf } from './reportPdf.js';
 import { buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
@@ -211,26 +196,6 @@ export function createApplication(options = {}) {
 	const isDraining = typeof options.isDraining === 'function' ? options.isDraining : () => false;
 	const mailer = options.mailer ?? createMailer({ environment, logger });
 	const activeTurns = new Set();
-	const founderContinuations = new Map();
-	const founderSetupAnswers = new Set();
-	async function answerFounderSetup(session, response, action) {
-		if (session.pendingQuestion?.kind !== 'founder_launch_credentials' || founderSetupAnswers.has(session.id)) return response.status(409).json({ error: 'The review setup is already being submitted or answered. Refresh the saved run.' });
-		founderSetupAnswers.add(session.id);
-		try {
-			const latest = await services.runs.get(session.id);
-			if (latest?.pendingQuestion?.kind !== 'founder_launch_credentials'
-				|| latest.pendingQuestion.toolCallId !== session.pendingQuestion.toolCallId) {
-				return response.status(409).json({ error: 'The review setup has already been answered. Refresh the saved run.' });
-			}
-			return await action();
-		}
-		finally { founderSetupAnswers.delete(session.id); }
-	}
-	async function founderAuthenticatedAvailable() {
-		if (environment.QASE_FOUNDER_REASONING_ENABLED === 'true') return false;
-		const configuration = await services.configuration.getPublic();
-		return configuration?.provider !== 'jev';
-	}
 	const drytisIntegrationApi = options.drytisIntegrationApi;
 	if (drytisIntegrationApi !== undefined && typeof drytisIntegrationApi?.mount !== 'function') {
 		throw new TypeError('Drytis integration API must provide mount(app).');
@@ -681,35 +646,6 @@ export function createApplication(options = {}) {
 	}
 
 	/**
-	 * Resolve the detected Founder project context for the requesting owner
-	 * from trusted run records (QA + Founder modes only). Shared by
-	 * GET /api/founder/context and POST /api/founder/sessions enrichment.
-	 * Returns undefined when nothing usable is found — never throws on empty
-	 * history so a first launch stays frictionless.
-	 */
-	async function founderDetectedContext(request) {
-		const ownerUserId = request.auth?.userId;
-		const listAll = services.runs.listAll ?? services.runs.list.bind(services.runs);
-		const summaries = await listAll({ limit: 100, ownerUserId });
-		const getAny = services.runs.getAny?.bind(services.runs) ?? services.runs.get.bind(services.runs);
-		const runs = [];
-		for (const summary of summaries) {
-			if (summary.mode !== 'qa' && summary.mode !== 'founder') continue;
-			const session = await getAny(summary.id);
-			if (session && (!ownerUserId || session.ownerUserId === ownerUserId)) runs.push(session);
-		}
-		const detected = detectFounderProjectContext({ runs });
-		// Only enrich the founder scope with the facts the schema accepts;
-		// drop transport-only fields (detectedAt, targetName) at this boundary.
-		return {
-			targetUrl: detected.targetUrl,
-			studio: detected.studio,
-			previousFindings: detected.previousFindings,
-			previousFounder: detected.previousFounder
-		};
-	}
-
-	/**
 	 * Attaches the requesting user's feedback for this run (reports embed the
 	 * submitter's own record; nothing from other runs or users leaks in).
 	 */
@@ -804,41 +740,6 @@ export function createApplication(options = {}) {
 	app.get('/api/qa/catalog', (_request, response) => {
 		response.set('Cache-Control', 'private, max-age=300');
 		response.json(publicQaTestCatalog());
-	});
-
-	app.get('/api/founder/catalog', async (_request, response) => {
-		response.set('Cache-Control', 'no-store');
-		response.json({
-			schemaVersion: FOUNDER_SCHEMA_VERSION,
-			categories: FOUNDER_CATEGORIES,
-			observationTypes: FOUNDER_OBSERVATION_TYPES,
-			confidenceLevels: FOUNDER_LEVELS,
-			caveat: FOUNDER_CAVEAT,
-			launch: { setupVersion: 1, authenticatedAvailable: await founderAuthenticatedAvailable() }
-		});
-	});
-
-	// Detected project context for the Founder launcher: target URL candidates,
-	// Studio project metadata availability, prior findings and prior Founder
-	// context. Computed from trusted server-side run records for the
-	// requesting owner; never accepts request-body input.
-	app.get('/api/founder/context', async (request, response) => {
-		try {
-			const ownerUserId = request.auth?.userId;
-			const listAll = services.runs.listAll ?? services.runs.list.bind(services.runs);
-			const summaries = await listAll({ limit: 100, ownerUserId });
-			const getAny = services.runs.getAny?.bind(services.runs) ?? services.runs.get.bind(services.runs);
-			const runs = [];
-			for (const summary of summaries) {
-				if (summary.mode !== 'qa' && summary.mode !== 'founder') continue;
-				const session = await getAny(summary.id);
-				if (session && (!ownerUserId || session.ownerUserId === ownerUserId)) runs.push(session);
-			}
-			response.set('Cache-Control', 'no-store');
-			response.json(detectFounderProjectContext({ runs }));
-		} catch (error) {
-			safeErrorResponse(request, response, error, 500);
-		}
 	});
 
 	// Modern writes bind to an owned published run, its content key and action
@@ -2066,63 +1967,37 @@ export function createApplication(options = {}) {
 	app.post('/api/founder/sessions', async (request, response) => {
 		let session;
 		try {
-			// Tenant and actor identity always come from trusted per-instance
-			// context. Only the explicit Founder review scope crosses this boundary.
-			// Detected project context is resolved server-side (never from the body)
-			// so the launcher cannot inject untrusted Studio or findings data.
-			const detectedContext = await founderDetectedContext(request);
-			const authenticatedAvailable = await founderAuthenticatedAvailable();
-			const founder = publicInput(() => createFounderState({
-				authorizationConfirmed: request.body?.authorizationConfirmed,
-				target: request.body?.target,
-				productContext: request.body?.productContext,
-				setupVersion: request.body?.setupVersion,
-				environmentId: request.body?.environmentId,
-				accessDecision: request.body?.accessDecision,
-				contextMode: request.body?.contextMode,
-				authenticatedAvailable,
-				projectContext: detectedContext
-			}));
+			// Tenant and actor identity come from trusted per-instance context; only
+			// the review target and the owner's brief cross this boundary.
+			if (request.body?.authorizationConfirmed !== true) {
+				response.status(400).json({ error: 'Confirm that you are authorized to review this product.' });
+				return;
+			}
+			const targetUrl = (() => { try { const url = new URL(String(request.body?.targetUrl ?? '').trim()); return ['http:', 'https:'].includes(url.protocol) ? url.href : undefined; } catch { return undefined; } })();
+			if (!targetUrl) {
+				response.status(400).json({ error: 'Enter the product URL (http:// or https://).' });
+				return;
+			}
+			const brief = normalizeBrief(request.body?.brief ?? {});
+			const name = String(request.body?.name ?? '').trim().slice(0, 120) || new URL(targetUrl).host;
 			const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
 			const deviceLandscape = request.body?.deviceLandscape === true;
-			const engine = isEngineId(request.body?.engine) ? request.body.engine : 'chromium';
 			const reviewEnvironment = await resolveEnvironmentForRun(services, request.body?.environmentId);
-			const executionEngine = founder.scope.setupVersion === 1
-				? await preflightFounderRuntime({ environment: reviewEnvironment, engine }) : engine;
-			session = await services.runs.create(`Founder — ${founder.scope.target.name}`, {
-				device, deviceLandscape, engine: executionEngine, ownerUserId: request.auth?.userId,
+			// Fail at launch, not mid-run, when the chosen browser is not installed.
+			const engine = await preflightFounderRuntime({ environment: reviewEnvironment, engine: isEngineId(request.body?.engine) ? request.body.engine : 'chromium' });
+			session = await services.runs.create(`Founder — ${name}`, {
+				device, deviceLandscape, engine, ownerUserId: request.auth?.userId,
 				cohort: cohortFor(request.auth?.role).cohort,
 				environmentId: reviewEnvironment?.envId, environmentSnapshot: reviewEnvironment
 			});
 			session.mode = 'founder';
-			session.founder = founder;
-			if (drytisDelivery?.automaticFounderHandoff && ['owner', 'admin', 'developer'].includes(request.auth?.role)) {
-				founder.automaticStudioHandoff = true;
-			}
-			session.todos = createFounderReviewTodos();
+			session.founder = createFounderRunState({ targetUrl, name, brief });
+			if (drytisDelivery?.automaticFounderHandoff && ['owner', 'admin', 'developer'].includes(request.auth?.role)) session.founder.automaticStudioHandoff = true;
 			session.device = device;
 			session.deviceLandscape = deviceLandscape;
 			session.environmentId = reviewEnvironment?.envId;
 			session.environmentSnapshot = reviewEnvironment;
-			if (founder.scope.setupVersion === 1) {
-				session.targetUrl = founder.scope.target.url;
-				if (founder.scope.access.decision === 'authenticated') {
-					session.pendingQuestion = {
-						toolCallId: randomUUID(), kind: 'founder_launch_credentials', credentialLike: true,
-						question: 'Provide a test account before the Founder review starts, or choose Skip login to review public pages only.'
-					};
-					await services.runs.setStatus(session, 'awaiting_input');
-				}
-			}
-			// `founder.created` intentionally skips relational child rewrites in the
-			// PostgreSQL repository. Persist the host-owned plan explicitly first so
-			// progress is visible before the model's first update_todo call.
-			await services.runs.commit(session, 'todos', { todos: session.todos });
-			await services.runs.commit(session, 'founder.created', {
-				schemaVersion: founder.schemaVersion,
-				categories: founder.scope.categories,
-				authorizedTargetUrl: founder.scope.target.url
-			});
+			await services.runs.commit(session, 'founder.created', { founder: session.founder, authorizedTargetUrl: targetUrl });
 			response.status(201).json(session);
 		} catch (error) {
 			if (session) await services.runs.delete(session.id).catch(() => undefined);
@@ -2147,8 +2022,6 @@ export function createApplication(options = {}) {
 		response.json({
 			...session,
 			...(session.mode === 'qa' && session.hybrid ? { hybrid: publicQaState(session) ?? session.hybrid } : {}),
-			...(session.mode==='founder'?{founderProgress:buildFounderProgress(session,{running:liveState.running,resuming:founderContinuations.has(session.id),stopping:founderContinuations.get(session.id)?.cancelled})}:{}),
-			...(session.mode === 'founder' && session.founder?.finalizedAt ? { founderVerifiedObservations: verifiedFounderObservationIds(session) } : {}),
 			durationSeconds,
 			secretNames: await services.secrets.names(session.id),
 			running: liveState.running,
@@ -2157,55 +2030,6 @@ export function createApplication(options = {}) {
 			// timer time from this skew, never from its own render time.
 			serverNow: Date.now()
 		});
-	});
-
-	app.get('/api/sessions/:id/founder/progress', async (request,response)=>{
-		const session=await requireSession(request,response);if(!session)return;
-		if(session.mode!=='founder')return response.status(404).json({error:'No Founder review exists for this run.'});
-		const config=await services.configuration.getPublic();
-		response.set('Cache-Control','no-store');
-		response.json(buildFounderProgress(session,{running:services.agent.getLiveState(session.id).running,resuming:founderContinuations.has(session.id),stopping:founderContinuations.get(session.id)?.cancelled,configReady:config.ready!==false,provider:config.provider}));
-	});
-
-	app.post('/api/sessions/:id/founder/continue', async (request,response)=>{
-		const session=await requireSession(request,response);if(!session)return;
-		if(session.mode!=='founder')return response.status(404).json({error:'No Founder review exists for this run.'});
-		if(founderContinuations.has(session.id))return response.status(409).json({error:'This review is already resuming.',code:'BUSY'});
-		const ticket={cancelled:false};founderContinuations.set(session.id,ticket);
-		try{
-			const config=await services.configuration.getPublic();
-			const progress=buildFounderProgress(session,{running:services.agent.getLiveState(session.id).running,configReady:config.ready!==false,provider:config.provider});
-			if(!progress.recovery.available){founderContinuations.delete(session.id);return response.status(409).json({error:progress.recovery.reason,code:progress.recovery.code||'BUSY',progress});}
-			if(request.body?.expectedCheckpoint!==progress.recovery.token){founderContinuations.delete(session.id);return response.status(409).json({error:'Saved progress changed. Refresh the review before continuing.',code:'STALE_CHECKPOINT',progress});}
-			await services.runs.addMessage(session,{role:'user',text:progress.recovery.label+' from saved progress.'});
-			const work=(async()=>{
-				try{
-					const prepared=!services.agent.isRemote?await services.agent.ensureRuntime(session,services.runs):undefined;
-					if(ticket.deletion)await ticket.deletion;
-					if(ticket.deleted){await prepared?.dispose?.();return;}
-					if(ticket.cancelled){await services.runs.setStatus(session,'interrupted','Stopped by user.');return;}
-					await startTurn(session,{task:founderContinuationTask(progress)});
-				}catch(error){
-					try{
-						if(ticket.deletion)await ticket.deletion;
-						if(ticket.deleted)return;
-						if(ticket.cancelled)await services.runs.setStatus(session,'interrupted','Stopped by user.');
-						else await services.runs.setStatus(session,'error',sanitizeErrorDetail(error));
-					}catch{console.error('[Qase persistence] Could not save the Founder continuation failure.');}
-				}finally{if(founderContinuations.get(session.id)===ticket)founderContinuations.delete(session.id);}
-			})();
-			activeTurns.add(work);void work.finally(()=>activeTurns.delete(work));
-			response.status(202).json({accepted:true,progress:buildFounderProgress(session,{running:services.agent.getLiveState(session.id).running,resuming:true})});
-		}catch(error){founderContinuations.delete(session.id);safeErrorResponse(request,response,error);}
-	});
-
-
-	app.get('/api/sessions/:id/founder/evidence/:observationId/:index', async (request, response) => {
-		const session = await requireSession(request, response);
-		if (!session) return;
-		response.set('Cache-Control', 'no-store');
-		try { response.json(inspectFounderEvidence(session, request.params.observationId, request.params.index)); }
-		catch (error) { safeErrorResponse(request, response, error); }
 	});
 
 	app.get('/api/sessions/:id/qa-evidence', async (request, response) => {
@@ -2268,15 +2092,8 @@ export function createApplication(options = {}) {
 			response.json({ deleted: false });
 			return;
 		}
-		const continuation=founderContinuations.get(session.id);let finishDeletion;
-		if(continuation?.deletion)return response.status(409).json({error:'This review is already being deleted.'});
-		if(continuation){continuation.cancelled=true;continuation.deletion=new Promise(resolve=>{finishDeletion=resolve;});}
-		let deleted;
-		try{
-			if (services.agent.isRemote) await services.agent.stop(session.id);
-			deleted = await services.runs.delete(session.id);
-			if(continuation)continuation.deleted=deleted;
-		}finally{finishDeletion?.();}
+		if (services.agent.isRemote) await services.agent.stop(session.id);
+		const deleted = await services.runs.delete(session.id);
 		if (deleted) {
 			const cleanup = await Promise.allSettled([
 				Promise.resolve().then(() => services.secrets.clear(session.id)),
@@ -2338,19 +2155,36 @@ export function createApplication(options = {}) {
 		startTurn(session, { task: 'resume' });
 	}
 
+	/**
+	 * Founder brief question. The running engine waits on record.founderReply;
+	 * after a restart (no live waiter) the answer is saved and the run resumes.
+	 */
+	async function answerFounderBrief(session, text) {
+		const answer = String(text ?? '').trim().slice(0, 1500);
+		const record = services.runs.liveFor?.(session.id) ?? services.agent.getLiveState?.(session.id);
+		await services.runs.addMessage(session, { role: 'user', kind: 'answer', text: answer || 'Skip' });
+		if (typeof record?.founderReply === 'function') { record.founderReply({ text: answer }); return; }
+		if (session.founder?.brief && answer && !/^(skip|no|nope|later|not now)/i.test(answer)) { session.founder.brief.goals = answer; session.founder.brief.answeredInChat = true; }
+		if (session.founder?.phases) session.founder.phases.brief = { status: 'done', detail: answer ? 'answered in the conversation' : 'skipped' };
+		session.pendingQuestion = undefined;
+		await services.runs.commit(session, 'question', { question: null });
+		startTurn(session, { task: 'resume' });
+	}
+
 	app.post('/api/sessions/:id/message', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
-		if(founderContinuations.has(session.id))return response.status(409).json({error:'This review is already resuming. Wait for it to start or stop it first.'});
-		if (session.pendingQuestion?.kind === 'founder_launch_credentials') {
-			return response.status(409).json({ error: 'Provide the test account through the secure form, or choose Skip login before starting.' });
-		}
 		const text = String(request.body?.text ?? '').trim();
 		if (!text) {
 			response.status(400).json({ error: 'Message is empty.' });
 			return;
 		}
-		if (['qa', 'sqa'].includes(session.mode) && session.pendingQuestion?.kind === 'qa_credentials') {
+		if (session.mode === 'founder' && session.pendingQuestion?.kind === 'founder_brief') {
+			await answerFounderBrief(session, text);
+			response.json({ ok: true });
+			return;
+		}
+		if (['qa', 'sqa', 'founder'].includes(session.mode) && session.pendingQuestion?.kind === 'qa_credentials') {
 			// Passwords never go through the chat: only a "skip" reply is accepted here.
 			if (SKIP_REPLY.test(text)) {
 				await answerQaCredentials(session, { skip: true, text });
@@ -2468,27 +2302,19 @@ export function createApplication(options = {}) {
 			response.status(400).json({ error: 'Answer is empty.' });
 			return;
 		}
-		if (['qa', 'sqa'].includes(session.mode) && session.pendingQuestion.kind === 'qa_credentials') {
+		if (['qa', 'sqa', 'founder'].includes(session.mode) && session.pendingQuestion.kind === 'qa_credentials') {
 			await answerQaCredentials(session, { skip: true, text: answer.slice(0, 400) });
 			response.json({ ok: true });
 			return;
 		}
-		const founderLaunch = session.mode === 'founder' && session.pendingQuestion.kind === 'founder_launch_credentials';
-		const applyAnswer = async () => {
-			if (session.mode === 'founder' && session.pendingQuestion.credentialLike === true) {
-				recordFounderPublicOnlyDecision(session);
-				answer = FOUNDER_PUBLIC_ONLY_ANSWER;
-			}
-			await services.runs.addMessage(session, { role: 'user', text: answer, kind: 'answer' });
-			if (founderLaunch) {
-				session.pendingQuestion = undefined;
-				await services.runs.commit(session, 'question', { question: null });
-			}
-			startTurn(session, founderLaunch ? { task: `Review ${session.targetUrl}. ${answer}` } : { resumeAnswer: answer });
+		if (session.mode === 'founder' && session.pendingQuestion.kind === 'founder_brief') {
+			await answerFounderBrief(session, /^skip/i.test(answer) ? 'skip' : answer);
 			response.json({ ok: true });
-		};
-		if (founderLaunch) return answerFounderSetup(session, response, applyAnswer);
-		await applyAnswer();
+			return;
+		}
+		await services.runs.addMessage(session, { role: 'user', text: answer, kind: 'answer' });
+		startTurn(session, { resumeAnswer: answer });
+		response.json({ ok: true });
 	});
 
 	/** Credential answers are stored in the vault; only placeholders reach the agent. */
@@ -2505,7 +2331,7 @@ export function createApplication(options = {}) {
 			response.status(400).json({ error: 'No credentials supplied.' });
 			return;
 		}
-		if (['qa', 'sqa'].includes(session.mode) && session.pendingQuestion.kind === 'qa_credentials') {
+		if (['qa', 'sqa', 'founder'].includes(session.mode) && session.pendingQuestion.kind === 'qa_credentials') {
 			let account;
 			try {
 				account = validateTestAccount({ username: fields.QA_USERNAME, password: fields.QA_PASSWORD, authorized: request.body?.authorizeLogin === true, loginUrl: request.body?.loginUrl || undefined });
@@ -2521,20 +2347,6 @@ export function createApplication(options = {}) {
 			response.json({ ok: true, secretNames: ['QA_USERNAME', 'QA_PASSWORD'] });
 			return;
 		}
-		const founderLaunch = session.mode === 'founder' && session.pendingQuestion.kind === 'founder_launch_credentials';
-		if (session.mode === 'founder' && session.founder?.scope?.setupVersion === 1
-			&& session.founder.scope.access?.decision === 'public_only') {
-			return response.status(409).json({ error: 'This review is limited to public pages. Start a separate review to include sign-in.' });
-		}
-		if (founderLaunch && (request.body.authorizeLogin !== true
-			|| !['QA_USERNAME', 'QA_PASSWORD'].every(key => typeof fields[key] === 'string' && fields[key].trim() && fields[key].length <= 4096)
-			|| Object.keys(fields).some(key => !['QA_USERNAME', 'QA_PASSWORD'].includes(key)))) {
-			return response.status(400).json({ error: 'Provide both test-account fields and approve sign-in, or choose Skip login.' });
-		}
-		if (founderLaunch && !await founderAuthenticatedAvailable()) {
-			return response.status(409).json({ error: 'Sign-in review is unavailable in the current execution mode. Choose Skip login for a public-only review.' });
-		}
-
 		const applyCredentials = async () => {
 			const names = await services.secrets.store(session.id, fields);
 			if (names.length === 0) {
@@ -2547,7 +2359,6 @@ export function createApplication(options = {}) {
 			const placeholders = names.map(name => `{{${name}}}`).join(', ');
 			const answer = [
 				'The credentials are stored in the host vault. You will not be shown the values.',
-				founderLaunch && 'The owner approved test-account sign-in on the declared target. Continue read-only review after sign-in; other origins remain out of scope.',
 				`Fill the sign-in form using these literal placeholders as the browser_fill value: ${placeholders}.`,
 				'The host substitutes the real secret at the keyboard. Never print, repeat or report a credential value.',
 				note && `Note from the user: ${note}`
@@ -2559,22 +2370,15 @@ export function createApplication(options = {}) {
 				text: `Provided ${names.length} credential${names.length === 1 ? '' : 's'} securely: ${placeholders}`
 			});
 			await services.runs.commit(session, 'secrets', { secretNames: session.secretNames });
-			if (founderLaunch) {
-				session.founder.scope.access.credentialsProvidedAt = new Date().toISOString();
-				session.pendingQuestion = undefined;
-				await services.runs.commit(session, 'question', { question: null });
-			}
-			startTurn(session, founderLaunch ? { task: `Review ${session.targetUrl}. ${answer}` } : { resumeAnswer: answer });
+			startTurn(session, { resumeAnswer: answer });
 			response.json({ ok: true, secretNames: names });
 		};
-		if (founderLaunch) return answerFounderSetup(session, response, applyCredentials);
 		await applyCredentials();
 	});
 
 	app.post('/api/sessions/:id/stop', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
-		const continuation=founderContinuations.get(session.id);if(continuation)continuation.cancelled=true;
 		await services.runs.commit(session, 'run.stop_requested');
 		await services.agent.stop(session.id);
 		response.json({ ok: true });
@@ -2609,7 +2413,7 @@ export function createApplication(options = {}) {
 			return;
 		}
 		if (session.mode === 'founder' && (!session.founder?.report || !session.founder?.finalizedAt)) {
-			response.status(409).json({ error: 'The Founder review is pending and has not been finalized yet.' });
+			response.status(409).json({ error: 'The Founder review has not finished yet.' });
 			return;
 		}
 		let markdown;
@@ -2621,7 +2425,8 @@ export function createApplication(options = {}) {
 			const feedbackSection = buildFeedbackSectionMarkdown(await attachUserFeedback(session, request.auth?.userId));
 			if (feedbackSection) markdown += `\n${feedbackSection}`;
 		} else if (session.mode === 'founder') {
-			markdown = buildFounderReportMarkdown(session);
+			// Reviews made by the previous Founder pipeline export like a QA run.
+			markdown = isFounderEngineSession(session) ? buildFounderMarkdown(session) : services.reports.buildMarkdown(session);
 			// Same USER FEEDBACK section as the QA/SQA reports (#16654):
 			// the submitter's own feedback for THIS review, run-scoped.
 			const founderFeedbackSection = buildFeedbackSectionMarkdown(await attachUserFeedback(session, request.auth?.userId));
@@ -2652,7 +2457,7 @@ export function createApplication(options = {}) {
 			return;
 		}
 		if (session.mode === 'founder' && (!session.founder?.report || !session.founder?.finalizedAt)) {
-			response.status(409).json({ error: 'The Founder review is pending and has not been finalized yet.' });
+			response.status(409).json({ error: 'The Founder review has not finished yet.' });
 			return;
 		}
 		try {

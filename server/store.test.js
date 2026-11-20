@@ -6,7 +6,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
-import { createFounderState } from './founderService.js';
+import { createFounderRunState } from './founder/engine.js';
 import { runTurn } from './agent.js';
 
 test('hybrid durable events are written before publication and filesystem failures propagate', async t => {
@@ -182,11 +182,7 @@ test('local JSON persistence round-trips Founder Mode independently from QA and 
 	const first = await import(`./store.js?founder-write=${Date.now()}`);
 	const session = first.createSession('Founder — Example');
 	session.mode = 'founder';
-	session.founder = createFounderState({
-		authorizationConfirmed: true,
-		target: { name: 'Example', release: '1.0.0', environment: 'staging' },
-		productContext: { stage: 'mvp', primaryGoal: 'Validate demand' }
-	}, () => 1_786_896_000_000);
+	session.founder = createFounderRunState({ targetUrl: 'https://example.test/', name: 'Example', brief: { stage: 'early', goals: 'Validate demand' } });
 	first.emit(session, 'founder.created');
 	first.flushSessions();
 
@@ -195,7 +191,9 @@ test('local JSON persistence round-trips Founder Mode independently from QA and 
 	const restored = second.getSession(session.id);
 	assert.equal(restored.mode, 'founder');
 	assert.equal(restored.founder.scope.target.name, 'Example');
-	assert.equal(restored.founder.scope.productContext.stage, 'mvp');
+	assert.equal(restored.founder.scope.productContext.stage, 'early');
+	assert.equal(restored.founder.brief.goals, 'Validate demand');
+	assert.equal(restored.founder.version, 2, 'engine state is stored as is');
 	assert.equal(restored.sqa, undefined);
 	assert.equal(second.listSessions()[0].mode, 'founder');
 	second.flushSessions();

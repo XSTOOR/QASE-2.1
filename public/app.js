@@ -6,7 +6,7 @@ import { runCardDetails } from './runCard.js';
 import { renderResultsOverview, resultsOverviewModel } from './resultsOverview.js';
 import { isCredentialQuestion } from './questionPresentation.js';
 import { buildFindingFixPrompt, buildAllFixPromptsMarkdown } from './fixPromptBuilder.js';
-import { createFounderView } from './founderView.js';
+import { founderBadge, isFounderReviewRun, renderFounderReview } from './founderReviewView.js';
 import { createFounderActionController } from './founderActions.js';
 import { followUpSuggestions, buildFollowUpMessage } from './followUp.js';
 import { createBugsView } from './bugsView.js';
@@ -42,7 +42,6 @@ import { channelFor as channelForClient } from './browserChannels.js';
 import { fallbackOptionsFor, availabilityMeta, describeQueue } from './deviceRuntimeUi.js';
 import { resolveActiveRuntimeEnvironment, viewForSelection } from './activeRuntimeEnvironment.js';
 import { chromeViewModel } from './browserChrome.js';
-import { founderLaunchProblems } from './founderLaunch.js';
 import {
 	lastRunByCase, caseStatus, platformsOf, caseEnvLines,
 	filterCasesForWizard, resolveRunPairs
@@ -169,7 +168,6 @@ const el = {
 	sqaView: $('sqa-view'),
 	founderTab: $('tab-founder'),
 	founderView: $('founder-view'),
-	founderProgress: $('founder-progress'),
 	countPlan: $('count-plan'),
 	countFindings: $('count-findings'),
 	countSqa: $('count-sqa'),
@@ -240,10 +238,8 @@ const state = {
 	bubbles: new Map(),
 	viewport: { width: 1440, height: 900 },
 	cursorTimer: undefined,
-	founderCatalog: undefined,
 	founderProjectState: null,
 	founderHandoffPayload: null,
-	founderCatalogPromise: undefined,
 	qaTestCatalog: undefined,
 	qaTestCatalogPromise: undefined,
 	qaTestCatalogFailed: false,
@@ -412,41 +408,73 @@ const { update: updateQaEvidence } = createQaEvidenceWorkspace({
 	onFindings: () => activateDetailTab($('tab-findings'), true),
 	onFinding: id => openFindingDetail(id)
 });
-const founderView = createFounderView({
-	getSession: () => state.session,
-	getCatalog: () => state.founderCatalog,
-	getSessionId: () => state.sessionId,
-	getProjectState: () => founderActions.snapshot().state,
-	getActionStatus: founderActions.snapshot,
-	onToggleSelection: founderToggleSelection,
-	onSelectAll: ids => founderSaveSelections(ids),
-	onClearSelection: () => founderSaveSelections([]),
-	onSendToStudio: founderSendToStudio,
-	onExportHandoff: founderExportHandoff,
-	onProvideFeedback: () => openFeedbackModal(),
-	getFeedbackRating: () => state.runRatings.get(state.sessionId)
-		?? (state.feedback.existingLoadedFor === state.sessionId ? state.feedback.existing : undefined),
-	renderReportFeedbackSection,
-	onReloadSelection: () => founderActions.load({ force: true }),
-	onRetrySelection: founderActions.retrySelection,
-	onContinue: founderContinue,
-	onReviewActivity: ()=>{activateDetailTab($('tab-activity'));setWorkspaceView('results');},
-	onAnswer: ()=>{setWorkspaceView('agent');el.questionSlot.scrollIntoView({block:'nearest'});el.questionSlot.querySelector('input, textarea, button')?.focus();},
-	onOpenSettings: ()=>{void openSettings().catch(fail);},
-	elements: {
-		founderView: el.founderView,
-		founderProgress: el.founderProgress,
-		countFounder: el.countFounder,
-		reportView: el.reportView
+function getFeedbackRating(runId) {
+	return state.runRatings.get(runId) ?? (state.feedback.existingLoadedFor === runId ? state.feedback.existing : undefined);
+}
+
+function founderViewActions() {
+	const session = state.session;
+	const status = founderActions.snapshot();
+	return {
+		// Feedback: same flow as QA and SQA (getFeedbackRating reads the submitted record).
+		onProvideFeedback: () => openFeedbackModal(),
+		feedbackRated: Boolean(getFeedbackRating(session.id)),
+		artifactUrl: id => `/api/sessions/${encodeURIComponent(session.id)}/artifacts/${encodeURIComponent(id)}`,
+		onDownloadPdf: async () => { try { await downloadReportPdf('qase-founder-review.pdf'); } catch (error) { exportError(error, 'The PDF export failed.'); } },
+		onDownloadMarkdown: async () => {
+			try {
+				const markdownText = await apiText(`/sessions/${session.id}/report.md`);
+				const url = URL.createObjectURL(new Blob([markdownText], { type: 'text/markdown;charset=utf-8' }));
+				const save = document.createElement('a');
+				save.href = url; save.download = 'qase-founder-review.md';
+				document.body.append(save); save.click(); save.remove();
+				setTimeout(() => URL.revokeObjectURL(url), 0);
+			} catch (error) { exportError(error, 'The Markdown export failed.'); }
+		},
+		onCopyFixes: async (_event, target) => {
+			try { await navigator.clipboard.writeText(buildAllFixPromptsMarkdown(session)); target.textContent = 'Copied ✓'; toast('Do-now prompts copied.', 'good'); }
+			catch { target.textContent = 'Copy failed'; }
+			setTimeout(() => { target.textContent = 'Copy do-now prompts'; }, 1800);
+		},
+		handoff: session.founder?.report && session.founder?.finalizedAt ? {
+			status,
+			onToggle: founderToggleSelection,
+			onSelect: ids => founderSaveSelections(ids),
+			onSend: founderSendToStudio,
+			onExport: founderExportHandoff
+		} : undefined
+	};
+}
+
+/** The Founder tab: live progress while reviewing, the full review once finished. */
+const founderView = {
+	render() {
+		const session = state.session;
+		if (session?.mode !== 'founder') {
+			el.founderView.replaceChildren();
+			el.countFounder.textContent = '';
+			return;
+		}
+		const open = new Set([...el.founderView.querySelectorAll('details[open]')].map(item => item.dataset.lens ?? item.querySelector('summary')?.textContent));
+		el.founderView.replaceChildren(renderFounderReview(session, founderViewActions()));
+		for (const item of el.founderView.querySelectorAll('details')) if (open.has(item.dataset.lens ?? item.querySelector('summary')?.textContent)) item.open = true;
+		el.countFounder.textContent = founderBadge(session);
+		if (el.reportTab.classList.contains('is-active')) renderReport();
 	},
-	api,
-	apiText,
-	downloadReportPdf,
-	toast,
-	fail,
-	exportError,
-	humanizeId: humanizeSqaId
-});
+	renderReportTab() {
+		const session = state.session;
+		if (isFounderReviewRun(session) && !session.founder.report) {
+			const pending = document.createElement('div');
+			pending.className = 'feed-empty';
+			pending.textContent = ['running', 'awaiting_input'].includes(session.status) ? 'The review appears here when it finishes. Follow progress in the Founder tab.' : 'This review has no report yet.';
+			el.reportView.append(pending);
+			return;
+		}
+		el.reportView.append(renderFounderReview(session, founderViewActions()));
+		renderReportFeedbackSection(state.runRatings.get(session.id) ?? (state.feedback.existingLoadedFor === session.id ? state.feedback.existing : undefined));
+	},
+	clearReport() { el.reportView.replaceChildren(); }
+};
 
 // Action responses stay scoped to their published report across navigation.
 async function founderLoadProjectState() { return founderActions.load({ force: true }); }
@@ -460,40 +488,6 @@ function founderSendToStudio() { return founderActions.send(); }
 function founderExportHandoff(mode) { return founderActions.export(mode); }
 const renderFounder = founderView.render;
 
-const founderProgressRequests=new Map(),founderContinueRequests=new Map();
-let founderProgressTimer;
-function scheduleFounderProgress(){
-	if(state.session?.mode!=='founder')return;
-	clearTimeout(founderProgressTimer);
-	founderProgressTimer=setTimeout(()=>{void refreshFounderProgress(state.sessionId);},150);
-}
-async function refreshFounderProgress(id){
-	if(!id||state.session?.mode!=='founder'||state.sessionId!==id)return;
-	const existing=founderProgressRequests.get(id);if(existing){existing.dirty=true;return existing.promise;}
-	const session=state.session,request={dirty:false};founderProgressRequests.set(id,request);
-	request.promise=(async()=>{
-		try{
-			const progress=await api(`/sessions/${id}/founder/progress`);
-			if(state.session===session){session.founderProgress=progress;renderFounder();renderHeader();}
-		}catch{/* SSE reconnect retains the last saved progress; continuation fetches fresh state. */}
-		finally{founderProgressRequests.delete(id);if(request.dirty&&state.session===session)scheduleFounderProgress();}
-	})();
-	return request.promise;
-}
-async function founderContinue(id=state.sessionId){
-	if(founderContinueRequests.has(id))return founderContinueRequests.get(id);
-	const session=state.session;
-	const work=(async()=>{
-		const progress=await api(`/sessions/${id}/founder/progress`);
-		if(state.session===session){session.founderProgress=progress;renderFounder();}
-		if(!progress.recovery?.available)throw new Error(progress.recovery?.reason||'Review saved progress before continuing.');
-		const result=await api(`/sessions/${id}/founder/continue`,{method:'POST',body:JSON.stringify({expectedCheckpoint:progress.recovery.token})});
-		if(state.session===session&&!session.founder?.finalizedAt){session.founderProgress=result.progress;renderFounder();renderHeader();}
-		scheduleFounderProgress();return result;
-	})();
-	founderContinueRequests.set(id,work);
-	try{return await work;}finally{if(founderContinueRequests.get(id)===work)founderContinueRequests.delete(id);}
-}
 
 /* ── Bug tracker (standalone view) ───────────────────────────────── */
 
@@ -1326,7 +1320,7 @@ function applySessionSnapshot(session) {
 	// QA runs use the conversation layout: the agent's messages, findings and report
 	// cards on the left, the live browser and the evidence tabs beside them.
 	document.body.dataset.qaWorkspace = 'false';
-	document.body.dataset.qaConversation = String(session.mode === 'qa' || isSqaComplianceRun(session));
+	document.body.dataset.qaConversation = String(session.mode === 'qa' || isSqaComplianceRun(session) || isFounderReviewRun(session));
 	if (changedSession && isQaEvidenceRun(session) && document.body.dataset.page === 'run') {
 		activateDetailTab($('tab-plan'));
 		setWorkspaceView('agent');
@@ -1772,11 +1766,12 @@ function renderHeader() {
 	renderMiniSummary();
 	renderProgressCard();
 	if (session.mode === 'founder') {
-		const target = session.founder?.scope?.target ?? session.founder?.report?.target ?? {};
-		const context = session.founder?.scope?.productContext ?? {};
-		el.chatTitle.textContent = target.name ?? session.title ?? 'Founder review';
-		el.chatTarget.textContent = [context.stage, context.businessModel, target.environment].filter(Boolean).join(' · ')
-			|| 'Evidence-informed product and go-to-market review';
+		const name = session.founder?.business?.name ?? session.founder?.scope?.target?.name;
+		el.chatTitle.textContent = isFounderReviewRun(session) ? `Founder review${name ? ` · ${name}` : ''}` : session.founder?.scope?.target?.name ?? session.title ?? 'Founder review';
+		const report = session.founder?.report;
+		el.chatTarget.textContent = isFounderReviewRun(session)
+			? [session.targetUrl ? hostOf(session.targetUrl) : '', report?.readiness !== undefined && report?.readiness !== null ? `Readiness ${report.readiness}/100 · ${report.verdictLabel}` : 'Business review: what to do, avoid and keep'].filter(Boolean).join(' · ')
+			: 'Earlier Founder review';
 		setStatus(session.status);
 		return;
 	}
@@ -1912,7 +1907,7 @@ function setStatus(status) {
 	renderMiniSummary();
 	const running = status === 'running';
 	// The QA engine keeps its browser open while it waits for a sign-in answer; it can still be stopped.
-	const qaWaiting = status === 'awaiting_input' && ['qa', 'sqa'].includes(state.session?.mode) && state.session?.pendingQuestion?.kind === 'qa_credentials';
+	const qaWaiting = status === 'awaiting_input' && ['qa', 'sqa', 'founder'].includes(state.session?.mode) && state.session?.pendingQuestion?.kind === 'qa_credentials';
 	el.stopRun.hidden = !(running || qaWaiting);
 	el.stopRun.disabled = stopping;
 	el.stopRun.textContent = stopping ? 'Stopping…' : 'Stop';
@@ -1924,8 +1919,8 @@ function setStatus(status) {
 	el.sendBtn.disabled = running;
 	el.composerInput.disabled = running;
 	el.composerHint.hidden = !running;
-	if (state.session?.mode === 'qa' || isSqaComplianceRun(state.session)) {
-		el.composerHint.textContent = 'Qase is testing. Press Stop to end early; you still get the report.';
+	if (state.session?.mode === 'qa' || isSqaComplianceRun(state.session) || isFounderReviewRun(state.session)) {
+		el.composerHint.textContent = state.session?.mode === 'founder' ? 'Qase is reviewing. Press Stop to end early; you still get the review.' : 'Qase is testing. Press Stop to end early; you still get the report.';
 		if (qaWaiting) el.composerInput.placeholder = 'Use the sign-in card above, or reply "skip" to test public pages only';
 		else if (el.composerInput.placeholder.startsWith('Use the sign-in card')) el.composerInput.placeholder = 'Paste a URL or tell Qase what to test…';
 	} else el.composerHint.textContent = 'Agent is working. You can reply when it pauses.';
@@ -2701,8 +2696,8 @@ function renderQaMessage(message) {
 	role.textContent = 'Qase';
 	const body = renderQaMessageBody(message, state.session, {
 		onOpen: openFindingDetail,
-		onOpenReport: () => activateDetailTab($('tab-report'), true),
-		onDownloadPdf: async () => { try { await downloadReportPdf('qase-qa-report.pdf'); } catch (error) { exportError(error, 'The PDF export failed.'); } },
+		onOpenReport: () => activateDetailTab(state.session?.mode === 'founder' ? el.founderTab : $('tab-report'), true),
+		onDownloadPdf: async () => { try { await downloadReportPdf(state.session?.mode === 'founder' ? 'qase-founder-review.pdf' : 'qase-qa-report.pdf'); } catch (error) { exportError(error, 'The PDF export failed.'); } },
 		onCopyAll: async (target, label) => {
 			try { await navigator.clipboard.writeText(buildAllFixPromptsMarkdown(state.session)); target.textContent = 'Copied ✓'; toast('All fix prompts copied.', 'good'); }
 			catch { target.textContent = 'Copy failed'; }
@@ -2927,7 +2922,6 @@ function credentialForm() {
 	const form = document.createElement('form');
 	form.className = 'cred-form';
 	const hybrid = state.session?.qaExecutionMode === 'hybrid';
-	const founderLaunch = state.session?.mode === 'founder' && state.session?.pendingQuestion?.kind === 'founder_launch_credentials';
 
 	const row = document.createElement('div');
 	row.className = 'cred-row';
@@ -2955,10 +2949,8 @@ function credentialForm() {
 	consent.className = 'cred-note';
 	const authorize = document.createElement('input');
 	authorize.type = 'checkbox';
-	authorize.required = hybrid || founderLaunch;
-	consent.append(authorize, founderLaunch
-		? ' I am authorized to use this test account for sign-in on this website. Continue with read-only testing afterward.'
-		: ' I am authorized to use this test account and approve one sign-in attempt on this website. Continue with read-only testing afterward.');
+	authorize.required = hybrid;
+	consent.append(authorize, ' I am authorized to use this test account and approve one sign-in attempt on this website. Continue with read-only testing afterward.');
 	const expectedUrl = document.createElement('input');
 	expectedUrl.type = 'url';
 	expectedUrl.placeholder = 'Expected signed-in page URL (optional)';
@@ -2969,7 +2961,6 @@ function credentialForm() {
 	loginEndpoint.setAttribute('aria-label', 'Approved sign-in API URL');
 	if (hybrid) consent.append(' If a sign-in API URL is supplied below, I also approve sending this test account to that exact endpoint once.');
 	if (hybrid) note.textContent = 'Use a test account. Credentials are encrypted in this run’s vault; the model receives placeholders only. One sign-in is allowed on this website or the exact API URL you approve. Account creation and SSO/MFA are not automated. You can skip login and continue public-only.';
-	if (founderLaunch) note.textContent = 'Use a test account for this website. Credentials are encrypted for this run; only placeholders reach the model. The review begins after you store the account or choose Skip login. Other websites remain outside the review scope.';
 
 	const actions = document.createElement('div');
 	actions.className = 'cred-actions';
@@ -2984,14 +2975,14 @@ function credentialForm() {
 	submit.textContent = 'Store and continue';
 	actions.append(skip, submit);
 
-	form.append(row, ...(hybrid ? [expectedUrl, loginEndpoint, consent] : founderLaunch ? [consent] : [extra]), note, actions);
+	form.append(row, ...(hybrid ? [expectedUrl, loginEndpoint, consent] : [extra]), note, actions);
 	form.onsubmit = async event => {
 		event.preventDefault();
 		const fields = {};
 		if (username.value) fields.QA_USERNAME = username.value;
 		if (password.value) fields.QA_PASSWORD = password.value;
-		if (!hybrid && !founderLaunch && extra.value) fields.QA_OTP = extra.value;
-		if ((hybrid || founderLaunch) && (!username.value || !password.value || !authorize.checked)) {
+		if (!hybrid && extra.value) fields.QA_OTP = extra.value;
+		if (hybrid && (!username.value || !password.value || !authorize.checked)) {
 			toast('Enter both test-account fields and approve one sign-in, or choose Skip login.', 'bad');
 			return;
 		}
@@ -3001,7 +2992,7 @@ function credentialForm() {
 		}
 		submit.disabled = true;
 		try {
-			await api(`/sessions/${state.sessionId}/credentials`, { method: 'POST', body: JSON.stringify({ fields, ...((hybrid || founderLaunch) ? { authorizeLogin: authorize.checked } : {}), ...(hybrid ? { expectedUrl: expectedUrl.value.trim(), loginEndpoint: loginEndpoint.value.trim() } : {}) }) });
+			await api(`/sessions/${state.sessionId}/credentials`, { method: 'POST', body: JSON.stringify({ fields, ...(hybrid ? { authorizeLogin: authorize.checked } : {}), ...(hybrid ? { expectedUrl: expectedUrl.value.trim(), loginEndpoint: loginEndpoint.value.trim() } : {}) }) });
 			el.questionSlot.replaceChildren();
 			state.session.pendingQuestion = undefined;
 			password.value = ''; username.value = ''; extra.value = '';
@@ -3879,7 +3870,8 @@ function renderCoverageSelection(session) {
 
 function renderReport() {
 	if (state.session?.mode === 'founder') {
-		renderFounder();
+		el.reportView.replaceChildren();
+		founderView.renderReportTab();
 		return;
 	}
 	const previousDetails = el.reportView.querySelector('.qe-technical');
@@ -4543,7 +4535,6 @@ function connect(id) {
 }
 
 function handleEvent(event) {
-	if(['activity','todos','question','status','founder.created','founder.observation','founder.report_draft','founder.finalized'].includes(event.type))scheduleFounderProgress();
 	const session = state.session;
 	switch (event.type) {
 		case 'frame':
@@ -4653,7 +4644,8 @@ function handleEvent(event) {
 			// The backlog view is server-sourced; a new finding anywhere in
 			// this account's stream coalesces to one throttled refetch.
 			if (state.bugsViewOpen) bugsView.scheduleRefresh();
-			if (event.finding.severity === 'critical' || event.finding.severity === 'high') {
+			// Founder do-now items are already posted in the conversation; no toast per item.
+			if (session.mode !== 'founder' && (event.finding.severity === 'critical' || event.finding.severity === 'high')) {
 				toast(`${event.finding.severity.toUpperCase()}: ${event.finding.title}`, 'bad');
 			}
 			break;
@@ -4680,51 +4672,30 @@ function handleEvent(event) {
 			break;
 
 		case 'founder.created':
+		case 'founder.state':
 			session.mode = 'founder';
-			session.founder ??= { scope: {} };
-			if (event.schemaVersion) session.founder.schemaVersion = event.schemaVersion;
-			if (event.categories) session.founder.scope.categories = event.categories;
+			if (event.founder) session.founder = { ...event.founder, report: event.founder.report ?? session.founder?.report };
 			syncSqaDetailMode();
 			renderHeader();
 			renderFounder();
-			renderReport();
-			void refreshRuns();
+			if (event.type === 'founder.created') void refreshRuns();
 			break;
 
 		case 'founder.target_bound':
 			session.mode = 'founder';
 			session.targetUrl = event.targetUrl;
 			session.title = event.title;
-			session.founder ??= { scope: { target: {} }, observations: [] };
-			session.founder.scope ??= { target: {} };
-			session.founder.scope.target ??= {};
-			session.founder.scope.target.url = event.authorizedTargetUrl ?? event.targetUrl;
 			syncSqaDetailMode();
 			renderHeader();
 			renderFounder();
 			void refreshRuns();
 			break;
 
-		case 'founder.observation': {
-			session.mode = 'founder';
-			session.founder ??= { scope: {}, observations: [] };
-			session.founder.observations ??= [];
-			const index = session.founder.observations.findIndex(item => item.id === event.observation?.id);
-			if (event.observation && index === -1) session.founder.observations.push(event.observation);
-			else if (event.observation) session.founder.observations[index] = event.observation;
-			syncSqaDetailMode();
-			renderHeader();
-			renderFounder();
-			break;
-		}
-
 		case 'founder.finalized':
 			session.mode = 'founder';
-			if (Array.isArray(event.todos)) { session.todos = event.todos; renderTodos(); }
-			session.founder ??= { scope: {}, observations: [] };
+			session.founder ??= {};
 			session.founder.report = event.report;
-			session.founder.finalizedAt = event.report?.generatedAt ?? new Date(event.ts ?? Date.now()).toISOString();
-			if (Array.isArray(event.verifiedObservations)) session.founderVerifiedObservations = event.verifiedObservations;
+			session.founder.finalizedAt = event.finalizedAt ?? new Date(event.ts ?? Date.now()).toISOString();
 			void founderActions.load();
 			syncSqaDetailMode();
 			renderHeader();
@@ -4732,7 +4703,7 @@ function handleEvent(event) {
 			renderReport();
 			showCompletedFounderReport();
 			void refreshRuns();
-			toast('Founder brief published.', 'good');
+			toast('Founder review published.', 'good');
 			break;
 		case 'founder.handoff':
 			void founderActions.load({ force: true });
@@ -5819,7 +5790,7 @@ if (qaUi.dialog) {
 				qaUi.targetUrl.value = ''; $('qa-goal').value = '';
 				closeQaStart({ updateRoute: false });
 				toast('QA test started.');
-				if (qaUi.founderMode?.checked) { await openFounderStart(); founderUi.targetUrl.value = targetUrl; }
+				if (qaUi.founderMode?.checked) await openFounderStart({ targetUrl });
 				else if (qaUi.compliance?.checked) { await openSqaStart(); sqaUi.targetUrl.value = targetUrl; }
 				return;
 			}
@@ -5847,8 +5818,7 @@ if (qaUi.dialog) {
 			// checked option opens the existing dialog prefilled with the same
 			// target for the user to confirm — nothing starts automatically.
 			if (qaUi.founderMode?.checked) {
-				await openFounderStart();
-				founderUi.targetUrl.value = targetUrl;
+				await openFounderStart({ targetUrl });
 			} else if (qaUi.compliance?.checked) {
 				await openSqaStart();
 				sqaUi.targetUrl.value = targetUrl;
@@ -6003,27 +5973,17 @@ const founderUi = {
 	close: $('founder-close'),
 	cancel: $('founder-cancel'),
 	submit: $('founder-submit'),
-	catalogMeta: $('founder-catalog-meta'),
-	deviceSelect: null, // legacy select removed (DX Phase 3)
+	launchStatus: $('founder-launch-status'),
 	deviceLandscape: $('founder-device-landscape'),
 	testOnChange: document.querySelector('#founder-start [data-test-on-change]'),
-	targetName: $('founder-target-name'),
 	targetUrl: $('founder-target-url'),
-	targetRelease: $('founder-target-release'),
-	targetEnvironment: $('founder-target-environment'),
-	primaryGoal: $('founder-primary-goal'),
+	targetName: $('founder-target-name'),
+	goals: $('founder-goals'),
+	audience: $('founder-audience'),
 	stage: $('founder-stage'),
-	businessModel: $('founder-business-model'),
-	targetCustomer: $('founder-target-customer'),
-	access: $('founder-access'),
-	accessHelp: $('founder-access-help'),
-	contextMode: $('founder-context-mode'),
-	businessFields: $('founder-business-fields'),
-	launchStatus: $('founder-launch-status'),
-	constraints: $('founder-constraints'),
+	journeys: $('founder-journeys'),
+	competitors: $('founder-competitors'),
 	authorization: $('founder-authorization'),
-	advanced: $('founder-advanced'),
-	detectedContext: $('founder-detected-context'),
 	error: $('founder-form-error')
 };
 
@@ -6032,216 +5992,93 @@ function setFounderFormError(message = '') {
 	founderUi.error.textContent = message;
 }
 
-async function loadFounderCatalog() {
-	if (state.founderCatalog) return state.founderCatalog;
-	if (!state.founderCatalogPromise) {
-		state.founderCatalogPromise = api('/founder/catalog')
-			.then(catalog => {
-				if (!catalog || typeof catalog !== 'object' || !catalog.schemaVersion || !Array.isArray(catalog.categories)) {
-					throw new Error('The Founder review catalog response is invalid.');
-				}
-				state.founderCatalog = catalog;
-				return catalog;
-			})
-			.finally(() => {
-				state.founderCatalogPromise = undefined;
-			});
-	}
-	return state.founderCatalogPromise;
-}
-
-function paintFounderCatalog(catalog) {
-	founderUi.catalogMeta.textContent = `${catalog.schemaVersion} · ${catalog.categories.length} review lenses · browser evidence required`;
-	syncFounderSubmitState();
-	if (state.session?.mode === 'founder') renderFounder();
+function founderTargetUrl() {
+	try {
+		const url = new URL(founderUi.targetUrl.value.trim());
+		return ['http:', 'https:'].includes(url.protocol) ? url.href : undefined;
+	} catch { return undefined; }
 }
 
 function syncFounderSubmitState() {
-	const provided = founderUi.contextMode.value === 'provided';
-	founderUi.businessFields.hidden = !provided;
-	for (const field of [founderUi.stage, founderUi.businessModel, founderUi.targetCustomer, founderUi.primaryGoal]) field.required = provided;
-	$('founder-goal-optional').hidden = provided;
-	const authenticatedAvailable = state.founderCatalog?.launch?.authenticatedAvailable !== false;
-	founderUi.access.querySelector('option[value="authenticated"]').disabled = !authenticatedAvailable;
-	founderUi.accessHelp.textContent = founderUi.access.value === 'authenticated'
-		? 'Provide a test account securely in the next step. Browser review waits until you supply it or choose public pages only.'
-		: authenticatedAvailable ? 'Signed-in pages are excluded. Qase will record that boundary and continue without asking for credentials.'
-			: 'Signed-in review is unavailable in the current execution mode. Public pages can still be reviewed.';
-	const missing = founderLaunchProblems({
-		catalogReady: Boolean(state.founderCatalog), targetUrl: founderUi.targetUrl.value,
-		authorizationConfirmed: founderUi.authorization.checked, environmentId: selectedEnvironmentForRun(),
-		accessDecision: founderUi.access.value, authenticatedAvailable,
-		contextMode: founderUi.contextMode.value, productContext: founderProductContext()
-	});
+	const missing = [];
+	if (!founderTargetUrl()) missing.push('enter the product URL');
+	if (!founderUi.authorization.checked) missing.push('confirm you may review it');
+	if (!selectedEnvironmentForRun()) missing.push('choose a device in TEST ON');
 	const busy = founderUi.submit.dataset.busy === 'true';
 	founderUi.submit.disabled = busy || missing.length > 0;
-	founderUi.submit.textContent = busy ? 'Creating review…' : founderUi.access.value === 'authenticated' ? 'Continue to secure sign-in' : 'Start Product Review';
-	const message = busy ? 'Creating your review…'
-		: missing.length ? `To start: ${missing[0]}.`
-			: founderUi.access.value === 'authenticated' ? 'Ready to continue to secure sign-in. Browser work has not started.' : 'Ready to start the public-page review.';
-	if (founderUi.launchStatus.textContent !== message) founderUi.launchStatus.textContent = message;
-}
-
-function founderProductContext() {
-	const values = { primaryGoal: founderUi.primaryGoal.value, constraints: founderUi.constraints.value };
-	if (founderUi.contextMode.value === 'provided') Object.assign(values, {
-		stage: founderUi.stage.value, businessModel: founderUi.businessModel.value, targetCustomer: founderUi.targetCustomer.value
-	});
-	return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value.trim()]).filter(([, value]) => value));
+	const message = busy ? 'Starting the Founder review…' : missing.length ? `To start: ${missing.join(', ')}.` : 'Ready to start.';
+	if (founderUi.launchStatus && founderUi.launchStatus.textContent !== message) founderUi.launchStatus.textContent = message;
 }
 
 async function openFounderStart({ targetUrl } = {}) {
+	// Like SQA: an explicit launch during startup wins over the automatic QA page.
+	if (!pageRouter.started) sqaStartupRequested = true;
+	if (!pageRouter.started || pageRouter.current().name === 'new-run') {
+		await pageRouter.navigate({ name: 'runs' }, { replace: true, applyRoute: pageRouter.started });
+	}
 	setFounderFormError();
 	founderUi.form.reset();
-	$('founder-customize').open = false;
-	void ensureReviewEnvironment().then(() => { renderAllTestOnBlocks(); syncSqaSubmitState(); syncFounderSubmitState(); }).catch(() => {});
 	const studioContext = applyStudioTarget(founderUi.targetUrl);
 	if (targetUrl) founderUi.targetUrl.value = targetUrl;
 	if (studioContext && founderUi.targetName) founderUi.targetName.value = studioContext.project;
-	founderUi.detectedContext && (founderUi.detectedContext.hidden = true);
-	if (founderUi.detectedContext) founderUi.detectedContext.textContent = '';
-	populateDeviceSelect(founderUi.deviceSelect, pendingDeviceId());
-	founderUi.environmentSelect && populateEnvironmentSelect(founderUi.environmentSelect);
+	void ensureReviewEnvironment().then(() => { renderAllTestOnBlocks(); syncSqaSubmitState(); syncFounderSubmitState(); }).catch(() => {});
 	renderTestOn('founder-test-on');
 	if (founderUi.testOnChange) founderUi.testOnChange.onclick = () => devicePicker?.open?.();
 	if (founderUi.deviceLandscape) founderUi.deviceLandscape.checked = pendingLandscape();
 	founderUi.submit.dataset.busy = 'false';
-	founderUi.catalogMeta.textContent = 'Loading review catalog…';
 	syncFounderSubmitState();
 	if (!founderUi.dialog.open) founderUi.dialog.showModal();
-	// Prefill from detected project context (trusted server-side records).
-	// Missing context is not an error here — the fields stay editable.
-	try {
-		const context = await api('/founder/context');
-		if (context && typeof context === 'object') applyFounderDetectedContext(context);
-	} catch { /* detection is best-effort; the form remains fully usable */ }
-	try {
-		paintFounderCatalog(await loadFounderCatalog());
-	} catch (error) {
-		founderUi.catalogMeta.textContent = 'Review catalog unavailable.';
-		setFounderFormError(error instanceof Error ? error.message : String(error));
-	}
-}
-
-/** Show detected context and prefill target fields without overwriting user input. */
-function applyFounderDetectedContext(context) {
-	const chips = [];
-	if (context.targetUrl) chips.push(`Target: ${context.targetUrl}`);
-	if (context.studio?.project?.name) chips.push(`Studio project: ${context.studio.project.name}`);
-	if (context.previousFindings) chips.push(`${context.previousFindings.count} prior QA finding(s)`);
-	if (context.previousFounder) chips.push('Prior Founder review found');
-	if (chips.length > 0) {
-		founderUi.detectedContext.textContent = `Detected project context — ${chips.join(' · ')}. Advanced options below are optional.`;
-	} else {
-		// Distinct missing-context state: no prior Qase context exists for this
-		// project, so only the essential target fields are needed.
-		founderUi.detectedContext.textContent = 'No prior project context was found. Choose a review scope and either supply business context or allow clearly labeled assumptions.';
-	}
-	founderUi.detectedContext.hidden = false;
-	if (context.targetUrl && !founderUi.targetUrl.value.trim()) founderUi.targetUrl.value = context.targetUrl;
-	if (context.targetName && !founderUi.targetName.value.trim()) founderUi.targetName.value = context.targetName;
-	if (context.previousFounder?.productContext?.primaryGoal && !founderUi.primaryGoal.value.trim()) {
-		founderUi.primaryGoal.value = context.previousFounder.productContext.primaryGoal;
-	}
-	if (context.previousFounder?.productContext?.constraints && !founderUi.constraints.value.trim()) {
-		founderUi.constraints.value = context.previousFounder.productContext.constraints;
-	}
-	for (const key of ['stage', 'businessModel', 'targetCustomer']) {
-		if (context.previousFounder?.productContext?.[key] && !founderUi[key].value.trim()) founderUi[key].value = context.previousFounder.productContext[key];
-	}
-	syncFounderSubmitState();
+	if (matchMedia('(pointer: fine)').matches) setTimeout(() => founderUi.targetUrl?.focus(), 0);
 }
 
 function closeFounderStart() {
 	if (founderUi.dialog.open) founderUi.dialog.close();
 }
 
-function founderOptional(value) {
-	const text = String(value ?? '').trim();
-	return text || undefined;
-}
-
 founderUi.close.onclick = closeFounderStart;
 founderUi.cancel.onclick = closeFounderStart;
 founderUi.authorization.onchange = syncFounderSubmitState;
-for (const field of [founderUi.targetUrl, founderUi.primaryGoal, founderUi.stage, founderUi.businessModel, founderUi.targetCustomer, founderUi.contextMode, founderUi.access]) {
-	field.addEventListener('input', syncFounderSubmitState);
-	field.addEventListener('change', syncFounderSubmitState);
-}
+founderUi.targetUrl.addEventListener('input', syncFounderSubmitState);
 
 founderUi.form.onsubmit = async event => {
 	event.preventDefault();
 	setFounderFormError();
-	syncFounderSubmitState();
-	if (founderUi.submit.disabled) return;
 	if (!founderUi.form.reportValidity()) return;
 	if (!ensureModelConfigured('Founder launcher')) return;
-	let targetUrl;
-	try {
-		targetUrl = new URL(founderUi.targetUrl.value.trim());
-		if (!['http:', 'https:'].includes(targetUrl.protocol)) throw new TypeError();
-		targetUrl = targetUrl.href;
-	} catch {
-		setFounderFormError('Enter a complete HTTP or HTTPS target URL.');
-		founderUi.targetUrl.focus();
-		return;
-	}
-	if (!founderUi.authorization.checked) {
-		setFounderFormError('Confirm review authorization and the non-destructive boundary first.');
-		founderUi.authorization.focus();
-		return;
-	}
-
-	const target = {
-		name: founderUi.targetName.value.trim() || new URL(targetUrl).hostname,
-		url: targetUrl,
-		...(founderOptional(founderUi.targetRelease.value) ? { release: founderUi.targetRelease.value.trim() } : {}),
-		...(founderOptional(founderUi.targetEnvironment.value) ? { environment: founderUi.targetEnvironment.value.trim() } : {})
-	};
-	const productContext = founderProductContext();
-
+	const targetUrl = founderTargetUrl();
+	if (!targetUrl) { setFounderFormError('Enter a complete http:// or https:// product URL.'); founderUi.targetUrl.focus(); return; }
+	if (!founderUi.authorization.checked) { setFounderFormError('Confirm that you own this product or may review it.'); founderUi.authorization.focus(); return; }
+	const environmentId = selectedEnvironmentForRun();
+	if (!environmentId) { setFounderFormError('Choose a device and browser before starting.'); founderUi.testOnChange?.focus(); return; }
 	founderUi.submit.dataset.busy = 'true';
-	founderUi.submit.textContent = 'Creating review…';
-	founderUi.form.setAttribute('aria-busy', 'true');
+	founderUi.submit.textContent = 'Starting…';
 	syncFounderSubmitState();
 	try {
+		const focus = [...founderUi.form.querySelectorAll('input[name="focus"]:checked')].map(input => input.value);
 		const result = await api('/founder/sessions', {
 			method: 'POST',
 			body: JSON.stringify({
-				authorizationConfirmed: true,
-				setupVersion: 1,
-				accessDecision: founderUi.access.value,
-				contextMode: founderUi.contextMode.value,
-				target,
-				device: activeTestEnvStore?.get?.()?.device || pendingDeviceId(),
-				deviceLandscape: (founderUi.deviceLandscape?.checked) === true,
-				environmentId: selectedEnvironmentForRun() || undefined,
-				...(Object.keys(productContext).length ? { productContext } : {})
+				authorizationConfirmed: true, targetUrl, name: founderUi.targetName.value.trim() || undefined,
+				brief: { goals: founderUi.goals.value.trim() || undefined, audience: founderUi.audience.value.trim() || undefined, stage: founderUi.stage.value || undefined, journeys: founderUi.journeys.value, competitors: founderUi.competitors.value, focus },
+				deviceLandscape: founderUi.deviceLandscape?.checked === true,
+				environmentId
 			})
 		});
 		const session = result?.session ?? result;
-		if (!session?.id) throw new Error('The server did not return the new Founder review session.');
+		if (!session?.id) throw new Error('The server did not return the new Founder review.');
 		closeFounderStart();
 		await selectSession(session.id);
-		if (session.pendingQuestion?.kind === 'founder_launch_credentials') {
-			setWorkspaceView('agent');
-			el.questionSlot.querySelector('input')?.focus();
-			return;
-		}
-		const startError = await api(`/sessions/${session.id}/message`, {
-			method: 'POST',
-			body: JSON.stringify({ text: `Review ${targetUrl}` })
-		}).then(() => undefined, error => error);
+		const startError = await api(`/sessions/${session.id}/message`, { method: 'POST', body: JSON.stringify({ text: targetUrl }) }).then(() => undefined, error => error);
 		if (startError) {
-			fail(new Error(`The review scope was created, but evidence collection could not start: ${startError.message}`));
-			el.composerInput.value = `Review ${targetUrl}`;
+			fail(new Error(`The Founder review was created, but it could not start: ${startError.message}`));
+			el.composerInput.value = targetUrl;
 			el.composerInput.focus();
 		}
 	} catch (error) {
 		setFounderFormError(error instanceof Error ? error.message : String(error));
 	} finally {
 		founderUi.submit.dataset.busy = 'false';
-		founderUi.form.removeAttribute('aria-busy');
+		founderUi.submit.textContent = 'Start Founder review';
 		syncFounderSubmitState();
 	}
 };
@@ -8070,11 +7907,8 @@ el.stopRun.onclick = async () => {
 };
 el.resumeRun.onclick = async () => {
 	if (workflowStatus(state.session).resumeBlocked) { toast(workflowStatus(state.session).resumeBlocked, 'bad'); return; }
-	const founderFocus=state.session?.mode==='founder'&&document.activeElement===el.resumeRun;
 	el.resumeRun.disabled = true;
-	if(founderFocus)document.getElementById('founder-progress-title')?.focus({preventScroll:true});
 	try {
-		if(state.session?.mode==='founder'){await founderContinue();return;}
 		await api(`/sessions/${state.sessionId}/message`, {
 			method: 'POST',
 			body: JSON.stringify({ text: 'continue' })

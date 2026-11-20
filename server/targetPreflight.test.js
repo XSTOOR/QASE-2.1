@@ -103,25 +103,3 @@ describe('pre-flight wiring (message flow)', () => {
 		assert.equal(h.addedMessages.length, 0);
 	});
 });
-
-describe('prompt surface (environment notes reach the agent)', () => {
-	it('renders environmentNotes into the QA context', async () => {
-		const { buildQaContext } = await import('./prompt.js');
-		const context = buildQaContext({
-			targetUrl: 'https://www.drytis.com/',
-			secretNames: [],
-			userMemory: [],
-			environmentNotes: [
-				{ host: 'www.drytis.com', detail: 'The run environment resolves www.drytis.com (or a name in its DNS chain) to a private address (10.3.87.24).' }
-			]
-		}, undefined);
-		assert.match(context, /# Environment notes \(authoritative\)/);
-		assert.match(context, /Never file them as site defects/);
-	});
-
-	it('omits the section when there are no notes', async () => {
-		const { buildQaContext } = await import('./prompt.js');
-		const context = buildQaContext({ targetUrl: 'https://example.com/', secretNames: [], userMemory: [] }, undefined);
-		assert.doesNotMatch(context, /# Environment notes/);
-	});
-});

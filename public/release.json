@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-11-20-sqa-compliance-r4",
-  "uiVersion": "20261120-5",
+  "releaseId": "qase-2026-11-21-founder-business-r5",
+  "uiVersion": "20261121-1",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Push-SQA: SQA rebuilt as compliance testing \u2014 identifies the product, researches the standards and laws that apply, tests each requirement and reports per standard, on the CleanSlate SDK with the reasoning model only."
+  "source": "Push-SQA: Founder rebuilt as a business review on the SQA stage architecture — understands the product, researches competitors, measures business signals, walks key journeys, scores ten lenses and advises what to do, avoid and keep, on the CleanSlate SDK with the reasoning model only."
 }

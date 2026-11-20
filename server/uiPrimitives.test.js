@@ -135,8 +135,8 @@ test('mini summary composes the compact collapsed row segments', () => {
 });
 
 test('the application controller consumes extracted UI modules instead of redefining them', () => {	assert.match(app, /from '\.\/uiPrimitives\.js'/);
-	assert.match(app, /from '\.\/founderView\.js'/);
-	assert.match(app, /createFounderView\(\{/);
+	assert.match(app, /from '\.\/founderReviewView\.js'/);
+	assert.match(app, /renderFounderReview\(/);
 	for (const name of ['escapeHtml', 'markdown', 'hostOf', 'relativeTime', 'truncate', 'section', 'paragraph', 'list', 'formatTokens', 'usageChipText', 'tokenSummaryText']) {
 		assert.doesNotMatch(app, new RegExp(`function ${name}\\(`));
 	}

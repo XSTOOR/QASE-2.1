@@ -17,11 +17,11 @@ const METHODS = ['automated', 'browser', 'document'];
 export const RESULT_STATUSES = ['pass', 'fail', 'partial', 'needs_documents', 'not_applicable'];
 export const DATA_TYPES = ['accounts', 'personal_data', 'payments', 'health', 'children', 'education_records', 'location', 'biometrics', 'user_content', 'ai_inputs', 'financial'];
 
-const tool = (name, description, properties, required, run) => ({ name, category: 'sqa', description, parametersSchema: { type: 'object', properties, required }, run });
+const tool = (name, description, properties, required, run) => ({ name, category: name.split('_')[0], description, parametersSchema: { type: 'object', properties, required }, run });
 const hostOf = url => { try { return new URL(url).host.replace(/^www\./, ''); } catch { return ''; } };
 
 /** Tools that read and interact with the product under test. */
-export function browsingTools({ browser, profile, state, onVisit = () => {} }) {
+export function browsingTools({ browser, profile, state, onVisit = () => {}, prefix = 'sqa' }) {
 	let page, log;
 	const ensure = async () => {
 		if (page && !page.isClosed()) return;
@@ -32,7 +32,7 @@ export function browsingTools({ browser, profile, state, onVisit = () => {} }) {
 	const after = async () => { await browser.settle(page, { quietMs: 1000 }); visit(); return { success: true, observation: await observe(page, log) }; };
 	const locate = ref => page.locator(`[data-qase-ref="${String(ref).replace(/"/g, '')}"]`).first();
 	const tools = [
-		tool('sqa_open', 'Open a page of the product under test (same site only) and read its text, links and interactive elements. Elements are listed with refs (e0, e1…) for sqa_click/sqa_type.',
+		tool(`${prefix}_open`, `Open a page of the product under test (same site only) and read its text, links and interactive elements. Elements are listed with refs (e0, e1…) for ${prefix}_click/${prefix}_type.`,
 			{ url: { type: 'string' } }, ['url'], async ({ url }) => {
 				await ensure();
 				const target = new URL(String(url), page.url() === 'about:blank' ? state.targetUrl : page.url()).href;
@@ -40,7 +40,7 @@ export function browsingTools({ browser, profile, state, onVisit = () => {} }) {
 				await browser.goto(page, target, log);
 				return after();
 			}),
-		tool('sqa_click', 'Click an element by its ref from the latest observation. Destructive actions (delete, pay, sign out…) are refused; form submissions are blocked by the host.',
+		tool(`${prefix}_click`, 'Click an element by its ref from the latest observation. Destructive actions (delete, pay, sign out…) are refused; form submissions are blocked by the host.',
 			{ ref: { type: 'string' } }, ['ref'], async ({ ref }) => {
 				await ensure();
 				const label = await locate(ref).evaluate(element => (element.getAttribute('aria-label') || element.innerText || element.value || '').trim().slice(0, 60)).catch(() => '');
@@ -48,7 +48,7 @@ export function browsingTools({ browser, profile, state, onVisit = () => {} }) {
 				await browser.interact(() => locate(ref).click({ timeout: 5000 }));
 				return after();
 			}),
-		tool('sqa_type', 'Type text into a field by ref (replaces its value). Set submit=true to press Enter. Submissions are blocked from reaching the server; you see how the page reacts.',
+		tool(`${prefix}_type`, 'Type text into a field by ref (replaces its value). Set submit=true to press Enter. Submissions are blocked from reaching the server; you see how the page reacts.',
 			{ ref: { type: 'string' }, text: { type: 'string' }, submit: { type: 'boolean' } }, ['ref', 'text'], async input => {
 				await ensure();
 				await browser.interact(async () => {
@@ -57,12 +57,12 @@ export function browsingTools({ browser, profile, state, onVisit = () => {} }) {
 				});
 				return after();
 			}),
-		tool('sqa_scroll', 'Scroll the current page.', { direction: { type: 'string', enum: ['down', 'up', 'top', 'bottom'] } }, ['direction'], async ({ direction }) => {
+		tool(`${prefix}_scroll`, 'Scroll the current page.', { direction: { type: 'string', enum: ['down', 'up', 'top', 'bottom'] } }, ['direction'], async ({ direction }) => {
 			await ensure();
 			await page.evaluate(where => { if (where === 'top') scrollTo(0, 0); else if (where === 'bottom') scrollTo(0, document.documentElement.scrollHeight); else scrollBy(0, (where === 'up' ? -1 : 1) * innerHeight * 0.8); }, direction).catch(() => {});
 			return after();
 		}),
-		tool('sqa_press', 'Press a key (Tab, Enter, Escape, ArrowDown…) — useful for keyboard-accessibility checks.', { key: { type: 'string' } }, ['key'], async ({ key }) => {
+		tool(`${prefix}_press`, 'Press a key (Tab, Enter, Escape, ArrowDown…) — useful for keyboard-accessibility checks.', { key: { type: 'string' } }, ['key'], async ({ key }) => {
 			await ensure();
 			await browser.interact(() => page.keyboard.press(String(key).slice(0, 30)));
 			const focus = await page.evaluate(() => { const element = document.activeElement; if (!element || element === document.body) return 'nothing focused'; const r = element.getBoundingClientRect(); const s = getComputedStyle(element); return `${element.tagName.toLowerCase()} "${(element.getAttribute('aria-label') || element.innerText || element.value || '').trim().slice(0, 50)}" focus outline: ${s.outlineStyle !== 'none' && s.outlineWidth !== '0px' ? 'visible' : s.boxShadow !== 'none' ? 'box-shadow' : 'none'}, on screen: ${r.bottom > 0 && r.top < innerHeight}`; }).catch(() => 'unknown');

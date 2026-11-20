@@ -13,13 +13,13 @@ const SEARCH_RESULTS = [
 ];
 
 /** A SearXNG-compatible JSON endpoint; QASE_SQA_SEARCH_URL is its base URL (the SDK adds /search). */
-export async function startSearchStub() {
+export async function startSearchStub(results = SEARCH_RESULTS) {
 	const queries = [];
 	const server = http.createServer((request, response) => {
 		const url = new URL(request.url, 'http://127.0.0.1');
 		queries.push(url.searchParams.get('q'));
 		response.writeHead(200, { 'content-type': 'application/json' });
-		response.end(JSON.stringify({ query: url.searchParams.get('q'), results: SEARCH_RESULTS }));
+		response.end(JSON.stringify({ query: url.searchParams.get('q'), results }));
 	});
 	await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 	return { url: `http://127.0.0.1:${server.address().port}`, queries, close: () => new Promise(resolve => server.close(resolve)) };
@@ -101,11 +101,11 @@ export async function startScriptedModel() {
 }
 
 /** Stubs the SDK's hosted search provider; everything else passes through. */
-export function stubWebSearch() {
+export function stubWebSearch(results = SEARCH_RESULTS) {
 	const original = globalThis.fetch;
 	globalThis.fetch = async (url, init) => {
 		if (/mcp\.exa\.ai|search\.parallel\.ai/.test(String(url))) {
-			const text = 'WCAG 2.2 https://www.w3.org/TR/WCAG22/\nCOPPA rule https://www.ftc.gov/legal-library/browse/rules/childrens-online-privacy-protection-rule-coppa\nDPDP Act https://www.meity.gov.in/data-protection-framework';
+			const text = results.map(item => `${item.title} ${item.url}`).join('\n');
 			return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
 		}
 		return original(url, init);

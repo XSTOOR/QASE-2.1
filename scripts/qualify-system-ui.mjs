@@ -82,13 +82,11 @@ try{
   }
   await page.locator(`#${mode}-authorization`).check();
   if(mode==='founder'){
-   await page.locator('#founder-context-mode').selectOption('provided');
-   assert.equal(await page.locator('#founder-submit').isDisabled(),true);
-   for(const [id,value]of [['stage','Beta'],['business-model','Subscription'],['target-customer','Small product teams'],['primary-goal','Improve first-run completion']])await page.locator(`#founder-${id}`).fill(value);
-   await page.locator('#founder-context-mode').selectOption('assumptions');
-   assert.equal(await page.locator('#founder-business-fields').isHidden(),true);
-   assert.equal(await page.locator('#founder-stage').evaluate(input=>input.required),false);
-   await page.locator('#founder-context-mode').selectOption('provided');
+   await page.locator('#founder-goals').fill('Improve first-run completion and paid conversion');
+   await page.locator('#founder-audience').fill('Small product teams');
+   await page.locator('#founder-stage').selectOption('early');
+   await page.locator('#founder-journeys').fill('Sign up\nCreate the first project');
+   await page.locator('.founder-focus-chip:has(input[value="onboarding"])').click();
   }
   await page.waitForFunction(mode=>!document.querySelector(`#${mode}-submit`).disabled,mode);
   await page.locator(`#${mode}-submit`).click();await page.locator(`#${mode}-start`).waitFor({state:'hidden'});
@@ -99,56 +97,17 @@ try{
   if(mode==='sqa'){
    assert.equal(session.sqa.version,3,'The launcher creates a compliance-engine run.');
    assert.match(session.sqa.focus,/school children/);assert.equal(session.sqa.regionsHint,'United States');
-  }else assert.ok(session[mode].scope.authorization.confirmed);
-  if(mode==='founder'){
-   assert.equal(session.founder.scope.access.decision,'public_only');
-   assert.equal(session.founder.scope.contextDecision.mode,'provided');
-   assert.equal(session.founder.scope.productContext.targetCustomer,'Small product teams');
+  }else{
+   assert.equal(session.founder.version,2,'The launcher creates a business-review engine run.');
+   assert.equal(session.founder.brief.audience,'Small product teams');
+   assert.equal(session.founder.brief.stage,'early');
+   assert.deepEqual(session.founder.brief.focus,['onboarding']);
+   assert.match(session.founder.brief.journeys.join(' '),/first project/);
   }
   await page.reload();await page.locator(`#tab-${mode}`).waitFor({state:'visible'});
   assert.ok(new URL(page.url()).hash.includes('/runs/'));assert.ok(!new URL(page.url()).hash.endsWith('/results'));
   checks.push(`${mode}: launcher authorization, API creation, reload and retained run route`);
  }
-
- // Scope and context choices use the real HTTP handlers; no model is executed.
- await page.locator('#new-founder').click();
- await page.locator('#founder-target-url').fill(targetUrl);
- await page.locator('#founder-authorization').check();
- await page.locator('#founder-access').selectOption('authenticated');
- const beforeCredentials=turns.length;
- await page.locator('#founder-submit').click();
- await page.locator('.cred-form').waitFor();
- assert.equal(turns.length,beforeCredentials,'No browser/model turn starts before secure setup is answered.');
- const authenticated=[...sessions.values()].find(s=>s.pendingQuestion?.kind==='founder_launch_credentials');
- assert.ok(authenticated);assert.equal(authenticated.founder.scope.contextDecision.mode,'assumptions');
- await page.reload();await page.locator('.cred-form').waitFor();
- const password='Local Founder UI fixture password';
- await page.locator('.cred-form').getByLabel('Username or email',{exact:true}).fill('founder-fixture@example.invalid');
- await page.locator('.cred-form').getByLabel('Password',{exact:true}).fill(password);
- publish(authenticated,'question',{question:authenticated.pendingQuestion});
- await page.waitForFunction(()=>document.querySelector('.cred-form input[type="password"]')?.value.length>0);
- assert.equal(await page.locator('.cred-form').getByLabel('Password',{exact:true}).inputValue(),password,'A repeated question must preserve unsent values in the current vault form.');
- await page.getByRole('button',{name:'Store and continue',exact:true}).click();
- assert.equal(turns.length,beforeCredentials,'Native consent validation prevents dispatch.');
- assert.equal(vaults.has(authenticated.id),false);
- await page.locator('.cred-form input[type="checkbox"]').check();
- await page.getByRole('button',{name:'Store and continue',exact:true}).click();
- await page.locator('.cred-form').waitFor({state:'hidden'});
- assert.equal(turns.length,beforeCredentials+1);
- assert.match(turns.at(-1).options.task,/\{\{QA_PASSWORD\}\}/);
- assert.ok(!JSON.stringify({sessions:[...sessions.values()],turns}).includes(password));
- checks.push('founder: authenticated setup survives reload, waits for consent and vault storage, then starts once with placeholders only');
-
- await page.locator('#new-founder').click();
- await page.locator('#founder-target-url').fill(targetUrl);
- await page.locator('#founder-authorization').check();
- await page.locator('#founder-access').selectOption('authenticated');
- await page.locator('#founder-submit').click();await page.locator('.cred-form').waitFor();
- const skipped=[...sessions.values()].find(s=>s.pendingQuestion?.kind==='founder_launch_credentials');
- await page.getByRole('button',{name:'Skip login',exact:true}).click();
- await page.locator('.cred-form').waitFor({state:'hidden'});
- assert.equal(skipped.founder.scope.access.decision,'public_only');assert.equal(vaults.has(skipped.id),false);
- checks.push('founder: Skip login saves an early public-only boundary without storing credentials');
 
  // Restored selections can finish loading after all form inputs are complete.
  const delayed=await browser.newPage({viewport:{width:1440,height:1000}});
@@ -165,7 +124,7 @@ try{
   await delayed.locator('#founder-target-url').fill(targetUrl);
   await delayed.locator('#founder-authorization').check();
   assert.equal(await delayed.locator('#founder-submit').isDisabled(),true);
-  assert.match(await delayed.locator('#founder-launch-status').textContent(),/choose a device and browser/);
+  assert.match(await delayed.locator('#founder-launch-status').textContent(),/choose a device/);
   releaseDevice();
   await delayed.waitForFunction(()=>!document.querySelector('#founder-submit').disabled);
   await delayed.locator('#founder-target-url').fill('not-a-url');
@@ -182,7 +141,7 @@ try{
   checks.push('founder: invalid URL and missing device block launch; delayed device restoration enables it on desktop/mobile');
  }finally{releaseDevice();await delayed.close();}
 
- for(const mode of launchOnly?[]:['qa','founder']){
+ for(const mode of launchOnly?[]:['qa']){
   const file=path.resolve(process.env.QASE_SYSTEM_QUALIFICATION_OUTPUT||'test-results/system-qualification',mode,'checkpoint.json');
   const session=JSON.parse(fs.readFileSync(file,'utf8'));assert.equal(session.status,'done');
   const finalTodos=session.todos;

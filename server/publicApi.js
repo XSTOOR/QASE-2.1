@@ -365,9 +365,10 @@ export function createPublicApi(options = {}) {
 					// retired SQA workflow have no public report.
 					markdown = isSqaEngineSession(session) && session.report ? buildSqaMarkdown(session) : undefined;
 				} else if (session.mode === 'founder') {
-					const { buildFounderReportMarkdown } = await import('./founderService.js');
-					markdown = session.founder?.report && session.founder?.finalizedAt
-						? buildFounderReportMarkdown(session) : undefined;
+					const { isFounderEngineSession } = await import('./founder/engine.js');
+					const { buildFounderMarkdown } = await import('./founder/report.js');
+					markdown = isFounderEngineSession(session) && session.founder?.report && session.founder?.finalizedAt
+						? buildFounderMarkdown(session) : undefined;
 				} else {
 					markdown = services.reports?.buildMarkdown
 						? services.reports.buildMarkdown(session)

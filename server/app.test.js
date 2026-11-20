@@ -3,17 +3,14 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { createApplication } from './app.js';
-import { hybridProfile } from './hybridConfig.js';
 import { PublicInputError } from './publicErrors.js';
 import { createInstanceAccess } from './instanceAccess.js';
-import { createFounderState,createFounderReviewTodos,recordFounderObservations } from './founderService.js';
 import { aggregateSessionFindings, setFindingStatus } from './store.js';
 import { createCoverageService } from './coverageService.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { withUserConfiguration } from './config.js';
-import { profileIdentity, REQUIRED_CAPABILITIES, HYBRID_SDK_VERSION } from './hybridConfig.js';
 
 export const TEST_TENANT = Object.freeze({
 	organizationId: '55c15025-8ef4-4ce8-8ad5-4562f33f1852',
@@ -376,108 +373,6 @@ async function body(response) {
 	return response.json();
 }
 
-async function pausedFounderFixture(t){
-	const f=await startFixture();t.after(()=>f.close());
-	const setStatus=f.services.runs.setStatus;f.services.runs.setStatus=(session,status,detail)=>{session.statusDetail=detail;return setStatus(session,status,detail);};
-	const session=await f.services.runs.create('Paused Founder');
-	Object.assign(session,{mode:'founder',status:'interrupted',targetUrl:'https://fixture.test/',tokenUsage:{inputTokens:40000,outputTokens:1000},todos:createFounderReviewTodos(),founder:createFounderState({authorizationConfirmed:true,target:{name:'Fixture',url:'https://fixture.test/'}})});
-	session.activities.push({id:'observed-browser',toolName:'browser_open',status:'done',ts:Date.now()});
-	return {...f,session};
-}
-
-test('Founder evidence API resolves only attached receipts without starting a model or changing run data',async t=>{
-	const f=await pausedFounderFixture(t),{session}=f;
-	session.activities[0].toolName='browser_snapshot';session.activities[0].summary='A task heading was visible.';
-	await recordFounderObservations(session,[{category:'product_clarity',type:'opportunity',title:'Observed task',summary:'A task heading was visible.',confidence:'medium'}],f.services.runs);
-	const before=structuredClone(session),id=session.founder.observations[0].id;
-	const response=await f.request(`/api/sessions/${session.id}/founder/evidence/${id}/1`);
-	assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');assert.equal((await body(response)).integrity,'verified');
-	assert.equal((await f.request(`/api/sessions/${session.id}/founder/evidence/missing/1`)).status,404);
-	assert.equal((await f.request(`/api/sessions/${session.id}/founder/evidence/${id}/0`)).status,400);
-	assert.equal((await f.request(`/api/sessions/${randomUUID()}/founder/evidence/${id}/1`)).status,404);
-	assert.deepEqual(session,before);assert.equal(f.state.ensureCalls.length,0);assert.equal(f.state.runCalls.length,0);
-});
-
-test('Founder continuation uses fresh owner-scoped progress and preserves the existing run and usage',async t=>{
-	const f=await pausedFounderFixture(t),{session}=f;
-	const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));
-	assert.equal(progress.recovery.available,true);assert.equal(progress.phase,'exploration');
-	const before=structuredClone({founder:session.founder,activities:session.activities,usage:session.tokenUsage,todos:session.todos});
-	const response=await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:progress.recovery.token}});assert.equal(response.status,202);
-	await f.whenIdle();assert.equal(f.state.runCalls.length,1);assert.match(f.state.runCalls[0].options.task,/saved plan/);
-	assert.deepEqual({founder:session.founder,activities:session.activities,usage:session.tokenUsage,todos:session.todos},before);
-	assert.equal(f.state.runCalls[0].sessionId,session.id);
-	assert.equal((await body(await f.request(`/api/sessions/${session.id}`))).founderProgress.version,1);
-	assert.equal((await f.request('/api/sessions/missing/founder/progress')).status,404);
-	const other=await f.services.runs.create('QA');assert.equal((await f.request(`/api/sessions/${other.id}/founder/continue`,{method:'POST',json:{}})).status,404);
-});
-
-test('Founder stale tabs and pending decisions cannot dispatch a model turn',async t=>{
-	const f=await pausedFounderFixture(t),{session}=f;
-	const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));session.todos[0].status='completed';
-	const stale=await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:progress.recovery.token}});
-	assert.equal(stale.status,409);assert.equal((await body(stale)).code,'STALE_CHECKPOINT');
-	session.pendingQuestion={toolCallId:'secure-question',credentialLike:true};
-	const blocked=await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:'ignored'}});
-	assert.equal(blocked.status,409);assert.equal((await body(blocked)).code,'INPUT_REQUIRED');
-	assert.equal(f.state.runCalls.length,0);assert.equal(f.state.ensureCalls.length,0);
-});
-
-test('duplicate Founder continuation and ordinary continue messages cannot race runtime initialization; Stop cancels admission',async t=>{
-	const f=await pausedFounderFixture(t),{session}=f;let release;
-	const gate=new Promise(resolve=>{release=resolve;});const original=f.services.agent.ensureRuntime;
-	f.services.agent.ensureRuntime=async(...args)=>{await gate;return original(...args);};
-	try{
-		const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));
-		const input={method:'POST',json:{expectedCheckpoint:progress.recovery.token}};
-		assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,input)).status,202);
-		assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,input)).status,409);
-		assert.equal((await f.request(`/api/sessions/${session.id}/message`,{method:'POST',json:{text:'continue'}})).status,409);
-		assert.equal((await body(await f.request(`/api/sessions/${session.id}/founder/progress`))).busy,true);
-		assert.equal((await f.request(`/api/sessions/${session.id}/stop`,{method:'POST'})).status,200);
-		assert.equal((await body(await f.request(`/api/sessions/${session.id}/founder/progress`))).title,'Stopping review');
-	}finally{release();await f.whenIdle();}
-	assert.equal(f.state.runCalls.length,0);assert.equal(session.status,'interrupted');assert.equal(session.statusDetail,'Stopped by user.');
-});
-
-test('Founder initialization failure retains progress and permits a fresh explicit retry',async t=>{
-	const f=await pausedFounderFixture(t),{session}=f;const before=structuredClone(session.founder);
-	f.state.ensureError=new Error('Fixture model connection unavailable');
-	const first=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));
-	assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:first.recovery.token}})).status,202);
-	await f.whenIdle();assert.equal(session.status,'error');assert.deepEqual(session.founder,before);assert.equal(f.state.runCalls.length,0);
-	f.state.ensureError=undefined;
-	const retry=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));assert.match(retry.lastError,/connection unavailable/);
-	assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:retry.recovery.token}})).status,202);
-	await f.whenIdle();assert.equal(f.state.runCalls.length,1);assert.deepEqual(session.founder,before);
-});
-
-test('deleting a Founder review while continuation initializes cannot resurrect it or dispatch a model turn',async t=>{
-	const f=await pausedFounderFixture(t),{session}=f;let release,disposed=0;
-	const gate=new Promise(resolve=>{release=resolve;});f.services.agent.ensureRuntime=async()=>{await gate;return {dispose(){disposed++;}};};
-	try{
-		const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));
-		assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:progress.recovery.token}})).status,202);
-		assert.equal((await f.request(`/api/sessions/${session.id}`,{method:'DELETE'})).status,200);
-	}finally{release();await f.whenIdle();}
-	assert.equal(f.state.runCalls.length,0);assert.equal(disposed,1);assert.equal(f.services.runs.get(session.id),undefined);
-});
-
-test('a failed deletion cancels pending Founder admission without losing the saved run or trapping future recovery',async t=>{
-	const f=await pausedFounderFixture(t),{session}=f;let release,disposed=0;
-	const gate=new Promise(resolve=>{release=resolve;});f.services.agent.ensureRuntime=async()=>{await gate;return {dispose(){disposed++;}};};
-	const originalDelete=f.services.runs.delete;f.services.runs.delete=()=>{throw new Error('Fixture deletion unavailable');};
-	try{
-		const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));
-		assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:progress.recovery.token}})).status,202);
-		assert.equal((await f.request(`/api/sessions/${session.id}`,{method:'DELETE'})).status,500);
-	}finally{release();await f.whenIdle();f.services.runs.delete=originalDelete;}
-	assert.equal(f.state.runCalls.length,0);assert.equal(disposed,0);assert.equal(f.services.runs.get(session.id),session);
-	const progress=await body(await f.request(`/api/sessions/${session.id}/founder/progress`));assert.equal(progress.recovery.available,true);
-	assert.equal((await f.request(`/api/sessions/${session.id}/founder/continue`,{method:'POST',json:{expectedCheckpoint:progress.recovery.token}})).status,202);
-	await f.whenIdle();assert.equal(f.state.runCalls.length,1);
-});
-
 test('application construction has no startup side effects and validates its service contract', () => {
 	const memory = createMemoryServices();
 	const application = createApplication({
@@ -762,221 +657,6 @@ test('run CRUD preserves summaries, derived detail fields, cleanup, and 404 beha
 	assert.equal((await fixture.request(`/api/sessions/${created.id}`)).status, 404);
 });
 
-test('Founder versioned setup persists scope/context and rejects missing or inactive device selections before dispatch',async t=>{
-	const f=await founderLaunchFixture(t);
-	for(const patch of [{environmentId:''},{accessDecision:'invented'},{contextMode:'provided'},{target:{name:'Bad',url:'https://user:password@example.test/'}}]){
-		const response=await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,...patch}});
-		assert.equal(response.status,400);
-	}
-	assert.equal((await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,environmentId:'missing'}})).status,422);
-	f.environment.active=false;
-	assert.equal((await f.request('/api/founder/sessions',{method:'POST',json:f.input})).status,422);
-	f.environment.active=true;
-	assert.equal(f.state.runCalls.length,0); assert.equal(f.state.ensureCalls.length,0);
-	const response=await f.request('/api/founder/sessions',{method:'POST',json:f.input});assert.equal(response.status,201);
-	const created=await body(response),restored=await body(await f.request(`/api/sessions/${created.id}`));
-	assert.equal(restored.founder.scope.access.decision,'public_only');
-	assert.equal(restored.founder.scope.contextDecision.mode,'assumptions');
-	assert.equal(restored.environmentId,f.environment.envId);assert.equal(restored.status,'idle');
-	assert.equal(f.state.runCalls.length,0);
-});
-
-test('Founder authenticated setup waits for secure credentials, rejects missing consent, and starts with placeholders only',async t=>{
-	const f=await founderLaunchFixture(t);
-	const created=await body(await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,accessDecision:'authenticated'}}));
-	const session=f.services.runs.get(created.id);
-	assert.equal(session.status,'awaiting_input');assert.equal(session.pendingQuestion.kind,'founder_launch_credentials');
-	assert.equal(f.state.runCalls.length,0);assert.equal(f.state.ensureCalls.length,0);
-	assert.equal((await f.request(`/api/sessions/${session.id}/message`,{method:'POST',json:{text:'continue'}})).status,409);
-	const fields={QA_USERNAME:'fixture@example.invalid',QA_PASSWORD:'private fixture password'};
-	assert.equal((await f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:{fields}})).status,400);
-	assert.deepEqual(await f.services.secrets.names(session.id),[]);
-	const result=await f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:{fields,authorizeLogin:true}});
-	assert.equal(result.status,200);await f.whenIdle();
-	assert.equal(session.pendingQuestion,undefined);assert.ok(session.founder.scope.access.credentialsProvidedAt);
-	assert.deepEqual(session.secretNames,['QA_USERNAME','QA_PASSWORD']);assert.equal(f.state.runCalls.length,1);
-	assert.match(f.state.runCalls[0].options.task,/\{\{QA_PASSWORD\}\}/);
-	assert.ok(!JSON.stringify({session,calls:f.state.runCalls,events:f.state.events,result:await body(result)}).includes(fields.QA_PASSWORD));
-	assert.equal((await f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:{fields,authorizeLogin:true}})).status,409);
-});
-
-test('Founder credential setup survives vault failure and serializes competing credential/skip answers',async t=>{
-	const f=await founderLaunchFixture(t);
-	const created=await body(await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,accessDecision:'authenticated'}}));
-	const session=f.services.runs.get(created.id),store=f.services.secrets.store;
-	const input={fields:{QA_USERNAME:'fixture@example.invalid',QA_PASSWORD:'private fixture password'},authorizeLogin:true};
-	f.services.secrets.store=async()=>{throw new Error('Fixture vault unavailable');};
-	assert.equal((await f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:input})).status,500);
-	assert.equal(session.pendingQuestion.kind,'founder_launch_credentials');assert.equal(f.state.runCalls.length,0);
-	let release,entered;const waiting=new Promise(resolve=>{release=resolve;});const observed=new Promise(resolve=>{entered=resolve;});
-	t.after(()=>release());
-	f.services.secrets.store=async(...args)=>{entered();await waiting;return store(...args);};
-	const first=f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:input});await observed;
-	assert.equal((await f.request(`/api/sessions/${session.id}/credentials`,{method:'POST',json:input})).status,409);
-	assert.equal((await f.request(`/api/sessions/${session.id}/answer`,{method:'POST',json:{answer:'Skip login'}})).status,409);
-	assert.equal(session.founder.scope.access.decision,'authenticated');release();
-	assert.equal((await first).status,200);await f.whenIdle();assert.equal(f.state.runCalls.length,1);
-});
-
-test('Founder early Skip login records public-only scope and qualified execution refuses authenticated setup',async t=>{
-	const f=await founderLaunchFixture(t);
-	const created=await body(await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,accessDecision:'authenticated'}}));
-	assert.equal((await f.request(`/api/sessions/${created.id}/answer`,{method:'POST',json:{answer:'Skip login'}})).status,200);
-	await f.whenIdle();const session=f.services.runs.get(created.id);
-	assert.equal(session.founder.scope.access.decision,'public_only');assert.equal(session.pendingQuestion,undefined);
-	assert.deepEqual(session.secretNames,[]);assert.match(f.state.runCalls[0].options.task,/public-only/);
-	const qualified=await founderLaunchFixture(t,{environment:{QASE_FOUNDER_REASONING_ENABLED:'true'}});
-	const catalog=await body(await qualified.request('/api/founder/catalog'));assert.equal(catalog.launch.authenticatedAvailable,false);
-	const rejected=await qualified.request('/api/founder/sessions',{method:'POST',json:{...qualified.input,accessDecision:'authenticated'}});
-	assert.equal(rejected.status,400);assert.match((await body(rejected)).error,/sign-in review is unavailable/);
-	assert.equal(qualified.state.runCalls.length,0);
-	f.services.configuration.getPublic=()=>({provider:'jev',model:'jev-1.13',ready:true});
-	assert.equal((await body(await f.request('/api/founder/catalog'))).launch.authenticatedAvailable,false);
-	assert.equal((await f.request('/api/founder/sessions',{method:'POST',json:{...f.input,accessDecision:'authenticated'}})).status,400);
-});
-
-test('Founder Mode creates an authorized pending review and starts only from a target URL message', async t => {
-	const fixture = await startFixture();
-	t.after(() => fixture.close());
-
-	const catalogResponse = await fixture.request('/api/founder/catalog');
-	assert.equal(catalogResponse.status, 200);
-	const catalog = await body(catalogResponse);
-	assert.match(catalog.schemaVersion, /^2026\./);
-	assert.equal(catalog.categories.length, 17);
-	assert.deepEqual(catalog.observationTypes, ['strength', 'friction', 'opportunity', 'risk']);
-	assert.deepEqual(catalog.confidenceLevels, ['low', 'medium', 'high']);
-	assert.match(catalog.caveat, /hypotheses to validate/i);
-
-	const unauthorized = await fixture.request('/api/founder/sessions', {
-		method: 'POST',
-		json: { target: { name: 'Example product' } }
-	});
-	assert.equal(unauthorized.status, 400);
-	assert.match((await body(unauthorized)).error, /authorized/i);
-
-	const createdResponse = await fixture.request('/api/founder/sessions', {
-		method: 'POST',
-		json: {
-			authorizationConfirmed: true,
-			tenantId: 'request-controlled-tenant',
-			organizationId: 'request-controlled-organization',
-			target: { name: 'Example product', release: '1.0.0', environment: 'staging' },
-			productContext: {
-				stage: 'mvp',
-				businessModel: 'B2B SaaS',
-				targetCustomer: 'Product teams',
-				primaryGoal: 'Improve activation',
-				competitors: ['Incumbent suite']
-			}
-		}
-	});
-	assert.equal(createdResponse.status, 201);
-	const created = await body(createdResponse);
-	assert.equal(created.mode, 'founder');
-	assert.equal(created.status, 'idle');
-	assert.equal(created.targetUrl, undefined);
-	assert.equal(created.founder.scope.authorization.confirmed, true);
-	assert.deepEqual(created.founder.observations, []);
-	assert.equal(created.todos.length, 8);
-	assert.ok(created.todos.every(item => item.status === 'pending'));
-	assert.match(created.todos[0].text, /evidence baseline/i);
-	assert.equal(created.founder.report, undefined);
-	assert.equal(created.founder.finalizedAt, undefined);
-	assert.equal(JSON.stringify(created).includes('request-controlled-tenant'), false);
-	assert.equal(JSON.stringify(created).includes('request-controlled-organization'), false);
-	assert.equal(fixture.state.runCalls.length, 0);
-	assert.equal(fixture.state.events.at(-1).type, 'founder.created');
-	const initialPlan = fixture.state.events.find(event => (
-		event.type === 'todos' && event.sessionId === created.id
-	));
-	assert.equal(initialPlan.todos.length, 8);
-	const missingTarget = await fixture.request(`/api/sessions/${created.id}/message`, {
-		method: 'POST', json: { text: 'Please begin the review.' }
-	});
-	assert.equal(missingTarget.status, 400);
-	assert.match((await body(missingTarget)).error, /target URL/i);
-	assert.equal(fixture.state.runCalls.length, 0);
-	assert.equal(fixture.services.runs.get(created.id).messages.length, 0);
-
-	const summaries = await body(await fixture.request('/api/sessions'));
-	assert.equal(summaries[0].mode, 'founder');
-	const pendingReport = await fixture.request(`/api/sessions/${created.id}/report.md`);
-	assert.equal(pendingReport.status, 409);
-	assert.match((await body(pendingReport)).error, /pending/i);
-
-	const instruction = 'Review the complete product at https://example.com/app.';
-	const startResponse = await fixture.request(`/api/sessions/${created.id}/message`, {
-		method: 'POST',
-		json: { text: instruction }
-	});
-	assert.equal(startResponse.status, 200);
-	const started = await body(await fixture.request(`/api/sessions/${created.id}`));
-	assert.equal(started.targetUrl, 'https://example.com/app');
-	assert.equal(started.founder.scope.target.url, 'https://example.com/app');
-	const targetBinding = fixture.state.events.find(event => (
-		event.type === 'founder.target_bound' && event.sessionId === created.id
-	));
-	assert.equal(targetBinding.authorizedTargetUrl, 'https://example.com/app');
-	assert.deepEqual(fixture.state.runCalls.at(-1), {
-		sessionId: created.id,
-		options: { task: instruction }
-	});
-	await fixture.whenIdle();
-
-	const preauthorizedResponse = await fixture.request('/api/founder/sessions', {
-		method: 'POST',
-		json: {
-			authorizationConfirmed: true,
-			target: { name: 'Bound product', url: 'https://authorized.example/product' }
-		}
-	});
-	assert.equal(preauthorizedResponse.status, 201);
-	const preauthorized = await body(preauthorizedResponse);
-	assert.equal(fixture.state.events.at(-1).authorizedTargetUrl, 'https://authorized.example/product');
-	const runsBeforeMismatch = fixture.state.runCalls.length;
-	const mismatchResponse = await fixture.request(`/api/sessions/${preauthorized.id}/message`, {
-		method: 'POST', json: { text: 'Review https://different.example/product' }
-	});
-	assert.equal(mismatchResponse.status, 400);
-	assert.match((await body(mismatchResponse)).error, /does not match the authorized/i);
-	assert.equal(fixture.state.runCalls.length, runsBeforeMismatch);
-	assert.equal(fixture.services.runs.get(preauthorized.id).messages.length, 0);
-	assert.equal(fixture.services.runs.get(preauthorized.id).targetUrl, undefined);
-
-	const authorizedStart = await fixture.request(`/api/sessions/${preauthorized.id}/message`, {
-		method: 'POST', json: { text: 'Review https://authorized.example/product' }
-	});
-	assert.equal(authorizedStart.status, 200);
-	assert.equal(fixture.services.runs.get(preauthorized.id).targetUrl, 'https://authorized.example/product');
-	const preauthorizedBinding = fixture.state.events.find(event => (
-		event.type === 'founder.target_bound' && event.sessionId === preauthorized.id
-	));
-	assert.equal(preauthorizedBinding.authorizedTargetUrl, 'https://authorized.example/product');
-	await fixture.whenIdle();
-
-	const stored = fixture.services.runs.get(created.id);
-	stored.founder.finalizedAt = '2026-08-18T00:00:00.000Z';
-	stored.founder.report = {
-		generatedAt: stored.founder.finalizedAt,
-		target: { name: 'Example product' },
-		coverage: { categoriesReviewed: [], totalCategories: 17, evidenceBackedObservations: 0 },
-		executiveSummary: 'A bounded product review.',
-		icp: { primary: 'Product teams', users: ['Operators'], buyers: ['Leaders'], jobs: ['Ship'], pains: ['Friction'] },
-		positioning: { oneLiner: 'Ship with confidence.', valueProposition: 'Evidence-informed decisions.' },
-		recommendations: [],
-		marketing: { channels: [] },
-		sales: { motion: 'Founder-led discovery.' },
-		risks: [],
-		plan: { days30: [], days60: [], days90: [] },
-		metrics: { northStar: { name: 'Activation', definition: 'First successful run.' }, experiments: [] },
-		caveat: 'Recommendations are hypotheses to validate.'
-	};
-	const finalReport = await fixture.request(`/api/sessions/${created.id}/report.md`);
-	assert.equal(finalReport.status, 200);
-	assert.match(await finalReport.text(), /^# Founder review — Example product/);
-});
-
 test('run deletion remains hidden while durable cleanup records a sanitized failure', async t => {
 	const fixture = await startFixture({
 		purgeArtifacts() { throw new Error('workspace path and secret must never enter audit'); }
@@ -1091,41 +771,6 @@ test('answers and credentials require pending input and never expose raw credent
 });
 
 
-
-test('Founder credential refusal persists a public-only boundary and cannot re-open the login gate', async t => {
-	const fixture = await startFixture();
-	t.after(() => fixture.close());
-	const created = await body(await fixture.request('/api/founder/sessions', {
-		method: 'POST',
-		json: {
-			authorizationConfirmed: true,
-			target: { name: 'Public product', url: 'https://example.com/' }
-		}
-	}));
-	const session = fixture.services.runs.get(created.id);
-	session.pendingQuestion = {
-		question: 'Provide credentials to continue.',
-		credentialLike: true
-	};
-
-	const response = await fixture.request(`/api/sessions/${session.id}/answer`, {
-		method: 'POST',
-		json: { answer: 'No credentials available. Skip anything behind the login.' }
-	});
-	assert.equal(response.status, 200);
-	assert.deepEqual(session.founder.scope.access, {
-		decision: 'public_only',
-		authenticatedSurfaces: 'excluded',
-		decidedAt: session.founder.scope.access.decidedAt,
-		source: 'user'
-	});
-	assert.match(session.messages.at(-1).text, /public-only review/i);
-	assert.match(session.messages.at(-1).text, /do not ask for credentials again/i);
-	assert.deepEqual(fixture.state.runCalls.at(-1).options, {
-		resumeAnswer: session.messages.at(-1).text
-	});
-	await fixture.whenIdle();
-});
 
 test('stop, report, configuration, malformed JSON, and API 404 contracts remain stable', async t => {
 	const fixture = await startFixture();
@@ -1733,10 +1378,54 @@ test('GET /api/findings returns the owned backlog with composed filters', async 
 	assert.deepEqual(empty.findings, []);
 });
 
-async function founderLaunchFixture(t, options={}) {
-	const fixture=await startFixture(options); t.after(()=>fixture.close());
-	const environment={envId:'founder-launch-env',active:true,platform:'windows',device:'Desktop',deviceType:'desktop',os:'Windows',osVersion:'11',browser:'Chrome',browserCode:'chrome',browserVersion:'151',executionType:'SIMULATED',executionProvider:'local',emulation:{viewport:{width:1440,height:1000},deviceScaleFactor:1,isMobile:false,hasTouch:false}};
-	fixture.services.environments.get=async id=>id===environment.envId?environment:null;
-	const input={setupVersion:1,authorizationConfirmed:true,target:{name:'Launch fixture',url:'https://example.test/'},environmentId:environment.envId,accessDecision:'public_only',contextMode:'assumptions'};
-	return {...fixture,input,environment};
-}
+test('Founder launcher creates an authorized business review with the owner brief and never trusts request identity', async t => {
+	const fixture = await startFixture();
+	t.after(() => fixture.close());
+	const unauthorized = await fixture.request('/api/founder/sessions', { method: 'POST', json: { targetUrl: 'https://example.test/' } });
+	assert.equal(unauthorized.status, 400);
+	assert.match((await body(unauthorized)).error, /authorized/i);
+	const noUrl = await fixture.request('/api/founder/sessions', { method: 'POST', json: { authorizationConfirmed: true, targetUrl: 'ftp://example.test/' } });
+	assert.equal(noUrl.status, 400);
+	assert.match((await body(noUrl)).error, /product URL/i);
+
+	const response = await fixture.request('/api/founder/sessions', {
+		method: 'POST',
+		json: {
+			authorizationConfirmed: true, targetUrl: 'https://example.test/app', name: 'Example',
+			tenantId: 'request-controlled-tenant',
+			brief: { goals: 'More trial sign-ups', audience: 'Small agencies', stage: 'early', journeys: 'Sign up\nInvite a teammate', competitors: 'https://rival.test/', focus: ['onboarding', 'not-a-lens'] }
+		}
+	});
+	assert.equal(response.status, 201);
+	const created = await body(response);
+	assert.equal(created.mode, 'founder');
+	assert.equal(created.founder.engine, 'qase-founder');
+	assert.equal(created.founder.version, 2);
+	assert.equal(created.founder.scope.target.url, 'https://example.test/app');
+	assert.equal(created.founder.brief.goals, 'More trial sign-ups');
+	assert.deepEqual(created.founder.brief.focus, ['onboarding'], 'unknown focus lenses are dropped');
+	assert.equal(created.founder.report, undefined);
+	assert.equal(JSON.stringify(created).includes('request-controlled-tenant'), false);
+	assert.equal(fixture.state.runCalls.length, 0, 'creating the review does not start the model');
+	assert.equal(fixture.state.events.at(-1).type, 'founder.created');
+
+	const markdown = await fixture.request(`/api/sessions/${created.id}/report.md`);
+	assert.equal(markdown.status, 409, 'no report before the review finishes');
+	assert.match((await body(markdown)).error, /not finished/i);
+});
+
+test('a Founder brief answer after a restart is saved into the brief and resumes the review', async t => {
+	const fixture = await startFixture();
+	t.after(() => fixture.close());
+	const created = await body(await fixture.request('/api/founder/sessions', { method: 'POST', json: { authorizationConfirmed: true, targetUrl: 'https://example.test/' } }));
+	const session = fixture.services.runs.get(created.id);
+	session.status = 'awaiting_input';
+	session.pendingQuestion = { kind: 'founder_brief', question: 'Who is it for?' };
+	const reply = await fixture.request(`/api/sessions/${created.id}/message`, { method: 'POST', json: { text: 'Agencies with 5-20 people; goal is paid conversions.' } });
+	assert.equal(reply.status, 200);
+	assert.match(session.founder.brief.goals, /Agencies/);
+	assert.equal(session.pendingQuestion, undefined);
+	assert.ok(session.messages.some(message => message.role === 'user' && /Agencies/.test(message.text)));
+	await new Promise(resolve => setTimeout(resolve, 20));
+	assert.equal(fixture.state.runCalls.length, 1, 'the engine resumes once');
+});

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { MAX_FOUNDER_STATE_BYTES, normalizeFounderState } from '../founderService.js';
+import { MAX_FOUNDER_STATE_BYTES, normalizeFounderState } from '../founder/state.js';
 import { currentRequestActor } from '../requestActor.js';
 import { normalizeQaScopeSelection } from '../../public/qaScopeCatalog.js';
 import { hybridStorage, hydrateHybrid } from '../hybridPersistence.js';
@@ -63,6 +63,7 @@ const EVENT_CHILD_GROUPS = new Map([
 	['founder.observation', Object.freeze([])],
 	['founder.finalized', Object.freeze([])],
 	['founder.created', Object.freeze([])],
+	['founder.state', Object.freeze([])],
 	['founder.target_bound', Object.freeze([])],
 	['drytis.review.created', Object.freeze([])],
 	['drytis.review.start_requested', Object.freeze([])],

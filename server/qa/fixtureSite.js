@@ -159,6 +159,28 @@ const EDU_PAGES = {
 	'/edu/terms': `${EDU_NAV}<main><h1>Terms of use</h1><p>By using BrightPath you agree to these terms.</p></main>${EDU_FOOTER}`
 };
 
+/**
+ * Taskly: a small B2B task-management startup with planted business gaps,
+ * used to test the Founder review end to end. Planted: a vague headline with
+ * no call to action on the first screen (desktop and phone), no social proof,
+ * a "Pricing" link that is broken (404) and no prices, a nine-field sign-up
+ * form with a phone number and no one-click sign-in, no meta description or
+ * share preview, no contact channel, and a wide banner that makes the phone
+ * layout scroll sideways. What works: a clear features page and a free trial.
+ */
+export const SAAS_GAPS = ['value.headline', 'value.cta_above_fold', 'trust.social_proof', 'conversion.pricing', 'onboarding.signup_friction', 'performance.broken_links', 'discoverability.meta', 'mobile.layout'];
+const SAAS_NAV = '<header style="display:flex;gap:16px;padding:12px"><a href="/saas/">Taskly</a><a href="/saas/features">Features</a><a href="/saas/pricing">Pricing</a><a href="/saas/about">About</a></header>';
+const SAAS_FOOTER = '<footer style="padding:20px"><a href="/saas/about">About</a> · <a href="/saas/privacy">Privacy</a> · <a href="/saas/terms">Terms</a> · © Taskly</footer>';
+const SAAS_PAGES = {
+	'/saas/': `${SAAS_NAV}<main><section style="min-height:2600px;padding:40px"><h1>The future of work, reimagined for the next generation of ambitious modern teams everywhere</h1><p>Synergy. Velocity. Clarity.</p><div style="width:900px;background:#eef;padding:10px">Now with AI ✨</div></section>
+<section><h2>Start your 14-day free trial</h2><a class="btn" href="/saas/signup" style="background:#2563eb;color:#fff;padding:10px 16px;border-radius:6px">Start free trial</a></section></main>${SAAS_FOOTER}`,
+	'/saas/features': `${SAAS_NAV}<main><h1>Features</h1><ul><li>Kanban boards and lists</li><li>Recurring tasks and reminders</li><li>Slack and Google Calendar integrations</li><li>Time tracking per task</li></ul><p>Taskly helps small agencies plan client work and hit deadlines.</p><a class="btn" href="/saas/signup" style="background:#2563eb;color:#fff;padding:10px 16px">Start free trial</a></main>${SAAS_FOOTER}`,
+	'/saas/about': `${SAAS_NAV}<main><h1>About Taskly</h1><p>We are a team of four building calmer project management for agencies.</p></main>${SAAS_FOOTER}`,
+	'/saas/privacy': `${SAAS_NAV}<main><h1>Privacy</h1><p>We store your account data to provide the service.</p></main>${SAAS_FOOTER}`,
+	'/saas/terms': `${SAAS_NAV}<main><h1>Terms</h1><p>Standard terms of service.</p></main>${SAAS_FOOTER}`,
+	'/saas/signup': `${SAAS_NAV}<main><h1>Create your account</h1><form method="post" action="/saas/signup"><label>First name <input name="first_name" required></label> <label>Last name <input name="last_name" required></label> <label>Work email <input name="email" type="email" required></label> <label>Phone <input name="phone" type="tel" required></label> <label>Company <input name="company" required></label> <label>Company size <select name="size" required><option>1-10</option><option>11-50</option></select></label> <label>Role <input name="role" required></label> <label>Password <input name="password" type="password" required></label> <label>Confirm password <input name="password2" type="password" required></label> <button class="btn">Create account</button></form></main>${SAAS_FOOTER}`
+};
+
 export function labHandler(request, response, { prefix = '' } = {}) {
 	const url = new URL(request.url, 'http://lab');
 	// Mounted under Express, the prefix is already stripped from request.url.
@@ -179,6 +201,10 @@ export function labHandler(request, response, { prefix = '' } = {}) {
 			// The analytics cookie is set on first load, before the visitor answers the cookie notice.
 			response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Set-Cookie': '_ga=GA1.1.123456.789; Path=/; Max-Age=63072000' });
 			return response.end(rewrite(layout(path === '/edu/' ? 'BrightPath Academy — online classes for kids' : `${path.split('/').pop()} — BrightPath Academy`, EDU_PAGES[path])));
+		case '/saas': response.writeHead(301, { Location: link('/saas/') }); return response.end();
+		case '/saas/': case '/saas/features': case '/saas/about': case '/saas/privacy': case '/saas/terms': case '/saas/signup':
+			if (request.method === 'POST') return html(rewrite(layout('Welcome', '<main><h1>Welcome to Taskly</h1></main>')));
+			return html(rewrite(layout(path === '/saas/' ? 'Taskly' : `${path.split('/').pop()} — Taskly`, SAAS_PAGES[path])));
 		case '/contact':
 			if (request.method === 'POST') return html(rewrite(layout('Thanks', '<main><h1>Thanks!</h1></main>')));
 			return html(rewrite(layout('Contact', CONTACT)));

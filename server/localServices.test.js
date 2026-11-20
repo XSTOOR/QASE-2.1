@@ -24,7 +24,7 @@ test('acknowledged Founder checkpoints and usage survive immediate process exit'
 			session.founder = { scope: {}, observations: [], reportDraft: { revision: 'saved', input: { executive_summary: 'Persisted before acknowledgement.' } } };
 			session.tokenUsage = { inputTokens: 521118, outputTokens: 42600, totalTokens: 563718 };
 			await services.runs.setStatus(session, 'running');
-			await services.runs.commit(session, 'founder.report_draft');
+			await services.runs.commit(session, 'founder.finalized');
 			session.tokenUsage.inputTokens += 100;
 			session.tokenUsage.totalTokens += 100;
 			await services.runs.commit(session, 'usage');
@@ -63,7 +63,7 @@ test('Founder commits refuse acknowledgement when the local checkpoint cannot be
 			fs.mkdirSync('.qase/sessions.json', { recursive: true });
 			let published = false;
 			services.runs.subscribe(session.id, () => { published = true; });
-			await assert.rejects(services.runs.commit(session, 'founder.report_draft'));
+			await assert.rejects(services.runs.commit(session, 'founder.finalized'));
 			assert.equal(published, false);
 			process.exit(0);
 		`], { cwd: directory, encoding: 'utf8', timeout: 30_000, windowsHide: true });

@@ -17,7 +17,7 @@ test('the QA launcher exposes a test-selection fieldset with bulk controls', () 
 	// Submit is the named control the customer asked to gate.
 	assert.match(html, /id="qa-submit"[^>]*>Start QA test<\/button>/);
 	// Founder Mode and SQA (compliance) remain separate, untouched launchers.
-	assert.match(html, /id="new-founder"[^>]+aria-label="Start Founder Mode review"/);
+	assert.match(html, /id="new-founder"[^>]+aria-label="Start Founder review"/);
 	assert.match(html, /id="new-sqa"[^>]+aria-label="Start compliance test"/);
 });
 

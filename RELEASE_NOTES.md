@@ -1,5 +1,40 @@
 # QASE release notes
 
+## qase-2026-11-21-founder-business-r5 (UI 20261121-1)
+
+**Founder is now a business review that tells you how to win users.** The old
+Founder pipeline is replaced by a new engine (`server/founder/`) built on the
+same architecture as SQA: host-run stages on the CleanSlate SDK with the
+reasoning model only. The shared agent moved to `server/stageAgent.js`.
+
+- The agent reads the key pages and records what the product is, the promise,
+  the customer, the business model and the main goal; researches competitors
+  and what users of the category expect (a competitor needs a source found in
+  the research); measures 21 business signals on desktop and phone (headline,
+  first-screen call to action, social proof, pricing, free start, sign-up
+  friction, mobile layout, speed, errors, broken links, sharing metadata,
+  retention hooks); walks the key journeys as the target customer; scores ten
+  lenses with cited evidence; and writes 6–15 recommendations — do or avoid,
+  now / next / later, impact, effort, why, how, the metric to watch and when it
+  is done — plus what to keep, a positioning line and headline options.
+- Readiness (0–100) and the verdict are computed by the host from the
+  weighted lenses. Without a model the review advises from measured signals.
+- Steering: the launcher takes goals, customers, stage, journeys to test,
+  competitors and focus areas. With no brief the agent asks one short question
+  in the conversation (skippable). Sign-in walls use the secure QA card.
+- UI: a new launcher, narration and readiness / do-now cards in the
+  conversation, and a Founder tab with readiness ring, recommendations grouped
+  by priority, keep doing, scorecard, business profile, journeys, competitors,
+  signals with screenshots, sources and exports. Recommendations can be
+  selected and sent to Drytis Studio through the existing signed handoff.
+- Do-now recommendations become business findings; Markdown and PDF exports.
+- Removed: the old Founder service, tools, prompts, report drafting, evidence
+  and progress routes, the old SDK agent loop and its browser bridge, the JEV
+  Founder controller, the qualified "mode reasoning" runtime and their tests
+  and scripts. Earlier Founder reviews stay listed and readable.
+- Fixed: the Founder launcher no longer loses to the automatic new-test page on
+  a fresh account, and Founder runs no longer toast every finding.
+
 ## qase-2026-11-20-sqa-compliance-r4 (UI 20261120-5)
 
 **SQA is now compliance testing, and it starts.** The old SQA could not start

@@ -11,7 +11,7 @@ evidence and a ready-to-paste fix prompt for every defect.
 - **SQA** — compliance testing: identifies the kind of product, researches the
   standards and laws that apply to it, tests each requirement and reports per
   standard. Reasoning model only. → [docs/sqa.md](docs/sqa.md)
-- **Founder** — evidence-bound product and go-to-market review.
+- **Founder** — business review: what to change, avoid and keep so the product wins users.
   → [docs/founder-mode.md](docs/founder-mode.md)
 
 Point QASE only at sites you own or are authorized to test.
@@ -34,14 +34,15 @@ Models are optional for QA. Set `QASE_API_KEY` (and/or `JEV_API_KEY`) in the
 environment or `.env` to enable AI exploration, visual review and JEV
 verification; without keys QA still runs every automated check. SQA uses the
 reasoning model (without it, it reports from a labelled baseline and measured
-evidence). Founder needs a configured model (Settings → Models). See `.env.example`.
+evidence). Founder uses the same reasoning model (without it, it advises from the measured
+business signals). See `.env.example`.
 
 ## Repository map
 
 | Path | Contents |
 | --- | --- |
 | `server/qa/` | QA engine: pipeline, detectors, models, triage, report, QA Lab |
-| `server/` | HTTP API (`app.js`), QA engine (`qa/`), SQA compliance engine (`sqa/`), Founder agent loop (`agent.js`), storage, auth, browser policy, integrations |
+| `server/` | HTTP API (`app.js`), QA engine (`qa/`), SQA compliance engine (`sqa/`), Founder business-review engine (`founder/`), storage, auth, browser policy, integrations |
 | `server/postgres/`, `server/controlPlane/` | PostgreSQL adapters and migrations; optional multi-cell control plane |
 | `public/` | Dashboard (plain ES modules, no build step) |
 | `integrations/drytis/` | Server-only Drytis client and signing protocol |

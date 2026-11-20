@@ -3,12 +3,15 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-const agent = readFileSync(new URL('./agent.js', import.meta.url), 'utf8');
+const engines = ['qa', 'sqa', 'founder'].map(mode => [mode, readFileSync(new URL(`./${mode}/engine.js`, import.meta.url), 'utf8')]);
 const store = readFileSync(new URL('./store.js', import.meta.url), 'utf8');
 
-test('user Stop persists an authoritative resumable interrupted state', () => {
-	assert.equal((agent.match(/setStatus\(session, 'interrupted', 'Stopped by user\.'\)/g) ?? []).length, 3);
-	assert.doesNotMatch(agent, /setStatus\(session, 'idle', 'Stopped by user\.'\)/);
+test('a user Stop marks unfinished stages and still publishes the work done so far', () => {
+	for (const [mode, source] of engines) {
+		assert.match(source, /status: 'skipped', detail: 'Stopped by user'/, `${mode} records stopped stages`);
+		assert.match(source, /if \(stopped\(\) && session\.status === 'awaiting_input'\) await runStore\.setStatus\(session, 'running'/, `${mode} leaves a pending question before publishing`);
+		assert.doesNotMatch(source, /setStatus\(session, 'idle', 'Stopped by user\.'\)/);
+	}
 	assert.match(store, /session\.statusDetail = detail \|\| undefined/);
 });
 

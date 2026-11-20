@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildReportHtml } from './reportPdf.js';
+import { createFounderReviewFixture } from './founder/fixtureReview.js';
 
 function makeSession(overrides = {}) {
 	return {
@@ -67,66 +68,21 @@ test('SQA HTML report shows the product, each standard with its score, the gaps 
 	assert.doesNotMatch(html, /<covers>/);
 });
 
-test('Founder HTML report renders the complete structured professional brief', () => {
-	const session = makeSession({
-		mode: 'founder',
-		founder: {
-			scope: {
-				target: { name: 'Acme AI', url: 'https://example.com/' },
-				productContext: { stage: 'seed', businessModel: 'SaaS', targetCustomer: 'ops teams', primaryGoal: 'convert trials' }
-			},
-			observations: [{
-				id: 'F-01', category: 'onboarding', type: 'friction', title: 'Signup requires phone',
-				summary: 'Blocks demo path', confidence: 'high',
-				evidence: [{ summary: 'Observed required phone field', reference: 'qase://runs/1/activities/a1', digest: 'sha256:def' }]
-			}],
-				report: {
-				schemaVersion: '2026.08.1',
-				generatedAt: '2026-08-20T12:00:00.000Z',
-				target: { name: 'Acme AI', url: 'https://example.com/', release: '1.0.0', environment: 'production' },
-				executiveSummary: 'Reduce onboarding friction and clarify the commercial path.',
-				coverage: { categoriesReviewed: ['onboarding', 'monetization_pricing'], totalCategories: 17, evidenceBackedObservations: 1 },
-				evidenceConfidence: { rating: 'medium', uniqueBrowserActivities: 1, assumptionCount: 2, limitation: 'Browser-accessible evidence only.' },
-				icp: { primary: 'Operations leaders', users: ['Operators'], buyers: ['VP Operations'], jobs: ['Ship reliable work'], pains: ['Slow setup'], evidenceObservationIds: ['F-01'], assumptions: ['Buyer role needs validation.'] },
-				positioning: { category: 'Operations platform', oneLiner: 'Move work faster.', valueProposition: 'A focused workspace.', differentiators: ['Fast setup'], alternatives: ['Spreadsheets'], evidenceObservationIds: ['F-01'], assumptions: [] },
-				monetization: { model: 'Subscription', valueMetric: 'Active workspace', pricingPresentation: 'Publish transparent tiers.', packages: ['Starter', 'Growth'], nextTests: ['Interview five buyers'], evidenceObservationIds: [], assumptions: ['Willingness to pay is unknown.'] },
-				recommendations: [
-					{ id: 'rec-1', category: 'onboarding', title: 'Remove phone from signup', rationale: 'Cited by F-01', actions: ['Make phone optional'], impact: 'high', effort: 'low', confidence: 'medium', evidenceObservationIds: ['F-01'], assumptions: [] }
-				],
-				quickWins: ['rec-1'],
-				marketing: { channels: [{ channel: 'Founder-led content', rationale: 'Demonstrate the workflow.', firstTest: 'Publish three teardown posts.', confidence: 'medium', evidenceObservationIds: ['F-01'], assumptions: [] }], contentAngles: ['Before-and-after workflow'], launchMotions: ['Design partner launch'], growthLoops: ['Shareable output'], assumptions: ['Audience reach is unknown.'] },
-				sales: { motion: 'Founder-led discovery', qualificationQuestions: ['How is this solved today?'], objectionResponses: [{ objection: 'Switching cost', response: 'Start with one workflow.' }], salesAssets: ['ROI worksheet'], evidenceObservationIds: ['F-01'], assumptions: [] },
-				risks: [{ title: 'Activation friction', likelihood: 'high', impact: 'high', mitigation: 'Shorten setup.', evidenceObservationIds: ['F-01'], assumptions: [] }],
-				plan: { days30: ['Fix signup'], days60: ['Validate pricing'], days90: ['Scale the winning channel'] },
-				metrics: {
-					northStar: { name: 'Activated workspaces', definition: 'Workspaces completing the core outcome.', why: 'Measures delivered value.', evidenceObservationIds: ['F-01'], assumptions: [] },
-					candidates: [{ name: 'Time to value', definition: 'Minutes to first outcome.', evidenceObservationIds: ['F-01'], assumptions: [] }],
-					experiments: [{ hypothesis: 'Optional phone increases completion.', change: 'Remove required phone.', successMetric: 'Signup completion', timebox: 'Two weeks', guardrail: 'Qualified activation rate', evidenceObservationIds: ['F-01'], assumptions: [] }]
-				},
-				caveat: 'Evidence-informed guidance, not guaranteed outcomes.'
-			}
-		}
-	});
+test('Founder HTML report leads with readiness and gives the do / avoid / keep advice with its evidence', async () => {
+	const session = await createFounderReviewFixture();
+	session.userFeedback = { rating: 5, comments: 'Clear next steps', userName: 'Owner', submittedAtFormatted: '21-Nov-2026 10:00 AM IST' };
 	const html = buildReportHtml(session);
+	const { report } = session.founder;
 	assert.match(html, /Founder review/);
-	assert.match(html, /Context<\/h2>/);
-	assert.match(html, /2026\.08\.1/);
-	assert.match(html, /2026-08-20T12:00:00\.000Z/);
-	assert.match(html, /Executive summary/);
-	assert.match(html, /Evidence confidence/);
-	assert.match(html, /Observation evidence registry/);
-	assert.match(html, /F-01/);
-	assert.match(html, /Ideal customer profile/);
-	assert.match(html, /Positioning/);
-	assert.match(html, /Monetization & pricing/);
-	assert.match(html, /Prioritized recommendations<\/h2>/);
-	assert.match(html, /Quick wins/);
-	assert.match(html, /Marketing & growth/);
-	assert.match(html, /Sales & go-to-market/);
-	assert.match(html, /30 \/ 60 \/ 90-day plan/);
-	assert.match(html, /Metrics & experiments/);
-	assert.match(html, /Important boundary/);
-	assert.match(html, /Impact high/);
+	assert.match(html, new RegExp(`${report.readiness}`));
+	assert.match(html, /Not ready to scale/);
+	assert.match(html, /Publish a pricing page with a free trial/);
+	assert.match(html, /Do not launch paid ads before the pricing page exists/);
+	assert.match(html, /Clean, uncluttered layout/);
+	assert.match(html, /Asana/);
+	assert.match(html, /Conversion &amp; pricing|Conversion & pricing/);
+	assert.match(html, /User feedback<\/h2>/);
+	assert.match(html, /Clear next steps/);
 	assert.doesNotMatch(html, /undefined/);
 });
 

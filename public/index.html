@@ -20,11 +20,10 @@
 <link rel="stylesheet" href="runCard.css?v=20261015-17">
 <link rel="stylesheet" href="auth.css?v=20261109-1">
 <link rel="stylesheet" href="runStartup.css?v=20261016-1">
-<link rel="stylesheet" href="founderReader.css?v=20261108-2">
 <link rel="stylesheet" href="reportReadability.css?v=20261109-1">
-<link rel="stylesheet" href="qaEvidence.css?v=20261120-5">
-<link rel="stylesheet" href="qaConversation.css?v=20261120-5">
-<link rel="stylesheet" href="sqaCompliance.css?v=20261120-5">
+<link rel="stylesheet" href="qaEvidence.css?v=20261121-1">
+<link rel="stylesheet" href="qaConversation.css?v=20261121-1">
+<link rel="stylesheet" href="sqaCompliance.css?v=20261121-1">
 <link rel="icon" type="image/svg+xml" href="qase-mark.svg">
 </head>
 <body class="cli-theme studio-workspace" data-has-run="false">
@@ -513,7 +512,7 @@
       <section class="tab-pane" id="pane-bugs" data-pane="bugs" role="tabpanel" aria-label="Bugs"><div class="feed" id="bugs-list" role="list"><div class="feed-empty">No bugs detected yet — use Report bug on a run with findings.</div></div></section>
       <section class="tab-pane" id="pane-report" data-pane="report" role="tabpanel" aria-labelledby="tab-report"><div id="qa-report-evidence" hidden></div><div class="feed" id="report-view"></div></section>
       <section class="tab-pane" id="pane-sqa" data-pane="sqa" role="tabpanel" aria-labelledby="tab-sqa"><div class="feed sqa-view" id="sqa-view" aria-live="polite"></div></section>
-      <section class="tab-pane" id="pane-founder" data-pane="founder" role="tabpanel" aria-labelledby="tab-founder"><section id="founder-progress" hidden></section><div class="feed founder-view" id="founder-view"></div></section>
+      <section class="tab-pane" id="pane-founder" data-pane="founder" role="tabpanel" aria-labelledby="tab-founder"><div class="feed founder-view" id="founder-view"></div></section>
     </div>
 
   </aside>
@@ -552,10 +551,10 @@
       <span class="feature-label">SQA</span>
       <span class="feature-tooltip" id="feature-tip-sqa" role="tooltip">Test against the standards and laws that apply</span>
     </button>
-    <button id="new-founder" class="feature-action feature-action--founder" type="button" aria-label="Start Founder Mode review" aria-describedby="feature-tip-founder" data-feature="founder">
+    <button id="new-founder" class="feature-action feature-action--founder" type="button" aria-label="Start Founder review" aria-describedby="feature-tip-founder" data-feature="founder">
       <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 9 7-9 11L3 10l9-7Z"/><path d="m3 10 18 0M8 10l4 11 4-11M8 10l4-7 4 7"/></svg></span>
       <span class="feature-label">Founder</span>
-      <span class="feature-tooltip" id="feature-tip-founder" role="tooltip">Founder Mode product review</span>
+      <span class="feature-tooltip" id="feature-tip-founder" role="tooltip">How to make your product attract and keep users</span>
     </button>
     <button id="open-bugs" class="feature-action" type="button" aria-label="Open the bug tracker" aria-describedby="feature-tip-bugs" data-feature="bugs" aria-pressed="false">
       <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="13" rx="5"/><path d="m9 7-2-3m8 3 2-3M3 10h4m10 0h4M3 15h4m10 0h4M5 21l3-3m8 0 3 3M12 10v7"/></svg></span>
@@ -927,7 +926,7 @@
       <div class="qe-mode-picker" role="group" aria-label="Test mode">
         <span class="qe-mode-current" aria-current="true"><strong>QA test</strong><small>Verify browser workflows</small></span>
         <button type="button" id="qa-launch-sqa"><strong>Compliance test</strong><small>Standards and laws that apply</small></button>
-        <button type="button" id="qa-launch-founder"><strong>Founder review</strong><small>Evaluate product and UX</small></button>
+        <button type="button" id="qa-launch-founder"><strong>Founder review</strong><small>Business advice to win users</small></button>
       </div>
       <h2 id="journey-website-title" tabindex="-1">Test a user journey</h2>
       <label class="field">
@@ -1255,120 +1254,84 @@
   </form>
 </dialog>
 
-<!-- Founder Mode launcher. This creates a scoped strategic product review;
-     the existing agent/runtime remains responsible for evidence collection. -->
+<!-- Founder review launcher: the product URL plus the owner's optional brief
+     (goals, customers, stage, journeys, competitors, focus areas). -->
 <dialog class="modal founder-modal" id="founder-start" aria-labelledby="founder-start-title" aria-describedby="founder-start-description">
   <form class="modal-inner founder-modal-inner" id="founder-form">
     <header class="modal-head" data-path="~/qase/founder/new">
       <div>
-        <h2 id="founder-start-title">Review Product Ideas</h2>
-        <p id="founder-start-description">Find what to improve, what to build next, why it matters, and what to prioritize.</p>
+        <h2 id="founder-start-title">Founder review</h2>
+        <p id="founder-start-description">A business review of your product: what makes visitors sign up, what makes them leave, and exactly what to change, stop and keep to make it polished and attractive to users.</p>
       </div>
       <button class="btn btn-ghost btn-sm" type="button" id="founder-close">Close</button>
     </header>
 
     <div class="modal-body founder-modal-body">
-      <aside class="founder-intro founder-recommended" role="note">
-        <span aria-hidden="true">◆</span>
-        <div>
-          <strong>Recommended Product Review</strong>
-          <p>Qase reviews the current product, connects observed evidence to opportunities, and orders the recommendations for you.</p>
-          <small id="founder-catalog-meta" aria-live="polite">Loading review catalog…</small>
-        </div>
-      </aside>
+      <ol class="sqa-steps founder-steps" aria-label="How the Founder review works">
+        <li><strong>Understand</strong><span>What it promises, to whom, and how it makes money.</span></li>
+        <li><strong>Compare</strong><span>Researches your competitors and what users now expect.</span></li>
+        <li><strong>Experience</strong><span>Measures the first impression and walks your key journeys as a new customer.</span></li>
+        <li><strong>Advise</strong><span>Scores 10 business areas and tells you what to do, avoid and keep.</span></li>
+      </ol>
 
-      <div class="founder-detected-context" id="founder-detected-context" role="status" aria-live="polite" aria-atomic="true" hidden></div>
-
-      <fieldset class="founder-fieldset founder-target-primary">
+      <fieldset class="sqa-fieldset founder-target">
         <legend>Product to review</legend>
         <label class="field">
-          <span>Target URL</span>
-          <input id="founder-target-url" name="targetUrl" type="url" required maxlength="8192" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://product.example.com…">
-          <small>Qase uses the current Studio project when it is available.</small>
+          <span>Product URL</span>
+          <input id="founder-target-url" name="targetUrl" type="url" required maxlength="2048" inputmode="url" autocomplete="url" placeholder="https://yourproduct.com">
+        </label>
+        <label class="field">
+          <span>Product name <small>(optional)</small></span>
+          <input id="founder-target-name" name="name" maxlength="120" autocomplete="off" placeholder="Taken from the site if left blank">
         </label>
       </fieldset>
 
-      <fieldset class="founder-fieldset">
-        <legend>Review scope</legend>
-        <label class="field">
-          <span>Which pages should Qase review?</span>
-          <select id="founder-access" name="accessDecision" aria-describedby="founder-access-help">
-            <option value="public_only">Public pages only</option>
-            <option value="authenticated">Public pages and signed-in product</option>
-          </select>
-          <small id="founder-access-help">Signed-in pages are excluded. Qase will record that boundary and continue without asking for credentials.</small>
-        </label>
-      </fieldset>
-
-      <fieldset class="founder-fieldset">
-        <legend>Business context</legend>
-        <label class="field">
-          <span>How should Qase use business context?</span>
-          <select id="founder-context-mode" name="contextMode" aria-describedby="founder-context-help">
-            <option value="assumptions">Use visible evidence and label assumptions</option>
-            <option value="provided">I will supply the business context</option>
-          </select>
-          <small id="founder-context-help">Unknown customers, stage and business model remain explicit assumptions in the report.</small>
-        </label>
-        <div id="founder-business-fields" hidden>
-          <div class="field-row founder-context-row">
+      <details class="qa-customize founder-customize" id="founder-customize" open>
+        <summary>Steer the review <small>(optional — the more you say, the sharper the advice)</small></summary>
+        <div class="qa-customize-body founder-customize-body">
+          <label class="field">
+            <span>What should the product achieve?</span>
+            <textarea id="founder-goals" rows="2" maxlength="1500" placeholder="e.g. Get small agencies to start a free trial and invite their team."></textarea>
+          </label>
+          <div class="field-row founder-row">
             <label class="field">
-              <span>Product stage</span>
-              <input id="founder-stage" name="stage" maxlength="200" autocomplete="off" placeholder="MVP, beta, or established product">
+              <span>Who are your customers?</span>
+              <input id="founder-audience" maxlength="600" autocomplete="off" placeholder="e.g. Agencies of 2–20 people">
             </label>
             <label class="field">
-              <span>Business model</span>
-              <input id="founder-business-model" name="businessModel" maxlength="500" autocomplete="off" placeholder="Subscription, marketplace, or internal tool">
+              <span>Stage</span>
+              <select id="founder-stage">
+                <option value="">Not sure</option>
+                <option value="idea">Idea / prototype</option>
+                <option value="pre_launch">About to launch</option>
+                <option value="early">Launched, early users</option>
+                <option value="growth">Growing</option>
+              </select>
             </label>
           </div>
           <label class="field">
-            <span>Target customer</span>
-            <textarea id="founder-target-customer" name="targetCustomer" rows="2" maxlength="1000" placeholder="Who uses and buys the product?"></textarea>
+            <span>Journeys to test <small>(one per line)</small></span>
+            <textarea id="founder-journeys" rows="2" maxlength="700" placeholder="e.g. Sign up and create the first project&#10;Compare plans and upgrade"></textarea>
           </label>
-        </div>
-        <label class="field">
-          <span>Primary goal <small id="founder-goal-optional">(optional)</small></span>
-          <textarea id="founder-primary-goal" name="primaryGoal" rows="2" maxlength="1000" placeholder="The outcome this review should focus on"></textarea>
-        </label>
-      </fieldset>
-
-      <label class="check founder-authorization">
-        <input id="founder-authorization" type="checkbox" required>
-        <span>I have permission to review this product.<small>Qase observes the product without changing it or taking external business actions.</small></span>
-      </label>
-
-      <details class="qa-customize founder-customize" id="founder-customize">
-        <summary>Advanced Options</summary>
-        <div class="qa-customize-body founder-customize-body">
-          <fieldset class="founder-fieldset">
-            <legend>Project Details</legend>
-            <div class="field-row founder-target-row">
-              <label class="field">
-                <span>Product or project <small>(optional)</small></span>
-                <input id="founder-target-name" name="targetName" maxlength="200" autocomplete="off" placeholder="Acme workspace…">
-              </label>
-              <label class="field">
-                <span>Release <small>(optional)</small></span>
-                <input id="founder-target-release" name="targetRelease" maxlength="200" autocomplete="off" placeholder="Current…">
-              </label>
-              <label class="field">
-                <span>Environment <small>(optional)</small></span>
-                <input id="founder-target-environment" name="targetEnvironment" maxlength="100" autocomplete="off" placeholder="Preview…">
-              </label>
-            </div>
+          <label class="field">
+            <span>Competitors <small>(names or URLs, one per line)</small></span>
+            <textarea id="founder-competitors" rows="2" maxlength="1500" placeholder="e.g. asana.com&#10;Trello"></textarea>
+          </label>
+          <fieldset class="founder-focus">
+            <legend>Pay extra attention to</legend>
+            <div class="founder-focus-chips"><label class="founder-focus-chip"><input type="checkbox" name="focus" value="value_prop"><span>First impression</span></label><label class="founder-focus-chip"><input type="checkbox" name="focus" value="trust"><span>Trust</span></label><label class="founder-focus-chip"><input type="checkbox" name="focus" value="onboarding"><span>Onboarding</span></label><label class="founder-focus-chip"><input type="checkbox" name="focus" value="conversion"><span>Conversion & pricing</span></label><label class="founder-focus-chip"><input type="checkbox" name="focus" value="experience"><span>Polish</span></label><label class="founder-focus-chip"><input type="checkbox" name="focus" value="mobile"><span>Mobile</span></label><label class="founder-focus-chip"><input type="checkbox" name="focus" value="performance"><span>Speed</span></label><label class="founder-focus-chip"><input type="checkbox" name="focus" value="discoverability"><span>SEO & sharing</span></label><label class="founder-focus-chip"><input type="checkbox" name="focus" value="retention"><span>Retention</span></label><label class="founder-focus-chip"><input type="checkbox" name="focus" value="positioning"><span>Positioning</span></label></div>
           </fieldset>
-
-          <fieldset class="founder-fieldset">
-            <legend>Additional context <small class="founder-context-note">optional</small></legend>
-            <label class="field">
-              <span>Constraints</span>
-              <textarea id="founder-constraints" name="constraints" rows="3" maxlength="2000" placeholder="Team, runway, compliance, or launch constraints…"></textarea>
-            </label>
-          </fieldset>
+          <small class="founder-hint">Leave this blank and the agent works it out from the site, asking you one short question in the chat.</small>
         </div>
       </details>
+
+      <label class="check sqa-authorization">
+        <input id="founder-authorization" type="checkbox" required>
+        <span>I own this product or have permission to review it.<small>Qase only reads and clicks; it never submits real data, pays or deletes anything.</small></span>
+      </label>
+
       <fieldset class="qa-device-fieldset founder-device-fieldset test-on-fieldset">
-        <legend>REVIEW ON</legend>
+        <legend>TEST ON</legend>
         <div class="test-on-summary" id="founder-test-on" data-empty="true">
           <span class="test-on-prompt">SELECT A DEVICE</span>
         </div>
@@ -1379,16 +1342,15 @@
             <span>Landscape orientation</span>
           </label>
         </div>
-        <small>A supported desktop profile is selected when available. Change it before starting. Simulated profiles do not certify a physical device or its native OS.</small>
       </fieldset>
 
       <div class="test-result" id="founder-form-error" role="alert" aria-live="assertive"></div>
     </div>
 
-    <footer class="modal-foot founder-modal-foot">
-      <p id="founder-launch-status" class="founder-launch-status" role="status" aria-live="polite">Complete the review setup to start.</p>
+    <footer class="modal-foot">
+      <p class="sqa-launch-status" id="founder-launch-status" role="status" aria-live="polite"></p>
       <button class="btn btn-ghost" type="button" id="founder-cancel">Cancel</button>
-      <button class="btn btn-primary founder-submit" type="submit" id="founder-submit">Start Product Review</button>
+      <button class="btn btn-primary" type="submit" id="founder-submit" aria-describedby="founder-launch-status founder-form-error" disabled>Start Founder review</button>
     </footer>
   </form>
 </dialog>
@@ -1736,6 +1698,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261120-5" type="module"></script>
+<script src="app.js?v=20261121-1" type="module"></script>
 </body>
 </html>
