@@ -116,7 +116,9 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 			deviceScaleFactor: profile.deviceScaleFactor,
 			isMobile: engine.id === 'firefox' ? undefined : profile.isMobile,
 			hasTouch: profile.hasTouch,
-			...(profile.userAgent ? { userAgent: profile.userAgent } : {}),
+			// Headless Chromium announces itself as "HeadlessChrome", which some sign-in
+			// pages and firewalls reject; desktop profiles use the regular Chrome string.
+			...(profile.userAgent ? { userAgent: profile.userAgent } : engine.id === 'chromium' ? { userAgent: `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${String(browser.version()).split('.')[0]}.0.0.0 Safari/537.36` } : {}),
 			reducedMotion: reducedMotion ?? 'no-preference',
 			...(storageState ? { storageState } : {}),
 			serviceWorkers: 'block',

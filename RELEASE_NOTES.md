@@ -1,5 +1,18 @@
 # QASE release notes
 
+## qase-2026-11-20-qa-engine-r3 (UI 20261120-3)
+
+- Sign-in: the engine now waits up to 20 s for the site's answer (slow auth
+  APIs and client-side redirects used to be read as a rejection), keeps the
+  write window open for the whole sign-in, and reports the real reason: the
+  site's own error text and the auth request's HTTP status, a CAPTCHA/one-time
+  code, or a request that never answered. It asks for another account only
+  when the site actually rejected the credentials. Desktop contexts use a
+  regular Chrome user agent instead of "HeadlessChrome".
+- QA Lab: `/app-login`, a single-page-app sign-in with a slow JSON auth API.
+- Dashboard: an open tab reloads itself onto the new UI when the server
+  restarts with a newer version (it only did that on page load before).
+
 ## qase-2026-11-20-qa-engine-r2 (UI 20261120-2)
 
 **QA mode talks again, asks for sign-in, and reports fewer false positives.**

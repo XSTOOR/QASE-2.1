@@ -194,3 +194,26 @@ test('skipping the sign-in question finishes with public pages and records the g
 		assert.ok(session.hybrid.elapsedMs < Date.now() - session.hybrid.startedAt, 'waiting time is not counted against the budget');
 	} finally { await lab.close(); }
 });
+
+test('a rejected test account is explained and asked for once more; the corrected one signs in', { timeout: 300_000 }, async () => {
+	const lab = await startQaLab();
+	try {
+		const { session, runStore, artifactStore } = harness(`${lab.url}app-login`);
+		const record = {};
+		const run = runQaEngine({ session, runStore, record, env: { ...ENV, QASE_QA_ASK_CREDENTIALS: 'true', QASE_QA_MAX_PAGES: '2' }, settings: qaModelSettings({}, {}), artifactStore });
+		await waitForQuestion(session);
+		storeSecrets(session.id, { QA_USERNAME: 'qa@lab.test', QA_PASSWORD: 'wrong-pass' });
+		record.qaAnswer({ credentials: {} });
+		// The site's own error is relayed, then the agent asks again.
+		const end = Date.now() + 90_000;
+		while (Date.now() < end && !(session.pendingQuestion?.question ?? '').includes("didn't work")) await new Promise(resolve => setTimeout(resolve, 200));
+		assert.match(session.pendingQuestion.summary, /Invalid email or password/);
+		assert.ok(session.messages.some(message => /HTTP 401/.test(message.text)), 'the reason names the rejected request');
+		storeSecrets(session.id, { QA_USERNAME: 'qa@lab.test', QA_PASSWORD: 'lab-pass' });
+		record.qaAnswer({ credentials: {} });
+		await run;
+		assert.equal(session.status, 'done');
+		assert.equal(session.hybrid.signedIn, true);
+		assert.equal(session.messages.filter(message => message.kind === 'qa-step' && /couldn't sign in/.test(message.text)).length, 0);
+	} finally { await lab.close(); }
+});

@@ -49,7 +49,50 @@ async function findLoginPage(browser, profile, candidates) {
 	return undefined;
 }
 
-/** Returns { ok, url, reason }. Never throws for an ordinary sign-in failure. */
+const SIGN_IN_WAIT_MS = 20000;
+const TELEMETRY = /analytics|plausible|\/rum\b|\/rum\/|logs?\.|\/logs?\/|telemetry|track|collect|sentry|beacon|segment|mixpanel/i;
+const ERROR_TEXT = /invalid|incorrect|wrong|not (?:recogni[sz]ed|found|match)|failed|unable|denied|locked|try again|doesn.t match|does not match|too many/i;
+
+/** Waits until the page leaves the sign-in form, shows an error, or the wait ends. */
+async function waitForOutcome(page, startUrl, baseline = []) {
+	const end = Date.now() + SIGN_IN_WAIT_MS;
+	let gone = 0;
+	while (Date.now() < end) {
+		await page.waitForTimeout(500);
+		const state = await page.evaluate(errorSource => {
+			const errorRe = new RegExp(errorSource, 'i');
+			const visible = element => { const r = element.getBoundingClientRect(); const s = getComputedStyle(element); return r.width > 2 && r.height > 2 && s.visibility !== 'hidden' && s.display !== 'none'; };
+			const password = [...document.querySelectorAll('input[type=password]')].some(visible);
+			const messages = [...document.querySelectorAll('[role=alert], [aria-live], .error, .alert, [class*=error i], [class*=invalid i], form p, form span, form div')]
+				.filter(element => visible(element) && element.children.length < 4)
+				.map(element => (element.innerText || '').trim()).filter(text => text && text.length < 200 && errorRe.test(text));
+			const verification = /captcha|verify (?:you|that you)|one-time|2fa|two-factor|authenticat(?:or|ion) code|verification code|check your (?:email|inbox)/i.test(document.body?.innerText ?? '')
+				|| Boolean(document.querySelector('iframe[src*=captcha], iframe[src*=turnstile], iframe[src*=hcaptcha], [class*=captcha i], input[autocomplete=one-time-code]'));
+			return { password, error: messages.find(Boolean), messages, verification };
+		}, ERROR_TEXT.source).catch(() => ({ password: true }));
+		// The form must stay gone for two checks: some apps re-render it while submitting.
+		gone = state.password ? 0 : gone + 1;
+		if (gone >= 2) return { kind: 'left_form', moved: page.url().split('#')[0] !== startUrl.split('#')[0] };
+		if (state.verification) return { kind: 'verification', message: state.error };
+		if (state.error && !baseline.includes(state.error)) return { kind: 'error', message: state.error };
+	}
+	return { kind: 'timeout' };
+}
+
+/** Turns what was observed into a reason the owner can act on. retry: whether asking for another account helps. */
+function diagnose(outcome, responses, failed, sent = []) {
+	const auth = responses.filter(item => !TELEMETRY.test(item.url)).at(-1);
+	if (outcome.kind === 'verification') return { retry: false, reason: 'The site asked for extra verification (a CAPTCHA or a one-time code), which QASE cannot complete automatically.' };
+	if (outcome.kind === 'error') return { retry: true, reason: `The site rejected the sign-in and showed: "${outcome.message.slice(0, 140).replace(/[.!]+$/, '')}"${auth ? ` (${auth.method} ${new URL(auth.url).pathname} → HTTP ${auth.status})` : ''}.` };
+	if (auth && auth.status >= 400) return { retry: auth.status === 401 || auth.status === 403 || auth.status === 400, reason: `The sign-in request ${new URL(auth.url).pathname} answered HTTP ${auth.status}${auth.status === 401 || auth.status === 403 ? ' (credentials rejected)' : ''}.` };
+	const blocked = failed.filter(item => !TELEMETRY.test(item.url));
+	if (blocked.length) return { retry: false, reason: `The sign-in request ${new URL(blocked[0].url).pathname} did not complete (${blocked[0].error ?? 'network error'}).` };
+	if (!auth && sent.length) return { retry: false, reason: `The sign-in request ${new URL(sent.at(-1).url).pathname} got no answer within 20 seconds.` };
+	if (!auth) return { retry: false, reason: 'Clicking the sign-in button sent no sign-in request within 20 seconds (the form may need a field QASE did not fill, or the button stayed disabled).' };
+	return { retry: false, reason: `The sign-in request answered HTTP ${auth.status}, but the page still shows the sign-in form after 20 seconds.` };
+}
+
+/** Returns { ok, url, reason, retry }. Never throws for an ordinary sign-in failure. */
 export async function signIn({ browser, profile, session, candidates }) {
 	const username = resolveSecrets(session.id, '{{QA_USERNAME}}');
 	const password = resolveSecrets(session.id, '{{QA_PASSWORD}}');
@@ -69,19 +112,42 @@ export async function signIn({ browser, profile, session, candidates }) {
 		const userField = scope.locator('input[type=email], input[autocomplete=username], input[name*=user i], input[name*=email i], input[name*=login i], input[type=text]').first();
 		if (await userField.count()) await userField.fill(username, { timeout: 4000 });
 		await passwordField.fill(password, { timeout: 4000 });
-		await browser.permitWritesFor(10000, async () => {
-			const submit = submitButton;
-			if (await submit.count()) await submit.click({ timeout: 4000 });
+		// Watch what the sign-in actually does: the requests it sends (and how the site
+		// answers), whether the page leaves the form, and any error message it shows.
+		const authResponses = [];
+		const onResponse = response => {
+			const request = response.request();
+			if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method()) && ['fetch', 'xhr', 'document'].includes(request.resourceType())) authResponses.push({ url: response.url(), status: response.status(), method: request.method() });
+		};
+		const sent = [];
+		const onRequest = request => { if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method()) && !TELEMETRY.test(request.url())) sent.push({ url: request.url(), method: request.method() }); };
+		page.on('request', onRequest);
+		const failed = [];
+		const onFailed = request => { if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method())) failed.push({ url: request.url(), error: request.failure()?.errorText }); };
+		page.on('response', onResponse);
+		page.on('requestfailed', onFailed);
+		const startUrl = page.url();
+		// Messages already on the page before submitting are not the site's answer.
+		const baseline = await page.evaluate(errorSource => [...document.querySelectorAll('[role=alert], [aria-live], .error, .alert, [class*=error i], [class*=invalid i], form p, form span, form div')]
+			.map(element => (element.innerText || '').trim()).filter(text => text && text.length < 200 && new RegExp(errorSource, 'i').test(text)), ERROR_TEXT.source).catch(() => []);
+		let outcome;
+		// The write window stays open until the outcome is known (slow auth APIs,
+		// client-side redirects and follow-up session requests all fit in it).
+		await browser.permitWritesFor(SIGN_IN_WAIT_MS + 5000, async () => {
+			if (await submitButton.count()) await submitButton.click({ timeout: 5000 });
 			else await passwordField.press('Enter');
-			await page.waitForLoadState('load', { timeout: 15000 }).catch(() => {});
-			await browser.settle(page, { quietMs: 2000 });
+			outcome = await waitForOutcome(page, startUrl, baseline);
+			// Let a redirect after a successful sign-in finish and cookies settle.
+			if (outcome.kind === 'left_form') await browser.settle(page, { quietMs: 1500 });
 		});
-		const stillOnForm = await hasLoginForm(page);
+		page.off('response', onResponse);
+		page.off('requestfailed', onFailed);
+		page.off('request', onRequest);
 		const expected = session.qaAuth?.expectedUrl;
-		const reachedExpected = expected ? page.url().startsWith(expected) : undefined;
-		if (stillOnForm || reachedExpected === false) {
-			return { ok: false, url, reason: `Sign-in did not complete: ${stillOnForm ? 'the sign-in form is still shown (credentials rejected or extra verification such as MFA/CAPTCHA required)' : `the browser did not reach ${expected}`}.` };
+		if (outcome.kind === 'left_form' && expected && !page.url().startsWith(expected)) {
+			return { ok: false, url, retry: false, reason: `Signed in, but the browser reached ${page.url()} instead of the expected ${expected}.` };
 		}
+		if (outcome.kind !== 'left_form') return { ok: false, url, ...diagnose(outcome, authResponses, failed, sent) };
 		await browser.useSignedInState(await page.context().storageState());
 		return { ok: true, url: page.url() };
 	} catch (error) {

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "releaseId": "qase-2026-11-20-qa-engine-r2",
+  "releaseId": "qase-2026-11-20-qa-engine-r3",
   "files": [
     {
       "path": ".dockerignore",
@@ -92,7 +92,7 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "d422c1d434c4aaee57829b148ad78e786c76006f648e875a41c4c92905ddc2f8"
+      "sha256": "eb807345ced72af4b85815ea4bc40d42173bafb0bf1b0f9942142f95f5aa0a7e"
     },
     {
       "path": "docs/ARCHITECTURE.md",
@@ -260,7 +260,7 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "f99439400f62140eecea7cf552682d06359466db5380ab04dd2a2bfc57846a20"
+      "sha256": "2956c2574d8fe3b655d5afd276d630b84cd6bf6f650512bae24081954f81522b"
     },
     {
       "path": "public/auth.css",
@@ -500,7 +500,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "2d1b3d59942bd59d7630e4ad84ceda812503ada167016c54153fd88b0d06264f"
+      "sha256": "9418114d3ffbc115c656c9a72377b52b6470454461eeb3348c916cf0cac45ffa"
     },
     {
       "path": "public/jevExecutionView.js",
@@ -716,7 +716,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "c5ad95a52fda78689789d9801ad069ca37b387ce15a506723ed0b835eaa6d815"
+      "sha256": "a15d89e28fedafac9dda0d50acfc99492a5a352e06e68c5875c4345f43a7d56b"
     },
     {
       "path": "public/renderHealth.js",
@@ -924,7 +924,7 @@
     },
     {
       "path": "RELEASE_NOTES.md",
-      "sha256": "41ef02a19964ca6e201de761d2983182fefb939c863eefc5b102005c12662d04"
+      "sha256": "f78c8a9f391e5c0b8eaa5a231b9de0756fc16ac4e59aab339cdcadc7b63b73dd"
     },
     {
       "path": "run-jev.command",
@@ -2572,7 +2572,7 @@
     },
     {
       "path": "server/qa/browser.js",
-      "sha256": "8ec84635652fb7c84e6584b7631071d2a640b529bc6788e94623a49e33896f71"
+      "sha256": "e10ab5298d49f78ace9490b51a3550e278d861c270f9975a3af322b6bbae039d"
     },
     {
       "path": "server/qa/browser.test.js",
@@ -2604,11 +2604,11 @@
     },
     {
       "path": "server/qa/engine.integration.test.js",
-      "sha256": "0e1001f3516eb9da13217d52f70302a47e63c80e419882b13035bb4927792b0c"
+      "sha256": "e1e2b34a0244a9f5daddbc622152be0a89a4a187ddce58c2540b9d3e75ab7a37"
     },
     {
       "path": "server/qa/engine.js",
-      "sha256": "c4e5db7b2f7b7c49c9b8dd1e5499d34b192fde724ae743383f3a3cbe95b73ff2"
+      "sha256": "72655ce3532c89062d5edb3c16db7af46be2c35e2e91b989140683c14b498ea4"
     },
     {
       "path": "server/qa/explorer.js",
@@ -2620,7 +2620,7 @@
     },
     {
       "path": "server/qa/fixtureSite.js",
-      "sha256": "7d9ebfb8f958774a800e50c4b06094fd97f6fc0177f4172e5a207c53283dbd48"
+      "sha256": "be0339af61e899dd774f573999e3eb1ef0e9538c2068e7777dac35f0df08c54b"
     },
     {
       "path": "server/qa/index.js",
@@ -2640,7 +2640,7 @@
     },
     {
       "path": "server/qa/signin.js",
-      "sha256": "914aa26489c074e405eab8b44b0c9d93fb0788741daf18949d904baed33a7d16"
+      "sha256": "62bdf63e5a3ecaff41ff602c472ae6fee001b9a4c723d9f18119eaaa14de9bbd"
     },
     {
       "path": "server/qa/triage.js",

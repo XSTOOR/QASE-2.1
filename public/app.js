@@ -5225,8 +5225,14 @@ function connect(id) {
 		if (state.stream !== stream || state.sessionId !== id) return;
 		state.streamConnection = next;
 		updateQaEvidencePreview(id, { streamConnection: next });
+		const reconnected = next === 'live' && state.connectionLostAt !== undefined;
 		if (next === 'live') state.connectionLostAt = undefined; else state.connectionLostAt ??= Date.now();
 		if (state.session) renderHeader();
+		// A reconnect usually means the server restarted, possibly with a newer UI:
+		// re-run the stale-tab check so an open tab picks up the new version.
+		if (reconnected && !el.questionSlot.querySelector('input:not([type=checkbox])')?.value) {
+			void api('/config').then(ensureUiVersionFresh).catch(() => {});
+		}
 	};
 	let finishReady;
 	const ready = new Promise(resolve => { finishReady = resolve; });

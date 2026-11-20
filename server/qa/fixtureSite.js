@@ -181,6 +181,31 @@ export function labHandler(request, response, { prefix = '' } = {}) {
 			if (id.includes("'")) return html(`<pre>SQLSTATE[42000]: Syntax error or access violation: 1064 You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ''' at line 1</pre>`, 500);
 			return html(rewrite(layout('Product', `<header><a href="/">Lab</a></header><main><h1>Product ${Number(id) || 1}</h1><p>A fine widget.</p></main>`)));
 		}
+		case '/app-login':
+			// A single-page-app sign-in like many real products: JavaScript posts JSON to an
+			// auth API (slowly), shows the API's error inline, and redirects on success.
+			return html(rewrite(layout('Sign in', `<main><h1>Welcome back.</h1><p id="err" role="alert" hidden></p><form id="f"><input id="email" type="email" placeholder="Email Address" required>
+<span style="position:relative;display:inline-block"><input id="password" type="password" placeholder="Password" required><button type="button" tabindex="-1" aria-label="Show password" style="position:absolute;right:4px;top:2px">◉</button></span>
+<button type="submit">Sign In</button></form>
+<script>document.getElementById('f').addEventListener('submit', async event => { event.preventDefault(); const err = document.getElementById('err'); err.hidden = true;
+try { const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: document.getElementById('email').value, password: document.getElementById('password').value }) });
+if (r.ok) { setTimeout(() => { location.href = '${link('/account')}'; }, 300); } else { err.textContent = 'Invalid email or password.'; err.hidden = false; } } catch (e) { err.textContent = e.message; err.hidden = false; } });</script></main>`)));
+		case '/api/auth/login': {
+			if (request.method !== 'POST') { response.writeHead(405); return response.end(); }
+			let body = '';
+			const answer = () => setTimeout(() => {
+				let data = request.body && typeof request.body === 'object' ? request.body : {};
+				if (body) { try { data = JSON.parse(body); } catch { /* invalid body is a failed sign-in */ } }
+				const ok = data.email === 'qa@lab.test' && data.password === 'lab-pass';
+				response.writeHead(ok ? 200 : 401, { 'content-type': 'application/json', ...(ok ? { 'Set-Cookie': 'labauth=ok; Path=/; HttpOnly' } : {}) });
+				response.end(JSON.stringify(ok ? { ok: true } : { error: 'invalid_credentials' }));
+			}, 2500);
+			// Mounted inside the dashboard, express.json() has already read the body.
+			if (request.readableEnded || request.body) return answer();
+			request.on('data', chunk => { body += chunk; });
+			request.on('end', answer);
+			return;
+		}
 		case '/account':
 			if (!/labauth=ok/.test(request.headers.cookie ?? '')) { response.writeHead(302, { Location: link('/login') }); return response.end(); }
 			return html(rewrite(layout('Account', '<header><a href="/">Lab</a><a href="/account">Account</a></header><main><h1>Account dashboard</h1><p>Open orders: <b>NaN</b></p><p>Signed in as qa@lab.test</p></main>')));

@@ -294,9 +294,9 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 	async function askForAccount({ retry = false, reason } = {}) {
 		const question = {
 			kind: 'qa_credentials', credentialLike: true, options: [], allowCustom: false,
-			question: retry ? `Signing in didn't work${reason ? `: ${reason}` : '.'} Try another test account?` : `${host} has a sign-in page. Should I test the signed-in part too?`,
+			question: retry ? 'Signing in didn\'t work. Try another test account?' : `${host} has a sign-in page. Should I test the signed-in part too?`,
 			summary: retry
-				? 'Check the username and password (and that the account does not need a one-time code), or continue with the public pages only.'
+				? `${reason ? `${reason}. ` : ''}Check the username and password, or continue with the public pages only.`
 				: `So far I can test only the public pages. Give me a test account and I'll sign in once and test what's behind it, read-only: I won't submit forms, change settings or delete anything. Skip and I'll finish with the public pages.`
 		};
 		session.pendingQuestion = question;
@@ -356,12 +356,15 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 					await say(`Signed in. I'm testing the signed-in area too (read-only), starting at \`${pathOf(outcome.url)}\`.`);
 					return 'signed in';
 				}
-				if (attempt === 1 || !options.askForCredentials || session.matrixRunId) {
+				// Ask for another account only when the site actually rejected this one;
+				// a CAPTCHA, a missing form or a failed request will not be fixed by retyping.
+				if (attempt === 1 || outcome.retry === false || !options.askForCredentials || session.matrixRunId) {
 					limitation('signin', `Signed-in areas were not tested. ${outcome.reason} Public pages were tested instead.`, true);
-					await say(`I couldn't sign in: ${outcome.reason} I'll continue with the public pages.`);
+					await say(`I couldn't sign in. ${outcome.reason} I'll continue with the public pages; the report lists this as not tested.`);
 					return 'public only';
 				}
-				const retry = await askForAccount({ retry: true, reason: outcome.reason.replace(/^Sign-in did not complete: /, '').replace(/\.$/, '') });
+				await say(`That didn't work. ${outcome.reason}`);
+				const retry = await askForAccount({ retry: true, reason: outcome.reason.replace(/\.$/, '') });
 				if (!retry.credentials) {
 					limitation('signin', `Signed-in areas were not tested. ${outcome.reason}`, true);
 					return 'public only';
