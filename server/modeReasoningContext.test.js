@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { projectModeMessages,compactModeEnvelopes,buildModeExecutionContext } from './modeReasoningContext.js';
-import {createSqaState} from './sqaService.js';
-import {buildSqaContext} from './sqaPrompt.js';
 import path from 'node:path';
 
 test('mode inference compacts complete rounds without orphaning results or losing human scope', () => {
@@ -26,20 +24,6 @@ test('recent screenshots survive and inference never mutates the durable transcr
  assert.equal(result.filter(m=>m.content.some(p=>p.type==='image_url')).length,2);
  assert.equal(messages.filter(m=>m.content.some(p=>p.type==='image_url')).length,5);
  assert.equal(result[0].content[0].text,'Capture 0');
-});
-
-test('SQA inference keeps only the current workflow result and latest screenshot', () => {
-	const messages=[];
-	for(let n=0;n<6;n++) messages.push(
-		{role:'assistant',content:'',toolCalls:[{id:`sqa-${n}`,toolName:'browser_snapshot',input:{}}]},
-		{role:'tool',toolCallId:`sqa-${n}`,content:JSON.stringify({success:true,bodyText:'x'.repeat(5000)})},
-		{role:'user',content:[{type:'image_url',image_url:{url:`data:image/png;base64,sqa${n}`}}]}
-	);
-	const session={mode:'sqa',todos:[],sqa:{observations:[],execution:{}}};
-	const result=projectModeMessages(messages,session);
-	const calls=result.flatMap(message=>message.toolCalls||[]).map(call=>call.id);
-	assert.deepEqual(calls,['sqa-4','sqa-5']);
-	assert.equal(result.filter(message=>Array.isArray(message.content)&&message.content.some(part=>part.type==='image_url')).length,1);
 });
 
 test('duplicate SDK envelopes compact only against matching trusted workspace reminders and retain every human request',()=>{
@@ -68,24 +52,4 @@ test('large recent tool results keep failed assertions and exact evidence identi
  const projected=projectModeMessages([message]);const compacted=JSON.parse(projected[0].content);
  assert.equal(compacted.modeEvidenceId,'receipt');assert.equal(compacted.evidenceActivityId,'actual-browser');assert.equal(compacted.failedAssertions[0].name,'Check 199');assert.equal(compacted.assertionCounts.total,200);
  assert.equal(message.content,JSON.stringify(value));assert.ok(projected[0].content.length<message.content.length/5);
-});
-
-test('qualified SQA phase brief retains exact reviewer requirements with less repeated legacy guidance',()=>{
- const s={mode:'sqa',targetUrl:'https://fixture.test/',activities:[],todos:[],messages:[],sqa:createSqaState({authorizationConfirmed:true,profiles:['core'],attributes:['web_application','user_interface'],target:{name:'Fixture',url:'https://fixture.test/',release:'test',environment:'isolated'}})};
- s.sqa.execution={discovery:{version:1,status:'pending'},phase:'discovery'};
- const original=buildSqaContext(s),brief=buildModeExecutionContext(s);
- assert.match(brief,/SQA-CHG-001/);assert.match(brief,/approval_record/);assert.match(brief,/BLOCKED/);assert.match(brief,/never certification/);assert.match(brief,/JEV only classifies/);assert.match(brief,/No server mutations/);
- assert.ok(brief.length<original.length,'Remove duplicated operating manuals without dropping pending controls.');
- s.sqa.observations.push({controlId:'SQA-CHG-001',status:'blocked'});
- assert.doesNotMatch(buildModeExecutionContext(s).split('Pending scoped controls')[1],/SQA-CHG-001/,'Resolved controls remain in scope but do not demand another investigation.');
-});
-
-test('standalone inference retains the citation ID and the actual requested page of a large retrieved source',()=>{
- const session={id:'research',mode:'sqa',sqa:{execution:{strategy:'sqa-single-reasoner-v1',research:{sources:[{id:'doc',contentHash:'hash',finalUrl:'https://example.test/standard'}]}}}};
- const value={success:true,sourceId:'doc',contentHash:'hash',url:'https://example.test/standard',authority:'unverified',offset:24000,nextOffset:48000,content:'excerpt '.repeat(2000)+'Exact quoted passage.'};
- const message={role:'tool',toolCallId:'fetch-call',content:JSON.stringify(value)};
- const result=projectModeMessages([message],session);
- assert.equal(result[0].toolCallId,message.toolCallId);
- const projected=JSON.parse(result[0].content);
- assert.equal(projected.sourceId,'doc');assert.equal(projected.content,value.content);assert.equal(projected.nextOffset,48000);
 });

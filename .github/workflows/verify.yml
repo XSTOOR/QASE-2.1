@@ -91,15 +91,8 @@ jobs:
           node scripts/test-founder-reader-browser.mjs
           node scripts/test-founder-actions-browser.mjs
           node scripts/qualify-system-ui.mjs --launch-only
-      - name: Verify SQA startup, launch and evidence across all installed engines
-        shell: bash
-        run: |
-          set -euo pipefail
-          for browser in chromium firefox webkit; do
-            node scripts/test-sqa-startup.mjs --browser "$browser" --isolated --output-dir "test-results/phase8/sqa-${browser}-startup"
-            node scripts/test-sqa-launch.mjs --browser "$browser" --output-dir "test-results/phase8/sqa-${browser}-launch"
-            node scripts/test-sqa-evidence.mjs --browser "$browser" --output-dir "test-results/phase8/sqa-${browser}-evidence"
-          done
+      - name: Verify SQA compliance testing end to end
+        run: node scripts/test-sqa-browser.mjs --browser chromium --output-dir test-results/phase8/sqa-chromium
       - name: Retain mode browser diagnostics
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

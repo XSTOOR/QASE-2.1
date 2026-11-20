@@ -61,6 +61,6 @@ test('#16653 modal run meta is mode-aware', () => {
 	const start = app.indexOf('const modeLabel = session.mode');
 	const body = app.slice(start, start + 400);
 	assert.match(body, /Founder Review/, 'founder label');
-	assert.match(body, /SQA Review/, 'SQA label');
+	assert.match(body, /Compliance Test/, 'SQA label');
 	assert.match(body, /Test Run/, 'QA default');
 });

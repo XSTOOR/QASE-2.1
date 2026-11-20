@@ -47,65 +47,24 @@ test('QA HTML report omits sections with no data', () => {
 	assert.doesNotMatch(html, /Covered<\/h2>/);
 });
 
-test('SQA HTML report groups results by status and shows scope metadata', () => {
-	const session = makeSession({
-		mode: 'sqa',
-		targetUrl: 'https://staging.example.com/',
-		device: 'desktop',
-		deviceLandscape: false,
-		sqa: {
-			scope: {
-				target: { name: 'Portal', release: '2026.08.15', environment: 'staging' },
-				profiles: ['core'],
-				attributes: ['pii'],
-				catalogVersion: '2026-08-1',
-				scopeNotes: 'Public surfaces only.'
-			},
-			assessment: {
-				assessmentId: 'sqa-assessment-1',
-				assessmentSha256: '0123456789abcdef',
-				assessedAt: '2026-08-15T12:00:00.000Z',
-				catalogVersion: '2026-08-1',
-				target: { name: 'Portal', release: '2026.08.15', environment: 'staging' },
-				profiles: ['core'],
-				attributes: ['pii'],
-				verdict: 'fail',
-				summary: { applicableControls: 3, pass: 1, fail: 1, blocked: 1, not_assessed: 0 },
-				coverage: { observed: 100, conclusive: 66.67, mandatoryPassed: 50, evidence: 75, requiredEvidence: 4, satisfiedEvidence: 3 },
-				technicalSummary: { verdict: 'fail', applicableControls: 2, pass: 1, fail: 1, blocked: 0, not_assessed: 0 },
-				risk: { level: 'high', score: 61.5, method: 'Severity-weighted unresolved-control score.' },
-				gates: [{ status: 'fail', title: 'Mandatory controls', detail: '1/2 mandatory controls passed.' }],
-				results: [
-					{ controlId: 'C-01', status: 'pass', title: 'Login form validation', domain: 'quality', severity: 'medium', evidenceCoverage: { satisfied: 1, required: 1 } },
-					{ controlId: 'C-02', status: 'fail', title: 'CSP misconfigured', domain: 'security', severity: 'high', automationLevel: 'automated', rationale: 'No frame-ancestors', decisionNotes: ['Header was absent.'], evidenceCoverage: { satisfied: 1, required: 1, requirements: [{ type: 'security_report', description: 'Security header evidence', minimum: 1, actual: 1, satisfied: true }] }, evidence: [{ type: 'security_report', summary: 'Response header capture', reference: 'qase://evidence/csp', digest: 'sha256:abc' }] },
-					{ controlId: 'C-03', status: 'blocked', title: 'DPA absent', domain: 'privacy', severity: 'high', automationLevel: 'manual', rationale: 'Reviewer artifact was unavailable.', decisionNotes: ['Approval evidence is required.'], evidenceCoverage: { satisfied: 0, required: 1, requirements: [{ type: 'approval_record', description: 'Approved DPA', minimum: 1, actual: 0, satisfied: false }] }, evidence: [] }
-				],
-				frameworkCoverage: [{ title: 'ISO/IEC 25010', url: 'https://example.com/iso', controls: 2, status: 'fail', coverage: 50 }],
-				outOfScope: [{ controlId: 'C-99', reason: 'No payment workflow declared.' }],
-				disclaimer: 'Engineering assurance only; not certification.'
-			}
-		}
+test('SQA HTML report shows the product, each standard with its score, the gaps and the disclaimer', async () => {
+	const { createSqaRunState } = await import('./sqa/engine.js');
+	const { buildSqaReport } = await import('./sqa/report.js');
+	const sqa = Object.assign(createSqaRunState({}), {
+		product: { name: 'Portal Kids', category: 'education', summary: 'Courses for children.', audience: { description: 'Pupils', children: true }, regions: ['United States'], dataHandled: ['children'] },
+		frameworks: [{ id: 'F1', name: 'COPPA', url: 'https://www.ftc.gov/coppa', applicability: 'Directed at children.', mandatory: true }],
+		requirements: [
+			{ id: 'R1', frameworkId: 'F1', clause: '312.4', title: 'Notice <covers> children', check: 'Policy covers children', method: 'browser', severity: 'high', status: 'fail', observed: 'No section', fix: 'Add a section' },
+			{ id: 'R2', frameworkId: 'F1', clause: '312.5', title: 'Parental consent records', check: 'Consent records kept', method: 'document', severity: 'high', status: 'needs_documents' }
+		],
+		evidence: [], sources: [{ url: 'https://www.ftc.gov/coppa', title: 'COPPA rule' }], limitations: []
 	});
+	const session = makeSession({ mode: 'sqa', findings: [], sqa });
+	session.report = buildSqaReport(session);
 	const html = buildReportHtml(session);
-	assert.match(html, /SQA assessment/);
-	assert.match(html, /FAIL/);
-	assert.match(html, /Scope notes/);
-	assert.match(html, /sqa-assessment-1/);
-	assert.match(html, /sha256:0123456789abcdef/);
-	assert.match(html, /Assessment outcome/);
-	assert.match(html, /Coverage & evidence completeness/);
-	assert.match(html, /Bounded technical smoke sample/);
-	assert.match(html, /Decision gates/);
-	assert.match(html, /Unresolved controls/);
-	assert.match(html, /Referenced evidence/);
-	assert.match(html, /qase:\/\/evidence\/csp/);
-	assert.match(html, /Framework crosswalk/);
-	assert.match(html, /ISO\/IEC 25010/);
-	assert.match(html, /Not applicable in the declared scope/);
-	assert.match(html, /Assessment boundary/);
-	assert.match(html, /C-02/);
-	// The summary table is risk-first: failed and blocked controls precede passes.
-	assert.ok(html.indexOf('C-02') < html.indexOf('C-01'), 'failed control listed before pass');
+	for (const expected of [/Portal Kids/, /COPPA/, /0%/, /312\.4/, /Add a section/, /Needs documents/, /not legal advice/]) assert.match(html, expected);
+	assert.match(html, /Notice &lt;covers&gt; children/, 'model and page text is escaped');
+	assert.doesNotMatch(html, /<covers>/);
 });
 
 test('Founder HTML report renders the complete structured professional brief', () => {

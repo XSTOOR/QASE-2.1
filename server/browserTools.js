@@ -22,69 +22,6 @@ export function createBrowserTools(getBridge) {
 			}
 		},
 		{
-			name: 'browser_sqa_smoke',
-			category: 'browser',
-			description: 'Runs one bounded SQA browser smoke workflow with real driver input. accessibility samples up to 12 Tab and 3 Shift+Tab steps. responsive samples up to 3 viewport sizes, measures clipping and restores the original viewport. navigation verifies up to 4 exact accessible same-origin link destinations and restores the source. form_validation tests local email feedback with HTTP requests blocked. Omit field_label and submit_name for discovery. If no safe email workflow exists, detached native constraint samples of empty text/search/URL/textarea fields are returned as partial evidence: these do NOT establish application error handling/recovery or justify a complete form-validation pass. Optional unconstrained text is not a defect. Network-dependent or unsafe workflows remain blocked.',
-			parametersSchema: {
-				type: 'object', additionalProperties: false,
-				properties: {
-					action: { type: 'string', enum: ['accessibility', 'responsive', 'navigation', 'form_validation'] },
-					steps: { type: 'integer', minimum: 1, maximum: 12, description: 'Accessibility forward Tab steps; default 8.' },
-					reverse_steps: { type: 'integer', minimum: 0, maximum: 3, description: 'Accessibility Shift+Tab steps; default 2.' },
-					viewports: {
-						type: 'array', minItems: 1, maxItems: 3,
-						items: {
-							type: 'object', additionalProperties: false,
-							properties: {
-								width: { type: 'integer', minimum: 320, maximum: 2560 },
-								height: { type: 'integer', minimum: 480, maximum: 1600 }
-							},
-							required: ['width', 'height']
-						}
-					},
-					links: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string', minLength: 1, maxLength: 120 }, description: 'Navigation action: exact accessible link names from the current snapshot.' },
-					field_label: { type: 'string', minLength: 1, maxLength: 120, description: 'Optional form-validation override: exact accessible label of one empty email field. Omit with submit_name for deterministic discovery.' },
-					submit_name: { type: 'string', minLength: 1, maxLength: 120, description: 'Optional form-validation override: exact accessible name of its submit button. Omit with field_label for deterministic discovery.' }
-				},
-				required: ['action']
-			},
-			async run(input) {
-				if (!input || !['accessibility', 'responsive', 'navigation', 'form_validation'].includes(input.action)) {
-					return { success: false, error: 'action must be accessibility, responsive, navigation, or form_validation.' };
-				}
-				if (input.steps !== undefined && (!Number.isInteger(input.steps) || input.steps < 1 || input.steps > 12)) {
-					return { success: false, error: 'steps must be an integer from 1 to 12.' };
-				}
-				if (input.reverse_steps !== undefined && (!Number.isInteger(input.reverse_steps) || input.reverse_steps < 0 || input.reverse_steps > 3)) {
-					return { success: false, error: 'reverse_steps must be an integer from 0 to 3.' };
-				}
-				if (input.viewports !== undefined && (!Array.isArray(input.viewports) || input.viewports.length < 1 || input.viewports.length > 3
-					|| input.viewports.some(viewport => !Number.isInteger(viewport?.width) || !Number.isInteger(viewport?.height)
-						|| viewport.width < 320 || viewport.width > 2560 || viewport.height < 480 || viewport.height > 1600))) {
-					return { success: false, error: 'viewports must contain 1-3 integer sizes with width 320-2560 and height 480-1600.' };
-				}
-				if (input.links !== undefined && (!Array.isArray(input.links) || input.links.length < 1 || input.links.length > 4
-					|| input.links.some(name => typeof name !== 'string' || !name.trim() || name.length > 120))) {
-					return { success: false, error: 'links must contain 1-4 exact accessible names of at most 120 characters.' };
-				}
-				const allowedFields = {
-					accessibility: new Set(['action', 'steps', 'reverse_steps']),
-					responsive: new Set(['action', 'viewports']),
-					navigation: new Set(['action', 'links']),
-					form_validation: new Set(['action', 'field_label', 'submit_name'])
-				}[input.action];
-				const unexpected = Object.keys(input).filter(key => !allowedFields.has(key));
-				if (unexpected.length > 0) return { success: false, error: `${unexpected.join(', ')} is not valid for ${input.action}.` };
-				if (input.action === 'navigation' && input.links === undefined) return { success: false, error: 'navigation requires links.' };
-				if (input.action === 'form_validation') {
-					const supplied = [input.field_label, input.submit_name]
-						.map(value => typeof value === 'string' && value.trim() && value.length <= 120);
-					if (supplied[0] !== supplied[1]) return { success: false, error: 'form_validation accepts both field_label and submit_name, or neither for deterministic discovery.' };
-				}
-				return getBridge().sqaSmoke(input);
-			}
-		},
-		{
 			name: 'security_check',
 			category: 'browser',
 			description: `Runs deterministic, benign security checks against the CURRENT page: security headers (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy), session cookie flags, reflected-XSS escaping (submits a harmless canary through the page's own search form), SQL-injection error signatures (benign quote payload only), and mixed content. Every failed check is reported through report_finding with category "security", the check's evidence and remediation. This is a surface scan, not a penetration test: report findings honestly, including "info" results. Optionally pass a subset of check ids: ${SECURITY_CHECK_IDS.join(', ')}.`,

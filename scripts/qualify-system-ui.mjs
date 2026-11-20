@@ -6,7 +6,6 @@ import { parseArgs } from 'node:util';
 import { chromium } from 'playwright';
 import { createApplication } from '../server/app.js';
 import { buildReportMarkdown } from '../server/report.js';
-import { qualifiedSqaLauncherFixture } from './sqa-test-runtime.mjs';
 
 const { values } = parseArgs({ options: { 'launch-only': { type: 'boolean', default: false } } });
 const launchOnly = values['launch-only'];
@@ -72,26 +71,14 @@ try{
  const seed=await services.runs.create('UI qualification workspace',{targetUrl,status:'idle'});
  await page.goto(`${base}/#/runs/${seed.id}`);await page.locator('#auth-gate').waitFor({state:'hidden'});
  await page.locator('#qa-start').waitFor({state:'hidden'});
- await page.locator('#new-sqa').click();
- await page.locator('#sqa-target-url').fill(targetUrl);
- await page.locator('#sqa-authorization').check();
- await page.locator('#sqa-execution-status').getByText(/QASE_SQA_SEARCH_URL/).waitFor();
- assert.equal(await page.locator('#sqa-submit').isDisabled(),true);
- assert.equal(turns.length,0);
- assert.equal(sessions.size,1);
- checks.push('Unconfigured SQA explains the missing search endpoint and prevents launch.');
- await page.locator('#sqa-close').click();
- Object.assign(fixtureEnvironment,await qualifiedSqaLauncherFixture(output));
- await page.reload();
- await page.locator('#auth-gate').waitFor({state:'hidden'});
  for(const mode of ['sqa','founder']){
   await page.locator(`#new-${mode}`).click();await page.locator(`#${mode}-start[open]`).waitFor();
   assert.equal(await page.locator(`#${mode}-submit`).isDisabled(),true);
   await page.locator(`#${mode}-target-url`).fill(targetUrl);
   if(mode==='sqa'){
    await page.locator('#sqa-customize > summary').click();
-   await page.locator('#sqa-target-release').fill('integration-fixture');
-   await page.locator('#sqa-target-environment').fill('isolated local fixture');
+   await page.locator('#sqa-focus').fill('Online courses for school children; parents create the accounts.');
+   await page.locator('#sqa-regions').fill('United States');
   }
   await page.locator(`#${mode}-authorization`).check();
   if(mode==='founder'){
@@ -108,11 +95,11 @@ try{
   await page.locator(`#tab-${mode}`).waitFor({state:'visible'});
   const created=[...sessions.values()].filter(s=>s.mode===mode);
   assert.equal(created.length,1);
-  const session=created[0];assert.ok(session[mode].scope.authorization.confirmed);
+  const session=created[0];
   if(mode==='sqa'){
-   assert.ok(['web_application','user_interface'].every(attribute=>session.sqa.scope.attributes.includes(attribute)),'Recommended website review must include its browser-app attributes.');
-   assert.ok(['001','002','003','004','005','006'].every(suffix=>session.sqa.scope.applicableControlIds.includes(`SQA-WEB-${suffix}`)),'The six browser smoke controls must not disappear from the default scope.');
-  }
+   assert.equal(session.sqa.version,3,'The launcher creates a compliance-engine run.');
+   assert.match(session.sqa.focus,/school children/);assert.equal(session.sqa.regionsHint,'United States');
+  }else assert.ok(session[mode].scope.authorization.confirmed);
   if(mode==='founder'){
    assert.equal(session.founder.scope.access.decision,'public_only');
    assert.equal(session.founder.scope.contextDecision.mode,'provided');
@@ -195,7 +182,7 @@ try{
   checks.push('founder: invalid URL and missing device block launch; delayed device restoration enables it on desktop/mobile');
  }finally{releaseDevice();await delayed.close();}
 
- for(const mode of launchOnly?[]:['qa','sqa','founder']){
+ for(const mode of launchOnly?[]:['qa','founder']){
   const file=path.resolve(process.env.QASE_SYSTEM_QUALIFICATION_OUTPUT||'test-results/system-qualification',mode,'checkpoint.json');
   const session=JSON.parse(fs.readFileSync(file,'utf8'));assert.equal(session.status,'done');
   const finalTodos=session.todos;
@@ -208,12 +195,11 @@ try{
    const deadline=Date.now()+5000;
    while(!listeners.get(session.id)?.size){assert.ok(Date.now()<deadline,'UI event subscription must connect.');await new Promise(resolve=>setTimeout(resolve,10));}
    session.todos=finalTodos;
-   publish(session,mode==='sqa'?'sqa':'founder.finalized',{todos:finalTodos,...(mode==='sqa'?{assessment:session.sqa.assessment,final:true}:{report:session.founder.report})});
+   publish(session,'founder.finalized',{todos:finalTodos,report:session.founder.report});
    await page.waitForFunction(count=>document.querySelector('#count-plan')?.textContent===`${count}/${count}`,finalTodos.length);
    checks.push(`${mode}: atomic publication event completes the visible plan without page refresh`);
   }
-  if(mode==='sqa')await page.locator('#tab-sqa').click();
-  else if(mode==='founder')await page.locator('#tab-founder').click();
+  if(mode==='founder')await page.locator('#tab-founder').click();
   else await page.locator('#tab-report').click();
   await page.reload();await page.waitForFunction(()=>document.body.dataset.pageLoading!=='true');
   assert.equal(new URL(page.url()).hash,`#/runs/${session.id}`);

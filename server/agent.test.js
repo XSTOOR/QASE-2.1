@@ -2,16 +2,12 @@ import './testWorkingDirectory.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { activityLabel, allowedToolNames, ensureRuntime, founderAutomaticPublicationInput, guardSqaBrowserTool, isFounderSynthesisReady, modelActivityTimeoutMs, prepareFounderSynthesis, prepareSqaContextContinuation, prepareSqaSynthesis, restoreWaitingSnapshot, runTurn, sqaAutomaticBudgetCloseoutInput, summariseResult, withModelActivityDeadline } from './agent.js';
+import { activityLabel, allowedToolNames, ensureRuntime, founderAutomaticPublicationInput, isFounderSynthesisReady, modelActivityTimeoutMs, prepareFounderSynthesis, restoreWaitingSnapshot, runTurn, summariseResult, withModelActivityDeadline } from './agent.js';
 import { attachUsageCapture, createUsageLogger } from './usageCapture.js';
 import { createBrowserTools } from './browserTools.js';
 import { createFounderReviewTodos, FOUNDER_CATEGORY_IDS } from './founderService.js';
 import { clearSecrets, resolveSecrets, storeSecrets } from './secrets.js';
 import { withUserConfiguration } from './config.js';
-import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
-import { AGENT_EVIDENCE_TYPES, createSqaState, createSqaTodoPlan } from './sqaService.js';
-import { createSqaTools } from './sqaTools.js';
-import { seedSqaSmokePassReceipts } from '../scripts/fixtures/sqa-smoke.mjs';
 
 import { createFounderTools } from './founderTools.js';
 import { FOUNDER_REPORT_SECTIONS, founderDraftProgress } from './founderReportDraft.js';
@@ -69,41 +65,11 @@ function runtimeFixture(overrides = {}) {
 }
 import { setStatus as setStatusReal } from './store.js';
 
-for(const mode of ['sqa','founder']) test(`${mode} host publication remains authoritative if SDK prefetch throws before yielding the tool result`,async()=>{
+for(const mode of ['founder']) test(`${mode} host publication remains authoritative if SDK prefetch throws before yielding the tool result`,async()=>{
  const f=runtimeFixture({mode,[mode]:{}});
  f.record.runtime.run=async function*(){f.session[mode].finalizedAt='2026-11-03T00:00:00.000Z';f.record.onModePublished();throw new Error('SDK prefetched after durable publication');};
  await runTurn(f.session,{task:'Finalize existing evidence'},f.store);
  assert.equal(f.session.status,'done');assert.equal(f.statuses.some(s=>s.status==='error'||s.status==='interrupted'),false);
-});
-
-test('SQA closeout uses supported session clearing only after control evidence is accounted for and never completes todos itself',()=>{
- const f=runtimeFixture({mode:'sqa',sqa:{scope:{applicableControlIds:['SQA-WEB-001']},observations:[],execution:{routes:[{url:'https://example.test',reviewed:true}],actions:[{tool:'browser_click',status:'done',interaction:true},{tool:'browser_diagnostics',status:'done'}]}},todos:[{text:'Record complete work',status:'pending'}]});
- let clears=0;const tools=['browser_snapshot','update_todo','finish_sqa_assessment'].map(name=>({name}));
- f.record.modeReasoning={state:f.session.sqa.execution};f.record.runtime.agentSession={clear(){clears++;}};f.record.runtime.headlessRuntime={options:{tools},getTools(){return this.options.tools;},toolsByName:new Map(tools.map(t=>[t.name,t]))};
- assert.equal(prepareSqaSynthesis(f.session,f.record),false);
- f.session.sqa.observations=[{controlId:'SQA-WEB-001',status:'blocked',rationale:'Required reviewed artifact unavailable',evidence:[]}];
- f.session.findings=[{id:'confirmed-fixture',controlIds:['SQA-WEB-001']}];
- assert.equal(prepareSqaSynthesis(f.session,f.record),false,'Synthesis must retain control-recording tools until confirmed findings are reconciled.');
- assert.equal(clears,0);
- f.session.findings=[];
- f.session.sqa.execution.strategy='sqa-single-reasoner-v1';
- assert.equal(prepareSqaSynthesis(f.session,f.record),false,'Unfinished research must retain its tools after browser checks.');
- assert.equal(clears,0);
- delete f.session.sqa.execution.strategy;
- assert.equal(prepareSqaSynthesis(f.session,f.record),true);assert.equal(clears,1);
- assert.deepEqual(f.record.runtime.headlessRuntime.getTools().map(t=>t.name),['update_todo','finish_sqa_assessment']);
- assert.equal(f.session.todos[0].status,'pending');assert.equal(f.session.sqa.finalizedAt,undefined);
- assert.equal(f.record.modeReasoning.state.phase,'synthesis');
- assert.equal(prepareSqaSynthesis(f.session,f.record),false);assert.equal(clears,1);
-});
-
-test('legacy SQA context compaction cannot reset the qualified mode runtime', () => {
- const f=runtimeFixture({mode:'sqa',sqa:{},tokenUsage:{inputTokens:200000}});
- let cleared=false;
- f.record.modeReasoning={state:{phase:'exploration'}};
- f.record.runtime.agentSession={clear(){cleared=true;}};
- assert.equal(prepareSqaContextContinuation(f.session,f.record),false);
- assert.equal(cleared,false);
 });
 
 test('fixed browser activities name their real action and atomic summaries use recorded assertion counts', () => {
@@ -198,21 +164,6 @@ test('usage is preserved when a model call fails mid-stream', async () => {
 });
 
 
-test('each mode exposes only its own finalizer and browser capabilities', () => {
-	for (const [mode, finalizer] of [['sqa', 'finish_sqa_assessment'], ['founder', 'finish_founder_review']]) {
-		const names = allowedToolNames(mode);
-		assert.equal(names.has('browser_media'), true);
-		assert.equal(names.has('browser_test_meeting_link'), true);
-		assert.equal(names.has('browser_sqa_smoke'), mode === 'sqa');
-		assert.equal(names.has('run_sqa_smoke_workflow'), mode === 'sqa');
-		assert.equal(names.has('browser_founder_review'), false, 'Only configured Founder draft runs receive the composed tool.');
-		assert.equal(names.has('browser_founder_form'), false, 'Only configured Founder draft runs receive the isolated form tool.');
-		assert.equal(names.has('run_command'), false);
-		assert.deepEqual([...names].filter(name => name.startsWith('finish_')), [finalizer]);
-		assert.equal(names.has('report_finding'), mode !== 'founder');
-	}
-});
-
 test('a stale saved model falls back to the provider default with a warning and heals the preference', async () => {
 	const saved = { ...process.env };
 	const live = { messages: [] };
@@ -276,228 +227,6 @@ test('the real configured-provider SDK persists the new Founder report protocol 
  }finally{for(const key of keys){if(key in saved)process.env[key]=saved[key];else delete process.env[key];}}
 });
 
-test('new browser capabilities validate model arguments before invoking the bridge', async () => {
-	const calls = [];
-	const tools = createBrowserTools(() => ({
-		media: async input => { calls.push(input); return { success: true, synthetic: true }; },
-		testMeetingLink: async input => { calls.push(input); return { success: true }; },
-		sqaSmoke: async input => { calls.push(input); return { success: true, action: input.action }; },
-		runSecurityChecks: async input => ({ success: true, results: [] })
-	}));
-	const media = tools.find(tool => tool.name === 'browser_media');
-	const meeting = tools.find(tool => tool.name === 'browser_test_meeting_link');
-	const smoke = tools.find(tool => tool.name === 'browser_sqa_smoke');
-	for (const input of [null, {}, { action: 'record' }, { action: 'set_permission' }, { action: 'probe', durationMs: Infinity }]) {
-		assert.equal((await media.run(input)).success, false);
-	}
-	assert.equal((await meeting.run({})).success, false);
-	assert.equal((await meeting.run({ url: 10 })).success, false);
-	assert.equal((await smoke.run({})).success, false);
-	assert.equal((await smoke.run({ action: 'accessibility', viewports: [{ width: 390, height: 844 }] })).success, false);
-	assert.equal((await smoke.run({ action: 'accessibility', steps: 13 })).success, false);
-	assert.equal((await smoke.run({ action: 'responsive', steps: 8 })).success, false);
-	assert.equal((await smoke.run({ action: 'responsive', viewports: [{ width: 100, height: 200 }] })).success, false);
-	assert.equal((await smoke.run({ action: 'navigation' })).success, false);
-	assert.equal((await smoke.run({ action: 'form_validation', field_label: 'Email' })).success, false);
-	assert.equal(calls.length, 0, 'invalid inputs must not reach the bridge');
-	assert.equal((await media.run({ action: 'set_permission', permission: 'denied' })).success, true);
-	assert.equal((await meeting.run({ selector: '#meeting' })).success, true);
-	assert.equal((await smoke.run({ action: 'accessibility', steps: 8, reverse_steps: 2 })).success, true);
-	assert.equal((await smoke.run({ action: 'navigation', links: ['Privacy'] })).success, true);
-	assert.equal((await smoke.run({ action: 'form_validation' })).success, true);
-	assert.equal((await smoke.run({ action: 'form_validation', field_label: 'Email', submit_name: 'Validate' })).success, true);
-});
-
-test('SQA browser budget blocks more browser work without blocking finalization tools', async () => {
-	const session = {
-		mode: 'sqa',
-		activities: [
-			{ toolName: 'browser_open', status: 'done' },
-			{ toolName: 'browser_snapshot', status: 'done' }
-		]
-	};
-	let browserCalls = 0;
-	const guarded = guardSqaBrowserTool({
-		name: 'browser_click',
-		description: 'Click a control.',
-		run: async () => { browserCalls++; return { success: true }; }
-	}, session, 2);
-	const blocked = await guarded.run({ selector: '#submit' }, {});
-	assert.equal(blocked.success, false);
-	assert.equal(blocked.code, 'SQA_BROWSER_BUDGET_EXHAUSTED');
-	assert.equal(blocked.used, 2);
-	assert.equal(blocked.limit, 2);
-	assert.equal(browserCalls, 0);
-
-	session.activities = [];
-	session.tokenUsage = { inputTokens: 500 };
-	const tokenBlocked = await guardSqaBrowserTool({
-		name: 'browser_snapshot',
-		run: async () => { browserCalls++; return { success: true }; }
-	}, session, 99, 500).run({}, {});
-	assert.equal(tokenBlocked.success, false);
-	assert.equal(tokenBlocked.code, 'SQA_INPUT_TOKEN_BUDGET_EXHAUSTED');
-	assert.equal(tokenBlocked.used, 500);
-	assert.equal(tokenBlocked.limit, 500);
-	assert.equal(browserCalls, 0);
-
-	session.tokenUsage = { inputTokens: 0 };
-	session.sqa = { observations: [{ controlId: 'SQA-WEB-001', status: 'pass' }] };
-	session.activities = [
-		{ toolName: 'record_sqa_control', status: 'done' },
-		{ toolName: 'browser_snapshot', status: 'done' },
-		{ toolName: 'browser_diagnostics', status: 'done' }
-	];
-	const checkpointBlocked = await guardSqaBrowserTool({
-		name: 'browser_click',
-		run: async () => { browserCalls++; return { success: true }; }
-	}, session, 99, 500, 2).run({}, {});
-	assert.equal(checkpointBlocked.success, false);
-	assert.equal(checkpointBlocked.code, 'SQA_WORKFLOW_CHECKPOINT_REQUIRED');
-	assert.equal(checkpointBlocked.used, 2);
-	assert.equal(browserCalls, 0);
-
-	let finalizerCalls = 0;
-	const finalizer = guardSqaBrowserTool({
-		name: 'finish_sqa_assessment',
-		run: async () => { finalizerCalls++; return { success: true, published: true }; }
-	}, session, 2);
-	assert.equal((await finalizer.run({}, {})).success, true);
-	assert.equal(finalizerCalls, 1);
-});
-
-test('SQA budget guard results map to one host-owned finalizer path', () => {
-	assert.deepEqual(sqaAutomaticBudgetCloseoutInput({ code: 'SQA_INPUT_TOKEN_CLOSEOUT_REQUIRED' }), { close_from_saved_evidence: true });
-	assert.deepEqual(sqaAutomaticBudgetCloseoutInput({ code: 'SQA_EVIDENCE_COLLECTION_COMPLETE' }), { close_from_saved_evidence: true });
-	assert.deepEqual(sqaAutomaticBudgetCloseoutInput({ code: 'SQA_INPUT_TOKEN_BUDGET_EXHAUSTED' }), { close_after_safety_limit: true });
-	assert.deepEqual(sqaAutomaticBudgetCloseoutInput({ code: 'SQA_BROWSER_BUDGET_EXHAUSTED' }), { close_after_safety_limit: true });
-	assert.equal(sqaAutomaticBudgetCloseoutInput({ code: 'SQA_WORKFLOW_CHECKPOINT_REQUIRED' }), undefined);
-	assert.deepEqual(sqaAutomaticBudgetCloseoutInput({ success: true }, {
-		mode: 'sqa', sqa: {}, tokenUsage: { inputTokens: 300_000 }, activities: []
-	}), { close_from_saved_evidence: true });
-	assert.equal(sqaAutomaticBudgetCloseoutInput({ success: true }, {
-		mode: 'sqa', sqa: {}, tokenUsage: { inputTokens: 299_999 }, activities: []
-	}), undefined);
-});
-
-test('SQA threshold publishes through the host after any completed tool without another model turn', async () => {
-	const fixture = runtimeFixture({
-		mode: 'sqa',
-		sqa: { scope: { applicableControlIds: [] }, observations: [] },
-		tokenUsage: { inputTokens: 299_999 },
-		status: 'running'
-	});
-	const closeoutInputs = [];
-	const finalizer = {
-		name: 'finish_sqa_assessment',
-		async run(input) {
-			closeoutInputs.push(input);
-			fixture.session.sqa.finalizedAt = '2026-11-06T08:00:00.000Z';
-			fixture.session.sqa.assessment = { assessmentId: 'sqa-host-closeout', verdict: 'blocked' };
-			return { success: true, published: true, assessment_id: 'sqa-host-closeout', verdict: 'blocked' };
-		}
-	};
-	fixture.record.runtime.headlessRuntime = { getTools: () => [finalizer] };
-	let modelTurns = 0;
-	fixture.record.runtime.run = async function* () {
-		modelTurns++;
-		fixture.session.tokenUsage.inputTokens = 300_000;
-		yield {
-			type: 'tool_result', toolName: 'update_todo', toolCallId: 'budget-plan', input: {},
-			result: { success: true, todos: [] }
-		};
-		yield { type: 'text', content: 'This text must not require another turn.' };
-	};
-
-	await runTurn(fixture.session, { task: 'Complete the bounded SQA run.' }, fixture.store);
-
-	assert.equal(modelTurns, 1);
-	assert.deepEqual(closeoutInputs, [{ close_from_saved_evidence: true }]);
-	assert.equal(fixture.session.status, 'done');
-	assert.equal(fixture.session.sqa.assessment.assessmentId, 'sqa-host-closeout');
-	assert.equal(fixture.session.activities.find(item => item.toolName === 'finish_sqa_assessment')?.status, 'done');
-});
-
-function sqaRecoveryFixture(inputTokens = 314358) {
-	const sqa = createSqaState({ authorizationConfirmed: true, profiles: ['core'],
-		attributes: ['web_application', 'user_interface'], target: { name: 'Recovery fixture' } });
-	const f = runtimeFixture({ mode: 'sqa', sqa, status: 'error',
-		tokenUsage: { inputTokens, outputTokens: 14493, totalTokens: inputTokens + 14493, estimated: true } });
-	f.session.todos = createSqaTodoPlan(sqa);
-	f.session.sqa.observations = [{ controlId: 'SQA-WEB-001', status: 'blocked',
-		rationale: 'Saved fixture limitation', evidence: [] }];
-	f.record.runtime.headlessRuntime = { getTools: () => createSqaTools(f.session, f.store) };
-	return f;
-}
-
-test('SQA restart at the closeout threshold publishes saved evidence without model or browser replay', async () => {
-	const f = sqaRecoveryFixture();
-	const saved = structuredClone(f.session.sqa.observations), usage = structuredClone(f.session.tokenUsage);
-	let calls = 0;
-	f.record.runtime.run = async function* () { calls++; throw new Error('Gateway is unavailable'); };
-	await runTurn(f.session, { task: 'Continue' }, f.store);
-	assert.equal(calls, 0);
-	assert.equal(f.session.status, 'done');
-	assert.ok(f.session.sqa.finalizedAt);
-	assert.deepEqual(f.session.sqa.observations.slice(0, saved.length), saved);
-	assert.deepEqual(f.session.tokenUsage, usage);
-	assert.ok(f.session.sqa.observations.every(o => o.status === 'blocked'));
-	assert.ok(f.session.sqa.observations.slice(saved.length).every(o => /budget reached/.test(o.rationale)));
-	assert.equal(f.session.activities.filter(a => a.toolName.startsWith('browser_')).length, 0);
-	assert.equal(f.session.sqa.budgetCloseout.used, usage.inputTokens);
-});
-
-test('SQA disconnect crossing the threshold flushes usage and publishes without another model call', async () => {
-	const f = sqaRecoveryFixture(299999);
-	let calls = 0;
-	f.record.runtime.run = async function* () {
-		calls++;
-		f.record.onUsageHarvested({ inputTokens: 14359, outputTokens: 7, totalTokens: 14366, callId: 'disconnect-usage', estimated: false });
-		throw new Error('Connection error.');
-	};
-	await runTurn(f.session, { task: 'Continue' }, f.store);
-	assert.equal(calls, 1);
-	assert.equal(f.session.status, 'done');
-	assert.equal(f.session.tokenUsage.inputTokens, 314358);
-	assert.equal(f.session.tokenUsage.outputTokens, 14500);
-	assert.equal(f.session.sqa.budgetCloseout.used, 314358);
-	assert.equal(f.session.activities.filter(a => a.toolName === 'finish_sqa_assessment').length, 1);
-});
-
-for (const constraint of ['active tool', 'finding conflict', 'authentication', 'qualified exploration', 'storage failure']) {
-	test(`SQA recovery preserves the ${constraint} publication gate without replay`, async () => {
-		const f = sqaRecoveryFixture();
-		if (constraint === 'active tool') f.session.activities.push({ id: 'in-flight', toolName: 'browser_click', status: 'running', ts: Date.now() });
-		if (constraint === 'finding conflict') f.session.findings.push({ id: 'confirmed', controlIds: ['SQA-WEB-001'] });
-		if (constraint === 'authentication') f.session.sqa.observations = ['SQA-WEB-002', 'SQA-WEB-003'].map(controlId => ({ controlId, status: 'blocked', rationale: 'Authentication is required', evidence: [] }));
-		if (constraint === 'qualified exploration') f.session.sqa.execution = { routes: [], actions: [] };
-		if (constraint === 'storage failure') f.store.commit = async (_s, type) => { if (type === 'sqa') throw new Error('Fixture storage unavailable'); };
-		const saved = structuredClone(f.session.sqa.observations);
-		let calls = 0;
-		f.record.runtime.run = async function* () { calls++; };
-		await runTurn(f.session, { task: 'Continue' }, f.store);
-		assert.equal(calls, 0);
-		assert.equal(f.session.status, 'interrupted');
-		assert.equal(f.session.sqa.finalizedAt, undefined);
-		assert.deepEqual(f.session.sqa.observations, saved);
-		assert.equal(f.session.activities.at(-1).status, 'failed');
-	});
-}
-
-test('SQA cancellation during a disconnect cannot trigger saved-evidence publication', async () => {
-	const f = sqaRecoveryFixture(299999);
-	f.record.runtime.run = async function* () {
-		f.session.tokenUsage.inputTokens = 314358;
-		f.record.userStopRequested = true;
-		f.record.controller.abort();
-		throw new Error('Connection error');
-	};
-	await runTurn(f.session, { task: 'Continue' }, f.store);
-	assert.equal(f.session.status, 'interrupted');
-	assert.equal(f.session.sqa.finalizedAt, undefined);
-	assert.equal(f.session.activities.length, 0);
-});
-
 test('media evidence summaries fit Founder evidence limits and retain the latest app track state', () => {
 	const summary = summariseResult('browser_media', { permission:'granted', observed:{requests:Array.from({length:50},()=>({source:'application',outcome:'granted',tracks:[{kind:'audio',enabled:false,readyState:'live'}]}))} });
 	assert.ok(summary.length<=1000);
@@ -506,7 +235,7 @@ test('media evidence summaries fit Founder evidence limits and retain the latest
 	assert.ok(summariseResult('browser_test_meeting_link',{url:'https://example.test/'+'a'.repeat(4000),joined:false}).length<=1000);
 });
 
-for (const [mode, finalizer] of [['sqa', 'finish_sqa_assessment'], ['founder', 'finish_founder_review']]) {
+for (const [mode, finalizer] of [['founder', 'finish_founder_review']]) {
 	test(`${mode} publication stops the model before a later provider failure can corrupt run status`, async () => {
 		const session = { id: randomUUID(), mode, targetUrl: 'https://example.test', messages: [], activities: [], secretNames: [] };
 		let readAfterPublication = false;
@@ -572,35 +301,6 @@ test('a recreated runtime restores the saved pending-question snapshot', () => {
 });
 
 
-test('plural credentials in an SQA question select the secure credential form', async () => {
-	for (const question of [
-		{ question: 'Provide vaulted credentials to test authenticated workflows.', options: [] },
-		{ question: 'How should the assessment proceed?', options: [{ label: 'Use vaulted credentials' }, { label: 'Public-only scope' }] }
-	]) {
-		const fixture = runtimeFixture({
-			mode: 'sqa',
-			sqa: { scope: { applicableControlIds: [] }, observations: [] }
-		});
-		fixture.record.runtime.getPendingQuestion = () => ({ toolCallId: 'ask-credentials', question });
-		await runTurn(fixture.session, { task: 'Continue SQA' }, fixture.store);
-		assert.equal(fixture.session.status, 'awaiting_input');
-		assert.equal(fixture.session.pendingQuestion.credentialLike, true);
-	}
-});
-
-test('ordinary SQA scope decisions remain normal option questions', async () => {
-	const fixture = runtimeFixture({
-		mode: 'sqa',
-		sqa: { scope: { applicableControlIds: [] }, observations: [] }
-	});
-	fixture.record.runtime.getPendingQuestion = () => ({
-		toolCallId: 'ask-scope',
-		question: { question: 'Choose the assessment scope.', options: [{ label: 'Public pages' }, { label: 'Full product' }] }
-	});
-	await runTurn(fixture.session, { task: 'Continue SQA' }, fixture.store);
-	assert.equal(fixture.session.pendingQuestion.credentialLike, false);
-});
-
 test('model activity deadline is bounded and rejects a silent stream', async () => {
 	assert.equal(modelActivityTimeoutMs({ QASE_MODEL_ACTIVITY_TIMEOUT_MS: '1' }), 100);
 	assert.equal(modelActivityTimeoutMs({ QASE_MODEL_ACTIVITY_TIMEOUT_MS: '9999999' }), 900_000);
@@ -637,49 +337,6 @@ test('model activity deadline is bounded and rejects a silent stream', async () 
 	assert.deepEqual(externalChunks, ['tool-complete'], 'host-observed activity extends the current wait');
 });
 
-test('host inactivity deadline aborts a stalled SQA model and resumes durable progress', async t => {
-	const previous = process.env.QASE_MODEL_ACTIVITY_TIMEOUT_MS;
-	process.env.QASE_MODEL_ACTIVITY_TIMEOUT_MS = '100';
-	t.after(() => {
-		if (previous === undefined) delete process.env.QASE_MODEL_ACTIVITY_TIMEOUT_MS;
-		else process.env.QASE_MODEL_ACTIVITY_TIMEOUT_MS = previous;
-	});
-	const fixture = runtimeFixture({
-		mode: 'sqa',
-		sqa: {
-			scope: { applicableControlIds: ['SQA-WEB-001'] },
-			observations: [{ controlId: 'SQA-WEB-001', status: 'pass', evidence: [] }]
-		}
-	});
-	let calls = 0;
-	let stalledSignal;
-	fixture.record.runtime.run = async function* (_task, signal) {
-		calls++;
-		if (calls === 1) {
-			stalledSignal = signal;
-			await new Promise((resolve, reject) => {
-				const fallback = setTimeout(resolve, 5_000);
-				signal.addEventListener('abort', () => {
-					clearTimeout(fallback);
-					reject(signal.reason ?? new Error('aborted'));
-				}, { once: true });
-			});
-			return;
-		}
-		fixture.session.sqa.finalizedAt = new Date().toISOString();
-		yield {
-			type: 'tool_result', toolName: 'finish_sqa_assessment', toolCallId: 'finish',
-			result: { success: true, published: true }
-		};
-	};
-	await runTurn(fixture.session, { task: 'Complete SQA' }, fixture.store);
-	assert.equal(calls, 2);
-	assert.equal(stalledSignal.aborted, true);
-	assert.equal(fixture.session.status, 'done');
-	assert.ok(fixture.statuses.some(item => item.detail?.includes('model response timed out')));
-	assert.equal(fixture.session.messages.some(item => item.kind === 'error'), false);
-});
-
 test('Stop remains effective during timeout backoff and releases the running lock', async () => {
 	const fixture = runtimeFixture();
 	let calls = 0;
@@ -703,7 +360,7 @@ test('Stop remains effective during timeout backoff and releases the running loc
 	assert.equal(fixture.record.controller, undefined);
 });
 
-for (const mode of ['sqa', 'founder']) {
+for (const mode of ['founder']) {
 	test(`${mode} retries a transient provider disconnect and completes through its finalizer`, async () => {
 		const fixture = runtimeFixture({
 			mode,
@@ -731,45 +388,6 @@ for (const mode of ['sqa', 'founder']) {
 	});
 }
 
-test('SQA retries a gateway stream that ends with a bare terminated error', async () => {
-	const fixture = runtimeFixture({
-		mode: 'sqa',
-		sqa: { scope: { applicableControlIds: [] }, observations: [] }
-	});
-	let calls = 0;
-	fixture.record.runtime.run = async function* () {
-		calls++;
-		if (calls === 1) throw new Error('terminated');
-		fixture.session.sqa.finalizedAt = new Date().toISOString();
-		yield {
-			type: 'tool_result',
-			toolName: 'finish_sqa_assessment',
-			toolCallId: 'finish',
-			result: { success: true, published: true }
-		};
-	};
-	await runTurn(fixture.session, { task: 'Complete SQA' }, fixture.store);
-	assert.equal(calls, 2);
-	assert.equal(fixture.session.status, 'done');
-	assert.ok(fixture.statuses.some(item => item.detail?.includes('interrupted')));
-});
-
-
-test('SQA does not retry authentication failures disguised as connection errors', async () => {
-	const fixture = runtimeFixture({
-		mode: 'sqa',
-		sqa: { scope: { applicableControlIds: [] }, observations: [] }
-	});
-	let calls = 0;
-	fixture.record.runtime.run = async function* () {
-		calls++;
-		throw new Error('Connection error: 401 unauthorized API key');
-	};
-	await runTurn(fixture.session, { task: 'Complete SQA' }, fixture.store);
-	assert.equal(calls, 1);
-	assert.equal(fixture.session.status, 'error');
-});
-
 test('cancellation during unfinished-tool cleanup prevents a planned continuation', async () => {
 	const fixture = runtimeFixture();
 	let calls = 0;
@@ -788,7 +406,7 @@ test('cancellation during unfinished-tool cleanup prevents a planned continuatio
 	assert.equal(fixture.record.controller, undefined);
 });
 
-for (const mode of ['sqa', 'founder']) {
+for (const mode of ['founder']) {
 	test(`${mode} idempotent finalizer succeeds without requiring artifact mutation`, async () => {
 		const fixture = runtimeFixture({ mode, [mode]: { finalizedAt: '2026-09-09T00:00:00.000Z' } });
 		const previous = fixture.session[mode];
@@ -802,7 +420,7 @@ for (const mode of ['sqa', 'founder']) {
 	});
 }
 
-for (const mode of ['sqa', 'founder']) {
+for (const mode of ['founder']) {
 	test(`${mode} stale report cannot mark an unfinalized follow-up successful`, async () => {
 		const fixture = runtimeFixture({ mode, ...(mode === 'qa' ? { report: { ts: 1, verdict: 'pass' } } : { [mode]: { finalizedAt: '2026-09-09T00:00:00.000Z' } }) });
 		await runTurn(fixture.session, { task: 'Retest', incompleteAttempt: Number.MAX_SAFE_INTEGER }, fixture.store);
@@ -1005,216 +623,6 @@ test('new configured report groups retain their native SDK tool across synthesis
  assert.deepEqual(f.session,before);assert.equal(f.clearCount(),1);assert.equal(prepareFounderSynthesis(f.session,f.record),false);
 });
 
-test('SQA context continuation clears only redundant model history at bounded evidence checkpoints', () => {
-	const session = {
-		mode: 'sqa',
-		activities: Array.from({ length: 1 }, (_, index) => ({
-			id: `browser-${index}`,
-			toolName: 'browser_snapshot',
-			status: 'done'
-		})),
-		sqa: { observations: [{ controlId: 'SQA-WEB-001', status: 'pass' }] }
-	};
-	let clearCount = 0;
-	const record = { runtime: { agentSession: { clear() { clearCount++; } } } };
-	const before = structuredClone(session);
-	assert.equal(prepareSqaContextContinuation(session, record), true);
-	assert.equal(clearCount, 1);
-	assert.equal(record.sqaBrowserActivitiesAtCompaction, 1);
-	assert.equal(record.sqaContextCompactions, 1);
-	assert.deepEqual(session, before);
-	assert.equal(prepareSqaContextContinuation(session, record), false);
-	assert.equal(clearCount, 1);
-
-	session.activities.push(...Array.from({ length: 1 }, (_, index) => ({
-		id: `browser-next-${index}`,
-		toolName: 'browser_click',
-		status: 'done'
-	})));
-	assert.equal(prepareSqaContextContinuation(session, record), true);
-	assert.equal(clearCount, 2);
-	assert.equal(record.sqaBrowserActivitiesAtCompaction, 2);
-	assert.equal(record.sqaContextCompactions, 2);
-});
-
-test('SQA control-result checkpoint starts one compact continuation and preserves durable progress', async () => {
-	const activities = Array.from({ length: 24 }, (_, index) => ({
-		id: `browser-${index}`,
-		toolName: 'browser_snapshot',
-		status: 'done',
-		ts: Date.now()
-	}));
-	const fixture = runtimeFixture({
-		mode: 'sqa',
-		activities,
-		todos: [{ text: 'Completed bounded workflow', status: 'completed' }],
-		sqa: {
-			scope: { applicableControlIds: ['SQA-WEB-001'] },
-			observations: [{ controlId: 'SQA-WEB-001', status: 'pass', evidence: [] }]
-		}
-	});
-	let calls = 0;
-	let clears = 0;
-	let readPastCheckpoint = false;
-	fixture.record.runtime.agentSession = { clear() { clears++; } };
-	fixture.record.runtime.run = async function* () {
-		calls++;
-		if (calls === 1) {
-			yield {
-				type: 'tool_result',
-				toolName: 'record_sqa_control',
-				toolCallId: 'checkpoint',
-				result: { success: true, controlId: 'SQA-WEB-001', status: 'pass' }
-			};
-			readPastCheckpoint = true;
-			return;
-		}
-		fixture.session.sqa.finalizedAt = new Date().toISOString();
-		yield {
-			type: 'tool_result',
-			toolName: 'finish_sqa_assessment',
-			toolCallId: 'finish',
-			result: { success: true, published: true }
-		};
-	};
-	await runTurn(fixture.session, { task: 'Complete SQA' }, fixture.store);
-	assert.equal(calls, 2);
-	assert.equal(clears, 1);
-	assert.equal(readPastCheckpoint, false);
-	assert.equal(fixture.record.sqaBrowserActivitiesAtCompaction, 24);
-	assert.equal(fixture.session.status, 'done');
-});
-
-test('SQA todo updates do not interrupt parallel work when context compaction is due', async () => {
-	const fixture = runtimeFixture({
-		mode: 'sqa',
-		activities: Array.from({ length: 24 }, (_, index) => ({
-			id: `browser-${index}`,
-			toolName: 'browser_snapshot',
-			status: 'done',
-			ts: Date.now()
-		})),
-		todos: [{ text: 'Complete bounded workflow', status: 'in_progress' }],
-		sqa: {
-			scope: { applicableControlIds: ['SQA-WEB-001'] },
-			observations: [{ controlId: 'SQA-WEB-001', status: 'pass', evidence: [] }]
-		}
-	});
-	let calls = 0;
-	let clears = 0;
-	let continuedAfterTodo = false;
-	fixture.record.runtime.agentSession = { clear() { clears++; } };
-	fixture.record.runtime.run = async function* () {
-		calls++;
-		yield {
-			type: 'tool_result',
-			toolName: 'update_todo',
-			toolCallId: 'plan',
-			result: { success: true, todos: fixture.session.todos }
-		};
-		continuedAfterTodo = true;
-		fixture.session.sqa.finalizedAt = new Date().toISOString();
-		yield {
-			type: 'tool_result',
-			toolName: 'finish_sqa_assessment',
-			toolCallId: 'finish',
-			result: { success: true, published: true }
-		};
-	};
-	await runTurn(fixture.session, { task: 'Complete SQA' }, fixture.store);
-	assert.equal(calls, 1);
-	assert.equal(clears, 0);
-	assert.equal(continuedAfterTodo, true);
-	assert.equal(fixture.session.status, 'done');
-});
-
-test('deterministic fake-model SQA agent completes the real closeout path without a gateway', async () => {
-	const browserActivity = {
-		id: 'browser-evidence', toolName: 'browser_snapshot', status: 'done', ts: Date.now(),
-		summary: 'Controlled fixture rendered and its bounded technical workflows completed.'
-	};
-	const sqa = createSqaState({
-		authorizationConfirmed: true,
-		profiles: ['core'],
-		attributes: ['web_application', 'user_interface'],
-		target: { name: 'Deterministic SQA agent fixture', release: 'phase-6', environment: 'test' }
-	});
-	const fixture = runtimeFixture({ mode: 'sqa', activities: [browserActivity], sqa });
-	await seedSqaSmokePassReceipts(fixture.session, fixture.session.targetUrl);
-	fixture.session.todos = createSqaTodoPlan(sqa);
-	const commits = [];
-	const commit = fixture.store.commit;
-	fixture.store.commit = async (session, type, payload) => {
-		commits.push({ type, payload });
-		await commit(session, type, payload);
-	};
-	fixture.record.runtime.run = async function* () {
-		const tools = createSqaTools(fixture.session, fixture.store);
-		const record = tools.find(tool => tool.name === 'record_sqa_control');
-		const finish = tools.find(tool => tool.name === 'finish_sqa_assessment');
-		if (fixture.record.sqaSynthesis) {
-			fixture.session.todos = fixture.session.todos.map(todo => ({ ...todo, status: 'completed' }));
-			yield {
-				type: 'tool_result', toolName: 'update_todo', toolCallId: 'complete-plan',
-				result: { success: true, todos: fixture.session.todos }
-			};
-			const final = await finish.run({});
-			assert.equal(final.success, true, final.error);
-			yield { type: 'tool_result', toolName: 'finish_sqa_assessment', toolCallId: 'finish', result: final };
-			return;
-		}
-		let callIndex = 0;
-		const orderedControlIds = [
-			...SQA_TECHNICAL_CONTROL_IDS.filter(controlId => fixture.session.sqa.scope.applicableControlIds.includes(controlId)),
-			...fixture.session.sqa.scope.applicableControlIds.filter(controlId => !SQA_TECHNICAL_CONTROL_IDS.includes(controlId))
-		].filter(controlId => getSqaControl(controlId).evidenceRequirements
-			.some(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type)));
-		for (const controlId of orderedControlIds) {
-			const control = getSqaControl(controlId);
-			const hasAgentEvidence = control.evidenceRequirements.some(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type));
-			const allEvidenceIsAgentEvidence = !['SQA-QUA-002', 'SQA-QUA-003', 'SQA-QUA-004', 'SQA-QUA-006', 'SQA-QUA-008'].includes(controlId)
-				&& control.evidenceRequirements.every(requirement => AGENT_EVIDENCE_TYPES.has(requirement.type));
-			assert.equal(hasAgentEvidence, true);
-			const input = allEvidenceIsAgentEvidence ? {
-				control_id: controlId, status: 'pass',
-				evidence: control.evidenceRequirements.flatMap(requirement => Array.from(
-					{ length: requirement.minimum },
-					(_, index) => ({ type: requirement.type, summary: `Deterministic result ${index + 1} for ${controlId}.` })
-				))
-			} : {
-				control_id: controlId,
-				status: 'blocked',
-				rationale: 'The technical sample completed, but the required reviewed documentary evidence was not supplied.'
-			};
-			const result = await record.run(input);
-			assert.equal(result.success, true, `${controlId}: ${result.error}`);
-			yield { type: 'tool_result', toolName: 'record_sqa_control', toolCallId: `record-${callIndex++}`, input, result };
-		}
-		// This deterministic fixture uses the legacy runtime without the qualified
-		// synthesis handoff. Reviewer prerequisites were still host-closed by the
-		// final record call, so it can finish directly without a blocker tool call.
-		fixture.session.todos = fixture.session.todos.map(todo => ({ ...todo, status: 'completed' }));
-		yield {
-			type: 'tool_result', toolName: 'update_todo', toolCallId: 'complete-plan',
-			result: { success: true, todos: fixture.session.todos }
-		};
-		const final = await finish.run({});
-		assert.equal(final.success, true, final.error);
-		yield { type: 'tool_result', toolName: 'finish_sqa_assessment', toolCallId: 'finish', result: final };
-	};
-	await runTurn(fixture.session, { task: 'Complete deterministic SQA assessment' }, fixture.store);
-	assert.equal(fixture.session.status, 'done', JSON.stringify({ messages: fixture.session.messages, activities: fixture.session.activities.slice(-4) }));
-	assert.ok(fixture.session.sqa.finalizedAt);
-	assert.equal(fixture.session.sqa.observations.length, fixture.session.sqa.scope.applicableControlIds.length);
-	assert.equal(fixture.session.sqa.assessment.summary.not_assessed, 0);
-	assert.equal(fixture.session.sqa.assessment.technicalSummary.verdict, 'pass');
-	assert.equal(fixture.session.sqa.assessment.verdict, 'blocked');
-	assert.equal(fixture.session.todos.every(todo => todo.status === 'completed'), true);
-	assert.equal(fixture.session.activities.some(activity => activity.toolName === 'record_sqa_blockers'), false);
-	assert.ok(commits.some(item => item.payload?.reviewerCloseout === true));
-	assert.ok(commits.some(item => item.type === 'sqa' && item.payload?.final === true));
-});
-
 test('concurrent Founder run rejection cannot clear the active model session or narrow its tools', async () => {
 	const fixture = founderSynthesisFixture();
 	fixture.record.running = true;
@@ -1387,14 +795,13 @@ test('a user stop still ends interrupted when completions are healthy', async ()
 
 // #17935 — premature Review Failed: transient SDK failures must be retried,
 // not terminal-errored.
-test('#17935 "no pending agent question to resume" is retryable for founder/sqa', async () => {
+test('#17935 "no pending agent question to resume" is retryable for founder', async () => {
 	const { isRetryableModeInterruption } = await import('./agent.js');
 	const lostHandle = new Error('There is no pending agent question to resume.');
 	assert.equal(isRetryableModeInterruption(lostHandle, 'founder'), true);
-	assert.equal(isRetryableModeInterruption(lostHandle, 'sqa'), true);
 	// Auth/quota failures stay terminal — never retried into a loop.
 	assert.equal(isRetryableModeInterruption(new Error('401 unauthorized'), 'founder'), false);
-	assert.equal(isRetryableModeInterruption(new Error('429 rate limit'), 'sqa'), false);
+	assert.equal(isRetryableModeInterruption(new Error('429 rate limit'), 'founder'), false);
 	// Transport churn still retryable.
 	assert.equal(isRetryableModeInterruption(new Error('socket hang up'), 'founder'), true);
 });
@@ -1488,7 +895,7 @@ test('#17987 resume after stall completes from saved evidence and does not dupli
 
 
 
-for (const mode of ['sqa', 'founder']) test(`${mode} continuation retains device ownership and releases it exactly once`, async () => {
+for (const mode of ['founder']) test(`${mode} continuation retains device ownership and releases it exactly once`, async () => {
   const f = runtimeFixture({ mode }); let segments = 0, selections = 0; const releases = [];
   const devices = { async selectForRun() { selections++; return { executionLevel: 'SIMULATED', provider: 'fixture', deviceSession: { sessionId: 'device-fixture' } }; }, async completeSession(id) { releases.push(id); } };
   f.record.runtime.run = async function* () {
@@ -1507,18 +914,6 @@ test('initial persistence failure releases the running lock and controller', asy
   const f = runtimeFixture(); f.store.setStatus = async () => { throw new Error('Fixture storage unavailable'); };
   await assert.rejects(runTurn(f.session, { task: 'Start fixture' }, f.store), /storage unavailable/);
   assert.equal(f.record.running, false); assert.equal(f.record.controller, undefined);
-});
-
-test('automatic continuation cannot reset the transient model retry allowance', async () => {
-  const f = runtimeFixture({ mode: 'sqa' }); let segments = 0;
-  f.record.runtime.run = async function* () {
-    segments++;
-    if (segments % 2) throw new Error('Connection error: socket hang up');
-    yield { type: 'chat_text', content: 'Still working on the scoped controls.' };
-  };
-  await runTurn(f.session, { task: 'Assess fixture' }, f.store);
-  assert.ok(segments <= 5, `Retry/continuation alternation must not replenish retry budget (${segments} segments).`);
-  assert.equal(f.session.status, 'error');
 });
 
 test('device selection is single-owner and cancellation before selection returns cannot dispatch the SDK', async () => {

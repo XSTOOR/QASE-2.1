@@ -4,8 +4,6 @@ import { randomUUID } from 'node:crypto';
 import { createJevClient, JEV_ENDPOINT, validateJevResponse } from './jevClient.js';
 import { installJevRuntime, jevActionCandidates, jevDiagnosticCandidates } from './jevRuntime.js';
 import { createQaTools } from './qaTools.js';
-import { createSqaState, createSqaTodoPlan } from './sqaService.js';
-import { createSqaTools } from './sqaTools.js';
 import { createFounderState, createFounderReviewTodos } from './founderService.js';
 import { createFounderTools } from './founderTools.js';
 import { getConfig, getPublicConfig, withUserConfiguration, testConnection, envKeyDestinationProblem, saveConfig } from './config.js';
@@ -71,60 +69,7 @@ test('JEV cancellation aborts the in-flight transport', async () => {
   await assert.rejects(client.decide('ready', questions, { signal: controller.signal }), { name: 'AbortError' });
   assert.equal(transportSignal.aborted, true);
 });
-test('candidate construction uses observed safe same-origin targets and honors selected scope', () => {
-  const page = { success: true, url: 'https://site.test/', elements: [
-    { href: '/help', text: 'Help' }, { href: '/delete-account', text: 'Delete' },
-    { href: 'https://external.test', text: 'External' }, { href: '/action?delete=1', text: 'Go' },
-    { role: 'button', text: 'Purchase', selector: '#purchase' }, { role: 'button', text: 'Open menu', selector: '#menu' }
-  ] };
-  const actions = jevActionCandidates(page, page.url);
-  assert.equal(actions.length, 2);
-  assert.equal(actions[0].input.url, 'https://site.test/help');
-  assert.equal(jevActionCandidates(page, page.url, actions.map(item => item.key)).length, 0);
-  assert.equal(jevActionCandidates(page, page.url, [], ['console_health']).length, 0);
-  assert.equal(jevDiagnosticCandidates(page, { securityBlocks: [{ url: 'https://site.test/data' }], network: [{ url: 'https://site.test/data', statusCode: 403 }] }).length, 1); // only the empty-title candidate
-});
-
-function fixture(mode = 'qa', overrides = {}) {
-  const session = { id: randomUUID(), mode, targetUrl: 'https://site.test/', secretNames: [], findings: [], messages: [], todos: [], activities: [], selectedTests: ['console_health'], runtimeFacts: { executionLevel: 'SIMULATED', userAgent: 'Mozilla/5.0 Chrome/151', os: 'macOS' }, ...overrides };
-  const runStore = { async commit() {} };
-  if (mode === 'sqa') {
-    session.sqa = createSqaState({ authorizationConfirmed: true, profiles: ['core'], attributes: ['web_application'], target: { name: 'Test', release: '1', environment: 'test' } });
-    session.todos = createSqaTodoPlan(session.sqa);
-  }
-  if (mode === 'founder') {
-    session.founder = createFounderState({ authorizationConfirmed: true, target: { name: 'Test', url: session.targetUrl }, productContext: { stage: 'development', businessModel: 'Internal', targetCustomer: 'Testers', primaryGoal: 'Verify product' } });
-    session.todos = createFounderReviewTodos();
-  }
-  const tools = [...createQaTools(session, runStore), ...(mode === 'sqa' ? createSqaTools(session, runStore) : mode === 'founder' ? createFounderTools(session, runStore) : [])];
-  const calls = [];
-  const runtime = {
-    agentSession: { continueWithLatestUserMessage() {}, pauseForQuestion(call, question) { this.pending = { ...call, question }; } }, cleanSlateService: {},
-    headlessRuntime: { async *executeTool(name, input, id) {
-      calls.push({ name, input });
-      let result;
-      if (name === 'update_todo') { session.todos = input.items.map(item => ({ text: item.content, status: item.status })); result = { success: true }; }
-      else if (name === 'browser_snapshot') result = { success: true, url: session.targetUrl, title: 'Test product', bodyText: 'A product for testers.', elements: [] };
-      else if (name === 'browser_diagnostics') result = { console: [], network: [] };
-      else if (name === 'browser_open') result = { success: true, url: session.targetUrl };
-      else if (name === 'browser_qa_check') result = input.action === 'inspect'
-        ? { success: true, action: 'inspect', inventory: { url: session.targetUrl, title: 'Test product', text: 'A product for testers.', viewport: { width: 1440, height: 900 }, links: [], forms: [], search: [], disclosures: [], images: 0, players: 0 }, assertions: [] }
-        : { success: true, action: input.action, assertions: [], fields: [] };
-      else if (name === 'browser_screenshot') result = { success: true };
-      else result = await tools.find(tool => tool.name === name).run(input);
-      if (name.startsWith('browser_')) session.activities.push({ id, ts: Date.now(), toolName: name, status: 'done', summary: 'Observed test page' });
-      yield { type: 'tool_result', toolName: name, toolCallId: id, result };
-    } }
-  };
-  let requested = 0;
-  installJevRuntime(runtime, { session, runStore, configuration: { apiKey: 'test', model: 'jev-1.13' }, fetchImpl: async (url, options) => {
-    assert.equal(url, JEV_ENDPOINT); requested++;
-    const body = JSON.parse(options.body);
-    return Response.json(reply(Object.fromEntries(Object.entries(body.questions).map(([id, question]) => [id, question.type === 'noul' ? { type: 'noul', noul: 0.99 } : { type: 'choice', choice: id === 'verdict' ? 'pass' : id.startsWith('c') ? 'blocked' : id.startsWith('f') ? 'unknown' : 'finish' }]))));
-  } });
-  return { runtime, session, calls, requested: () => requested };
-}
-for (const mode of ['sqa', 'founder']) test(`native ${mode} controller publishes its artifact through existing finalizer validation`, async () => {
+for (const mode of ['founder']) test(`native ${mode} controller publishes its artifact through existing finalizer validation`, async () => {
   const f = fixture(mode);
   for await (const part of f.runtime.run('Review the authorized page.', new AbortController().signal)) assert.ok(part.type);
   const artifact = mode === 'qa' ? f.session.report : mode === 'sqa' ? f.session.sqa.assessment : f.session.founder.report;
@@ -166,3 +111,39 @@ test('operator model lock overrides saved account providers and rejects model sw
     });
   } finally { for (const key of keys) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; } }
 });
+
+function fixture(mode = 'qa', overrides = {}) {
+  const session = { id: randomUUID(), mode, targetUrl: 'https://site.test/', secretNames: [], findings: [], messages: [], todos: [], activities: [], selectedTests: ['console_health'], runtimeFacts: { executionLevel: 'SIMULATED', userAgent: 'Mozilla/5.0 Chrome/151', os: 'macOS' }, ...overrides };
+  const runStore = { async commit() {} };
+  if (mode === 'founder') {
+    session.founder = createFounderState({ authorizationConfirmed: true, target: { name: 'Test', url: session.targetUrl }, productContext: { stage: 'development', businessModel: 'Internal', targetCustomer: 'Testers', primaryGoal: 'Verify product' } });
+    session.todos = createFounderReviewTodos();
+  }
+  const tools = [...createQaTools(session, runStore), ...(mode === 'founder' ? createFounderTools(session, runStore) : [])];
+  const calls = [];
+  const runtime = {
+    agentSession: { continueWithLatestUserMessage() {}, pauseForQuestion(call, question) { this.pending = { ...call, question }; } }, cleanSlateService: {},
+    headlessRuntime: { async *executeTool(name, input, id) {
+      calls.push({ name, input });
+      let result;
+      if (name === 'update_todo') { session.todos = input.items.map(item => ({ text: item.content, status: item.status })); result = { success: true }; }
+      else if (name === 'browser_snapshot') result = { success: true, url: session.targetUrl, title: 'Test product', bodyText: 'A product for testers.', elements: [] };
+      else if (name === 'browser_diagnostics') result = { console: [], network: [] };
+      else if (name === 'browser_open') result = { success: true, url: session.targetUrl };
+      else if (name === 'browser_qa_check') result = input.action === 'inspect'
+        ? { success: true, action: 'inspect', inventory: { url: session.targetUrl, title: 'Test product', text: 'A product for testers.', viewport: { width: 1440, height: 900 }, links: [], forms: [], search: [], disclosures: [], images: 0, players: 0 }, assertions: [] }
+        : { success: true, action: input.action, assertions: [], fields: [] };
+      else if (name === 'browser_screenshot') result = { success: true };
+      else result = await tools.find(tool => tool.name === name).run(input);
+      if (name.startsWith('browser_')) session.activities.push({ id, ts: Date.now(), toolName: name, status: 'done', summary: 'Observed test page' });
+      yield { type: 'tool_result', toolName: name, toolCallId: id, result };
+    } }
+  };
+  let requested = 0;
+  installJevRuntime(runtime, { session, runStore, configuration: { apiKey: 'test', model: 'jev-1.13' }, fetchImpl: async (url, options) => {
+    assert.equal(url, JEV_ENDPOINT); requested++;
+    const body = JSON.parse(options.body);
+    return Response.json(reply(Object.fromEntries(Object.entries(body.questions).map(([id, question]) => [id, question.type === 'noul' ? { type: 'noul', noul: 0.99 } : { type: 'choice', choice: id === 'verdict' ? 'pass' : id.startsWith('c') ? 'blocked' : id.startsWith('f') ? 'unknown' : 'finish' }]))));
+  } });
+  return { runtime, session, calls, requested: () => requested };
+}

@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createSqaTestServer } from './sqa-test-runtime.mjs';
-import { createSqaState } from '../server/sqaService.js';
+import { createSqaRunState } from '../server/sqa/engine.js';
 
 // Load real deployed UI assets, isolating API/SSE fixtures from customer runs.
 const output = new URL('../test-results/founder-completion/', import.meta.url);
@@ -12,7 +12,7 @@ const base = process.env.TEST_BASE_URL ?? runtime.base;
 const id = '12345678-1234-4234-8234-123456789abc';
 const report = { generatedAt:'2026-09-13T00:00:00.000Z', executiveSummary:'Completion fixture founder thesis', coverage:{categoriesReviewed:[],totalCategories:0,evidenceBackedObservations:0} };
 const fixture = (status = 'running', mode = 'founder', finalized = false) => ({ id, title:'Founder completion fixture', mode, status, createdAt:Date.now(),updatedAt:Date.now(),messages:[],activities:[],findings:[],todos:[],secretNames:[],
-  ...(mode==='sqa'?{sqa:createSqaState({authorizationConfirmed:true,target:{name:'Founder completion fixture',url:'https://example.test/',release:'fixture',environment:'isolated'}})}:{}),
+  ...(mode==='sqa'?{sqa:createSqaRunState({focus:'Founder completion fixture'})}:{}),
   founder:{scope:{target:{name:'Fixture',url:'https://example.test'},categories:[]},observations:[],...(finalized ? {report,finalizedAt:report.generatedAt} : {})} });
 let browser;
 const checks = [];
@@ -41,7 +41,7 @@ async function open(session) {
     else await route.fulfill({json:body});
   });
   await page.goto(`${base}/#/runs/${session.id}`);
-  const title = session.mode === 'founder' ? 'Fixture' : session.mode === 'qa' ? 'Testing complete' : session.title;
+  const title = session.mode === 'founder' ? 'Fixture' : session.mode === 'qa' ? 'Testing complete' : 'Compliance test';
   await page.waitForFunction(title => document.querySelector('#chat-title')?.textContent === title, title);
   await page.waitForFunction(() => typeof window.fixtureStream?.onmessage === 'function' && document.body.dataset.pageLoading !== 'true');
   return page;

@@ -7,7 +7,7 @@ ES modules (no build step). There are three testing modes:
 | Mode | What it produces | Engine |
 | --- | --- | --- |
 | **QA** | Defects with evidence and a fix prompt each; verdict pass / pass_with_issues / partial / fail / blocked | `server/qa/` — host-orchestrated detectors + reasoning model + JEV; talks in the run conversation and asks for a test account when needed ([QA-ENGINE.md](QA-ENGINE.md)) |
-| **SQA** | Standards-informed quality assessment with a deterministic control evaluator | CleanSlate SDK agent loop (`agent.js`) with SQA tools ([sqa.md](sqa.md)) |
+| **SQA** | Compliance test: product profile, researched standards with sources, every requirement tested, score and verdict per standard | `server/sqa/` — host-run stages with one CleanSlate SDK agent on the reasoning model only; talks in the run conversation ([sqa.md](sqa.md)) |
 | **Founder** | Product and go-to-market review with evidence-bound recommendations | CleanSlate SDK agent loop with Founder tools ([founder-mode.md](founder-mode.md)) |
 
 ## Request path
@@ -15,7 +15,7 @@ ES modules (no build step). There are three testing modes:
 ```
 browser ──HTTP/SSE──▶ server/app.js ──▶ services (serviceFactory.js)
                          │                 ├─ runs      local JSON store  | PostgreSQL (+ Redis events)
-                         │                 ├─ agent     runTurn(): QA → server/qa/  ·  SQA/Founder → SDK loop
+                         │                 ├─ agent     runTurn(): QA → server/qa/  ·  SQA → server/sqa/  ·  Founder → SDK loop
                          │                 ├─ secrets   per-run encrypted vault
                          │                 ├─ artifacts screenshots/evidence (.qase/artifacts or QASE_ARTIFACT_DIR)
                          │                 └─ auth, feedback, bugs, test cases, catalog, matrix …
@@ -64,14 +64,16 @@ infrastructure design history.
   `catalogApi.js`, `deviceProfiles.js`) drive the launcher and the
   multi-configuration matrix runs (`matrixOrchestrator.js`), each of which is
   an ordinary QA run per configuration.
-- SQA/Founder browse through `browserBridge.js` (policy-gated SDK browser).
-  The QA engine owns its own Playwright browser (`server/qa/browser.js`). Both
-  use the same `browserPolicy.js` for scope and private-network protection.
+- Founder browses through `browserBridge.js` (policy-gated SDK browser).
+  The QA and SQA engines own their Playwright browser (`server/qa/browser.js`).
+  All use the same `browserPolicy.js` for scope and private-network protection.
 
 ## Models
 
 - QA: optional reasoner + JEV via `server/qa/models.js`.
-- SQA/Founder: the account's configured provider through the CleanSlate SDK,
+- SQA: the reasoning model only (`server/sqa/agent.js`), with the SDK's
+  built-in web search for research.
+- Founder: the account's configured provider through the CleanSlate SDK,
   or (opt-in) the qualified "mode reasoning" runtime (`modeReasoningRuntime.js`,
   `hybridConfig.js`, `hybridModelRouter.js`, `hybridUsageTransport.js`) with
   exact usage accounting. The `hybrid*` file names are historical.
@@ -94,7 +96,7 @@ infrastructure design history.
 
 `index.html` loads `app.js`, which composes view modules: the QA launcher and
 browser matrix (`qaConfigMatrix.js`, `matrixPicker.js`, `devicePicker.js`),
-the QA results workspace (`qaEvidenceView.js`), SQA (`sqa*View.js`), Founder
+the QA results workspace (`qaEvidenceView.js`), SQA (`sqaComplianceView.js`), Founder
 (`founder*.js`), bugs, test cases and analytics. `fixPromptBuilder.js` is
 shared with the server for the fix-prompt download and PDF report. Pure view
 logic has `*.test.js` unit tests run by `npm test`.

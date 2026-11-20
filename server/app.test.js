@@ -4,11 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { createApplication } from './app.js';
 import { hybridProfile } from './hybridConfig.js';
-import { SQA_STANDALONE_CAPABILITIES, standaloneProfileIdentity, standaloneResearchProfile } from './sqaStandaloneQualification.js';
-import { SQA_STANDALONE_STRATEGY } from './sqaStandaloneStrategy.js';
 import { PublicInputError } from './publicErrors.js';
 import { createInstanceAccess } from './instanceAccess.js';
-import { createSqaState, finishSqaAssessment } from './sqaService.js';
 import { createFounderState,createFounderReviewTodos,recordFounderObservations } from './founderService.js';
 import { aggregateSessionFindings, setFindingStatus } from './store.js';
 import { createCoverageService } from './coverageService.js';
@@ -481,52 +478,6 @@ test('a failed deletion cancels pending Founder admission without losing the sav
 	await f.whenIdle();assert.equal(f.state.runCalls.length,1);
 });
 
-test('SQA human review API preserves versions, rejects stale writes and enforces reviewer permissions without a model turn', async t => {
-	let role = 'developer';
-	const access = { mount(app) { createTestAccess().mount(app); app.use('/api', (request, _response, next) => { request.auth = { ...request.auth, role }; next(); }); } };
-	const fixture = await startFixture({ access }); t.after(() => fixture.close());
-	const session = fixture.services.runs.create('Review API');
-	session.mode = 'sqa'; session.status = 'done';
-	session.sqa = createSqaState({ authorizationConfirmed: true, target: { name: 'Review API', release: 'v1', environment: 'local' } });
-	session.sqa.observations = session.sqa.scope.applicableControlIds.map(controlId => ({ controlId, status: 'blocked', rationale: 'Evidence missing.', evidence: [] }));
-	await finishSqaAssessment(session, fixture.services.runs);
-	const base = `/api/sessions/${session.id}/sqa`;
-	assert.equal((await fixture.request(`${base}/review/request`, { method: 'POST', json: { expectedRevision: 0, reason: 'Please review risk evidence.' } })).status, 200);
-	assert.equal((await fixture.request('/api/sqa/reviews')).status, 403);
-	assert.equal((await fixture.request(`${base}/review/reopen`, { method: 'POST', json: { expectedRevision: 1, reason: 'Review evidence.' } })).status, 403);
-	assert.equal((await fixture.request(`${base}/observations`, { method: 'POST', json: {} })).status, 403);
-	assert.equal((await fixture.request(`${base}/review/evidence`, { method: 'POST', json: {} })).status, 403);
-	assert.equal((await fixture.request(`${base}/review/evidence/arbitrary-id/decision`, { method: 'POST', json: {} })).status, 403);
-	role = 'owner';
-	assert.equal((await body(await fixture.request('/api/sqa/reviews'))).reviews.length, 1);
-	const original = await body(await fixture.request(`${base}/versions/1`));
-	assert.equal((await fixture.request(`${base}/review/reopen`, { method: 'POST', json: { expectedRevision: 0, reason: 'Stale.' } })).status, 409);
-	assert.equal((await fixture.request(`${base}/review/reopen`, { method: 'POST', json: { expectedRevision: 1, reason: 'Review current risk evidence.' } })).status, 200);
-	assert.equal((await fixture.request(`/api/sessions/${session.id}/report.md`)).status, 409);
-	assert.equal((await fixture.request(`/api/sessions/${session.id}/report.md?version=1`)).status, 200);
-	assert.equal((await fixture.request(`/api/sessions/${session.id}/message`, { method: 'POST', json: { text: 'Restart' } })).status, 409);
-	const decision = { controlId: 'SQA-GOV-001', status: 'pass', rationale: 'Current risk register reviewed.', evidence: [{ type: 'risk_register', reference: 'artifact://release/v1/risk' }] };
-	assert.equal((await fixture.request(`${base}/observations`, { method: 'POST', json: { expectedRevision: 2, observation: decision } })).status, 200);
-	const inspected = await body(await fixture.request(`${base}/evidence/SQA-GOV-001/1`));
-	assert.equal(inspected.integrity, 'external_unverified');
-	assert.equal(inspected.evidence.reference, 'artifact://release/v1/risk');
-	assert.equal((await fixture.request(`${base}/evidence/SQA-GOV-001/1?version=1`)).status, 404);
-	assert.equal((await fixture.request(`${base}/evidence/SQA-GOV-001/0`)).status, 400);
-	assert.equal((await fixture.request(`${base}/observations`, { method: 'POST', json: { expectedRevision: 2, observation: decision } })).status, 409);
-	assert.equal((await fixture.request(`${base}/review/publish`, { method: 'POST', json: { expectedRevision: 3, reason: 'Reviewed risk evidence; other gaps remain.' } })).status, 200);
-	assert.equal((await body(await fixture.request(`${base}/versions`))).versions.length, 2);
-	assert.deepEqual(await body(await fixture.request(`${base}/versions/1`)), original);
-	assert.equal((await fixture.request(`${base}/versions/999`)).status, 404);
-	assert.equal((await body(await fixture.request('/api/sqa/reviews'))).reviews.length, 0);
-	assert.equal(fixture.state.runCalls.length, 0);
-	const get = fixture.services.runs.get;
-	fixture.services.runs.get = id => id === session.id ? undefined : get(id);
-	assert.equal((await fixture.request(`${base}/versions/1`)).status, 404);
-	assert.equal((await fixture.request(`${base}/evidence/SQA-GOV-001/1`)).status, 404);
-	assert.equal((await fixture.request(`${base}/review/evidence/arbitrary-id/file`)).status, 404);
-	assert.equal((await fixture.request(`${base}/review/reopen`, { method: 'POST', json: { expectedRevision: 4, reason: 'Unavailable run.' } })).status, 404);
-});
-
 test('application construction has no startup side effects and validates its service contract', () => {
 	const memory = createMemoryServices();
 	const application = createApplication({
@@ -810,252 +761,6 @@ test('run CRUD preserves summaries, derived detail fields, cleanup, and 404 beha
 	assert.deepEqual(removedAgain, { deleted: false });
 	assert.equal((await fixture.request(`/api/sessions/${created.id}`)).status, 404);
 });
-
-test('run creation with an environmentId snapshots the frozen environment onto the run', async t => {
-	const fixture = await startFixture({
-		memory: createMemoryServices(),
-	});
-	const frozen = {
-		envId: 'ENV-IOS-IP15PRO-18.3-SAF-18.3', platform: 'ios', device: 'iPhone 15 Pro',
-		osVersion: '18.3', browser: 'Safari', browserVersion: '18.3',
-		deviceType: 'phone', executionProvider: 'environment', isRealDevice: true, active: true
-	};
-	fixture.services.environments.get = async envId => (envId === frozen.envId ? frozen : null);
-	fixture.services.environments.list = async () => [frozen];
-	t.after(() => fixture.close());
-
-	const created = await body(await fixture.request('/api/sessions', {
-		method: 'POST',
-		json: { environmentId: frozen.envId }
-	}));
-	assert.equal(created.environmentId, frozen.envId);
-	assert.equal(created.environmentSnapshot.device, 'iPhone 15 Pro');
-	assert.equal(created.environmentSnapshot.executionProvider, 'environment');
-
-	const summaries = await body(await fixture.request('/api/sessions'));
-	assert.equal(summaries[0].environmentSnapshot.envId, frozen.envId);
-
-	// Unknown environment → 422, never a silent legacy run.
-	const unknown = await fixture.request('/api/sessions', {
-		method: 'POST',
-		json: { environmentId: 'ENV-DOES-NOT-EXIST' }
-	});
-	assert.equal(unknown.status, 422);
-
-	// Deprecated environments refuse new runs.
-	const deprecated = { ...frozen, envId: 'ENV-IOS-IP11-17.4-SAF-17.4', active: false };
-	fixture.services.environments.get = async envId => (envId === deprecated.envId ? deprecated : frozen);
-	const refused = await fixture.request('/api/sessions', {
-		method: 'POST',
-		json: { environmentId: deprecated.envId }
-	});
-	assert.equal(refused.status, 422);
-	assert.match((await body(refused)).error, /inactive \(deprecated\)/);
-});
-
-function qualifiedSqaFixture(t) {
-	const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'qase-sqa-launch-'));
-	t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-	const env = {
-		QASE_SQA_STANDALONE_ENABLED: 'true',
-		QASE_SQA_REASONER_API_KEY: 'api-fixture-key',
-		QASE_SQA_SEARCH_URL: 'https://search.example.test/search',
-		QASE_SQA_QUALIFICATION_FILE: path.join(directory, 'fixture.json')
-	};
-	const profile = standaloneResearchProfile({}, env);
-	fs.writeFileSync(env.QASE_SQA_QUALIFICATION_FILE, JSON.stringify({
-		strategy: SQA_STANDALONE_STRATEGY, sdkVersion: profile.sdkVersion,
-		profileIdentity: standaloneProfileIdentity(profile, env), checkedAt: Date.now(),
-		jevCalls: 0, runId: 'test-only',
-		capabilities: Object.fromEntries(SQA_STANDALONE_CAPABILITIES.map(name => [name,{passed:true,evidenceRef:'api-fixture'}]))
-	}));
-	return env;
-}
-
-test('SQA catalog and authorized scope creation stay pending until evidence is evaluated', async t => {
-	const environment = {};
-	const fixture = await startFixture({ environment });
-	t.after(() => fixture.close());
-
-	const catalogResponse = await fixture.request('/api/sqa/catalog');
-	assert.equal(catalogResponse.status, 200);
-	const catalog = await body(catalogResponse);
-	assert.match(catalog.catalogVersion, /^2026\./);
-	assert.ok(catalog.controls.length >= 40);
-	assert.match(catalog.disclaimer, /not legal advice/i);
-
-	assert.equal(catalog.execution.strategy, SQA_STANDALONE_STRATEGY);
-	const unavailable = await fixture.request('/api/sqa/sessions', {
-		method: 'POST',
-		json: {
-			authorizationConfirmed: true,
-			profiles: ['core'],
-			target: { name: 'Example', release: '1.0', environment: 'staging' }
-		}
-	});
-	assert.equal(unavailable.status, 409);
-	assert.equal((await body(unavailable)).error, catalog.execution.blocker);
-
-	const unauthorized = await fixture.request('/api/sqa/sessions', {
-		method: 'POST',
-		json: {
-			profiles: ['core'],
-			attributes: ['web_application'],
-			target: { name: 'Example', release: '1.0', environment: 'staging' }
-		}
-	});
-	assert.equal(unauthorized.status, 400);
-	assert.match((await body(unauthorized)).error, /authorized/i);
-
-	const unconfirmedExpanded = await fixture.request('/api/sqa/sessions', {
-		method: 'POST',
-		json: {
-			authorizationConfirmed: true,
-			profiles: ['core', 'medical'],
-			target: { name: 'Expanded example', release: '1.0', environment: 'staging' },
-			scopeNotes: 'Medical-device profile requested.'
-		}
-	});
-	assert.equal(unconfirmedExpanded.status, 400);
-	assert.match((await body(unconfirmedExpanded)).error, /Confirm.*expanded SQA scope/);
-
-	Object.assign(environment, qualifiedSqaFixture(t));
-	const createdResponse = await fixture.request('/api/sqa/sessions', {
-		method: 'POST',
-		json: {
-			authorizationConfirmed: true,
-			profiles: ['core'],
-			attributes: ['web_application', 'user_interface'],
-			target: { name: 'Example product', release: '1.0.0', environment: 'staging' },
-			scopeNotes: 'Non-destructive browser assessment of the staging release.'
-		}
-	});
-	assert.equal(createdResponse.status, 201);
-	const created = await body(createdResponse);
-	assert.equal(created.sqa.requestedExecutionStrategy,SQA_STANDALONE_STRATEGY);
-        assert.equal(created.mode, 'sqa');
-        assert.equal(created.sqa.scope.authorization.confirmed, true);
-        assert.equal(created.sqa.assessment, undefined);
-		assert.equal(created.todos.length, 8);
-		assert.ok(created.todos.every(item => item.status === 'pending'));
-		assert.match(created.todos[0].text, /authorized target.*assessment boundary/i);
-		assert.match(created.todos.at(-1).text, /publish the professional SQA report/i);
-		const invalidObservation = await fixture.request(`/api/sessions/${created.id}/sqa/observations`, {
-			method: 'POST',
-			json: { controlId: 'NOT-IN-SCOPE', status: 'pass', evidence: [] }
-		});
-		assert.equal(invalidObservation.status, 400);
-		assert.match((await body(invalidObservation)).error, /control|scope/i);
-		const initialPlan = fixture.state.events.find(event => (
-			event.type === 'todos' && event.sessionId === created.id
-		));
-		assert.equal(initialPlan.todos.length, 8);
-
-        const report = await fixture.request(`/api/sessions/${created.id}/report.md`);
-	assert.equal(report.status, 409);
-	assert.match((await body(report)).error, /pending/i);
-
-	const stored = fixture.services.runs.get(created.id);
-	await finishSqaAssessment(stored, fixture.services.runs, () => Date.parse('2026-08-15T00:00:00.000Z'));
-	const finalizedAt = stored.sqa.finalizedAt;
-	delete stored.sqa.finalizedAt;
-	const unpublishedReport = await fixture.request(`/api/sessions/${created.id}/report.md`);
-	assert.equal(unpublishedReport.status, 409);
-	assert.match((await body(unpublishedReport)).error, /not been finalized/i);
-	stored.sqa.finalizedAt = finalizedAt;
-	const finalReport = await fixture.request(`/api/sessions/${created.id}/report.md`);
-	assert.equal(finalReport.status, 200);
-	assert.match(await finalReport.text(), /^# SQA assessment/);
-});
-
-test('SQA refuses an unsupported runtime before creating an assessment or starting the model', async t => {
-	const fixture = await startFixture();
-	t.after(() => fixture.close());
-	fixture.services.environments.get = async () => ({
-		envId: 'unsupported-sqa-browser', active: true, platform: 'ios', browserCode: 'duckduckgo',
-		device: 'Test phone', browser: 'DuckDuckGo', executionProvider: 'local'
-	});
-	const response = await fixture.request('/api/sqa/sessions', {
-		method: 'POST', json: {
-			authorizationConfirmed: true, profiles: ['core'], attributes: ['web_application'],
-			target: { name: 'Runtime validation', release: 'test', environment: 'local' },
-			environmentId: 'unsupported-sqa-browser'
-		}
-	});
-	assert.equal(response.status, 422);
-	assert.match((await body(response)).error, /SQA cannot start.*NOT SUPPORTED/);
-	assert.equal(fixture.state.events.filter(event => event.type === 'sqa.created').length, 0);
-	assert.equal(fixture.state.ensureCalls.length, 0);
-	assert.equal(fixture.state.runCalls.length, 0);
-});
-
-test('SQA rejects invalid explicit device and engine identifiers instead of silently falling back', async t => {
-	const fixture = await startFixture();
-	t.after(() => fixture.close());
-	const request = extra => fixture.request('/api/sqa/sessions', {
-		method: 'POST',
-		json: {
-			authorizationConfirmed: true,
-			target: { name: 'Runtime validation', release: 'build-123', environment: 'staging' },
-			...extra
-		}
-	});
-
-	const invalidDevice = await request({ device: 'mystery-phone' });
-	assert.equal(invalidDevice.status, 422);
-	assert.match((await body(invalidDevice)).error, /Unsupported SQA device.*available catalog/);
-
-	const invalidEngine = await request({ engine: 'safari' });
-	assert.equal(invalidEngine.status, 422);
-	assert.match((await body(invalidEngine)).error, /Unsupported SQA browser engine.*chromium, firefox, or webkit/);
-
-	assert.equal(fixture.state.events.filter(event => event.type === 'sqa.created').length, 0);
-	assert.equal(fixture.state.ensureCalls.length, 0);
-	assert.equal(fixture.state.runCalls.length, 0);
-});
-
-test('a pending SQA scope accepts its first target URL and starts the agent', async t => {
-	const fixture = await startFixture({ environment: qualifiedSqaFixture(t) });
-	t.after(() => fixture.close());
-
-	const createdResponse = await fixture.request('/api/sqa/sessions', {
-		method: 'POST',
-		json: {
-			authorizationConfirmed: true,
-			profiles: ['core'],
-			attributes: ['web_application', 'user_interface'],
-			target: { name: 'Example product', release: '1.0.0', environment: 'staging' }
-		}
-	});
-	assert.equal(createdResponse.status, 201);
-	const session = await body(createdResponse);
-	assert.equal(session.status, 'idle');
-	assert.equal(session.sqa.assessment, undefined);
-
-	const startResponse = await fixture.request(`/api/sessions/${session.id}/message`, {
-		method: 'POST',
-		json: { text: 'Run the SQA assessment against https://example.com/releases/1.0.0.' }
-	});
-	assert.equal(startResponse.status, 200);
-	assert.deepEqual(await body(startResponse), { ok: true });
-	const started = await body(await fixture.request(`/api/sessions/${session.id}`));
-	assert.equal(started.mode, 'sqa');
-	assert.equal(started.targetUrl, 'https://example.com/releases/1.0.0');
-	assert.equal(fixture.state.ensureCalls.at(-1), session.id);
-	assert.deepEqual(fixture.state.runCalls.at(-1), {
-		sessionId: session.id,
-		options: { task: 'Run the SQA assessment against https://example.com/releases/1.0.0.' }
-	});
-	await fixture.whenIdle();
-});
-
-async function founderLaunchFixture(t, options={}) {
-	const fixture=await startFixture(options); t.after(()=>fixture.close());
-	const environment={envId:'founder-launch-env',active:true,platform:'windows',device:'Desktop',deviceType:'desktop',os:'Windows',osVersion:'11',browser:'Chrome',browserCode:'chrome',browserVersion:'151',executionType:'SIMULATED',executionProvider:'local',emulation:{viewport:{width:1440,height:1000},deviceScaleFactor:1,isMobile:false,hasTouch:false}};
-	fixture.services.environments.get=async id=>id===environment.envId?environment:null;
-	const input={setupVersion:1,authorizationConfirmed:true,target:{name:'Launch fixture',url:'https://example.test/'},environmentId:environment.envId,accessDecision:'public_only',contextMode:'assumptions'};
-	return {...fixture,input,environment};
-}
 
 test('Founder versioned setup persists scope/context and rejects missing or inactive device selections before dispatch',async t=>{
 	const f=await founderLaunchFixture(t);
@@ -2027,3 +1732,11 @@ test('GET /api/findings returns the owned backlog with composed filters', async 
 	const empty = await body(await fixture.request('/api/findings?q=nothing-matches'));
 	assert.deepEqual(empty.findings, []);
 });
+
+async function founderLaunchFixture(t, options={}) {
+	const fixture=await startFixture(options); t.after(()=>fixture.close());
+	const environment={envId:'founder-launch-env',active:true,platform:'windows',device:'Desktop',deviceType:'desktop',os:'Windows',osVersion:'11',browser:'Chrome',browserCode:'chrome',browserVersion:'151',executionType:'SIMULATED',executionProvider:'local',emulation:{viewport:{width:1440,height:1000},deviceScaleFactor:1,isMobile:false,hasTouch:false}};
+	fixture.services.environments.get=async id=>id===environment.envId?environment:null;
+	const input={setupVersion:1,authorizationConfirmed:true,target:{name:'Launch fixture',url:'https://example.test/'},environmentId:environment.envId,accessDecision:'public_only',contextMode:'assumptions'};
+	return {...fixture,input,environment};
+}

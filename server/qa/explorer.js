@@ -43,7 +43,7 @@ Rules:
 - Use look when visual state matters. Be efficient; finish when you have covered the main journeys.`;
 
 /** Tags interactive elements and returns a compact observation. */
-async function observe(page, log) {
+export async function observe(page, log) {
 	const snapshot = await page.evaluate(() => {
 		let ref = 0;
 		const items = [];

@@ -13,7 +13,7 @@ export function runCardDetails(run, profiles = []) {
  const completed = Math.min(total, Math.max(0, Number.isFinite(rawCompleted) ? Math.floor(rawCompleted) : 0));
  return {
   environment: environment + (environment && run.deviceLandscape ? ' · Landscape' : ''),
-  mode: run.mode === 'founder' ? 'Founder' : run.mode === 'sqa' ? 'Quality' : 'Test',
+  mode: run.mode === 'founder' ? 'Founder' : run.mode === 'sqa' ? 'Compliance' : 'Test',
   findings: Number.isFinite(run.findingCount) ? Math.max(0, Math.floor(run.findingCount)) : 0,
   total, completed, percent: total ? Math.round(completed / total * 100) : 0
  };

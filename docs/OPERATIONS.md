@@ -35,9 +35,9 @@ All variables, with defaults, are documented in `.env.example`.
 | `npm run verify` | Syntax, source credential signatures, ignore rules, then `npm test` | free |
 | `npm run test:browser` | Real-Chromium media, meeting, form-validity and mobile checks | free |
 | `npm run test:dashboard`, `test:ui`, `test:acceptance`, `test:auth`, `test:reset` | Dashboard flows against the real app with stub models | free |
-| `npm run test:sqa-release` | SQA contracts and three-engine browser acceptance | free |
+| `npm run test:sqa` | SQA compliance test end to end in the real UI (scripted model, local search stub) | free |
 | `npm run qualify:qa-live [-- <url>]` | QA engine with the real reasoner and JEV against the QA Lab (+ optional target) | capped model usage |
-| `npm run qualify:agent -- sqa\|founder` | Configured-model SQA/Founder against fixtures | model usage |
+| `npm run qualify:agent -- founder` | Configured-model Founder against fixtures | model usage |
 
 PostgreSQL integration tests run when `QASE_TEST_DATABASE_URL` and
 `QASE_TEST_CONTROL_DATABASE_URL` point to disposable databases (CI provisions
@@ -50,8 +50,6 @@ them); otherwise they skip. Firefox/WebKit tests need those browser bundles.
   all engines, Founder and SQA browser suites, then a hardened production image
   build and smoke test without live model calls, and a source ZIP artifact.
   CI never deploys.
-- **sqa-release.yml** — SQA contracts and caller-data preservation on Linux and
-  Windows.
 
 ## Releasing
 
@@ -113,5 +111,5 @@ private-network blocking; keep `QASE_AUTH_REQUIRED=true`, set
 | `scripts/smoke-deployment.mjs`, `load-placement.mjs`, `release-gate.mjs`, `evaluate-capacity.mjs` | Deployment smoke, placement load, read-only release gate, capacity evaluation (see `load/README.md`) |
 | `scripts/check-deployed-release.mjs` | Read-only public checks of a deployed release |
 | `scripts/smoke-production-image.mjs` | Boot and probe a built image (CI) |
-| `scripts/qualify-*.mjs`, `probe-sqa-*.mjs`, `verify-system-mode-evidence.mjs` | Opt-in qualification workloads for SQA, Founder and the QA engine |
+| `scripts/qualify-*.mjs`, `verify-system-mode-evidence.mjs` | Opt-in qualification workloads for Founder and the QA engine |
 | `scripts/start-local.mjs`, `start-jev-local.mjs`, `jev-test-server.mjs` | Local start helpers and the JEV model lab |

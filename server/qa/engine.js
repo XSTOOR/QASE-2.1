@@ -43,6 +43,7 @@ import { explore } from './explorer.js';
 import { reviewVisuals } from './visualReview.js';
 import { triage } from './triage.js';
 import { signIn, hasLoginForm } from './signin.js';
+import { accountQuestion, waitForAccount } from './accountQuestion.js';
 import { buildReport, refineWithReasoner } from './report.js';
 
 export const ENGINE_VERSION = 2;
@@ -294,33 +295,10 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 	 * The waiting time is excluded from the run budget.
 	 */
 	async function askForAccount({ retry = false, reason } = {}) {
-		const question = {
-			kind: 'qa_credentials', credentialLike: true, options: [], allowCustom: false,
-			question: retry ? 'Signing in didn\'t work. Try another test account?' : `${host} has a sign-in page. Should I test the signed-in part too?`,
-			summary: retry
-				? `${reason ? `${reason}. ` : ''}Check the username and password, or continue with the public pages only.`
-				: `So far I can test only the public pages. Give me a test account and I'll sign in once and test what's behind it, read-only: I won't submit forms, change settings or delete anything. Skip and I'll finish with the public pages.`
-		};
-		session.pendingQuestion = question;
 		state.awaitingCredentials = true;
-		try { await runStore.commit(session, 'question', { question }); } catch { /* the card is best effort; the wait still times out */ }
-		await runStore.setStatus(session, 'awaiting_input', 'Waiting for a test account');
-		const waitStart = Date.now();
-		const answer = await new Promise(resolve => {
-			const done = value => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); if (record) record.qaAnswer = undefined; resolve(value); };
-			const timer = setTimeout(() => done({ timeout: true }), options.credentialWaitMs);
-			timer.unref?.();
-			const onAbort = () => done({ stopped: true });
-			if (signal?.aborted) return done({ stopped: true });
-			signal?.addEventListener('abort', onAbort, { once: true });
-			if (record) record.qaAnswer = done;
-		});
-		pausedMs += Date.now() - waitStart;
+		const { answer, waitedMs } = await waitForAccount({ session, runStore, record, signal, waitMs: options.credentialWaitMs, question: accountQuestion({ host, retry, reason }) });
+		pausedMs += waitedMs;
 		state.awaitingCredentials = false;
-		session.pendingQuestion = undefined;
-		try { await runStore.commit(session, 'question', { question: null }); } catch { /* best effort */ }
-		if (!answer.stopped) await runStore.setStatus(session, 'running', 'Testing the site');
-		if (answer.credentials) session.qaAuth = { ...(session.qaAuth ?? {}), authorized: true, ...(answer.credentials.loginUrl ? { loginUrl: answer.credentials.loginUrl } : {}) };
 		if (answer.skip || answer.timeout) state.credentialsDeclined = true;
 		if (answer.timeout) await say(`I didn't get an answer within ${Math.round(options.credentialWaitMs / 60000)} minutes, so I'm continuing with the public pages. Start a new run with a test account to cover the signed-in area.`);
 		else if (answer.skip) await say('OK, I\'ll test the public pages only.');

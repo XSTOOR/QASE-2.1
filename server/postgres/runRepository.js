@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { MAX_FOUNDER_STATE_BYTES, normalizeFounderState } from '../founderService.js';
-import { normalizePendingSqaState } from '../sqaService.js';
 import { currentRequestActor } from '../requestActor.js';
 import { normalizeQaScopeSelection } from '../../public/qaScopeCatalog.js';
 import { hybridStorage, hydrateHybrid } from '../hybridPersistence.js';
@@ -60,6 +59,7 @@ const EVENT_CHILD_GROUPS = new Map([
 	['session', Object.freeze([])],
 	['sqa', Object.freeze([])],
 	['sqa.created', Object.freeze([])],
+	['sqa.state', Object.freeze([])],
 	['founder.observation', Object.freeze([])],
 	['founder.finalized', Object.freeze([])],
 	['founder.created', Object.freeze([])],
@@ -543,9 +543,7 @@ function hydrateRun(row, children) {
 		ownerUserId: row.created_by_user_id ?? undefined
 	};
 	if (session.mode === 'sqa') {
-		session.sqa = normalizePendingSqaState(row.sqa_assessment ?? {
-			scope: { profiles: names(row.sqa_profiles) }
-		});
+		session.sqa = row.sqa_assessment ?? { scope: { profiles: names(row.sqa_profiles) } };
 	}
 	if (session.mode === 'founder') {
 		session.founder = normalizeFounderState(row.founder_assessment);

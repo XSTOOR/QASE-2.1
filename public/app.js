@@ -1,8 +1,3 @@
-import { describeSqaLifecycle, groupSqaUnresolvedResults, sqaMissingEvidenceRequirements } from './sqaPresentation.js';
-import { renderSqaResearchReport } from './sqaResearchSections.js';
-import { renderSqaReviewPanel } from './sqaReviewView.js';
-import { sqaReportModel } from './sqaReportModel.js';
-import { evidenceInspectButton, renderSqaTraceability } from './sqaEvidenceView.js';
 import { previewCollapsed } from './previewLayout.js';
 import { renderProbeIds, hasInteractiveSurface } from './renderHealth.js';
 import { renderMatrixPicker } from './matrixPicker.js';
@@ -47,8 +42,6 @@ import { channelFor as channelForClient } from './browserChannels.js';
 import { fallbackOptionsFor, availabilityMeta, describeQueue } from './deviceRuntimeUi.js';
 import { resolveActiveRuntimeEnvironment, viewForSelection } from './activeRuntimeEnvironment.js';
 import { chromeViewModel } from './browserChrome.js';
-import { SQA_REQUIRED_BROWSER_ATTRIBUTES, describeSqaScopeSelection } from './sqaScopeSelection.js';
-import { SQA_BUSINESS_CATEGORIES } from './sqaBusinessCategories.js';
 import { founderLaunchProblems } from './founderLaunch.js';
 import {
 	lastRunByCase, caseStatus, platformsOf, caseEnvLines,
@@ -64,6 +57,7 @@ import { blockedRunReason, preferredResultTab, runPresentationLabel, runPresenta
 import { createQaJourney, normalizeWebsite } from './qaJourney.js';
 import { createQaEvidenceWorkspace, isQaEvidenceRun } from './qaEvidenceView.js';
 import { isQaConversationMessage, renderQaMessageBody } from './qaConversation.js';
+import { complianceBadge, isSqaComplianceRun, renderComplianceView } from './sqaComplianceView.js';
 import { workflowStatus } from './workflowStatus.js';
 import { renderJevExecution } from './jevExecutionView.js';
 import { planPresentation } from './planPresentation.js';
@@ -246,9 +240,6 @@ const state = {
 	bubbles: new Map(),
 	viewport: { width: 1440, height: 900 },
 	cursorTimer: undefined,
-	sqaCatalog: undefined,
-	sqaCatalogPromise: undefined,
-	sqaReviewSelection: undefined,
 	founderCatalog: undefined,
 	founderProjectState: null,
 	founderHandoffPayload: null,
@@ -1335,7 +1326,7 @@ function applySessionSnapshot(session) {
 	// QA runs use the conversation layout: the agent's messages, findings and report
 	// cards on the left, the live browser and the evidence tabs beside them.
 	document.body.dataset.qaWorkspace = 'false';
-	document.body.dataset.qaConversation = String(session.mode === 'qa');
+	document.body.dataset.qaConversation = String(session.mode === 'qa' || isSqaComplianceRun(session));
 	if (changedSession && isQaEvidenceRun(session) && document.body.dataset.page === 'run') {
 		activateDetailTab($('tab-plan'));
 		setWorkspaceView('agent');
@@ -1790,10 +1781,14 @@ function renderHeader() {
 		return;
 	}
 	if (session.mode === 'sqa') {
-		const target = session.sqa?.scope?.target ?? session.sqa?.assessment?.target ?? {};
-		el.chatTitle.textContent = target.name ?? session.title ?? 'Quality review';
-		el.chatTarget.textContent = [target.release, target.environment].filter(Boolean).join(' · ')
-			|| 'Standards-informed product quality review';
+		const host = session.targetUrl ? hostOf(session.targetUrl) : '';
+		const product = session.sqa?.product?.name;
+		el.chatTitle.textContent = isSqaComplianceRun(session)
+			? `Compliance test${product || host ? ` · ${product || host}` : ''}`
+			: session.sqa?.scope?.target?.name ?? session.title ?? 'Quality review';
+		el.chatTarget.textContent = isSqaComplianceRun(session)
+			? [host, session.sqa?.frameworks?.length ? session.sqa.frameworks.map(item => item.name).slice(0, 3).join(', ') : 'Standards and laws that apply'].filter(Boolean).join(' · ')
+			: 'Earlier quality review';
 		setStatus(session.status);
 		return;
 	}
@@ -1876,7 +1871,7 @@ function renderCurrentActivity() {
 	} else if (session?.status === 'done') {
 		const outcome = runPresentationStatus(session);
 		if (outcome === 'blocked') {
-			const summary = session.mode === 'sqa' ? 'Quality review finished with evidence gaps' : 'Testing could not proceed';
+			const summary = session.mode === 'sqa' ? 'Compliance test finished with gaps' : 'Testing could not proceed';
 			el.currentActivityState.textContent = `${summary} — ${truncate(blockedRunReason(session), 160)}`;
 		} else {
 			el.currentActivityState.textContent = outcome === 'partial' ? 'QA scenarios completed — review executed evidence and remaining workflows.' : 'Testing complete';
@@ -1917,7 +1912,7 @@ function setStatus(status) {
 	renderMiniSummary();
 	const running = status === 'running';
 	// The QA engine keeps its browser open while it waits for a sign-in answer; it can still be stopped.
-	const qaWaiting = status === 'awaiting_input' && state.session?.mode === 'qa' && state.session?.pendingQuestion?.kind === 'qa_credentials';
+	const qaWaiting = status === 'awaiting_input' && ['qa', 'sqa'].includes(state.session?.mode) && state.session?.pendingQuestion?.kind === 'qa_credentials';
 	el.stopRun.hidden = !(running || qaWaiting);
 	el.stopRun.disabled = stopping;
 	el.stopRun.textContent = stopping ? 'Stopping…' : 'Stop';
@@ -1929,7 +1924,7 @@ function setStatus(status) {
 	el.sendBtn.disabled = running;
 	el.composerInput.disabled = running;
 	el.composerHint.hidden = !running;
-	if (state.session?.mode === 'qa') {
+	if (state.session?.mode === 'qa' || isSqaComplianceRun(state.session)) {
 		el.composerHint.textContent = 'Qase is testing. Press Stop to end early; you still get the report.';
 		if (qaWaiting) el.composerInput.placeholder = 'Use the sign-in card above, or reply "skip" to test public pages only';
 		else if (el.composerInput.placeholder.startsWith('Use the sign-in card')) el.composerInput.placeholder = 'Paste a URL or tell Qase what to test…';
@@ -2071,7 +2066,7 @@ function renderStageCollapse() {
 			const result = count === 1 ? '1 finding' : `${count} findings`;
 			const blocked = runPresentationStatus(state.session) === 'blocked';
 			el.stageNote.textContent = blocked
-				? (state.session?.mode === 'sqa' && status === 'done' ? 'Quality review finished · Evidence gaps · Open preview' : 'Run blocked · Review report · Open preview')
+				? (state.session?.mode === 'sqa' && status === 'done' ? 'Compliance test finished · Gaps found · Open preview' : 'Run blocked · Review report · Open preview')
 				: state.session?.status === 'done'
 					? `Run complete · ${result} · Open preview`
 					: ['running', 'awaiting_input'].includes(status)
@@ -2428,7 +2423,7 @@ async function openFeedbackModal() {
 	const duration = Number.isFinite(session.completedAt) && Number.isFinite(session.startedAt)
 		? formatClock((session.completedAt - session.startedAt - (Number.isFinite(session.pausedSeconds) ? session.pausedSeconds * 1000 : 0)) / 1000)
 		: null;
-	const modeLabel = session.mode === 'sqa' ? 'SQA Review' : session.mode === 'founder' ? 'Founder Review' : 'Test Run';
+	const modeLabel = session.mode === 'sqa' ? 'Compliance Test' : session.mode === 'founder' ? 'Founder Review' : 'Test Run';
 	const bits = [`${modeLabel}: ${session.id.slice(0, 8)}`];
 	if (session.targetUrl) bits.push(String(session.targetUrl));
 	bits.push(failed ? 'Status: Failed' : 'Status: Completed');
@@ -4372,67 +4367,54 @@ function renderReportFeedbackSection(record, container = el.reportView) {
 	container.append(section);
 }
 
+function sqaViewActions() {
+	const session = state.session;
+	return {
+		artifactUrl: id => `/api/sessions/${encodeURIComponent(session.id)}/artifacts/${encodeURIComponent(id)}`,
+		findingFor: requirementId => session.findings?.find(item => item.requirementId === requirementId),
+		onOpenFinding: finding => openFindingDetail(finding.id),
+		onDownloadPdf: async () => { try { await downloadReportPdf('qase-compliance-report.pdf'); } catch (error) { exportError(error, 'The PDF export failed.'); } },
+		onDownloadMarkdown: async () => {
+			try {
+				const markdownText = await apiText(`/sessions/${session.id}/report.md`);
+				const url = URL.createObjectURL(new Blob([markdownText], { type: 'text/markdown;charset=utf-8' }));
+				const save = document.createElement('a');
+				save.href = url; save.download = 'qase-compliance-report.md';
+				document.body.append(save); save.click(); save.remove();
+				setTimeout(() => URL.revokeObjectURL(url), 0);
+			} catch (error) { exportError(error, 'The Markdown export failed.'); }
+		},
+		onCopyFixes: async (_event, target) => {
+			try { await navigator.clipboard.writeText(buildAllFixPromptsMarkdown(session)); target.textContent = 'Copied ✓'; toast('All fix prompts copied.', 'good'); }
+			catch { target.textContent = 'Copy failed'; }
+			setTimeout(() => { target.textContent = 'Copy all fix prompts'; }, 1800);
+		}
+	};
+}
+
+/** Report tab for a compliance run: the same view, with the submitter's feedback below. */
 function renderSqaReportTab() {
-	const sqa = state.session?.sqa ?? {};
-	const assessment = sqa.assessment;
-	const lifecycle = describeSqaLifecycle(sqa, state.session?.status, state.session?.activities?.length ?? 0);
-	if (!lifecycle.finalized || !assessment) {
+	const session = state.session;
+	if (isSqaComplianceRun(session) && !session.report) {
 		const pending = document.createElement('div');
 		pending.className = 'feed-empty';
-		pending.textContent = lifecycle.detail || 'The quality report is available after the review is finalized.';
+		pending.textContent = session.status === 'running' || session.status === 'awaiting_input'
+			? 'The compliance report appears here when the test finishes. Follow progress in the Compliance tab.'
+			: 'This compliance test has no report yet.';
 		el.reportView.append(pending);
 		return;
 	}
-
-	const notice = document.createElement('aside');
-	notice.className = 'sqa-notice';
-	const noticeTitle = document.createElement('strong');
-	noticeTitle.textContent = 'Quality review report';
-	const noticeText = document.createElement('p');
-	noticeText.textContent = assessment.disclaimer
-		?? 'This scoped engineering assessment is not legal advice, regulatory approval, accreditation, an audit opinion, or certification.';
-	notice.append(noticeTitle, noticeText);
-
-	const groups = groupSqaUnresolvedResults(assessment.results);
-	const unresolved = renderSqaUnresolved(groups);
-	el.reportView.append(renderSqaVerdict(assessment, lifecycle), renderSqaOutcomeSummary(assessment, groups, unresolved), renderSqaReportActions(), notice, unresolved);
-	el.reportView.append(renderSqaCoverage(assessment));
-	if (assessment.executionBudget) el.reportView.append(renderSqaExecutionBudget(assessment.executionBudget));
-	if (assessment.researchReport) el.reportView.append(renderSqaResearchReport(assessment.researchReport));
-	el.reportView.append(
-		renderSqaControls(assessment.results ?? []),
-		renderSqaTraceability(sqaReportModel(assessment), { runId: state.session.id, api }),
-		renderSqaSources(assessment.frameworkCoverage ?? []),
-		renderSqaScope(sqa.scope ?? {}, assessment)
-	);
-	// USER FEEDBACK section — the submitter's own feedback for THIS SQA run,
-	// same rendering and run-scoping as the QA report.
-	renderReportFeedbackSection(state.runRatings.get(state.session.id)
-		?? (state.feedback.existingLoadedFor === state.session.id ? state.feedback.existing : undefined));
+	el.reportView.append(renderComplianceView(session, sqaViewActions()));
+	renderReportFeedbackSection(state.runRatings.get(session.id)
+		?? (state.feedback.existingLoadedFor === session.id ? state.feedback.existing : undefined));
 }
 
-/* ── Event stream ────────────────────────────────────────────────── */
-
-/* ── Software quality assurance ─────────────────────────────────────────── */
-
-const SQA_RESULT_META = Object.freeze({
-	pass: { label: 'Pass', mark: '✓' },
-	fail: { label: 'Fail', mark: '×' },
-	blocked: { label: 'Blocked', mark: '!' },
-	not_assessed: { label: 'Not assessed', mark: '—' },
-	not_applicable: { label: 'Not applicable', mark: '—' }
-});
+/* ── Compliance testing (SQA) ───────────────────────────────────────── */
 
 function humanizeSqaId(value) {
 	return String(value ?? '')
 		.replaceAll('_', ' ')
 		.replace(/\b\w/g, character => character.toUpperCase());
-}
-
-function sqaValues(value) {
-	if (Array.isArray(value)) return value;
-	if (value && typeof value === 'object') return Object.values(value);
-	return [];
 }
 
 function showCompletedFounderReport() {
@@ -4449,9 +4431,10 @@ function syncSqaDetailMode(selectDefault = false) {
 	const isSqa = state.session?.mode === 'sqa';
 	const isFounder = state.session?.mode === 'founder';
 	const enteringFounder = isFounder && (el.founderTab.hidden || selectDefault);
+	const enteringSqa = isSqa && (el.sqaTab.hidden || selectDefault);
 	el.sqaTab.hidden = !isSqa;
 	el.founderTab.hidden = !isFounder;
-	if (isSqa && !el.sqaTab.classList.contains('is-active')) {
+	if (enteringSqa) {
 		activateDetailTab(el.sqaTab);
 	} else if (enteringFounder) {
 		activateDetailTab(el.founderTab);
@@ -4474,745 +4457,20 @@ function syncFeatureDock() {
 	}
 }
 
+/** The Compliance tab: live progress while testing, the full assessment once finished. */
 function renderSqa() {
-	el.sqaView.replaceChildren();
 	if (state.session?.mode !== 'sqa') {
+		el.sqaView.replaceChildren();
 		el.countSqa.textContent = '';
 		return;
 	}
-
-	const sqa = state.session.sqa ?? {};
-	const sqaReviewRunId = state.session.id;
-	const scope = sqa.scope ?? {};
-	const assessment = sqa.assessment;
-	const executionNotice=renderModeReasoning(state.session);
-	if(executionNotice)el.sqaView.append(executionNotice);
-	const lifecycle = describeSqaLifecycle(sqa, state.session.status, state.session.activities?.length ?? 0);
-	el.countSqa.textContent = lifecycle.badge;
-
-	// #17934: live token usage row for SQA Mode — same authoritative source
-	// (SSE 'usage' → session.tokenUsage) as the header chip. Includes the
-	// per-model breakdown so JEV vs primary-model spend is visible (#17936).
-	const sqaTokens = document.createElement('div');
-	sqaTokens.className = 'sqa-tokens';
-	const usageSummary = tokenSummaryText(state.session.tokenUsage);
-	if (usageSummary) {
-		sqaTokens.textContent = `Model usage: ${usageSummary}`;
-		sqaTokens.title = state.session.tokenUsage.estimated === true
-			? 'Includes estimates for model calls with incomplete usage reporting.'
-			: 'Token usage reported by the model gateway.';
-		const perModel = state.session.tokenUsage.byModel;
-		if (perModel && Object.keys(perModel).length > 0) {
-			const modelLines = Object.entries(perModel)
-				.sort((a, b) => (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens))
-				.map(([model, u]) => `${model}: ${formatTokens(u.inputTokens ?? 0)} in · ${formatTokens(u.outputTokens ?? 0)} out`)
-				.join('\n');
-			sqaTokens.title = `${sqaTokens.title}\n${modelLines}`;
-		}
-	} else if (state.session.status === 'running') {
-		sqaTokens.textContent = 'Tokens: awaiting usage report…';
-		sqaTokens.title = 'The model gateway has not reported usage for this run yet.';
-	} else {
-		sqaTokens.textContent = 'Token usage unavailable';
-		sqaTokens.title = 'No token usage was reported for this run.';
+	// Keep open disclosures (requirements, sources) open across live updates.
+	const open = new Set([...el.sqaView.querySelectorAll('details[open]')].map(item => item.dataset.requirement ?? item.querySelector('summary')?.textContent));
+	el.sqaView.replaceChildren(renderComplianceView(state.session, sqaViewActions()));
+	for (const item of el.sqaView.querySelectorAll('details')) {
+		if (open.has(item.dataset.requirement ?? item.querySelector('summary')?.textContent)) item.open = true;
 	}
-	el.sqaView.append(sqaTokens);
-
-	const notice = document.createElement('aside');
-	notice.className = 'sqa-notice';
-	const noticeTitle = document.createElement('strong');
-	noticeTitle.textContent = 'Review boundary';
-	const noticeText = document.createElement('p');
-	noticeText.textContent = assessment?.disclaimer ?? scope.disclaimer
-		?? 'This scoped engineering assessment is not legal advice, regulatory approval, accreditation, an audit opinion, or certification.';
-	notice.append(noticeTitle, noticeText);
-	const groups = assessment ? groupSqaUnresolvedResults(assessment.results) : undefined;
-	const unresolved = groups ? renderSqaUnresolved(groups) : undefined;
-	el.sqaView.append(renderSqaVerdict(assessment, lifecycle));
-	if (assessment && lifecycle.phase !== 'ready') el.sqaView.append(renderSqaOutcomeSummary(assessment, groups, unresolved));
-	el.sqaView.append(notice);
-	el.sqaView.append(renderSqaReviewPanel({
-		session: state.session,
-		role: state.user?.role,
-		selectedControlId: state.sqaReviewSelection?.runId === sqaReviewRunId ? state.sqaReviewSelection.controlId : undefined,
-		onSelectControl: controlId => { state.sqaReviewSelection = { runId: sqaReviewRunId, controlId }; },
-		api,
-		selectRun: id => selectSession(id),
-		refresh: async (sqa, { focusControl = false } = {}) => {
-			if (state.session?.id !== sqaReviewRunId) return;
-			if (sqa.reviewRevision === undefined || sqa.reviewRevision > (state.session.sqa?.reviewRevision ?? 0)) {
-				state.session.sqa = sqa;
-				renderSqa(); renderReport(); renderHeader();
-				void refreshRuns();
-			}
-			if (focusControl && el.sqaTab.classList.contains('is-active')) focusSqaReviewControl();
-		},
-		downloadMarkdown: async (url, filename) => {
-			const text = await apiText(url);
-			const blobUrl = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
-			const link = document.createElement('a'); link.href = blobUrl; link.download = filename;
-			document.body.append(link); link.click(); link.remove();
-			setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
-		}
-	}));
-
-	if (!lifecycle.finalized && lifecycle.phase === 'ready') {
-		const pending = document.createElement('div');
-		pending.className = 'sqa-pending';
-		const label = document.createElement('strong');
-		label.textContent = 'Preparing the review';
-		const text = document.createElement('p');
-		text.textContent = 'Qase will open the target and begin collecting evidence. The final result appears after every applicable check finishes.';
-		pending.append(label, text);
-		el.sqaView.append(pending);
-		return;
-	}
-	if (!assessment) return;
-
-	if (lifecycle.finalized) el.sqaView.append(renderSqaReportActions());
-	if (assessment.researchReport) el.sqaView.append(renderSqaResearchReport(assessment.researchReport));
-	el.sqaView.append(unresolved);
-	el.sqaView.append(renderSqaCoverage(assessment));
-	if (assessment.executionBudget) el.sqaView.append(renderSqaExecutionBudget(assessment.executionBudget));
-	el.sqaView.append(renderSqaControls(assessment.results ?? []));
-	el.sqaView.append(renderSqaTraceability(sqaReportModel(assessment), { runId: state.session.id, api }));
-	el.sqaView.append(renderSqaSources(assessment.frameworkCoverage ?? []));
-	el.sqaView.append(renderSqaScope(scope, assessment));
-}
-
-function renderSqaReportActions() {
-	const actions = document.createElement('div');
-	actions.className = 'report-actions sqa-report-actions';
-	actions.setAttribute('aria-label', 'Quality review report actions');
-
-	const download = document.createElement('button');
-	download.className = 'btn btn-ghost btn-sm';
-	download.type = 'button';
-	download.textContent = 'Download .md';
-	download.onclick = async () => {
-		try {
-			const markdownText = await apiText(`/sessions/${state.sessionId}/report.md`);
-			const url = URL.createObjectURL(new Blob([markdownText], { type: 'text/markdown;charset=utf-8' }));
-			const save = document.createElement('a');
-			save.href = url;
-			save.download = 'qase-sqa-assessment.md';
-			document.body.append(save);
-			save.click();
-			save.remove();
-			window.setTimeout(() => URL.revokeObjectURL(url), 0);
-		} catch (error) {
-			exportError(error, 'The SQA report download failed.');
-		}
-	};
-
-	const copy = document.createElement('button');
-	copy.className = 'btn btn-ghost btn-sm';
-	copy.type = 'button';
-	copy.textContent = 'Copy report';
-	copy.onclick = async () => {
-		try {
-			const markdownText = await apiText(`/sessions/${state.sessionId}/report.md`);
-			await navigator.clipboard.writeText(markdownText);
-			toast('Quality review copied to the clipboard.', 'good');
-		} catch (error) {
-			exportError(error, 'The SQA report copy failed.');
-		}
-	};
-
-	const pdf = document.createElement('button');
-	pdf.className = 'btn btn-primary btn-sm';
-	pdf.type = 'button';
-	pdf.textContent = 'Download PDF';
-	pdf.onclick = async () => {
-		try { await downloadReportPdf('qase-sqa-assessment.pdf'); }
-		catch (error) { exportError(error, 'The PDF export failed.'); }
-	};
-
-	const findings = Array.isArray(state.session?.findings) ? state.session.findings : [];
-
-	const copyFixes = document.createElement('button');
-	copyFixes.className = 'btn btn-ghost btn-sm';
-	copyFixes.type = 'button';
-	copyFixes.textContent = 'Copy fix prompts';
-	copyFixes.disabled = findings.length === 0;
-	copyFixes.title = findings.length === 0
-		? 'No findings to generate fix prompts for.'
-		: 'Copies one long markdown block containing a fix prompt for every finding.';
-	copyFixes.onclick = async () => {
-		const markdown = buildAllFixPromptsMarkdown(state.session);
-		if (!markdown) { toast('No findings to build fix prompts from.', 'bad'); return; }
-		try { await navigator.clipboard.writeText(markdown); toast('All fix prompts copied.', 'good'); }
-		catch { toast('Clipboard is blocked in this browser.', 'bad'); }
-	};
-
-	const downloadFixes = document.createElement('button');
-	downloadFixes.className = 'btn btn-ghost btn-sm';
-	downloadFixes.type = 'button';
-	downloadFixes.textContent = 'Download fix prompts (.md)';
-	downloadFixes.disabled = findings.length === 0;
-	downloadFixes.onclick = () => {
-		const markdown = buildAllFixPromptsMarkdown(state.session);
-		if (!markdown) { toast('No findings to build fix prompts from.', 'bad'); return; }
-		const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }));
-		const save = document.createElement('a');
-		save.href = url;
-		save.download = 'qase-sqa-fix-prompts.md';
-		document.body.append(save);
-		save.click();
-		save.remove();
-		window.setTimeout(() => URL.revokeObjectURL(url), 0);
-	};
-
-	const rated = state.runRatings.get(state.sessionId)
-		?? (state.feedback.existingLoadedFor === state.sessionId ? state.feedback.existing : undefined);
-	const provideFeedback = document.createElement('button');
-	provideFeedback.className = 'btn btn-ghost btn-sm';
-	provideFeedback.type = 'button';
-	provideFeedback.textContent = rated ? 'View Feedback' : 'Provide Feedback';
-	provideFeedback.title = rated
-		? 'View your submitted feedback for this assessment.'
-		: 'Rate this SQA assessment experience and tell us how it went.';
-	provideFeedback.onclick = () => openFeedbackModal();
-
-	actions.append(pdf, provideFeedback);
-	const developerActions = document.createElement('details');
-	developerActions.className = 'report-developer-actions';
-	const developerSummary = document.createElement('summary');
-	developerSummary.textContent = 'Advanced / developer tools';
-	const developerButtons = document.createElement('div');
-	developerButtons.className = 'report-developer-buttons';
-	developerButtons.append(download, copy, copyFixes, downloadFixes);
-	developerActions.append(developerSummary, developerButtons);
-	const actionGroup = document.createElement('div');
-	actionGroup.className = 'report-action-group';
-	actionGroup.append(actions, developerActions);
-	return actionGroup;
-}
-
-function renderSqaVerdict(assessment, lifecycle) {
-	const node = document.createElement('section');
-	node.className = 'sqa-verdict';
-	node.dataset.status = lifecycle.status;
-
-	const mark = document.createElement('span');
-	mark.className = 'sqa-verdict-mark';
-	mark.setAttribute('aria-hidden', 'true');
-	mark.textContent = lifecycle.mark;
-
-	const body = document.createElement('div');
-	const eyebrow = document.createElement('span');
-	eyebrow.className = 'sqa-eyebrow';
-	eyebrow.textContent = lifecycle.eyebrow;
-	const title = document.createElement('strong');
-	title.textContent = lifecycle.label;
-	const detail = document.createElement('p');
-	if (lifecycle.finalized && assessment) {
-		if (lifecycle.evidenceIncomplete) {
-			detail.textContent = 'The assessment remains blocked while required evidence is pending.';
-		} else if (lifecycle.status === 'blocked' && lifecycle.evidenceGapCount) {
-			detail.textContent = 'Some controls remain unresolved. See the browser results and required reviewer evidence below.';
-		} else {
-			const gates = assessment.gates ?? [];
-			const passed = gates.filter(gate => gate.status === 'pass').length;
-			const risk = assessment.risk?.level ? ` Residual risk: ${humanizeSqaId(assessment.risk.level)}.` : '';
-			detail.textContent = `${passed}/${gates.length} decision gates passed.${risk}`;
-		}
-	} else if (lifecycle.detail) {
-		detail.textContent = lifecycle.detail;
-	} else if (lifecycle.phase === 'ready') {
-		detail.textContent = 'The scope is saved. Testing has not started and no final verdict exists yet.';
-	} else if (lifecycle.phase === 'waiting') {
-		detail.textContent = 'Answer the agent\'s question to continue collecting assessment evidence.';
-	} else {
-		detail.textContent = 'Evidence collection is underway. Current control results remain provisional.';
-	}
-	body.append(eyebrow, title, detail);
-
-	const id = document.createElement('code');
-	id.className = 'sqa-assessment-id';
-	id.textContent = lifecycle.finalized ? (assessment?.assessmentId ?? 'result-unavailable') : 'draft-assessment';
-	node.append(mark, body, id);
-	return node;
-}
-
-function renderSqaOutcomeSummary(assessment, groups, unresolved) {
-	const summary = document.createElement('div');
-	summary.className = 'sqa-outcome-split';
-	summary.append(renderSqaTechnicalSummary(assessment.technicalSummary));
-
-	const count = groups.reviewer.length + groups.mixed.length;
-	const copy = count === 1 ? '1 control needs evidence from a reviewer.'
-		: count > 1 ? `${count} controls need evidence from a reviewer.`
-		: 'No outstanding reviewer evidence is listed.';
-	const reviewer = sqaSection('Reviewer evidence', copy);
-	reviewer.classList.add('sqa-reviewer-summary');
-	if (count > 0) {
-		const content = document.createElement('div');
-		content.className = 'sqa-reviewer-summary-content';
-		if (groups.mixed.length) {
-			const mixed = document.createElement('p');
-			mixed.textContent = groups.mixed.length === 1 ? '1 of these controls also needs browser evidence.'
-				: `${groups.mixed.length} of these controls also need browser evidence.`;
-			content.append(mixed);
-		}
-		const target = unresolved.querySelector('[data-kind="reviewer"]') ?? unresolved.querySelector('[data-kind="mixed"]');
-		const button = document.createElement('button');
-		button.className = 'btn btn-ghost btn-sm';
-		button.type = 'button';
-		button.textContent = 'View required evidence';
-		button.addEventListener('click', () => {
-			target.focus({ preventScroll: true });
-			target.scrollIntoView({ block: 'start' });
-		});
-		content.append(button);
-		reviewer.append(content);
-	}
-	summary.append(reviewer);
-	return summary;
-}
-
-function renderSqaTechnicalSummary(summary) {
-	const applicable = Number(summary?.applicableControls) || 0;
-	const verdict = summary?.verdict ?? 'not_applicable';
-	const meta = SQA_RESULT_META[verdict] ?? { label: humanizeSqaId(verdict), mark: '•' };
-	const node = sqaSection(
-		'Browser checks',
-		!summary ? 'This assessment has no saved browser check summary.'
-			: applicable ? `${applicable} automated web check${applicable === 1 ? '' : 's'} in scope. This summary covers browser checks only.`
-			: 'No automated web checks applied to this scope.'
-	);
-	node.classList.add('sqa-technical');
-	if (!summary || !applicable) return node;
-
-	const summaryRow = document.createElement('div');
-	summaryRow.className = 'sqa-technical-summary';
-	summaryRow.dataset.status = verdict;
-	const status = document.createElement('span');
-	status.className = 'sqa-status';
-	status.textContent = meta.label;
-	const copy = document.createElement('p');
-	copy.textContent = verdict === 'pass'
-		? 'The automated web checks all passed.'
-		: verdict === 'fail'
-			? 'At least one automated browser check produced an evidence-backed failure.'
-			: verdict === 'blocked'
-				? 'At least one automated browser check could not complete or lacks technical evidence.'
-				: 'This assessment scope contains no automated web controls.';
-	summaryRow.append(status, copy);
-	node.append(summaryRow);
-
-	const counts = document.createElement('dl');
-	counts.className = 'sqa-technical-counts';
-	for (const [label, key] of [['Passed', 'pass'], ['Failed', 'fail'], ['Blocked', 'blocked'], ['Not run', 'not_assessed']]) {
-		const item = document.createElement('div');
-		const value = document.createElement('dd');
-		value.textContent = String(Number(summary?.[key]) || 0);
-		const term = document.createElement('dt');
-		term.textContent = label;
-		item.append(value, term);
-		counts.append(item);
-	}
-	node.append(counts);
-	return node;
-}
-
-function renderSqaExecutionBudget(budget) {
-	const browser = budget?.browserTools ?? {};
-	const tokens = budget?.inputTokens ?? {};
-	const node = sqaSection(
-		'Run budget',
-		'Usage is shown against the reserved closeout threshold; the hard limit remains a safety net.'
-	);
-	const grid = document.createElement('dl');
-	grid.className = 'sqa-scope-grid';
-	appendSqaDefinition(grid, 'Browser actions', `${Number(browser.used) || 0} / ${Number(browser.evidenceLimit) || 0}`);
-	appendSqaDefinition(grid, 'Browser actions remaining', Math.max(0, Number(browser.remainingForEvidence) || 0));
-	appendSqaDefinition(grid, 'Input tokens', `${Number(tokens.used) || 0} / ${Number(tokens.closeoutThreshold) || 0}`);
-	appendSqaDefinition(grid, 'Tokens before closeout', Math.max(0, Number(tokens.remainingBeforeCloseout) || 0));
-	appendSqaDefinition(grid, 'Budget closeout', budget.closeout
-		? `${humanizeSqaId(budget.closeout.mode)} · ${humanizeSqaId(budget.closeout.trigger)}`
-		: 'Not used');
-	node.append(grid);
-	return node;
-}
-
-function renderSqaScope(scope, assessment) {
-	const target = assessment?.target ?? scope.target ?? {};
-	const profiles = assessment?.profiles ?? scope.profiles ?? [];
-	const attributes = assessment?.attributes ?? scope.attributes ?? [];
-	const node = sqaSection('Assessment scope', 'Target, release, and declared applicability inputs.');
-	const grid = document.createElement('dl');
-	grid.className = 'sqa-scope-grid';
-	appendSqaDefinition(grid, 'Target', target.name ?? state.session.title ?? 'Not provided');
-	appendSqaDefinition(grid, 'Release', target.release ?? 'Not provided');
-	appendSqaDefinition(grid, 'Environment', target.environment ?? 'Not provided');
-	appendSqaDefinition(grid, 'Catalog', assessment?.catalogVersion ?? scope.catalogVersion ?? 'Current server catalog');
-	appendSqaDefinition(grid, 'Profiles', profiles.length ? profiles.map(humanizeSqaId).join(', ') : 'Universal core');
-	appendSqaDefinition(grid, 'Attributes', attributes.length ? attributes.map(humanizeSqaId).join(', ') : 'None declared');
-	node.append(grid);
-
-	const notesText = assessment?.scopeNotes ?? scope.scopeNotes;
-	if (notesText) {
-		const notes = document.createElement('p');
-		notes.className = 'sqa-scope-notes';
-		notes.textContent = notesText;
-		node.append(notes);
-	}
-	return node;
-}
-
-function appendSqaDefinition(listNode, term, value) {
-	const dt = document.createElement('dt');
-	dt.textContent = term;
-	const dd = document.createElement('dd');
-	dd.textContent = String(value);
-	listNode.append(dt, dd);
-}
-
-function renderSqaCoverage(assessment) {
-	const node = sqaSection('Coverage and decision gates', 'Conclusive results require pass or fail; blocked and not assessed remain unresolved.');
-	const metrics = document.createElement('div');
-	metrics.className = 'sqa-metric-grid';
-	for (const [label, value] of [
-		['Observed controls', assessment.coverage?.observed],
-		['Conclusive controls', assessment.coverage?.conclusive],
-		['Mandatory passed', assessment.coverage?.mandatoryPassed],
-		['Evidence satisfied', assessment.coverage?.evidence]
-	]) {
-		metrics.append(renderSqaMetric(label, value));
-	}
-	node.append(metrics);
-
-	const gates = document.createElement('div');
-	gates.className = 'sqa-gates';
-	for (const gate of assessment.gates ?? []) {
-		const row = document.createElement('div');
-		row.className = 'sqa-gate';
-		row.dataset.status = gate.status;
-		const status = document.createElement('span');
-		status.className = 'sqa-status';
-		status.textContent = SQA_RESULT_META[gate.status]?.label ?? humanizeSqaId(gate.status);
-		const content = document.createElement('div');
-		const title = document.createElement('strong');
-		title.textContent = gate.title;
-		const detail = document.createElement('p');
-		detail.textContent = gate.detail ?? '';
-		content.append(title, detail);
-		row.append(status, content);
-		gates.append(row);
-	}
-	node.append(gates);
-	return node;
-}
-
-function renderSqaMetric(label, value) {
-	const numeric = Number(value);
-	const percent = Number.isFinite(numeric) ? Math.max(0, Math.min(100, numeric)) : 0;
-	const card = document.createElement('div');
-	card.className = 'sqa-metric';
-	const head = document.createElement('div');
-	const name = document.createElement('span');
-	name.textContent = label;
-	const amount = document.createElement('strong');
-	amount.textContent = Number.isFinite(numeric) ? `${numeric}%` : '—';
-	head.append(name, amount);
-	const track = document.createElement('span');
-	track.className = 'sqa-meter';
-	const fill = document.createElement('i');
-	fill.style.width = `${percent}%`;
-	track.append(fill);
-	card.append(head, track);
-	return card;
-}
-
-function focusSqaReviewControl(controlId) {
-	const panel = el.sqaView.querySelector('.sqa-review-panel');
-	const control = panel?.querySelector('[data-sqa-review-control]');
-	if (control) {
-		if (controlId && control.value !== controlId && [...control.options].some(option => option.value === controlId)) {
-			control.value = controlId;
-			control.dispatchEvent(new Event('change'));
-		}
-		control.focus();
-	} else {
-		panel?.querySelector('[data-sqa-review-reason]')?.focus();
-	}
-}
-
-function renderSqaUnresolved(groups) {
-	const session = state.session;
-	const canReview = ['owner', 'admin'].includes(state.user?.role)
-		&& !['running', 'queued', 'awaiting_input'].includes(session?.status)
-		&& (session?.sqa?.finalizedAt || session?.sqa?.review?.status === 'in_review');
-	const reviewControl = canReview ? controlId => {
-		if (state.session?.id !== session.id) return;
-		state.sqaReviewSelection = { runId: session.id, controlId };
-		activateDetailTab(el.sqaTab);
-		focusSqaReviewControl(controlId);
-	} : undefined;
-	const evidenceGaps = groups.reviewer.length + groups.mixed.length;
-	const failures = groups.failures.length;
-	const browserGaps = groups.automated.length;
-	const counts = [
-		`${failures} confirmed control failure${failures === 1 ? '' : 's'}`,
-		evidenceGaps && `${evidenceGaps} ${evidenceGaps === 1 ? 'control needs' : 'controls need'} reviewer evidence`,
-		browserGaps && `${browserGaps} browser check${browserGaps === 1 ? '' : 's'} incomplete`,
-		groups.budget.length && `${groups.budget.length} stopped by the run limit`
-	].filter(Boolean);
-	const node = sqaSection('Failures and evidence gaps', `${counts.join('. ')}.`);
-
-	if (!Object.values(groups).some(results => results.length)) {
-		const empty = document.createElement('p');
-		empty.className = 'sqa-section-empty';
-		empty.textContent = 'No unresolved controls in this assessment.';
-		node.append(empty);
-		return node;
-	}
-
-	const list = document.createElement('div');
-	list.className = 'sqa-unresolved-groups';
-	for (const group of [
-		{ title: 'Confirmed failures', description: 'Evidence-backed control failures that affect the product verdict.', results: groups.failures, kind: 'failures' },
-		{ title: 'Reviewer evidence needed', description: 'An authorized reviewer needs to provide the listed documents or records.', results: groups.reviewer, kind: 'reviewer' },
-		{ title: 'Browser and reviewer evidence needed', description: 'These controls need browser evidence and reviewer records.', results: groups.mixed, kind: 'mixed' },
-		{ title: 'Browser checks incomplete', description: 'These checks could not finish or need additional browser evidence.', results: groups.automated, kind: 'automated' },
-		{ title: 'Stopped by the run limit', description: 'The run reached its budget before these checks finished. The report retains the evidence already collected.', results: groups.budget, kind: 'budget' }
-	]) {
-		if (!group.results.length) continue;
-		const section = document.createElement('section');
-		section.className = 'sqa-unresolved-group';
-		section.dataset.kind = group.kind;
-		const heading = document.createElement('h4');
-		heading.textContent = `${group.title} (${group.results.length})`;
-		if (group.kind === 'reviewer' || group.kind === 'mixed') {
-			section.tabIndex = -1;
-			section.setAttribute('aria-label', heading.textContent);
-		}
-		const description = document.createElement('p');
-		description.className = 'sqa-unresolved-group-description';
-		description.textContent = group.description;
-		const rows = document.createElement('div');
-		rows.className = 'sqa-unresolved-list';
-		for (const result of group.results) rows.append(renderSqaUnresolvedRow(result, group.kind, reviewControl));
-		section.append(heading, description, rows);
-		list.append(section);
-	}
-	node.append(list);
-	return node;
-}
-
-function renderSqaUnresolvedRow(result, kind, reviewControl) {
-	const row = document.createElement('div');
-	row.className = 'sqa-unresolved';
-	row.dataset.status = result.status;
-	const status = document.createElement('span');
-	status.className = 'sqa-status';
-	status.textContent = SQA_RESULT_META[result.status]?.label ?? humanizeSqaId(result.status);
-	const body = document.createElement('div');
-	const title = document.createElement('strong');
-	title.textContent = `${result.controlId} · ${result.title}`;
-	const requirements = ['reviewer', 'mixed', 'automated'].includes(kind) ? sqaMissingEvidenceRequirements(result) : [];
-	const missing = result.evidenceCoverage?.missing ?? [];
-	body.append(title);
-	const explanation = result.decisionNotes?.[0] ?? result.rationale
-		?? (!requirements.length ? (missing.length ? `Missing evidence: ${missing.join(', ')}.` : 'A conclusive evidence-backed result is not available.') : undefined);
-	if (explanation) {
-		const reason = document.createElement('p');
-		reason.textContent = explanation;
-		body.append(reason);
-	}
-	if (requirements.length) {
-		const list = document.createElement('ul');
-		list.className = 'sqa-missing-evidence';
-		list.setAttribute('aria-label', 'Missing evidence');
-		for (const requirement of requirements) {
-			const item = document.createElement('li');
-			const label = document.createElement('span');
-			label.textContent = humanizeSqaId(requirement.type);
-			const detail = document.createElement('p');
-			const owner = requirement.owner === 'reviewer' ? 'Reviewer evidence' : 'Browser evidence';
-			const count = Number.isFinite(requirement.actual) && Number.isFinite(requirement.minimum)
-				? ` (${requirement.actual} of ${requirement.minimum} supplied)` : '';
-			detail.textContent = `${owner}${count}.${requirement.description ? ` ${requirement.description}` : ''}`;
-			item.append(label, detail);
-			list.append(item);
-		}
-		body.append(list);
-	}
-	if (reviewControl && ['reviewer', 'mixed'].includes(kind)) {
-		const action = document.createElement('button');
-		action.type = 'button';
-		action.className = 'btn btn-ghost btn-sm sqa-review-control-action';
-		action.textContent = 'Review this control';
-		action.setAttribute('aria-label', `Review evidence for ${result.controlId}`);
-		action.addEventListener('click', () => reviewControl(result.controlId));
-		body.append(action);
-	}
-	row.append(status, body);
-	return row;
-}
-
-function renderSqaControls(results) {
-	const node = sqaSection('Control results', `${results.length} applicable control${results.length === 1 ? '' : 's'}`);
-	const list = document.createElement('div');
-	list.className = 'sqa-control-list';
-	for (const result of results) list.append(renderSqaControl(result));
-	if (!results.length) {
-		const empty = document.createElement('p');
-		empty.className = 'sqa-section-empty';
-		empty.textContent = 'No control results were returned.';
-		list.append(empty);
-	}
-	node.append(list);
-	return node;
-}
-
-function renderSqaControl(result) {
-	const item = document.createElement('details');
-	item.className = 'sqa-control';
-	item.dataset.status = result.status;
-	const summary = document.createElement('summary');
-	const id = document.createElement('code');
-	id.textContent = result.controlId;
-	const title = document.createElement('span');
-	title.textContent = result.title;
-	const status = document.createElement('span');
-	status.className = 'sqa-status';
-	status.textContent = SQA_RESULT_META[result.status]?.label ?? humanizeSqaId(result.status);
-	summary.append(id, title, status);
-
-	const body = document.createElement('div');
-	body.className = 'sqa-control-body';
-	const meta = document.createElement('p');
-	meta.className = 'sqa-control-meta';
-	meta.textContent = `${humanizeSqaId(result.domain)} · ${humanizeSqaId(result.severity)} severity · ${humanizeSqaId(result.automationLevel)}${result.mandatory ? ' · Mandatory' : ''}`;
-	body.append(meta);
-	if (result.rationale) body.append(sqaLabeledText('Rationale', result.rationale));
-	for (const note of result.decisionNotes ?? []) body.append(sqaLabeledText('Decision note', note));
-
-	const evidenceTitle = document.createElement('h4');
-	evidenceTitle.textContent = `Evidence (${result.evidenceCoverage?.satisfied ?? 0}/${result.evidenceCoverage?.required ?? 0} requirements)`;
-	body.append(evidenceTitle);
-	const evidence = result.evidence ?? [];
-	if (!evidence.length) {
-		const none = document.createElement('p');
-		none.className = 'sqa-section-empty';
-		none.textContent = 'No evidence artifact was attached.';
-		body.append(none);
-	} else {
-		const evidenceList = document.createElement('ul');
-		evidenceList.className = 'sqa-evidence-list';
-		for (const [index, artifact] of evidence.entries()) {
-			const entry = document.createElement('li');
-			const type = document.createElement('strong');
-			type.textContent = humanizeSqaId(artifact.type);
-			const reference = safeSqaLink(artifact.reference, artifact.reference);
-			entry.append(type, reference, evidenceInspectButton({ runId: state.session.id, controlId: result.controlId, index: index + 1, api }));
-			const provenance = document.createElement('span');
-			provenance.textContent = `Collected at: ${artifact.collectedAt ?? 'not recorded'} · Digest: ${artifact.digest ?? 'not supplied'}`;
-			entry.append(provenance);
-			if (artifact.summary) {
-				const description = document.createElement('span');
-				description.textContent = artifact.summary;
-				entry.append(description);
-			}
-			evidenceList.append(entry);
-		}
-		body.append(evidenceList);
-	}
-
-	const requirements = result.evidenceCoverage?.requirements ?? [];
-	if (requirements.length) {
-		const requirementsList = document.createElement('ul');
-		requirementsList.className = 'sqa-requirement-list';
-		for (const requirement of requirements) {
-			const entry = document.createElement('li');
-			entry.dataset.satisfied = String(Boolean(requirement.satisfied));
-			entry.textContent = `${requirement.satisfied ? '✓' : '○'} ${requirement.description}`;
-			requirementsList.append(entry);
-		}
-		body.append(requirementsList);
-	}
-
-	if (result.sources?.length) {
-		const sources = document.createElement('div');
-		sources.className = 'sqa-source-tags';
-		for (const source of result.sources) {
-			const tag = document.createElement('code');
-			tag.textContent = source;
-			sources.append(tag);
-		}
-		body.append(sources);
-	}
-	item.append(summary, body);
-	return item;
-}
-
-function renderSqaSources(frameworks) {
-	const node = sqaSection('Source coverage', 'Control crosswalk coverage; source publications remain authoritative.');
-	const grid = document.createElement('div');
-	grid.className = 'sqa-source-grid';
-	for (const framework of frameworks) {
-		const card = document.createElement('article');
-		card.className = 'sqa-source-card';
-		card.dataset.status = framework.status;
-		const title = safeSqaLink(framework.title ?? framework.sourceId, framework.url);
-		title.classList.add('sqa-source-title');
-		const meta = document.createElement('p');
-		meta.textContent = `${framework.controls ?? 0} mapped controls · ${framework.coverage ?? 0}% conclusive`;
-		const status = document.createElement('span');
-		status.className = 'sqa-status';
-		status.textContent = SQA_RESULT_META[framework.status]?.label ?? humanizeSqaId(framework.status);
-		card.append(title, meta, status);
-		grid.append(card);
-	}
-	if (!frameworks.length) {
-		const empty = document.createElement('p');
-		empty.className = 'sqa-section-empty';
-		empty.textContent = 'No source crosswalk was returned.';
-		grid.append(empty);
-	}
-	node.append(grid);
-	return node;
-}
-
-function sqaSection(titleText, subtitleText) {
-	const node = document.createElement('section');
-	node.className = 'sqa-section';
-	const head = document.createElement('header');
-	const title = document.createElement('h3');
-	title.textContent = titleText;
-	const subtitle = document.createElement('p');
-	subtitle.textContent = subtitleText;
-	head.append(title, subtitle);
-	node.append(head);
-	return node;
-}
-
-function sqaLabeledText(labelText, text) {
-	const node = document.createElement('p');
-	const label = document.createElement('strong');
-	label.textContent = `${labelText}: `;
-	node.append(label, document.createTextNode(text));
-	return node;
-}
-
-function safeSqaLink(label, href) {
-	let safeUrl;
-	try {
-		const candidate = new URL(String(href ?? ''));
-		if (['http:', 'https:'].includes(candidate.protocol)) safeUrl = candidate.href;
-	} catch {
-		// Render untrusted references as text rather than active links.
-	}
-	const node = document.createElement(safeUrl ? 'a' : 'span');
-	node.textContent = String(label ?? href ?? 'Reference');
-	if (safeUrl) {
-		node.href = safeUrl;
-		node.target = '_blank';
-		node.rel = 'noreferrer noopener';
-	}
-	return node;
+	el.countSqa.textContent = complianceBadge(state.session);
 }
 
 function connect(id) {
@@ -5403,6 +4661,7 @@ function handleEvent(event) {
 		case 'report':
 			session.report = event.report;
 			updateQaEvidence(session, true);
+			if (session.mode === 'sqa') renderSqa();
 			renderReport();
 			renderHeader();
 			if (document.body.dataset.page === 'results') renderResultsPageHeader();
@@ -5410,37 +4669,14 @@ function handleEvent(event) {
 			toast('Report published.', 'good');
 			break;
 
-		case 'sqa':
-			if (event.reviewRevision !== undefined) {
-				if (event.reviewRevision <= (session.sqa?.reviewRevision ?? 0)) break;
-				const runId = session.id;
-				void api(`/sessions/${runId}`).then(latest => {
-					if (state.session?.id !== runId || latest.sqa?.reviewRevision <= (state.session.sqa?.reviewRevision ?? 0)) return;
-					state.session.sqa = latest.sqa;
-					renderSqa(); renderReport(); renderHeader(); void refreshRuns();
-				}).catch(() => undefined);
-				break;
-			}
+		case 'sqa.created':
+		case 'sqa.state':
 			session.mode = 'sqa';
-			if (Array.isArray(event.todos)) { session.todos = event.todos; renderTodos(); }
-			session.sqa ??= { scope: {} };
-			session.sqa.assessment = event.assessment;
-			if (event.final) session.sqa.finalizedAt = new Date(event.ts ?? Date.now()).toISOString();
-			else delete session.sqa.finalizedAt;
+			if (event.sqa) session.sqa = event.sqa;
 			syncSqaDetailMode();
 			renderHeader();
 			renderSqa();
-			renderReport();
-			void refreshRuns();
-			if (event.final && (!event.review || event.review.status === 'published')) toast('Quality review published.', 'good');
-			if (event.final || event.reviewRevision !== undefined) {
-				const runId = session.id;
-				void api(`/sessions/${runId}`).then(latest => {
-					if (state.session?.id !== runId) return;
-					state.session.sqa = latest.sqa;
-					renderSqa(); renderReport();
-				}).catch(() => undefined);
-			}
+			if (event.type === 'sqa.created') void refreshRuns();
 			break;
 
 		case 'founder.created':
@@ -6636,31 +5872,12 @@ const sqaUi = {
 	cancel: $('sqa-cancel'),
 	submit: $('sqa-submit'),
 	launchStatus: $('sqa-launch-status'),
-	catalogState: $('sqa-catalog-state'),
-	catalogMessage: $('sqa-catalog-message'),
-	catalogRetry: $('sqa-catalog-retry'),
-	catalogVersion: $('sqa-catalog-version'),
-	selectionSummary: $('sqa-selection-summary'),
-	selectionReasons: $('sqa-selection-reasons'),
-	scopeWarning: $('sqa-scope-warning'),
 	customize: $('sqa-customize'),
-	disclaimer: $('sqa-catalog-disclaimer'),
-	deviceSelect: null, // legacy select removed (DX Phase 3)
 	deviceLandscape: $('sqa-device-landscape'),
 	testOnChange: document.querySelector('#sqa-start [data-test-on-change]'),
-	profilesFieldset: $('sqa-profiles-fieldset'),
-	attributesFieldset: $('sqa-attributes-fieldset'),
-	profileOptions: $('sqa-profile-options'),
-	attributeOptions: $('sqa-attribute-options'),
-	targetName: $('sqa-target-name'),
 	targetUrl: $('sqa-target-url'),
-	targetRelease: $('sqa-target-release'),
-	targetEnvironment: $('sqa-target-environment'),
-	scopeNotes: $('sqa-scope-notes'),
-	businessCategory: $('sqa-business-category'),
-	businessGuidance: $('sqa-business-guidance'),
-	expandedConfirmation: $('sqa-expanded-confirmation'),
-	expandedScope: $('sqa-expanded-scope'),
+	focus: $('sqa-focus'),
+	regions: $('sqa-regions'),
 	authorization: $('sqa-authorization'),
 	error: $('sqa-form-error')
 };
@@ -6670,188 +5887,23 @@ function setSqaFormError(message = '') {
 	sqaUi.error.textContent = message;
 }
 
-async function loadSqaCatalog() {
-	if (state.sqaCatalog) return state.sqaCatalog;
-	if (!state.sqaCatalogPromise) {
-		state.sqaCatalogPromise = api('/sqa/catalog')
-			.then(catalog => {
-				if (!catalog || typeof catalog !== 'object' || !catalog.catalogVersion) {
-					throw new Error('The SQA catalog response is invalid.');
-				}
-				state.sqaCatalog = catalog;
-				return catalog;
-			})
-			.finally(() => {
-				state.sqaCatalogPromise = undefined;
-			});
-	}
-	return state.sqaCatalogPromise;
-}
-
-function paintSqaCatalog(catalog) {
-	const execution = catalog.execution;
-	const status = $('sqa-execution-status');
-	if (status) status.textContent = execution ? [
-		'Standalone SQA · ' + execution.model,
-		execution.qualified ? 'Standalone qualification current' : 'Standalone qualification pending',
-		execution.blocker
-	].filter(Boolean).join(' · ') : '';
-	const profiles = sqaValues(catalog.profiles);
-	const attributes = sqaValues(catalog.attributes);
-	const sources = sqaValues(catalog.sources);
-	const controls = sqaValues(catalog.controls);
-	sqaUi.disclaimer.textContent = catalog.disclaimer
-		?? 'This is a scoped engineering assessment and does not represent regulatory approval, an audit opinion, or certification.';
-	sqaUi.catalogVersion.textContent = `Catalog ${catalog.catalogVersion} · Evidence from actual browser checks`;
-	sqaUi.businessCategory.replaceChildren(...Object.values(SQA_BUSINESS_CATEGORIES).map(category => {
-		const option = document.createElement('option');
-		option.value = category.id;
-		option.textContent = category.title;
-		return option;
-	}));
-
-	sqaUi.profileOptions.replaceChildren(...profiles.map(profile => {
-		const id = typeof profile === 'string' ? profile : profile.id;
-		const title = typeof profile === 'string' ? humanizeSqaId(profile) : (profile.title ?? humanizeSqaId(id));
-		const description = typeof profile === 'string' ? '' : (profile.description ?? '');
-		const isCore = id === 'core';
-		const count = controls.filter(control => control.applicability?.profiles?.includes(id)).length;
-		return sqaCatalogOption({
-			name: 'sqa-profile', value: id, title, description,
-			meta: `${count} mapped control${count === 1 ? '' : 's'}${isCore ? ' · required' : ''}`,
-			checked: isCore, disabled: isCore
-		});
-	}));
-
-	sqaUi.attributeOptions.replaceChildren(...attributes.map(attribute => {
-		const id = typeof attribute === 'string' ? attribute : attribute.id;
-		const title = typeof attribute === 'string' ? humanizeSqaId(attribute) : (attribute.title ?? humanizeSqaId(id));
-		const requiredForBrowserReview = SQA_REQUIRED_BROWSER_ATTRIBUTES.includes(id);
-		return sqaCatalogOption({
-			name: 'sqa-attribute', value: id, title,
-			checked: requiredForBrowserReview,
-			disabled: requiredForBrowserReview,
-			meta: requiredForBrowserReview ? 'Required for URL-based browser review' : ''
-		});
-	}));
-	sqaUi.profilesFieldset.disabled = false;
-	sqaUi.attributesFieldset.disabled = false;
-	sqaUi.catalogState.hidden = true;
-	sqaUi.catalogRetry.hidden = true;
-	syncSqaSelectionSummary();
-	syncSqaSubmitState();
-}
-
-function syncSqaSelectionSummary() {
-	if (!sqaUi.selectionSummary) return;
-	if (!state.sqaCatalog) {
-		sqaUi.selectionSummary.textContent = 'Loading the recommended scope…';
-		sqaUi.selectionReasons?.replaceChildren();
-		return;
-	}
-	const profiles = [...sqaUi.profileOptions.querySelectorAll('input:checked')].map(input => input.value);
-	const attributes = [...sqaUi.attributeOptions.querySelectorAll('input:checked')].map(input => input.value);
-	const preview = describeSqaScopeSelection(state.sqaCatalog, { profiles, attributes, assessmentType: 'browser' });
-	sqaUi.selectionSummary.textContent = preview.text;
-	if (sqaUi.scopeWarning) {
-		sqaUi.scopeWarning.hidden = !preview.expanded;
-		sqaUi.scopeWarning.textContent = preview.warning;
-	}
-	if (sqaUi.expandedConfirmation) sqaUi.expandedConfirmation.hidden = !preview.requiresConfirmation;
-	if (sqaUi.expandedScope) {
-		sqaUi.expandedScope.required = preview.requiresConfirmation;
-		if (!preview.requiresConfirmation) sqaUi.expandedScope.checked = false;
-	}
-	if (sqaUi.scopeNotes) sqaUi.scopeNotes.required = preview.requiresRationale;
-	sqaUi.selectionReasons?.replaceChildren(...preview.reasons.map(reason => {
-		const item = document.createElement('li');
-		item.textContent = reason;
-		return item;
-	}));
-	syncSqaSubmitState();
-}
-
-function currentSqaScopePreview() {
-	if (!state.sqaCatalog) return undefined;
-	return describeSqaScopeSelection(state.sqaCatalog, {
-		assessmentType: 'browser',
-		profiles: [...sqaUi.profileOptions.querySelectorAll('input:checked')].map(input => input.value),
-		attributes: [...sqaUi.attributeOptions.querySelectorAll('input:checked')].map(input => input.value)
-	});
-}
-
-function sqaCatalogOption({ name, value, title, description = '', meta = '', checked = false, disabled = false }) {
-	const label = document.createElement('label');
-	label.className = `sqa-option${disabled ? ' is-required' : ''}`;
-	const input = document.createElement('input');
-	input.type = 'checkbox';
-	input.name = name;
-	input.value = value;
-	input.checked = checked;
-	input.defaultChecked = checked;
-	input.disabled = disabled;
-
-	const copy = document.createElement('span');
-	const heading = document.createElement('strong');
-	heading.textContent = title;
-	copy.append(heading);
-	if (description) {
-		const text = document.createElement('small');
-		text.textContent = description;
-		copy.append(text);
-	}
-	if (meta) {
-		const metadata = document.createElement('em');
-		metadata.textContent = meta;
-		copy.append(metadata);
-	}
-	label.append(input, copy);
-	return label;
+function sqaTargetUrl() {
+	try {
+		const url = new URL(sqaUi.targetUrl.value.trim());
+		return ['http:', 'https:'].includes(url.protocol) ? url.href : undefined;
+	} catch { return undefined; }
 }
 
 function syncSqaSubmitState() {
 	const missing = [];
-	if (!state.sqaCatalog) missing.push('load the assessment catalog');
-	const execution = state.sqaCatalog?.execution;
-	if (execution?.blocker) missing.push(execution.blocker);
-	try {
-		if (!['http:', 'https:'].includes(new URL(sqaUi.targetUrl.value.trim()).protocol)) throw new TypeError();
-	} catch { missing.push('enter a complete HTTP or HTTPS target URL'); }
-	if (!sqaUi.authorization.checked) missing.push('confirm testing permission');
-	const scopePreview = currentSqaScopePreview();
-	if (scopePreview?.requiresRationale && !sqaUi.scopeNotes.value.trim()) missing.push('explain the expanded scope in Review notes');
-	if (scopePreview?.requiresConfirmation && !sqaUi.expandedScope.checked) missing.push('confirm the expanded scope');
-	if (!selectedEnvironmentForRun()) missing.push('choose a device and browser in TEST ON');
+	if (!sqaTargetUrl()) missing.push('enter the product URL');
+	if (!sqaUi.authorization.checked) missing.push('confirm you may test it');
+	if (!selectedEnvironmentForRun()) missing.push('choose a device in TEST ON');
 	const busy = sqaUi.submit.dataset.busy === 'true';
 	sqaUi.submit.disabled = busy || missing.length > 0;
-	const message = busy ? 'Starting quality review…'
-		: missing.length ? `To start: ${missing.join('; ')}.` : 'Ready to start the quality review.';
+	const message = busy ? 'Starting the compliance test…'
+		: missing.length ? `To start: ${missing.join(', ')}.` : 'Ready to start.';
 	if (sqaUi.launchStatus && sqaUi.launchStatus.textContent !== message) sqaUi.launchStatus.textContent = message;
-}
-
-function showSqaCatalogState(message, { retry = false } = {}) {
-	sqaUi.catalogState.hidden = false;
-	sqaUi.catalogMessage.textContent = message;
-	sqaUi.catalogRetry.hidden = !retry;
-}
-
-async function refreshSqaCatalog({ force = false } = {}) {
-	if (force) {
-		state.sqaCatalog = undefined;
-		state.sqaCatalogPromise = undefined;
-	}
-	showSqaCatalogState('Loading assessment catalog…');
-	sqaUi.catalogRetry.disabled = true;
-	setSqaFormError();
-	try {
-		paintSqaCatalog(await loadSqaCatalog());
-	} catch (error) {
-		showSqaCatalogState('The assessment catalog could not be loaded.', { retry: true });
-		setSqaFormError(error instanceof Error ? error.message : String(error));
-	} finally {
-		sqaUi.catalogRetry.disabled = false;
-		syncSqaSubmitState();
-	}
 }
 
 let sqaStartupRequested = false;
@@ -6869,21 +5921,13 @@ async function openSqaStart({ targetUrl } = {}) {
 	if (targetUrl) sqaUi.targetUrl.value = targetUrl;
 	if (sqaUi.customize) sqaUi.customize.open = false;
 	void ensureReviewEnvironment().then(() => { renderAllTestOnBlocks(); syncSqaSubmitState(); syncFounderSubmitState(); }).catch(() => {});
-	populateDeviceSelect(sqaUi.deviceSelect, pendingDeviceId());
-	sqaUi.environmentSelect && populateEnvironmentSelect(sqaUi.environmentSelect);
 	renderTestOn('sqa-test-on');
 	if (sqaUi.testOnChange) sqaUi.testOnChange.onclick = () => devicePicker?.open?.();
 	if (sqaUi.deviceLandscape) sqaUi.deviceLandscape.checked = pendingLandscape();
-	sqaUi.profilesFieldset.disabled = true;
-	sqaUi.attributesFieldset.disabled = true;
-	showSqaCatalogState('Loading assessment catalog…');
-	syncSqaSelectionSummary();
 	sqaUi.submit.dataset.busy = 'false';
 	syncSqaSubmitState();
 	if (!sqaUi.dialog.open) sqaUi.dialog.showModal();
 	if (matchMedia('(pointer: fine)').matches) setTimeout(() => sqaUi.targetUrl?.focus(), 0);
-
-	await refreshSqaCatalog({ force: true });
 }
 
 function closeSqaStart() {
@@ -6893,90 +5937,46 @@ function closeSqaStart() {
 sqaUi.close.onclick = closeSqaStart;
 sqaUi.cancel.onclick = closeSqaStart;
 sqaUi.authorization.onchange = syncSqaSubmitState;
-sqaUi.businessCategory.onchange = () => {
-	const category = SQA_BUSINESS_CATEGORIES[sqaUi.businessCategory.value];
-	sqaUi.businessGuidance.textContent = category?.journeys?.length
-		? `Review focus: ${category.journeys.join(', ')}. Qase checks only observed, authorized features.`
-		: 'Choose the closest fit to guide the review toward relevant user journeys.';
-};
-sqaUi.expandedScope.onchange = syncSqaSubmitState;
-sqaUi.catalogRetry.onclick = () => void refreshSqaCatalog({ force: true });
-sqaUi.profileOptions.onchange = syncSqaSelectionSummary;
-sqaUi.attributeOptions.onchange = syncSqaSelectionSummary;
-for (const input of [sqaUi.targetUrl, sqaUi.targetRelease, sqaUi.targetEnvironment, sqaUi.scopeNotes]) {
-	input.addEventListener('input', syncSqaSubmitState);
-}
+sqaUi.targetUrl.addEventListener('input', syncSqaSubmitState);
 
 sqaUi.form.onsubmit = async event => {
 	event.preventDefault();
 	setSqaFormError();
 	if (!sqaUi.form.reportValidity()) return;
 	if (!ensureModelConfigured('SQA launcher')) return;
-	let targetUrl;
-	let parsedTargetUrl;
-	try {
-		parsedTargetUrl = new URL(sqaUi.targetUrl.value.trim());
-		if (!['http:', 'https:'].includes(parsedTargetUrl.protocol)) throw new TypeError();
-		targetUrl = parsedTargetUrl.href;
-	} catch {
-		setSqaFormError('Enter a complete HTTP or HTTPS target URL.');
+	const targetUrl = sqaTargetUrl();
+	if (!targetUrl) {
+		setSqaFormError('Enter a complete http:// or https:// product URL.');
 		sqaUi.targetUrl.focus();
 		return;
 	}
-	const target = {
-		name: sqaUi.targetName.value.trim() || parsedTargetUrl.hostname,
-		...(sqaUi.targetRelease.value.trim() ? { release: sqaUi.targetRelease.value.trim() } : {}),
-		...(sqaUi.targetEnvironment.value.trim() ? { environment: sqaUi.targetEnvironment.value.trim() } : {})
-	};
 	if (!sqaUi.authorization.checked) {
-		setSqaFormError('Confirm testing authorization and the non-destructive boundary first.');
+		setSqaFormError('Confirm that you have permission to test this product.');
 		sqaUi.authorization.focus();
-		return;
-	}
-
-	const profiles = [...sqaUi.profileOptions.querySelectorAll('input:checked')].map(input => input.value);
-	if (!profiles.includes('core')) profiles.unshift('core');
-	const attributes = [...sqaUi.attributeOptions.querySelectorAll('input:checked')].map(input => input.value);
-	const scopePreview = describeSqaScopeSelection(state.sqaCatalog, { profiles, attributes, assessmentType: 'browser' });
-	if (scopePreview.requiresRationale && !sqaUi.scopeNotes.value.trim()) {
-		setSqaFormError('Explain why the additional profiles or product characteristics apply in Review notes.');
-		sqaUi.customize.open = true;
-		sqaUi.scopeNotes.focus();
-		return;
-	}
-	if (scopePreview.requiresConfirmation && !sqaUi.expandedScope.checked) {
-		setSqaFormError('Confirm that the expanded scope applies to this product.');
-		sqaUi.expandedScope.focus();
 		return;
 	}
 	const environmentId = selectedEnvironmentForRun();
 	if (!environmentId) {
-		setSqaFormError('Choose an available device and browser before starting the quality review.');
+		setSqaFormError('Choose a device and browser before starting.');
 		sqaUi.testOnChange?.focus();
 		return;
 	}
 	sqaUi.submit.dataset.busy = 'true';
-	sqaUi.submit.textContent = 'Starting review…';
+	sqaUi.submit.textContent = 'Starting…';
 	syncSqaSubmitState();
 	try {
 		const result = await api('/sqa/sessions', {
 			method: 'POST',
 			body: JSON.stringify({
-				assessmentType: 'browser',
-				executionStrategy: state.sqaCatalog?.execution?.strategy,
-				businessCategory: sqaUi.businessCategory.value,
-				profiles: ['core'],
-				attributes: [...SQA_REQUIRED_BROWSER_ATTRIBUTES],
-				target,
-				scopeNotes: sqaUi.scopeNotes.value.trim(),
-				expandedScopeConfirmed: scopePreview.requiresConfirmation && sqaUi.expandedScope.checked,
 				authorizationConfirmed: true,
+				focus: sqaUi.focus.value.trim() || undefined,
+				regions: sqaUi.regions.value.trim() || undefined,
 				deviceLandscape: (sqaUi.deviceLandscape?.checked) === true,
 				environmentId
 			})
 		});
 		const session = result?.session ?? result;
-		if (!session?.id) throw new Error('The server did not return the new assessment session.');
+		if (!session?.id) throw new Error('The server did not return the new compliance run.');
 		closeSqaStart();
 		await selectSession(session.id);
 		const startError = await api(`/sessions/${session.id}/message`, {
@@ -6984,7 +5984,7 @@ sqaUi.form.onsubmit = async event => {
 			body: JSON.stringify({ text: targetUrl })
 		}).then(() => undefined, error => error);
 		if (startError) {
-			fail(new Error(`The assessment scope was created, but the test could not start: ${startError.message}`));
+			fail(new Error(`The compliance run was created, but it could not start: ${startError.message}`));
 			el.composerInput.value = targetUrl;
 			el.composerInput.focus();
 		}
@@ -6992,7 +5992,7 @@ sqaUi.form.onsubmit = async event => {
 		setSqaFormError(error instanceof Error ? error.message : String(error));
 	} finally {
 		sqaUi.submit.dataset.busy = 'false';
-		sqaUi.submit.textContent = 'Start quality review';
+		sqaUi.submit.textContent = 'Start compliance test';
 		syncSqaSubmitState();
 	}
 };
@@ -7531,18 +6531,12 @@ function renderResultsPageHeader() {
 	$('results-page-status').dataset.status = displayStatus;
 	if (isQaEvidenceRun(session)) $('results-page-status').textContent = runPresentationLabel(session);
 	$('results-page-findings').textContent = `${findings} finding${findings === 1 ? '' : 's'}`;
-	const assessment = session.mode === 'sqa' ? session.sqa?.assessment : null;
-	if (assessment) {
-		const verdict = String(assessment.verdict ?? '').toLowerCase();
-		$('results-page-status').textContent = ({ pass: 'Passed', fail: 'Failed', blocked: 'Blocked' })[verdict] ?? 'Assessment complete';
-		$('results-page-status').dataset.status = verdict === 'fail' ? 'failed' : verdict === 'pass' ? 'done' : displayStatus;
-		const summary = assessment.summary ?? {};
-		const unresolved = [
-			summary.fail > 0 ? `${summary.fail} failed` : '',
-			summary.blocked > 0 ? `${summary.blocked} blocked` : '',
-			summary.not_assessed > 0 ? `${summary.not_assessed} not assessed` : ''
-		].filter(Boolean);
-		$('results-page-findings').textContent = `${summary.applicableControls ?? 0} controls · ${unresolved.join(' · ') || `${summary.pass ?? 0} passed`}`;
+	if (isSqaComplianceRun(session) && session.report) {
+		const verdict = session.report.verdict;
+		$('results-page-status').textContent = session.report.verdictLabel ?? 'Assessment complete';
+		$('results-page-status').dataset.status = verdict === 'non_compliant' ? 'failed' : verdict === 'no_gaps_found' ? 'done' : displayStatus;
+		const counts = session.report.counts ?? {};
+		$('results-page-findings').textContent = `${session.report.frameworks?.length ?? 0} standards · ${counts.fail ?? 0} failed · ${counts.partial ?? 0} partial · ${counts.pass ?? 0} passed`;
 	}
 	let target = '';
 	try { target = session.targetUrl ? new URL(session.targetUrl).host : ''; } catch { target = session.targetUrl ?? ''; }

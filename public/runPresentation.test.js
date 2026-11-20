@@ -69,8 +69,8 @@ test('completed SQA uses its assurance verdict in full reports and lightweight l
 	assert.equal(runPresentationStatus(full), 'blocked');
 	assert.equal(runPresentationLabel(full), 'Blocked');
 	assert.equal(runPresentationStatus({ mode: 'sqa', status: 'done', sqaVerdict: 'blocked' }), 'blocked');
-	assert.match(blockedRunReason(full), /unresolved controls/);
-	assert.equal(workflowStatus(full).action, 'Review quality report');
+	assert.match(blockedRunReason(full), /could be tested/);
+	assert.equal(workflowStatus(full).action, 'Review compliance report');
 	assert.equal(full.status, 'done', 'Presentation must not rewrite the durable execution lifecycle.');
 });
 
@@ -86,8 +86,8 @@ test('failed SQA controls remain visible in full and list presentation without c
 	assert.equal(runPresentationStatus(full), 'failed');
 	assert.equal(runPresentationLabel(full), 'Failed');
 	assert.equal(runPresentationStatus({ mode: 'sqa', status: 'done', sqaVerdict: 'fail' }), 'failed');
-	assert.equal(workflowStatus(full).action, 'Review quality report');
-	assert.match(workflowStatus(full).description, /failed controls/);
+	assert.equal(workflowStatus(full).action, 'Review compliance report');
+	assert.match(workflowStatus(full).description, /Mandatory requirements/);
 	assert.equal(full.status, 'done');
 	assert.equal(runPresentationStatus({ ...full, status: 'running' }), 'running');
 	assert.equal(runPresentationLabel({ mode: 'qa', status: 'done', report: { verdict: 'fail' } }), 'Complete');
@@ -100,4 +100,12 @@ test('hybrid interruptions explain the real host pause reason without changing l
 	assert.ok(workflowStatus(hybrid).resumeBlocked);
 	assert.doesNotMatch(workflowStatus(hybrid).description, /Resume when/);
 	assert.match(workflowStatus({ ...hybrid, qaExecutionMode: 'legacy' }).description, /Resume when/);
+});
+
+test('compliance verdicts map to the customer-facing run outcome', () => {
+	for (const [verdict, expected] of [['non_compliant', 'failed'], ['gaps_found', 'partial'], ['not_assessed', 'blocked'], ['no_gaps_found', 'done']]) {
+		assert.equal(runPresentationStatus({ mode: 'sqa', status: 'done', sqa: { version: 3 }, report: { verdict } }), expected);
+		assert.equal(runPresentationStatus({ mode: 'sqa', status: 'done', reportVerdict: verdict }), expected, 'run-list summaries carry only reportVerdict');
+	}
+	assert.equal(runPresentationStatus({ mode: 'sqa', status: 'running', report: { verdict: 'non_compliant' } }), 'running');
 });

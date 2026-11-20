@@ -4,7 +4,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { normalizeFounderState } from './founderService.js';
 import { invalidTransition, recordLifecyclePhase } from './runLifecycle.js';
-import { normalizePendingSqaState } from './sqaService.js';
 import { DEFAULT_DEVICE_ID, isDeviceId } from './deviceProfiles.js';
 import { isEngineId } from './browserEngines.js';
 import { DEFAULT_ACTOR_USER_ID } from './tenancy.js';
@@ -152,7 +151,7 @@ export function loadSessions() {
 				delete session.founder;
 			} else if (session.mode === 'sqa') {
 				delete session.founder;
-				session.sqa = normalizePendingSqaState(session.sqa);
+				session.sqa ??= { scope: { profiles: ['compliance'] } };
 			} else {
 				delete session.sqa;
 				session.founder = normalizeFounderState(session.founder);

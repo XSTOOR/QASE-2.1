@@ -2,7 +2,7 @@
 
 Founder Mode is Qase's evidence-informed product, design, growth, and
 go-to-market review workflow. It uses the same constrained CleanSlate browser
-runtime as QA and SQA, but persists a separate `founder` run type and produces a
+runtime as earlier review modes, but persists a separate `founder` run type and produces a
 structured founder brief instead of a defect report or compliance verdict.
 
 ## What it reviews

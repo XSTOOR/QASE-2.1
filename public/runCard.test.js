@@ -21,7 +21,7 @@ test('progress is finite, integral and bounded', () => {
 });
 test('mode and findings have concise readable labels without missing data', () => {
  assert.equal(runCardDetails({ mode: 'founder', findingCount: 3 }).mode, 'Founder');
- assert.equal(runCardDetails({ mode: 'sqa' }).mode, 'Quality');
+ assert.equal(runCardDetails({ mode: 'sqa' }).mode, 'Compliance');
  assert.equal(runCardDetails({}).mode, 'Test');
  assert.equal(runCardDetails({ findingCount: -1 }).findings, 0);
 });

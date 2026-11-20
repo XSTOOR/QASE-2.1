@@ -1,7 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { SQA_STANDALONE_STRATEGY, standaloneSqa } from './sqaStandaloneStrategy.js';
-import { ResearchInputError, createSqaResearch, SQA_RESEARCH_TOOLS, standaloneResearchReadiness } from './sqaResearch.js';
-import { requireStandaloneExecution, standaloneProfileIdentity, standaloneResearchProfile } from './sqaStandaloneQualification.js';
 import {canonicalModeHash,legacyModeHash,modeReceiptHash} from './modeIntegrity.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { hybridProfile, loadQualification, profileIdentity } from './hybridConfig.js';
@@ -9,7 +6,6 @@ import { createHybridModelRouter, HybridPause } from './hybridModelRouter.js';
 import { createHybridTelemetry } from './hybridTelemetry.js';
 import { redact } from './secrets.js';
 import { projectModeMessages } from './modeReasoningContext.js';
-import { buildSqaWorkPlan, readSqaWorkPage } from './sqaWorkPlan.js';
 import {FOUNDER_DRAFT_PROTOCOL,founderDraftProgress,founderDraftSchema} from './founderReportDraft.js';
 import { createModeDiscovery, modeWorkReadiness, modeWorkflowSummary,modeExplorationReadiness } from './modeDiscovery.js';
 export { modeExplorationReadiness };
@@ -20,40 +16,31 @@ export function modeToolsForPhase(session, tools) {
  const name=t=>t.name||t.function?.name;
  if(state.recoveryRequired)return tools.filter(t=>['mode_verify_recovery','mode_execution_progress','ask_question'].includes(name(t)));
  if(state.phase==='synthesis')return tools;
- if(state.phase==='coverage_recovery')return tools.filter(t=>[...(standaloneSqa(session)?SQA_RESEARCH_TOOLS:[]),'mode_plan_work','mode_read_discovery','mode_execution_progress','classify_mode_observations','ask_question'].includes(name(t)));
+ if(state.phase==='coverage_recovery')return tools.filter(t=>['mode_plan_work','mode_read_discovery','mode_execution_progress','classify_mode_observations','ask_question'].includes(name(t)));
  if(state.phase==='evidence_review')return tools.filter(t=>!name(t).startsWith('browser_')&&!['mode_run_workflow','mode_start_workflow','mode_close_workflow','mode_test_surface','mode_execute_steps'].includes(name(t)));
  if(state.discovery.status!=='ready')return tools.filter(t=>['mode_discover_application','mode_execution_progress','ask_question','browser_snapshot','browser_get_url','browser_diagnostics'].includes(name(t)));
- if(!state.workflows?.length)return tools.filter(t=>['mode_plan_work','mode_read_discovery','mode_execution_progress','ask_question',...(standaloneSqa(session)?SQA_RESEARCH_TOOLS:[])].includes(name(t)));
- if(state.workflows.some(w=>['planned','running'].includes(w.status)))return tools.filter(t=>name(t).startsWith('mode_')||standaloneSqa(session)&&SQA_RESEARCH_TOOLS.includes(name(t))||['classify_mode_observations','record_founder_observation','update_todo','ask_question','report_finding'].includes(name(t))||state.loadedModeTools?.includes(name(t)));
+ if(!state.workflows?.length)return tools.filter(t=>['mode_plan_work','mode_read_discovery','mode_execution_progress','ask_question'].includes(name(t)));
+ if(state.workflows.some(w=>['planned','running'].includes(w.status)))return tools.filter(t=>name(t).startsWith('mode_')||['classify_mode_observations','record_founder_observation','update_todo','ask_question','report_finding'].includes(name(t))||state.loadedModeTools?.includes(name(t)));
  return tools;
 }
 
-const READ_ONLY_TOOLS=new Set(['browser_snapshot','browser_read_page','browser_get_url','browser_screenshot','browser_diagnostics','mode_execution_progress','read_sqa_work_plan','classify_mode_observations','web_search','web_fetch','sqa_read_research']);
+const READ_ONLY_TOOLS=new Set(['browser_snapshot','browser_read_page','browser_get_url','browser_screenshot','browser_diagnostics','mode_execution_progress','classify_mode_observations']);
 const MUTATING_ROUTE=/(?:^|\/)(?:log-?out|sign-?out|delete|remove|reset|purchase|checkout|payment|unsubscribe|destroy|revoke|deploy|publish)(?:\/|$)/i;
 const ASSET_ROUTE=/\.(?:pdf|zip|csv|json|xml|png|jpe?g|gif|svg|webp|mp[34]|webm|woff2?|exe|dmg)$/i;
 export const MODE_REASONING_STRATEGY = 'qualified-opus-jev-v1';
 export function selectsModeReasoning(session, env = process.env) {
-  if (!['sqa', 'founder'].includes(session.mode)) return false;
-  const selected = session[session.mode]?.execution?.strategy;
-  if (selected && selected !== MODE_REASONING_STRATEGY && !(session.mode === 'sqa' && selected === SQA_STANDALONE_STRATEGY)) throw new Error('Unsupported saved mode reasoning strategy.');
-  if (selected || session.mode === 'sqa' && session.sqa?.requestedExecutionStrategy === SQA_STANDALONE_STRATEGY) return true;
-  if (session.mode==='founder'&&session.founder?.reportGeneration) return false;
-  // Saved SQA runs without an explicit strategy resume through their original adapter.
-  if (session.mode==='sqa') return false;
+  if (session.mode !== 'founder') return false;
+  const selected = session.founder?.execution?.strategy;
+  if (selected && selected !== MODE_REASONING_STRATEGY) throw new Error('Unsupported saved mode reasoning strategy.');
+  if (selected) return true;
+  if (session.founder?.reportGeneration) return false;
   return env.QASE_FOUNDER_REASONING_ENABLED === 'true' && !(session.activities?.length || session[session.mode]?.observations?.length || session[session.mode]?.finalizedAt);
 }
 export function qualifiedModeProfile(settings, env = process.env, session) {
-  const requestedStandalone = session?.mode === 'sqa' && !session.sqa?.execution &&
-    session.sqa?.requestedExecutionStrategy === SQA_STANDALONE_STRATEGY;
-  const useStandalone = standaloneSqa(session || {}) || requestedStandalone;
-  const profile = useStandalone ? standaloneResearchProfile(settings,env) : hybridProfile(settings,env);
+  const profile = hybridProfile(settings,env);
   const number = (key, fallback, max) => Number.isSafeInteger(Number(env[key])) && Number(env[key]) > 0 ? Math.min(max, Number(env[key])) : fallback;
   profile.budgets = { ...profile.budgets, reasonerTokens: number('QASE_MODE_REASONER_TOKENS', 1000000, 2000000), reasonerCalls: number('QASE_MODE_REASONER_CALLS', 80, 200), outputTokens: number('QASE_MODE_OUTPUT_TOKENS', 8192, 16000), browserActions: number('QASE_MODE_BROWSER_ACTIONS', 200, 500) };
-  if (requestedStandalone && env.QASE_SQA_STANDALONE_ENABLED !== 'true') throw new Error('The standalone SQA flag is off.');
-  if (useStandalone) {
-    requireStandaloneExecution(session,profile,env);
-    profile.executionStrategy = SQA_STANDALONE_STRATEGY;
-  } else loadQualification(profile); // Legacy runs retain their original contract.
+  loadQualification(profile);
   return profile;
 }
 
@@ -76,13 +63,10 @@ function summary(result) {
 
 export function createModeReasoningRuntime({ session, runStore, profile, record, onUsage, fetchImpl }) {
   const aggregate = session[session.mode];
-  if (profile.executionStrategy === SQA_STANDALONE_STRATEGY && session.mode !== 'sqa') throw new Error('Standalone SQA strategy cannot own another mode.');
   if (aggregate.execution && profile.executionStrategy && aggregate.execution.strategy !== profile.executionStrategy) throw new Error('An existing run cannot switch execution strategies.');
   // Retain the original fingerprint algorithm for persisted checkpoints.
-  const standaloneIdentity = aggregate.execution ? aggregate.execution.profileIdentityVersion === 'standalone-v1' :
-    profile.executionStrategy === SQA_STANDALONE_STRATEGY;
-  const expectedIdentity = standaloneIdentity ? standaloneProfileIdentity(profile) : profileIdentity(profile);
-  const state = aggregate.execution ??= { version: 1, strategy: profile.executionStrategy || MODE_REASONING_STRATEGY, depthContractVersion:2,evidenceHashVersion:1,...(session.targetUrl?{discovery:{version:1,hashVersion:1,status:'pending',receipts:[],limitations:[]},workflows:[]}:{}),...(session.mode==='founder'?{reportProtocol:FOUNDER_DRAFT_PROTOCOL}:{}),...(standaloneIdentity?{profileIdentityVersion:'standalone-v1'}:{}),profileIdentity: expectedIdentity, budgets: { ...profile.budgets }, actions: [], evidence: [], classifications: [], segments: 0, stagnantSegments: 0 };
+  const expectedIdentity = profileIdentity(profile);
+  const state = aggregate.execution ??= { version: 1, strategy: profile.executionStrategy || MODE_REASONING_STRATEGY, depthContractVersion:2,evidenceHashVersion:1,...(session.targetUrl?{discovery:{version:1,hashVersion:1,status:'pending',receipts:[],limitations:[]},workflows:[]}:{}),...(session.mode==='founder'?{reportProtocol:FOUNDER_DRAFT_PROTOCOL}:{}),profileIdentity: expectedIdentity, budgets: { ...profile.budgets }, actions: [], evidence: [], classifications: [], segments: 0, stagnantSegments: 0 };
   if (state.version !== 1 || state.profileIdentity !== expectedIdentity) throw new Error('Saved mode reasoning requires its original qualified key/model profile.');
   if(state.discovery&&['interrupted','error','awaiting_input'].includes(session.status)&&!aggregate.finalizedAt)state.recoveryRequired=true;
   const digest=value=>(state.evidenceHashVersion===1?canonicalModeHash:legacyModeHash)(value);
@@ -97,14 +81,9 @@ export function createModeReasoningRuntime({ session, runStore, profile, record,
     };
     const next = commits.then(work); commits = next.catch(() => {}); return next;
   };
-  const singleReasoner = standaloneSqa(session);
-  const router = createHybridModelRouter({ session, state, profile, telemetry, checkpoint, onUsage, fetchImpl, reasonerOnly: singleReasoner });
+  const router = createHybridModelRouter({ session, state, profile, telemetry, checkpoint, onUsage, fetchImpl });
   const appDiscovery = createModeDiscovery({session,state,checkpoint,toolNames:()=>record.modeToolNames||[],invoke:(...args)=>record.invokeModeTool(...args)});
-  const progress = () => digest({ actions: [...new Set(state.actions.filter(a => a.status === 'done' && a.tool.startsWith('browser_')).map(a => a.progressKey||a.digest))], observations: session[session.mode].observations?.map(o => [o.controlId||o.category,o.status]), workflows:state.workflows?.map(w=>[w.id,w.status,w.evidenceIds]), discovery:state.discovery?.receipts.map(r=>r.id), research:singleReasoner ? {
-    documents:[...new Set(state.research?.sources?.map(s=>s.contentHash))],
-    requirements:state.research?.requirements?.map(r=>r.id),
-    decisions:state.research?.applicability?.map(d=>d.id)
-  } : undefined,classifications:state.classifications.length,draft:session.founder?.reportDraft?.revision });
+  const progress = () => digest({ actions: [...new Set(state.actions.filter(a => a.status === 'done' && a.tool.startsWith('browser_')).map(a => a.progressKey||a.digest))], observations: session[session.mode].observations?.map(o => [o.controlId||o.category,o.status]), workflows:state.workflows?.map(w=>[w.id,w.status,w.evidenceIds]), discovery:state.discovery?.receipts.map(r=>r.id),classifications:state.classifications.length,draft:session.founder?.reportDraft?.revision });
   return { state, router, telemetry, checkpoint,
     withActivity: (activity, execute) => activityScope.run(activity, execute),
     usage: usage => router.reasonerUsage(usage),
@@ -151,11 +130,6 @@ export function createModeReasoningRuntime({ session, runStore, profile, record,
         const activity = activityScope.getStore();
         const execute = async () => {
           const active = context.signal || signal; active?.throwIfAborted(); router.check();
-          if (singleReasoner && tool.name === 'classify_mode_observations') throw new Error('Standalone SQA does not expose or execute classifier tools.');
-          if (singleReasoner && tool.name === 'finish_sqa_assessment') {
-            const readiness=standaloneResearchReadiness(session);
-            if(!readiness.ready)return {success:false,code:readiness.code,error:readiness.reason,blockers:readiness.blockers.slice(0,12)};
-          }
           if(tool.name.startsWith('mode_')&&(!input||typeof input!=='object'||Array.isArray(input)))return {success:false,code:'MODE_INPUT_INVALID',error:'Mode tools require a typed JSON input object.'};
           if(state.actions.some(action=>action.status==='uncertain'))throw new HybridPause('MODE_ACTION_UNCERTAIN','A prior tool outcome is uncertain; no subsequent action was dispatched.');
           const refusal=appDiscovery.refusal(tool.name,input);if(refusal)return refusal;
@@ -172,7 +146,7 @@ export function createModeReasoningRuntime({ session, runStore, profile, record,
             // Commit the browser activity before releasing serialized ownership.
             // A dependent evidence tool may already be queued by the SDK.
             if (activity) await record.onModeToolResult?.({toolName:tool.name,toolCallId:activity.id,result});
-            if (result?.success === true && result?.published === true && tool.name === (session.mode === 'sqa' ? 'finish_sqa_assessment' : 'finish_founder_review') && session[session.mode]?.finalizedAt) {
+            if (result?.success === true && result?.published === true && tool.name === 'finish_founder_review' && session.founder?.finalizedAt) {
               record.modePublished = true; record.onModePublished?.();
             }
             active?.throwIfAborted();
@@ -205,11 +179,6 @@ export function createModeReasoningRuntime({ session, runStore, profile, record,
             if (result?.success === false) telemetry.metrics.toolFailures++;
             await checkpoint(); return result && typeof result === 'object' ? { ...result, modeEvidenceId: receipt.id, ...(activity && tool.name.startsWith('browser_') ? {evidenceActivityId:activity.id} : {}) } : result;
           } catch (error) {
-            if (singleReasoner && error instanceof ResearchInputError) {
-              action.status = 'failed';
-              await checkpoint();
-              return {success:false, code:'SQA_RESEARCH_INPUT', error:error.message};
-            }
             action.status = READ_ONLY_TOOLS.has(tool.name) ? 'failed' : 'uncertain'; await checkpoint(); throw error;
           } finally { if (tool.name.startsWith('browser_')) telemetry.browserTiming(tool.name, Date.now() - began); }
         };
@@ -217,7 +186,7 @@ export function createModeReasoningRuntime({ session, runStore, profile, record,
         const next = tail.then(execute); tail = next.catch(() => {}); return next;
       } };
     },
-    tools: [...(singleReasoner?createSqaResearch({session,checkpoint}):[]),...(state.discovery?appDiscovery.tools:[]),{ name: 'classify_mode_observations', category: session.mode, description: 'Ask JEV to categorize immutable host evidence. Advisory only: never grants permissions, confirms defects or assigns control verdicts.',
+    tools: [...(state.discovery?appDiscovery.tools:[]),{ name: 'classify_mode_observations', category: session.mode, description: 'Ask JEV to categorize immutable host evidence. Advisory only: never grants permissions, confirms defects or assigns control verdicts.',
       parametersSchema: { type: 'object', additionalProperties: false, properties: { evidence_ids: { type: 'array', minItems: 1, maxItems: 8, uniqueItems: true, items: { type: 'string' } } }, required: ['evidence_ids'] },
       async run(input, context = {}) {
         const evidence = input.evidence_ids.map(id => state.evidence.find(e => e.id === id));
@@ -228,18 +197,9 @@ export function createModeReasoningRuntime({ session, runStore, profile, record,
         if(!answers?.category||!['functional','usability','content','insufficient'].includes(answers.category.choice))return {success:false,degraded:true,error:'Classification was unavailable or insufficiently typed. No authoritative decision was recorded.'};
         const result = { key, answers, authority: 'advisory' }; state.classifications.push(result); state.classifications = state.classifications.slice(-40); await checkpoint(); return result;
       } }, { name: 'mode_execution_progress', category: session.mode,
-        description: 'Read host execution usage and recent evidence IDs. In SQA, read browser/reviewer contract pages or media guidance only when needed. Further pages require the returned revision. No plan, permission or budget changes.',
-        parametersSchema: { type: 'object', properties: session.mode === 'sqa' ? {
-          sqa_view: { type: 'string', enum: ['browser', 'reviewer', 'media'] },
-          offset: { type: 'integer', minimum: 0, maximum: 1000 },
-          revision: { type: 'string', pattern: '^[a-f0-9]{64}$' }
-        } : {}, additionalProperties: false },
-        async run(input = {}) {
-          if(input.sqa_view !== undefined || input.offset !== undefined) {
-            if(session.mode !== 'sqa') return {success:false,error:'SQA requirement pages are available only in SQA mode.'};
-            try { return {success:true,...readSqaWorkPage(session.sqa,input)}; } catch(error) {return {success:false,error:error.message};}
-          }
-          const plan=session.mode==='sqa'?buildSqaWorkPlan(session.sqa):null;
-          return { strategy: state.strategy, ...(plan?{sqaWork:{phase:plan.phase,activeControlIds:plan.activeControls.map(c=>c.id),pendingBrowserCount:plan.pendingBrowserCount,reviewerRequestCount:plan.reviewerRequests.length}}:{}), work:modeWorkReadiness(session),exploration:modeExplorationReadiness(session),workflows:state.workflows?.map(modeWorkflowSummary),budgets: state.budgets, telemetry: { elapsedMs: state.telemetry.elapsedMs, reasoner: state.telemetry.reasoner, classifier: state.telemetry.classifier, browserActions: state.telemetry.browserActions }, evidence: state.evidence.slice(-8).map(({id,tool,result}) => ({id,tool,...result})) }; } }].filter(tool => !singleReasoner || tool.name !== 'classify_mode_observations')
+        description: 'Read host execution usage and recent evidence IDs. No plan, permission or budget changes.',
+        parametersSchema: { type: 'object', properties: {}, additionalProperties: false },
+        async run() {
+          return { strategy: state.strategy, work:modeWorkReadiness(session),exploration:modeExplorationReadiness(session),workflows:state.workflows?.map(modeWorkflowSummary),budgets: state.budgets, telemetry: { elapsedMs: state.telemetry.elapsedMs, reasoner: state.telemetry.reasoner, classifier: state.telemetry.classifier, browserActions: state.telemetry.browserActions }, evidence: state.evidence.slice(-8).map(({id,tool,result}) => ({id,tool,...result})) }; } }]
   };
 }

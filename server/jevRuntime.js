@@ -1,7 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { createJevClient } from './jevClient.js';
 import { redact } from './secrets.js';
-import { getSqaControl, SQA_TECHNICAL_CONTROL_IDS } from './sqaCatalog.js';
 import { FOUNDER_CATEGORIES } from './founderSchema.js';
 import { buildJevFounderReport } from './jevFounderReport.js';
 import { jevDiagnosticCandidates } from './jevDiagnostics.js';
@@ -157,44 +156,9 @@ export function installJevRuntime(runtime, { session, runStore, configuration, o
         yield* invoke('report_finding', finding);
       }
     }
-    if (session.mode === 'sqa') {
-      yield* finishSqa(sample, snapshot, diagnostics, actions);
-    } else if (session.mode === 'founder') {
+    if (session.mode === 'founder') {
       yield* finishFounder(sample, evidence);
     }
-  }
-
-  async function* finishSqa(sample, snapshot, diagnostics, actions) {
-    const applicableControlIds = session.sqa?.scope?.applicableControlIds ?? [];
-    const orderedControlIds = [
-      ...SQA_TECHNICAL_CONTROL_IDS.filter(id => applicableControlIds.includes(id)),
-      ...applicableControlIds.filter(id => !SQA_TECHNICAL_CONTROL_IDS.includes(id))
-    ];
-    const controls = orderedControlIds.map(id => getSqaControl(id));
-    for (let offset = 0; offset < controls.length; offset += 20) {
-      const batch = controls.slice(offset, offset + 20);
-      const rendered = snapshot?.success && !snapshot.loading && !snapshot.loadError && snapshot.bodyText?.trim();
-      const diagnosticsComplete = diagnostics?.success !== false && Array.isArray(diagnostics?.console) && Array.isArray(diagnostics?.network);
-      const eligible = new Set(rendered ? ['SQA-WEB-001', ...(diagnosticsComplete ? ['SQA-WEB-005'] : [])] : []);
-      const questions = Object.fromEntries(batch.map((control, i) => [`c${i}`, { type: 'choice', instructions: `Evaluate ${control.id}: ${control.objective} Requirements: ${control.evidenceRequirements.map(item => item.description ?? item.type).join('; ')}. Select blocked for missing required workflow/artifact evidence.`, criteria: { pass: 'The entire bounded control evidence contract was actually met.', fail: 'Concrete observed evidence proves this control failed.', blocked: 'Evidence or prerequisites are missing, including unexecuted test steps.' } }]));
-      const answers = await decide({ ...sample, actions, controls: batch.map(control => ({ id: control.id, eligible: eligible.has(control.id), requirements: control.evidenceRequirements })) }, questions);
-      for (const [i, control] of batch.entries()) {
-        const proposed = answers[`c${i}`].choice;
-        const status = eligible.has(control.id) ? proposed : 'blocked';
-        if (status !== 'blocked') {
-          // Bind control evidence to fresh browser observations through the
-          // original SQA evidence contract, not a synthetic activity record.
-          yield* invoke('browser_snapshot', { limit: 60 });
-          yield* invoke('browser_diagnostics', { clear: false });
-        }
-        const rationale = status === 'blocked'
-          ? `${control.id}: the bounded JEV sample did not establish the complete required evidence: ${control.evidenceRequirements.map(item => item.type).join(', ')}. Required workflow checks and reviewer artifacts remain outstanding.`
-          : `JEV ${proposed} for ${control.id} based on ${sample.pages.length} page observations. ${bounded(JSON.stringify({ page: sample.pages.at(-1), diagnostics: sample.diagnostics }), 1200)} Sample only; unsampled workflows remain unverified.`;
-        yield* invoke('record_sqa_control', { control_id: control.id, status, rationale, ...(status === 'blocked' ? {} : { evidence: [{ type: 'test_result', summary: rationale.slice(0, 1000) }] }) });
-      }
-    }
-    yield* plan(true, 'Unexecuted workflows and unavailable reviewer artifacts are explicitly blocked per control.');
-    yield* invoke('finish_sqa_assessment');
   }
 
   async function* finishFounder(sample, evidence) {

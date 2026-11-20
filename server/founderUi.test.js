@@ -13,7 +13,7 @@ test('feature dock exposes one accessible launcher per mode outside the working 
 	assert.match(html, /<nav class="feature-dock" aria-label="Qase features">/);
 	for (const [id, label, feature, tip] of [
 		['new-run', 'Start standard QA run', 'qa', 'feature-tip-qa'],
-		['new-sqa', 'Start quality review', 'sqa', 'feature-tip-sqa'],
+		['new-sqa', 'Start compliance test', 'sqa', 'feature-tip-sqa'],
 		['new-founder', 'Start Founder Mode review', 'founder', 'feature-tip-founder']
 	]) {
 		assert.equal((html.match(new RegExp(`id="${id}"`, 'g')) ?? []).length, 1);

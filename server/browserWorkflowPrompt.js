@@ -48,9 +48,7 @@ appear in DOM snapshots or headless screenshots. Check validity flags and
 submission behavior before claiming invalid input was accepted. A stale success
 message is a separate UI issue; it does not prove an invalid form submitted.
 
-In SQA mode, use browser_sqa_smoke action=accessibility for the bounded observed
-Tab/Shift+Tab path instead of issuing many individual key calls. In modes where
-that tool is unavailable, take a snapshot or screenshot after each Tab/Shift+Tab
+Take a snapshot or screenshot after each Tab/Shift+Tab
 step to inspect which control received focus before continuing or pressing Enter.
 Consecutive identical key calls without observations can trigger the runtime's
 loop guard and do not establish keyboard accessibility evidence.

@@ -16,8 +16,8 @@ const fixtureTests = [
 	'telegramNotificationApi.test.js', 'telegramWebhook.test.js', 'testCaseApi.test.js',
 	'agent.test.js', 'attestation.test.js', 'founderEvidence.test.js', 'founderService.test.js',
 	'hybridArchitecture.test.js', 'hybridAuth.browser.test.js', 'hybridAuth.integration.test.js',
-	'hybridAuth.test.js', 'jevReportEvidence.test.js', 'qaTools.test.js', 'sqaEvidence.test.js',
-	'sqaReview.test.js', 'sqaService.test.js', 'sqaSmokeWorkflow.test.js', 'serviceFactory.test.js', 'testCaseAutogen.integration.test.js',
+	'hybridAuth.test.js', 'jevReportEvidence.test.js', 'qaTools.test.js', 'sqa/sqa.test.js',
+	'serviceFactory.test.js', 'testCaseAutogen.integration.test.js',
 	'hybridAuthenticatedDiscovery.integration.test.js', 'hybridLifecycle.integration.test.js',
 	'hybridSdk.integration.test.js'
 ].map(name => fileURLToPath(new URL(name, import.meta.url)));

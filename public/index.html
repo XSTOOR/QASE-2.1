@@ -22,8 +22,9 @@
 <link rel="stylesheet" href="runStartup.css?v=20261016-1">
 <link rel="stylesheet" href="founderReader.css?v=20261108-2">
 <link rel="stylesheet" href="reportReadability.css?v=20261109-1">
-<link rel="stylesheet" href="qaEvidence.css?v=20261120-4">
-<link rel="stylesheet" href="qaConversation.css?v=20261120-4">
+<link rel="stylesheet" href="qaEvidence.css?v=20261120-5">
+<link rel="stylesheet" href="qaConversation.css?v=20261120-5">
+<link rel="stylesheet" href="sqaCompliance.css?v=20261120-5">
 <link rel="icon" type="image/svg+xml" href="qase-mark.svg">
 </head>
 <body class="cli-theme studio-workspace" data-has-run="false">
@@ -502,7 +503,7 @@
       <button class="tab" id="tab-activity" data-tab="activity" role="tab" aria-selected="false" aria-controls="pane-activity" tabindex="-1">Activity</button>
       <button class="tab" id="tab-findings" data-tab="findings" role="tab" aria-selected="false" aria-controls="pane-findings" tabindex="-1">Findings <span class="count" id="count-findings"></span></button>
       <button class="tab" id="tab-report" data-tab="report" role="tab" aria-selected="false" aria-controls="pane-report" tabindex="-1">Report</button>
-      <button class="tab tab-sqa" id="tab-sqa" data-tab="sqa" role="tab" aria-selected="false" aria-controls="pane-sqa" tabindex="-1" hidden>Quality <span class="count" id="count-sqa"></span></button>
+      <button class="tab tab-sqa" id="tab-sqa" data-tab="sqa" role="tab" aria-selected="false" aria-controls="pane-sqa" tabindex="-1" hidden>Compliance <span class="count" id="count-sqa"></span></button>
       <button class="tab tab-founder" id="tab-founder" data-tab="founder" role="tab" aria-selected="false" aria-controls="pane-founder" tabindex="-1" hidden>Founder <span class="count" id="count-founder"></span></button>
     </nav>
     <div class="tab-body">
@@ -546,10 +547,10 @@
       <span class="feature-label">Test</span>
       <span class="feature-tooltip" id="feature-tip-qa" role="tooltip">New QA run <kbd>⌘N</kbd></span>
     </button>
-    <button id="new-sqa" class="feature-action" type="button" aria-label="Start quality review" aria-describedby="feature-tip-sqa" data-feature="sqa">
+    <button id="new-sqa" class="feature-action" type="button" aria-label="Start compliance test" aria-describedby="feature-tip-sqa" data-feature="sqa">
       <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 8 4v5c0 4-4 7-8 9-4-2-8-5-8-9V7l8-4Z"/><path d="m8 12 3 3 5-6"/></svg></span>
       <span class="feature-label">SQA</span>
-      <span class="feature-tooltip" id="feature-tip-sqa" role="tooltip">Review quality and readiness</span>
+      <span class="feature-tooltip" id="feature-tip-sqa" role="tooltip">Test against the standards and laws that apply</span>
     </button>
     <button id="new-founder" class="feature-action feature-action--founder" type="button" aria-label="Start Founder Mode review" aria-describedby="feature-tip-founder" data-feature="founder">
       <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 9 7-9 11L3 10l9-7Z"/><path d="m3 10 18 0M8 10l4 11 4-11M8 10l4-7 4 7"/></svg></span>
@@ -925,7 +926,7 @@
       <section class="journey-step" data-journey-panel="0" aria-labelledby="journey-website-title">
       <div class="qe-mode-picker" role="group" aria-label="Test mode">
         <span class="qe-mode-current" aria-current="true"><strong>QA test</strong><small>Verify browser workflows</small></span>
-        <button type="button" id="qa-launch-sqa"><strong>SQA review</strong><small>Assess quality controls</small></button>
+        <button type="button" id="qa-launch-sqa"><strong>Compliance test</strong><small>Standards and laws that apply</small></button>
         <button type="button" id="qa-launch-founder"><strong>Founder review</strong><small>Evaluate product and UX</small></button>
       </div>
       <h2 id="journey-website-title" tabindex="-1">Test a user journey</h2>
@@ -1185,109 +1186,49 @@
   <form class="modal-inner sqa-modal-inner" id="sqa-form">
     <header class="modal-head" data-path="~/qase/sqa/new">
       <div>
-        <h2 id="sqa-start-title">Review website quality</h2>
-        <p id="sqa-start-description">Check how your website loads, navigates and behaves, with evidence for each result.</p>
+        <h2 id="sqa-start-title">Compliance testing</h2>
+        <p id="sqa-start-description">Qase works out what kind of product this is, researches the standards and laws that apply to it, and tests the product against each requirement.</p>
       </div>
       <button class="btn btn-ghost btn-sm" type="button" id="sqa-close">Close</button>
     </header>
 
     <div class="modal-body sqa-modal-body">
-      <div class="sqa-recommended">
-        <h3>Universal web quality review</h3>
-        <p id="sqa-execution-status" role="status"></p>
-        <p>Six practical checks cover navigation, forms, accessibility basics, responsive layout, page loading and browser errors.</p>
-        <p class="sqa-selection-summary" id="sqa-selection-summary" role="status" aria-live="polite">Loading the recommended scope…</p>
-        <p class="sqa-scope-warning" id="sqa-scope-warning" role="alert" hidden></p>
-        <ul class="sqa-selection-reasons" id="sqa-selection-reasons" aria-label="Why these controls are selected"></ul>
-        <details class="sqa-boundary">
-          <summary>About this review</summary>
-          <p id="sqa-catalog-disclaimer">Results describe the pages and interactions tested. This review does not certify regulatory compliance.</p>
-        </details>
-        <span class="sqa-catalog-meta" id="sqa-catalog-version" aria-live="polite"></span>
-      </div>
-
-      <div class="sqa-catalog-state" id="sqa-catalog-state" role="status" aria-live="polite">
-        <span id="sqa-catalog-message">Loading assessment catalog…</span>
-        <button class="btn btn-ghost btn-sm" type="button" id="sqa-catalog-retry" hidden>Retry catalog</button>
-      </div>
+      <ol class="sqa-steps" aria-label="How the compliance test works">
+        <li><strong>Identify</strong><span>Reads the product to classify it — for example a course platform, a store or a health app.</span></li>
+        <li><strong>Research</strong><span>Searches the web for the standards and laws that fit, such as WCAG, GDPR, COPPA or FERPA for education.</span></li>
+        <li><strong>Test</strong><span>Measures what it can, tests the rest in the browser and asks you for a login if it needs one.</span></li>
+        <li><strong>Report</strong><span>Scores each standard and lists every gap with the requirement, evidence and a fix.</span></li>
+      </ol>
 
       <fieldset class="sqa-fieldset sqa-target-primary">
-        <legend>Product to review</legend>
+        <legend>Product to test</legend>
         <label class="field">
-          <span>Target URL</span>
-          <input id="sqa-target-url" name="targetUrl" type="url" required maxlength="2048" inputmode="url" autocomplete="url" placeholder="https://staging.example.com…">
-          <small>Qase opens this URL and starts the recommended review.</small>
+          <span>Product URL</span>
+          <input id="sqa-target-url" name="targetUrl" type="url" required maxlength="2048" inputmode="url" autocomplete="url" placeholder="https://app.example.com">
         </label>
       </fieldset>
 
-      <label class="check sqa-authorization">
-        <input id="sqa-authorization" type="checkbox" required>
-        <span>I have permission to test this product.<small>Qase will use non-destructive checks only.</small></span>
-      </label>
-
       <details class="qa-customize sqa-customize" id="sqa-customize">
-        <summary>Advanced options</summary>
+        <summary>Add context <small>(optional)</small></summary>
         <div class="qa-customize-body sqa-customize-body">
-          <fieldset class="sqa-fieldset">
-            <legend>Product details <small>(optional)</small></legend>
-            <p>The review date is recorded automatically. Leave unknown details blank; Qase will not infer a release or deployment environment.</p>
-        <div class="field-row sqa-field-row sqa-build-fields">
           <label class="field">
-            <span>Product name <small>(optional)</small></span>
-            <input id="sqa-target-name" name="targetName" maxlength="200" autocomplete="off" placeholder="Customer portal…">
+            <span>What is the product, and what matters most?</span>
+            <textarea id="sqa-focus" name="focus" rows="3" maxlength="2000" placeholder="e.g. Online courses for school children; parents create the accounts. Focus on sign-up and payments."></textarea>
+            <small>Helps the agent pick the right standards. Leave blank and it works this out from the site.</small>
           </label>
           <label class="field">
-            <span>Release or build identifier <small>(optional)</small></span>
-            <input id="sqa-target-release" name="targetRelease" maxlength="200" autocomplete="off" placeholder="Version, commit, or build ID">
-            <small>Use the deployed version, commit, or immutable build ID.</small>
+            <span>Where are your users?</span>
+            <input id="sqa-regions" name="regions" maxlength="300" autocomplete="off" placeholder="e.g. United States, European Union, India">
+            <small>Decides which laws apply. Leave blank to infer it from the site.</small>
           </label>
-          <label class="field">
-            <span>Environment <small>(optional)</small></span>
-            <input id="sqa-target-environment" name="targetEnvironment" maxlength="100" autocomplete="off" placeholder="Not specified">
-            <small>Name the environment represented by the target URL.</small>
-          </label>
-        </div>
-          </fieldset>
-      <label class="field">
-        <span>Business category</span>
-        <select id="sqa-business-category" name="businessCategory" aria-describedby="sqa-business-guidance">
-          <option value="general">General website or application</option>
-        </select>
-        <small id="sqa-business-guidance">Choose the closest fit to guide the review toward relevant user journeys.</small>
-      </label>
-
-          <fieldset class="sqa-fieldset" id="sqa-profiles-fieldset" hidden disabled>
-            <legend>Additional standards profiles</legend>
-            <p>Add only profiles that apply to this product. The universal quality baseline is always included.</p>
-            <div class="sqa-option-grid" id="sqa-profile-options"></div>
-          </fieldset>
-
-          <fieldset class="sqa-fieldset" id="sqa-attributes-fieldset" hidden disabled>
-            <legend>Product characteristics</legend>
-            <p>Use these details when they materially change the quality controls that apply.</p>
-            <div class="sqa-option-grid sqa-option-grid--compact" id="sqa-attribute-options"></div>
-          </fieldset>
-
-          <fieldset class="sqa-fieldset sqa-target-fields">
-            <legend>Review notes</legend>
-            <label class="field">
-              <span>Important workflows <small>(optional)</small></span>
-              <textarea id="sqa-scope-notes" name="scopeNotes" rows="3" maxlength="4000" placeholder="In-scope workflows, exclusions, assumptions, and evidence locations…"></textarea>
-              <small>Tell Qase which pages or workflows matter most, and any areas to avoid.</small>
-            </label>
-          </fieldset>
-
-
-          <aside class="sqa-scope-guidance" id="sqa-scope-guidance" role="note">
-            <strong>Evidence boundary</strong>
-            <p>This review checks observable website behavior. Organizational processes, legal compliance, certification and business claims need separate review. Missing access or untestable controls are reported explicitly.</p>
-          </aside>
         </div>
       </details>
-      <label class="check sqa-expanded-confirmation" id="sqa-expanded-confirmation" hidden>
-        <input id="sqa-expanded-scope" type="checkbox">
-        <span>I confirmed that the expanded scope applies to this product.<small>The added standards profiles and product characteristics will create additional evidence requirements.</small></span>
+
+      <label class="check sqa-authorization">
+        <input id="sqa-authorization" type="checkbox" required>
+        <span>I have permission to test this product.<small>Qase uses read-only, non-destructive checks and never submits real data.</small></span>
       </label>
+
       <fieldset class="qa-device-fieldset sqa-device-fieldset test-on-fieldset">
         <legend>TEST ON</legend>
         <div class="test-on-summary" id="sqa-test-on" data-empty="true">
@@ -1300,16 +1241,16 @@
             <span>Landscape orientation</span>
           </label>
         </div>
-        <small>A supported desktop profile is selected when available. Change it before starting. Simulated profiles do not certify a physical device or its native OS.</small>
       </fieldset>
 
+      <p class="sqa-boundary-note">This is an automated compliance-readiness assessment, not legal advice or a certification.</p>
       <div class="test-result" id="sqa-form-error" role="alert" aria-live="assertive"></div>
     </div>
 
     <footer class="modal-foot">
       <p class="sqa-launch-status" id="sqa-launch-status" role="status" aria-live="polite"></p>
       <button class="btn btn-ghost" type="button" id="sqa-cancel">Cancel</button>
-      <button class="btn btn-primary" type="submit" id="sqa-submit" aria-describedby="sqa-launch-status sqa-form-error" disabled>Start quality review</button>
+      <button class="btn btn-primary" type="submit" id="sqa-submit" aria-describedby="sqa-launch-status sqa-form-error" disabled>Start compliance test</button>
     </footer>
   </form>
 </dialog>
@@ -1699,7 +1640,7 @@
       <p id="dp-summary" class="dp-summary" data-empty="true">SELECT A DEVICE</p>
     </div>
     <footer class="modal-foot" id="dp-sqa-actions" hidden>
-      <button type="button" class="btn btn-primary" id="dp-sqa-continue">Continue to quality review</button>
+      <button type="button" class="btn btn-primary" id="dp-sqa-continue">Continue to compliance test</button>
     </footer>
   </div>
 </dialog>
@@ -1795,6 +1736,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261120-4" type="module"></script>
+<script src="app.js?v=20261120-5" type="module"></script>
 </body>
 </html>

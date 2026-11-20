@@ -17,7 +17,7 @@ import {
 	PURGE_ACKNOWLEDGEMENT,
 	createPostgresRetentionRepository
 } from './retentionRepository.js';
-import { createSqaState } from '../sqaService.js';
+import { createSqaRunState, SQA_ENGINE_VERSION } from '../sqa/engine.js';
 import { createFounderActions } from '../founderActions.js';
 
 const { Pool } = pg;
@@ -342,24 +342,21 @@ test(
 			id: 'f24010d2-78bf-43f7-a1e1-8f127df3042e',
 			title: 'Tenant A SQA persistence canary',
 			mode: 'sqa',
-			sqa: createSqaState({
-				authorizationConfirmed: true,
-				profiles: ['core'],
-				attributes: ['web_application'],
-				target: { name: 'Integration canary', release: '2026.08', environment: 'test' }
-			})
+			sqa: createSqaRunState({ focus: 'Integration canary', regions: 'EU' })
 		};
 		const sqaCreated = await tenantARepository.create(sqaRun, {
 			eventType: 'sqa.created',
-			payload: { catalogVersion: sqaRun.sqa.scope.catalogVersion }
+			payload: { sqa: sqaRun.sqa }
 		});
 		const sqaLoaded = await tenantARepository.get(sqaRun.id);
 		assert.equal(sqaLoaded.session.mode, 'sqa');
-		assert.equal(sqaLoaded.session.sqa.scope.catalogVersion, sqaRun.sqa.scope.catalogVersion);
-		assert.equal(sqaLoaded.session.sqa.assessment, undefined);
-		sqaLoaded.session.sqa.execution={version:1,strategy:'qualified-opus-jev-v1',actions:[{id:'executed',status:'done'}],modelBudget:{roles:{reasoner:{inputTokens:123,outputTokens:4,reservations:[]}}}};
-		const reasoningSave=await tenantARepository.save(sqaLoaded.session,{expectedVersion:sqaLoaded.version,eventType:'mode.reasoning',payload:{}});
-		assert.deepEqual((await tenantARepository.get(sqaRun.id)).session.sqa.execution,sqaLoaded.session.sqa.execution,'reasoning checkpoint and exact accounting survive real hydration');
+		assert.equal(sqaLoaded.session.sqa.version, SQA_ENGINE_VERSION);
+		assert.equal(sqaLoaded.session.sqa.focus, 'Integration canary');
+		sqaLoaded.session.sqa.phases = { identify: { status: 'done', detail: 'Education platform' } };
+		sqaLoaded.session.sqa.product = { category: 'education', summary: 'Courses for children', dataTypes: ['children'] };
+		const reasoningSave=await tenantARepository.save(sqaLoaded.session,{expectedVersion:sqaLoaded.version,eventType:'sqa.state',payload:{}});
+		const reloaded=(await tenantARepository.get(sqaRun.id)).session.sqa;
+		assert.deepEqual([reloaded.phases,reloaded.product],[sqaLoaded.session.sqa.phases,sqaLoaded.session.sqa.product],'compliance state survives real hydration');
 		assert.equal(await tenantBRepository.get(sqaRun.id), undefined);
 		assert.equal(await tenantARepository.delete(sqaRun.id, {
 			expectedVersion: reasoningSave.version,

@@ -359,11 +359,11 @@ export function createPublicApi(options = {}) {
 				if (!session) return;
 				let markdown;
 				if (session.mode === 'sqa') {
-					const { buildSqaReportMarkdown } = await import('./sqaAssessment.js');
-					// finalizedAt guard mirrors the internal /api route: an
-					// in-progress assessment is never published publicly.
-					markdown = session.sqa?.assessment && session.sqa?.finalizedAt
-						? buildSqaReportMarkdown(session.sqa.assessment) : undefined;
+					const { isSqaEngineSession } = await import('./sqa/engine.js');
+					const { buildSqaMarkdown } = await import('./sqa/report.js');
+					// Only a finished compliance run is published. Runs from the
+					// retired SQA workflow have no public report.
+					markdown = isSqaEngineSession(session) && session.report ? buildSqaMarkdown(session) : undefined;
 				} else if (session.mode === 'founder') {
 					const { buildFounderReportMarkdown } = await import('./founderService.js');
 					markdown = session.founder?.report && session.founder?.finalizedAt

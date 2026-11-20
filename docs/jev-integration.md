@@ -4,9 +4,10 @@ JEV (TypeSafe Decisions, `jev-1.13`) is used in two ways:
 
 - **QA mode** (any provider): the QA engine sends every candidate defect to
   JEV for verification and severity grading. See [QA-ENGINE.md](QA-ENGINE.md).
-- **JEV-only instance** (`QASE_PROVIDER=jev`): SQA and Founder run on the JEV
+- **JEV-only instance** (`QASE_PROVIDER=jev`): Founder runs on the JEV
   decision controller described below instead of a generative model. QA runs
-  use the QA engine with JEV verification (no reasoning model).
+  use the QA engine with JEV verification. SQA (compliance testing) never uses
+  JEV; it needs the reasoning model.
 
 The native JEV adapter uses `jev-1.13` at
 `https://llm.drytis.ai/typesafe/api/alpha/decisions`. The gateway resolves the
@@ -55,16 +56,10 @@ among observed same-origin links and a limited set of reversible disclosure
 controls. Query URLs, known destructive/account/commerce actions, and external
 destinations are excluded. Existing network policies still apply. The host
 persists attempted actions before execution to avoid repeating them after a
-restart. Each invocation reacquires browser evidence. SQA/Founder retain their
+restart. Each invocation reacquires browser evidence. Founder retains its
 bounded six-action sampler (`QASE_JEV_MAX_ACTIONS`). QA does not use this controller. The default decision limit is forty per
 invocation (`QASE_JEV_MAX_DECISIONS`); prior invocations do not consume a new
 turn's entire budget. All limits have hard upper bounds.
-
-SQA evaluates typed control decisions through the original evidence contract.
-Only initial rendering and console/request smoke controls are eligible for
-positive results from this controller. Other controls remain blocked with
-their missing evidence requirements. JEV cannot replace documentary artifacts
-or required reviewer approval.
 
 Founder mode classifies all review lenses against sampled DOM and diagnostics.
 Unobserved business facts remain unknown, and recommendations use explicit,

@@ -1,6 +1,3 @@
-import {createModeReasoningRuntime} from './modeReasoningRuntime.js';
-import { SQA_STANDALONE_CAPABILITIES, standaloneProfileIdentity } from './sqaStandaloneQualification.js';
-import { SQA_STANDALONE_STRATEGY } from './sqaStandaloneStrategy.js';
 import './testWorkingDirectory.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,36 +7,30 @@ import path from 'node:path';
 import http from 'node:http';
 import {once} from 'node:events';
 import {randomUUID,createHash} from 'node:crypto';
-import {createSqaResearch} from './sqaResearch.js';
 import {ensureRuntime,runTurn,deleteRunSnapshot} from './agent.js';
 import {hybridProfile,profileIdentity,REQUIRED_CAPABILITIES,HYBRID_SDK_VERSION} from './hybridConfig.js';
 import {JEV_ENDPOINT} from './jevClient.js';
 import {withUserConfiguration} from './config.js';
-import {createSqaState} from './sqaService.js';
 import {createFounderState,createFounderReviewTodos} from './founderService.js';
 import {modeDiscoveryStatus} from './modeDiscovery.js';
 
 // Deterministic model fixtures exercise the installed SDK and real browser;
 // these are integration regressions, not evidence of live gateway qualification.
-for(const composition of [false,true])for(const variant of ['sqa','founder','sqa-standalone'])test(`${variant}: native SDK ${composition?'bounded workflow':'batches'} persists browser evidence before dependent tools and final prose cannot publish`,{timeout:30000},async t=>{
- const mode=variant==='sqa-standalone'?'sqa':variant,standalone=variant==='sqa-standalone';
+for(const composition of [false,true])for(const variant of ['founder'])test(`${variant}: native SDK ${composition?'bounded workflow':'batches'} persists browser evidence before dependent tools and final prose cannot publish`,{timeout:30000},async t=>{
+ const mode=variant,standalone=false;
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'qase-mode-sdk-'));
  const env={QASE_SQA_REASONER_API_KEY:'fixture-only-mode-key',QASE_SQA_SEARCH_URL:'https://search.fixture.example/search',QASE_SQA_STANDALONE_ENABLED:standalone?'true':'false',NODE_ENV:'development',QASE_ALLOW_PRIVATE_NETWORK:'true',QASE_LOCK_MODEL:'false',[`QASE_${mode.toUpperCase()}_REASONING_ENABLED`]:'true',QASE_SQA_QUALIFICATION_FILE:path.join(root,'standalone-qualification.json'),QASE_HYBRID_QUALIFICATION_FILE:path.join(root,'qualification.json')};
  const saved=Object.fromEntries(Object.keys(env).map(key=>[key,process.env[key]]));Object.assign(process.env,env);
  t.after(()=>{for(const[key,value]of Object.entries(saved))if(value===undefined)delete process.env[key];else process.env[key]=value;fs.rmSync(root,{recursive:true,force:true});});
  const settings={provider:'jev',baseUrl:JEV_ENDPOINT,model:'jev-1.13',apiKey:'fixture-only-mode-key',headless:true,maxTurns:2},profile=hybridProfile(settings);
- fs.writeFileSync(env.QASE_HYBRID_QUALIFICATION_FILE,JSON.stringify({executionStrategies:{[SQA_STANDALONE_STRATEGY]:{passed:true}},sdkVersion:HYBRID_SDK_VERSION,profileIdentity:profileIdentity(profile),checkedAt:Date.now(),capabilities:Object.fromEntries(REQUIRED_CAPABILITIES.map(name=>[name,{passed:true}]))}));
- fs.writeFileSync(env.QASE_SQA_QUALIFICATION_FILE,JSON.stringify({strategy:SQA_STANDALONE_STRATEGY,profileIdentity:standaloneProfileIdentity(profile),sdkVersion:HYBRID_SDK_VERSION,checkedAt:Date.now(),jevCalls:0,runId:'deterministic-fixture-only',capabilities:Object.fromEntries(SQA_STANDALONE_CAPABILITIES.map(name=>[name,{passed:true,evidenceRef:'fixture-not-live-qualification'}]))}));
+ fs.writeFileSync(env.QASE_HYBRID_QUALIFICATION_FILE,JSON.stringify({sdkVersion:HYBRID_SDK_VERSION,profileIdentity:profileIdentity(profile),checkedAt:Date.now(),capabilities:Object.fromEntries(REQUIRED_CAPABILITIES.map(name=>[name,{passed:true}]))}));
  let writes=0,upgrades=0;
  const server=http.createServer((req,res)=>{if(req.method!=='GET'){writes++;res.writeHead(405).end();return;}res.setHeader('Content-Type','text/html').end(`<!doctype html><title>Mode SDK fixture</title><h1>Local workspace</h1><a href="/docs">Documentation</a><label>Sample<input id="sample"></label><button type="button" id="probe" onclick="fetch('/mutation',{method:'POST',body:'fixture'}).catch(()=>{});new WebSocket('ws://'+location.host+'/socket')">Probe nonpersistent request</button>`);});
  server.on('upgrade',(_req,socket)=>{upgrades++;socket.destroy();});
  server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>{server.closeAllConnections();server.close();});
  const url=`http://127.0.0.1:${server.address().port}/`,session={id:randomUUID(),mode,ownerUserId:'fixture',status:'idle',targetUrl:url,messages:[],activities:[],findings:[],todos:[],secretNames:[]};
- if(mode==='sqa')session.sqa=createSqaState({authorizationConfirmed:true,profiles:['core'],attributes:['web_application','user_interface'],target:{name:'Fixture',url,environment:'test',release:'test'}});
- else{session.founder=createFounderState({authorizationConfirmed:true,target:{name:'Fixture',url}});session.todos=createFounderReviewTodos();}
+ session.founder=createFounderState({authorizationConfirmed:true,target:{name:'Fixture',url}});session.todos=createFounderReviewTodos();
  const live={},store={liveFor:()=>live,listLive:()=>[],publish(){},async commit(){fs.writeFileSync(path.join(root,'checkpoint.json'),JSON.stringify(session));},async setStatus(s,status,detail){s.status=status;s.statusDetail=detail;},async addActivity(s,item){const activity={id:randomUUID(),ts:Date.now(),...item};s.activities.push(activity);if(process.env.QASE_MODE_TEST_TRACE==='true')console.log('mode-fixture',mode,composition,item.toolName,'start');return activity;},async updateActivity(s,id,patch){const item=s.activities.find(a=>a.id===id);Object.assign(item,patch);if(process.env.QASE_MODE_TEST_TRACE==='true')console.log('mode-fixture',mode,composition,item.toolName,patch.status);await this.commit();},async addMessage(s,item){s.messages.push(item);return item;}};
- if (standalone) session.sqa.requestedExecutionStrategy=SQA_STANDALONE_STRATEGY;
- else if (mode==='sqa') createModeReasoningRuntime({session,profile,record:{},runStore:store});
  await withUserConfiguration(settings,async()=>{},async()=>{
   const record=await ensureRuntime(session,store),nativeRun=record.runtime.run;let calls=0,applicabilityId;
   record.modeReasoning.router.classifier=async()=>{if(standalone)throw new Error('Standalone SQA must never invoke JEV');return {next_action:{choice:'execute'}};};

@@ -1,6 +1,6 @@
-import { sqaResearchSections } from '../public/sqaResearchSections.js';
+import { isSqaEngineSession } from './sqa/engine.js';
+import { buildSqaHtml } from './sqa/report.js';
 import { chromium } from 'playwright';
-import { sqaReportModel } from '../public/sqaReportModel.js';
 import { buildFindingFixPrompt } from './fixPromptBuilder.js';
 import { getDeviceProfile } from './deviceProfiles.js';
 import { QA_SCOPE_OPTIONS } from '../public/qaScopeCatalog.js';
@@ -270,139 +270,8 @@ function feedbackSectionHtml(session) {
 }
 
 function buildSqaBody(session) {
-	const sqa = session.sqa ?? {};
-	const assessment = sqa.assessment ?? {};
-	const verdict = assessment.verdict ?? sqa.verdict ?? '\u2014';
-	const model = sqaReportModel(assessment);
-	const parts = ['<h1>SQA assessment</h1>', headerBlock(session, 'SQA', String(verdict).toUpperCase())];
-	for (const [heading, rows] of sqaResearchSections(assessment.researchReport)) {
-		parts.push('<section><h2>'+escapeHtml(heading)+'</h2>'+rows.filter(Boolean).map(row=>'<p>'+escapeHtml(row)+'</p>').join('')+'</section>');
-	}
-	if (model.technical) {
-		const technical = model.technical;
-		parts.push('<section><h2>Bounded technical smoke sample</h2><div class="outcome-line">' + statusPill(technical.verdict) + '</div>'
-			+ metricGrid([['Applicable controls', technical.applicableControls ?? 0], ['Pass', technical.pass ?? 0], ['Fail', technical.fail ?? 0], ['Blocked', technical.blocked ?? 0], ['Not assessed', technical.not_assessed ?? 0]])
-			+ '<p class="callout">This sampled browser result does not establish whole-product compliance and does not override the broad assurance verdict.</p></section>');
-	}
-	parts.push('<section><h2>Evidence-backed control failures</h2>'
-		+ (model.failures.length ? '<ul>' + model.failures.map(item => '<li><strong>' + escapeHtml(item.controlId) + ' - ' + escapeHtml(item.title) + ':</strong> ' + escapeHtml(item.rationale ?? 'Remediate and retest this control.') + '</li>').join('') + '</ul>' : '<p>No evidence-backed control failures were recorded.</p>') + '</section>');
-	parts.push(findingsSection(session.findings ?? [], session));
-	parts.push('<section class="outcome"><h2>Assessment outcome</h2>'
-		+ '<div class="outcome-line">' + statusPill(verdict)
-		+ '<strong>Residual risk: ' + escapeHtml(statusLabel(assessment.risk?.level)) + '</strong></div>'
-		+ metricGrid([
-			['Applicable controls', assessment.summary?.applicableControls ?? 0],
-			['Pass', assessment.summary?.pass ?? 0],
-			['Fail', assessment.summary?.fail ?? 0],
-			['Blocked', assessment.summary?.blocked ?? 0],
-			['Not assessed', assessment.summary?.not_assessed ?? 0],
-			['Risk score', assessment.risk?.score === undefined ? 'not recorded' : assessment.risk.score + '%']
-		])
-		+ (assessment.risk?.method ? '<p class="muted">' + escapeHtml(assessment.risk.method) + '</p>' : '')
-		+ '</section>');
-	if (sqa.scope || assessment.target) {
-		const scope = sqa.scope ?? {};
-		const target = assessment.target ?? scope.target ?? {};
-		const meta = [
-			['Assessment ID', assessment.assessmentId],
-			['Assessment digest', assessment.assessmentSha256 ? 'sha256:' + assessment.assessmentSha256 : undefined],
-			['Assessment target', target.name],
-			['Release', target.release],
-			['Environment', target.environment],
-			['Assessed at', assessment.assessedAt],
-			['Profiles', (assessment.profiles ?? scope.profiles ?? []).join(', ')],
-			['Attributes', (assessment.attributes ?? scope.attributes ?? []).join(', ') || 'none'],
-			['Catalog version', assessment.catalogVersion ?? scope.catalogVersion]
-		].filter(([, value]) => value).map(([k, v]) => '<tr><th>' + escapeHtml(k) + '</th><td>' + escapeHtml(v) + '</td></tr>');
-		parts.push('<section><h2>Scope</h2><table class="meta"><tbody>' + meta.join('') + '</tbody></table>'
-			+ ((assessment.scopeNotes ?? scope.scopeNotes) ? '<h3>Scope notes</h3>' + paragraphs(assessment.scopeNotes ?? scope.scopeNotes) : '')
-			+ '</section>');
-	}
-	if (assessment.coverage) {
-		parts.push('<section><h2>Coverage & evidence completeness</h2>'
-			+ metricGrid([
-				['Observed', (assessment.coverage.observed ?? 0) + '%'],
-				['Conclusive', (assessment.coverage.conclusive ?? 0) + '%'],
-				['Mandatory passed', (assessment.coverage.mandatoryPassed ?? 0) + '%'],
-				['Evidence satisfied', (assessment.coverage.evidence ?? 0) + '%']
-			])
-			+ '<p class="muted">Evidence artifacts satisfied: '
-			+ escapeHtml(assessment.coverage.satisfiedEvidence ?? 0) + ' / '
-			+ escapeHtml(assessment.coverage.requiredEvidence ?? 0) + ' required.</p></section>');
-	}
-	if (values(assessment.gates).length > 0) {
-		parts.push('<section><h2>Decision gates</h2><div class="card-list">'
-			+ assessment.gates.map(gate => '<article class="report-card compact"><div class="card-heading">'
-				+ statusPill(gate.status) + '<h3>' + escapeHtml(gate.title) + '</h3></div>'
-				+ '<p>' + escapeHtml(gate.detail ?? '') + '</p></article>').join('')
-			+ '</div></section>');
-	}
-	if (Array.isArray(assessment.results) && assessment.results.length > 0) {
-		const ordered = ['fail', 'blocked', 'not_assessed', 'pass'];
-		const rows = [...assessment.results]
-			.sort((a, b) => ordered.indexOf(a.status) - ordered.indexOf(b.status)
-				|| String(a.controlId).localeCompare(String(b.controlId)))
-			.map(result => '<tr><td><strong>' + escapeHtml(result.controlId) + '</strong><br><span class="muted">'
-				+ escapeHtml(result.title ?? '') + '</span></td><td>' + escapeHtml(result.domain ?? '\u2014')
-				+ '</td><td>' + escapeHtml(result.severity ?? '\u2014') + '</td><td>' + statusPill(result.status)
-				+ '</td><td>' + escapeHtml(result.evidenceCoverage?.satisfied ?? 0) + '/'
-				+ escapeHtml(result.evidenceCoverage?.required ?? 0) + '</td></tr>').join('');
-		parts.push('<section><h2>Control results</h2><table class="result-table"><thead><tr>'
-			+ '<th>Control</th><th>Domain</th><th>Severity</th><th>Status</th><th>Evidence</th>'
-			+ '</tr></thead><tbody>' + rows + '</tbody></table></section>');
-
-		const unresolved = assessment.results.filter(result => result.status !== 'pass');
-		if (unresolved.length > 0) {
-			parts.push('<section><h2>Unresolved controls</h2><div class="card-list">'
-				+ unresolved.map(result => {
-					const requirements = values(result.evidenceCoverage?.requirements);
-					const evidence = values(result.evidence);
-					return '<article class="report-card"><div class="card-heading">' + statusPill(result.status)
-						+ '<h3>' + escapeHtml(result.controlId) + ' \u2014 ' + escapeHtml(result.title ?? '') + '</h3></div>'
-						+ '<p><strong>Severity:</strong> ' + escapeHtml(result.severity ?? 'not recorded')
-						+ ' \u00b7 <strong>Automation:</strong> ' + escapeHtml(statusLabel(result.automationLevel)) + '</p>'
-						+ (result.rationale ? '<h4>Rationale</h4>' + paragraphs(result.rationale) : '')
-						+ titledList('Decision notes', result.decisionNotes)
-						+ (requirements.length > 0 ? '<h4>Evidence contract</h4><ul>' + requirements.map(requirement =>
-							'<li>' + (requirement.satisfied ? '<strong>Met:</strong> ' : '<strong>Missing:</strong> ')
-							+ escapeHtml(requirement.description ?? requirement.id ?? requirement.type)
-							+ ' <span class="muted">(' + escapeHtml(requirement.actual ?? 0) + '/'
-							+ escapeHtml(requirement.minimum ?? 0) + ' ' + escapeHtml(requirement.type ?? '') + ')</span></li>'
-						).join('') + '</ul>' : '')
-						+ (evidence.length > 0 ? '<h4>Referenced evidence</h4><ul>' + evidence.map(item =>
-							'<li><strong>' + escapeHtml(statusLabel(item.type)) + ':</strong> '
-							+ escapeHtml(item.summary ?? 'Evidence artifact') + '<br><span class="code">'
-							+ escapeHtml(item.reference) + '</span>'
-							+ (item.digest ? '<br><span class="muted">' + escapeHtml(item.digest) + '</span>' : '') + '</li>'
-						).join('') + '</ul>' : '<p class="muted">No evidence artifact was attached.</p>')
-						+ '</article>';
-				}).join('') + '</div></section>');
-		}
-	}
-	parts.push('<section><h2>Evidence traceability register</h2><p class="muted">References identify saved browser records or external reviewer documents. A listed digest does not prove that external document bytes were checked.</p>'
-		+ (model.evidence.length ? model.evidence.map(item => '<article class="report-card sqa-evidence-card"><h3>' + escapeHtml(item.controlId) + ' - Evidence ' + item.index + '</h3><table class="meta"><tbody>'
-			+ [['Type', item.type], ['Collected at', item.collectedAt], ['Reference', item.reference], ['Digest', item.digest], ['Summary', item.summary], ['Origin', item.origin]].map(([label, value]) => '<tr><th>' + escapeHtml(label) + '</th><td>' + escapeHtml(value) + '</td></tr>').join('')
-			+ '</tbody></table></article>').join('') : '<p>No evidence artifacts were attached to this assessment.</p>') + '</section>');
-	if (values(assessment.frameworkCoverage).length > 0) {
-		parts.push('<section><h2>Framework crosswalk</h2><table class="result-table"><thead><tr>'
-			+ '<th>Reference</th><th>Mapped controls</th><th>Status</th><th>Conclusive</th></tr></thead><tbody>'
-			+ assessment.frameworkCoverage.map(item => '<tr><td><strong>' + escapeHtml(item.title) + '</strong><br><span class="code">'
-				+ escapeHtml(item.url) + '</span></td><td>' + escapeHtml(item.controls) + '</td><td>'
-				+ statusPill(item.status) + '</td><td>' + escapeHtml(item.coverage) + '%</td></tr>').join('')
-			+ '</tbody></table></section>');
-	}
-	if (values(assessment.outOfScope).length > 0) {
-		parts.push('<section><h2>Not applicable in the declared scope</h2><ul>'
-			+ assessment.outOfScope.map(item => '<li><strong>' + escapeHtml(item.controlId)
-				+ ':</strong> ' + escapeHtml(item.reason) + '</li>').join('') + '</ul></section>');
-	}
-	if (assessment.disclaimer) {
-		parts.push('<section class="boundary"><h2>Assessment boundary</h2>' + paragraphs(assessment.disclaimer) + '</section>');
-	}
-	// User feedback section — same embed as the QA report, only when the
-	// submitter left feedback for this run (session.userFeedback).
-	parts.push(feedbackSectionHtml(session));
-	return parts.join('');
+	// Assessments by the previous SQA engine have no compliance state; they render like a QA run.
+	return isSqaEngineSession(session) ? buildSqaHtml(session) : buildQaBody(session);
 }
 
 function buildFounderBody(session) {

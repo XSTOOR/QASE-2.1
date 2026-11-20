@@ -1,5 +1,3 @@
-import { verifiedResearchBody } from './sqaResearchSource.js';
-import { standaloneSqa } from './sqaStandaloneStrategy.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {canonicalModeHash,legacyModeHash,modeReceiptHash} from './modeIntegrity.js';
 
@@ -84,26 +82,6 @@ export function modeDiscoverySummary(session) {
  return {...status,featureCount:status.features.length,features:[...surfaces,...status.features.filter(f=>f.kind!=='surface')].slice(0,20),nextOffset:status.features.length>20?20:null};
 }
 
-/** Bind an agent's control claim to checks executed for that planned control,
- * never to an arbitrary recent screenshot. Documentary review is unchanged. */
-export function modeSqaEvidenceActivityIds(session,controlId) {
- if(!modeDiscoveryRequired(session))return null;
- const technical=/^SQA-WEB-00[1-6]$/.test(controlId);
- const state=execution(session), workflows=(state.workflows||[]).filter(w=>technical||w.control_ids?.includes(controlId));
- const candidates=[...state.evidence,...workflows.flatMap(w=>w.verification?.receipts||[])];
- const checks={'SQA-WEB-001':['inspect'],'SQA-WEB-002':['navigation','navigation_control','tabs','disclosure'], 'SQA-WEB-003':['forms'], 'SQA-WEB-004':['accessibility'],'SQA-WEB-006':['responsive']};
- return new Set(candidates.filter(e=>workflows.some(w=>w.id===e.workflowId)&&e.digest===modeReceiptHash(e)&&state.actions.some(a=>a.id===e.actionId&&a.status==='done'&&
-  (controlId==='SQA-WEB-005'?a.tool==='browser_diagnostics':controlId==='SQA-WEB-001'?a.tool==='browser_qa_check'&&Boolean(e.result.stateKey&&e.result.bodyText?.trim()):checks[controlId]?a.tool==='browser_qa_check'&&checks[controlId].includes(a.intent?.action)&&e.result.assertions?.length>0:a.tool.startsWith('browser_')))).map(e=>e.activityId));
-}
-
-export function modeSqaHasFailedAssertions(session,controlId) {
- const allowed=modeSqaEvidenceActivityIds(session,controlId);
- if(!allowed||!/^SQA-WEB-00[1-6]$/.test(controlId))return false;
- const state=execution(session);
- return [...state.evidence,...(state.workflows||[]).flatMap(w=>w.verification?.receipts||[])].some(e=>allowed.has(e.activityId)&&e.digest===modeReceiptHash(e)&&
-  (e.result.assertionCounts?.failed>0||e.result.assertions?.some(a=>a.outcome==='fail')));
-}
-
 export function modeWorkReadiness(session) {
  const discovery = modeDiscoveryStatus(session);
  if (!discovery.required) return { ready: true };
@@ -115,10 +93,10 @@ export function modeWorkReadiness(session) {
   const feature=discovery.features.find(f=>f.id===id);if(!feature)return [];
   return [feature.location+feature.stateKey,...feature.controls.flatMap(c=>w.verification?.receipts.filter(e=>e.result.url===c.href).map(e=>c.href+(e.result.stateKey||'observed-route'))||[])];
  })));
- return { ready: discovery.ready && !state.recoveryRequired && !state.actions.some(a=>a.status==='uncertain') && workflows.length > 0 && !pending.length && !invalid.length && plannedSurfaces.size>=Math.min(2,surfaces.size) && !state.currentWorkflowId && (standaloneSqa(session) || Boolean(state.classifications.length)),
+ return { ready: discovery.ready && !state.recoveryRequired && !state.actions.some(a=>a.status==='uncertain') && workflows.length > 0 && !pending.length && !invalid.length && plannedSurfaces.size>=Math.min(2,surfaces.size) && !state.currentWorkflowId && Boolean(state.classifications.length),
   discoveryReady: discovery.ready, planned: workflows.length, attempted: workflows.filter(w => w.evidenceIds?.length).length,
   invalidProofIds:invalid,requiredWorkflowSurfaces:Math.min(2,surfaces.size),plannedSurfaces:plannedSurfaces.size,
-  pending: pending.map(w => ({ id: w.id, title: w.title, status: w.status })), classificationRequired: !standaloneSqa(session) && !state.classifications.length,
+  pending: pending.map(w => ({ id: w.id, title: w.title, status: w.status })), classificationRequired: !state.classifications.length,
   counts: Object.fromEntries(['planned', 'running', 'passed', 'failed', 'blocked', 'inconclusive'].map(status => [status, workflows.filter(w => w.status === status).length])) };
 }
 
@@ -171,7 +149,7 @@ export function createModeDiscovery({ session, state, invoke, checkpoint,toolNam
   if (!modeDiscoveryRequired(session)) return;
   if(name==='ask_question'&&state.phase==='coverage_recovery'&&/(?:tools?.{0,100}(?:not|unavailable|expos|list)|host.{0,100}(?:retry|expos))/i.test(String(input?.question||'')+' '+String(input?.summary||'')))return {...fail('MODE_HOST_CONTINUATION_REQUIRED','This is an internal host capability question, not a new user authorization requirement. Use mode_plan_work with the next observed route/feature below, then mode_run_workflow. classify_mode_observations remains available for intact evidence. Do not ask the user to override completion gates.'),exploration:modeExplorationReadiness(session)};
   if(state.recoveryRequired&&!internal()&&!['mode_verify_recovery','mode_execution_progress','ask_question'].includes(name))return fail('MODE_RECOVERY_REQUIRED','Verify the interrupted browser state with mode_verify_recovery before further work. No uncertain action may be replayed.');
-  if (['update_todo', 'record_sqa_control', 'record_sqa_blockers', 'record_founder_observation', 'finish_sqa_assessment', 'finish_founder_review', 'draft_founder_report_section'].includes(name)) {
+  if (['update_todo', 'record_founder_observation', 'finish_founder_review', 'draft_founder_report_section'].includes(name)) {
    if (!modeDiscoveryStatus(session).ready) return fail('MODE_DISCOVERY_REQUIRED', 'Call mode_discover_application before planning or recording conclusions. Discovery must reference intact browser receipts.');
    if (!state.workflows?.length && name !== 'update_todo') return fail('MODE_PLAN_REQUIRED', 'Create the evidence-linked workflow plan with mode_plan_work before recording conclusions.');
   }
@@ -206,18 +184,13 @@ export function createModeDiscovery({ session, state, invoke, checkpoint,toolNam
   return { success: d.status === 'ready', discovery: modeDiscoverySummary(session) };
  }));
  const strings = { type: 'array', minItems: 1, maxItems: 8, items: { type: 'string', maxLength: 500 } };
- const standalonePlan = standaloneSqa(session);
- const catalogIds = session.sqa?.scope?.applicableControlIds ?? [];
- const catalogControls = standalonePlan
-  ? {type:'array',maxItems:Math.min(50,catalogIds.length),items:{type:'string',...(catalogIds.length?{enum:catalogIds}:{})},
-     description:'Optional internal QASE catalog IDs only. Omit for a researched workflow. Its requirements come from applicability_id.'}
-  : {...strings,maxItems:50};
+ const catalogControls = {...strings,maxItems:50};
  const plan = tool('mode_plan_work', 'After discovery, add 1–8 application-specific workflows referencing observed feature IDs. Preserve user requirements, canonical mode todos and prior work. Model planning is not execution.', {
   workflows: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'object', additionalProperties: false, properties: {
    id: { type: 'string', maxLength: 80 }, title: { type: 'string', maxLength: 180 }, feature_ids: strings, steps: strings,
-   expected_behavior: { type: 'string', maxLength: 1200 }, ...(standaloneSqa(session)?{applicability_id:{type:'string',description:'Saved decision that links these features to researched requirements.'}}:{}), control_ids: catalogControls,
+   expected_behavior: { type: 'string', maxLength: 1200 }, control_ids: catalogControls,
    depends_on: { type: 'array', maxItems: 8, items: { type: 'string' } }
-  }, required: ['id', 'title', 'feature_ids', 'steps', 'expected_behavior', ...(standalonePlan?['applicability_id']:[])] } }
+  }, required: ['id', 'title', 'feature_ids', 'steps', 'expected_behavior'] } }
  }, ['workflows'], async input => {
   const discovery = modeDiscoveryStatus(session);
   if (!discovery.ready) return fail('MODE_DISCOVERY_REQUIRED', 'Discover the application before planning.');
@@ -226,36 +199,10 @@ export function createModeDiscovery({ session, state, invoke, checkpoint,toolNam
   for (const w of input.workflows) {
    if(!w||typeof w!=='object'||typeof w.id!=='string'||typeof w.title!=='string'||typeof w.expected_behavior!=='string'||!Array.isArray(w.steps)||!Array.isArray(w.feature_ids)||w.control_ids!==undefined&&!Array.isArray(w.control_ids)||w.depends_on!==undefined&&!Array.isArray(w.depends_on))return fail('MODE_PLAN_INVALID','Use typed workflow fields and actual feature-ID arrays.');
    if (!w.id?.trim() || ids.has(w.id) || !w.title?.trim() || !w.expected_behavior?.trim() || !w.steps?.length || !w.feature_ids?.length || w.feature_ids.some(id => !discovery.features.some(f => f.id === id)) || w.depends_on?.some(id => !ids.has(id))) return fail('MODE_PLAN_INVALID', 'Use unique workflow IDs, actual feature IDs, nonempty steps/expectations, and earlier dependencies.');
-   if (session.mode === 'sqa' && w.control_ids?.some(id => !session.sqa.scope?.applicableControlIds?.includes(id))) return fail('MODE_CONTROL_SCOPE', standalonePlan?'Omit control_ids for research-led workflows. Supply the saved applicability_id; QASE resolves the publisher requirements from that decision.':'Plan only controls in the assessment scope.');
    if(w.id.length>80||w.title.length>180||w.expected_behavior.length>1200||w.steps.length>8||w.feature_ids.length>8||w.steps.some(s=>typeof s!=='string'||!s.trim()||s.length>500)||w.control_ids?.length>50||w.depends_on?.length>8)return fail('MODE_PLAN_INVALID','Workflow fields exceed their documented bounds.');
-   let researchLink;
-   if (standaloneSqa(session)) {
-    const research=state.research;
-    const sameTest = test => canonicalModeHash([[...test.feature_ids].sort(),test.steps,test.expected_behavior]);
-    if(next.some(prior=>prior.researchLink?.decisionId===w.applicability_id&&sameTest(prior)===sameTest(w))) return fail('SQA_DUPLICATE_WORKFLOW','This researched workflow is already planned for the same features.');
-    const decision=research?.applicability?.find(d=>d.id===w.applicability_id);
-    const {integrityHash,...payload}=decision||{};
-    if(!decision||decision.classification==='NOT_APPLICABLE'||canonicalModeHash(payload)!==integrityHash||!w.feature_ids.every(id=>decision.feature_ids.includes(id))) return fail('SQA_APPLICABILITY_REQUIRED','Link this workflow to an intact applicability decision for its observed features.');
-    const sources=decision.requirement_ids.map(id=>{
-     const requirement=research.requirements.find(r=>r.id===id);
-     const source=research.sources.find(s=>s.id===requirement?.sourceId);
-     if(!source||source.runId!==session.id)return null;
-     const content=verifiedResearchBody(source,session.id);
-     if(content===null||source.contentHash!==requirement.contentHash||!content.includes(requirement.quote)||!content.includes(requirement.controlId)||(!Number.isFinite(source.retrievedAt)||source.retrievedAt>Date.now()||Date.now()-source.retrievedAt>86400000))return null;
-     return {requirementId:id,sourceId:source.id,contentHash:source.contentHash};
-    });
-    if(!sources.length||sources.some(s=>!s))return fail('SQA_REQUIREMENT_REQUIRED','Refresh missing or outdated source evidence before planning.');
-    researchLink={decisionId:decision.id,decisionHash:integrityHash,sources};
-   }
-   ids.add(w.id); next.push({ ...(researchLink?{researchLink}:{}),id:w.id,title:w.title,feature_ids:w.feature_ids,steps:w.steps,expected_behavior:w.expected_behavior,...(w.control_ids?{control_ids:w.control_ids}:{}),...(w.depends_on?{depends_on:w.depends_on}:{}),status: 'planned', plannedAt: Date.now(), evidenceIds: [] });
+   ids.add(w.id); next.push({ id:w.id,title:w.title,feature_ids:w.feature_ids,steps:w.steps,expected_behavior:w.expected_behavior,...(w.control_ids?{control_ids:w.control_ids}:{}),...(w.depends_on?{depends_on:w.depends_on}:{}),status: 'planned', plannedAt: Date.now(), evidenceIds: [] });
   }
   if (next.length > 16) return fail('MODE_PLAN_LIMIT', 'The bounded plan allows at most 16 workflows; preserve completed work.');
-  if(standaloneSqa(session)){
-   const research=state.research;
-   research.planRevisions??=[];
-   research.planRevisions.push({revision:research.planRevisions.length+1,at:Date.now(),added:next.slice(state.workflows.length).map(w=>({workflowId:w.id,researchLink:w.researchLink}))});
-   research.stage='TEST_EXECUTION';
-  }
   state.workflows = next;state.phase='execution'; await checkpoint(); return { success: true, workflows: next.map(modeWorkflowSummary) };
  });
  const start = tool('mode_start_workflow', 'Activate a planned workflow before its browser checks. Completed workflows are never replayed; dependencies must be passed.', { id: { type: 'string' } }, ['id'], async ({ id }) => {
@@ -290,18 +237,7 @@ export function createModeDiscovery({ session, state, invoke, checkpoint,toolNam
   return owned(async () => {
    const results = [];
    const observed=await invoke('browser_qa_check',{action:'inspect'},context.signal);
-   const controlIds=session.mode==='sqa'?state.workflows.find(w=>w.id===state.currentWorkflowId)?.control_ids||[]:[];
-   if(controlIds.includes('SQA-WEB-002')){
-    const inv=observed?.inventory;
-    const link=inv?.links?.find(c=>c.selector&&safeUrl(c.href,session.targetUrl)&&c.href!==inv.url&&!new URL(c.href,inv.url).hash&&!c.target&&!c.download&&!RISKY.test(c.label||''));
-    const control=inv?.navigationControls?.find(c=>c.selector&&!RISKY.test(c.label||''));
-    const action=link?'navigation':control?'navigation_control':'anchors';
-    results.push({action,...await invoke('browser_qa_check',link?{action,selector:link.selector,expected:link.href}:control?{action,selector:control.selector}:{action},context.signal)});
-    const current=await invoke('browser_get_url',{},context.signal);
-    if(inv?.url&&current.url!==inv.url)await invoke('browser_open',{url:inv.url},context.signal);
-   }
-   const mapped={'SQA-WEB-003':'forms','SQA-WEB-004':'accessibility','SQA-WEB-006':'responsive'};
-   const planned=[...new Set([...checks,...controlIds.map(id=>mapped[id]).filter(Boolean)])];
+   const planned=[...new Set(checks)];
    for (const action of planned) { context.signal?.throwIfAborted(); results.push({ action, ...await invoke('browser_qa_check', { action }, context.signal) }); }
    await invoke('browser_snapshot', {}, context.signal); await invoke('browser_diagnostics', {}, context.signal);
    return { success: true, results: results.map(r => ({ action: r.action, assertions: r.assertions?.length || 0, failed: r.assertions?.filter(a => a.outcome === 'fail').length || 0, gaps: r.gaps })) };
@@ -326,30 +262,9 @@ export function createModeDiscovery({ session, state, invoke, checkpoint,toolNam
  },['steps'],async({steps},context={})=>{
   if(!state.currentWorkflowId)return fail('MODE_WORKFLOW_REQUIRED','Start the observed workflow first.');
   if(!Array.isArray(steps)||!steps.length||steps.length>8||steps.some(s=>!batchNames.includes(s.tool)||!s.input||typeof s.input!=='object'||Array.isArray(s.input)||Object.keys(s.input).some(k=>!['url','selector','value','key','action','expected'].includes(k))||JSON.stringify(s.input).length>3000||s.tool==='browser_qa_check'&&!['inspect','navigation','responsive','forms','search','media','disclosure','accessibility','anchors','tabs','scroll','navigation_control'].includes(s.input.action)))return fail('MODE_STEPS_INVALID','Use 1–8 supported browser steps with bounded native inputs.');
-  if (!standaloneSqa(session)) return owned(async()=>{
-   const results=[];
-   for(const step of steps){context.signal?.throwIfAborted();const result=await invoke(step.tool,step.input,context.signal);results.push({tool:step.tool,success:result?.success!==false,modeEvidenceId:result?.modeEvidenceId,evidenceActivityId:result?.evidenceActivityId,url:result?.url||result?.inventory?.url,assertions:result?.assertions?.length});if(result?.success===false)return {success:false,results,error:result.error||'A child browser step failed; later steps were not executed.'};}
-   return {success:true,results};
-  });
-  // Keep the validated plan stable across checkpoint awaits.
-  steps=structuredClone(steps);
   return owned(async()=>{
    const results=[];
-   const workflow=state.workflows.find(w=>w.id===state.currentWorkflowId);
-   workflow.executionSteps??=[];
-   const batchKey=hash(steps);
-   for(const [index,step] of steps.entries()){
-    context.signal?.throwIfAborted();
-    const key=hash([batchKey,index]), prior=workflow.executionSteps.find(s=>s.key===key);
-    if(prior?.status==='executed'){const saved=state.evidence.find(e=>e.id===prior.receipt?.modeEvidenceId);if(!saved||saved.digest!==modeReceiptHash(saved)||!receiptActivityValid(session,saved))return fail('MODE_STEP_UNCERTAIN','The prior execution receipt is missing or invalid. No step was replayed.');if(!prior.receipt.success)return {success:false,results,error:'Previous step failed; revise the plan instead of replaying.'};results.push(prior.receipt);continue;}
-    if(prior) return fail('MODE_STEP_UNCERTAIN','A prior delegated step has no verified receipt; it was not replayed.');
-    const intent={key,status:'dispatching',at:Date.now()};workflow.executionSteps.push(intent);await checkpoint();
-    const result=await invoke(step.tool,step.input,context.signal);context.signal?.throwIfAborted();
-    if(!result?.modeEvidenceId)return fail('MODE_STEP_UNCERTAIN','The delegated step returned no durable receipt. Do not replay.');
-    const receipt={tool:step.tool,success:result?.success!==false,modeEvidenceId:result.modeEvidenceId,evidenceActivityId:result.evidenceActivityId,url:result.url||result.inventory?.url,assertions:result.assertions?.length};
-    intent.status='executed';intent.receipt=receipt;await checkpoint();results.push(receipt);
-    if(result.success===false)return {success:false,results,error:result.error||'A child browser step failed; later steps were not executed.'};
-   }
+   for(const step of steps){context.signal?.throwIfAborted();const result=await invoke(step.tool,step.input,context.signal);results.push({tool:step.tool,success:result?.success!==false,modeEvidenceId:result?.modeEvidenceId,evidenceActivityId:result?.evidenceActivityId,url:result?.url||result?.inventory?.url,assertions:result?.assertions?.length});if(result?.success===false)return {success:false,results,error:result.error||'A child browser step failed; later steps were not executed.'};}
    return {success:true,results};
   });
  });

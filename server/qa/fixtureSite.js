@@ -136,6 +136,29 @@ const FAKE_AWS_KEY = ['AKIA', 'QASELAB1', '23456789'].join('');
 
 const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
 
+
+/**
+ * BrightPath Academy: a small education product for children with planted
+ * compliance gaps, used to test compliance SQA end to end. Planted: an
+ * analytics cookie set before consent, a cookie notice without a reject
+ * option, a sign-up form collecting a child's data with no privacy notice,
+ * a privacy policy that never mentions children or parental consent, no
+ * accessibility statement, an image without alt text and low-contrast text.
+ */
+export const EDU_GAPS = ['privacy.tracking_before_consent', 'privacy.cookie_reject', 'privacy.form_notice', 'privacy.children_notice', 'privacy.accessibility_statement', 'a11y.images_alt', 'a11y.contrast'];
+const EDU_NAV = '<header><a href="/edu/">BrightPath Academy</a><a href="/edu/courses">Courses</a><a href="/edu/parents">For parents</a><a href="/edu/about">About</a></header>';
+const EDU_FOOTER = '<footer style="padding:20px"><a href="/edu/privacy">Privacy policy</a> · <a href="/edu/terms">Terms of use</a> · Contact: hello@brightpath.example</footer>';
+const EDU_BANNER = '<div id="cookie-note" style="position:fixed;bottom:0;left:0;right:0;background:#222;color:#fff;padding:12px">We use cookies to improve your learning experience. <button class="btn">Accept</button></div>';
+const EDU_PAGES = {
+	'/edu/': `${EDU_NAV}<main><h1>Fun online courses for kids aged 8–14</h1><p>Live maths, coding and science classes with real teachers. Prices in ₹ and $. Students from India and the US learn with us.</p><img src="/static/pixel.png" width="120" height="80"><p style="color:#bbb">Classes for Grade 3 to Grade 9 students.</p>
+<h2>Create your child's account</h2><form method="post" action="/edu/signup"><label>Child's name <input name="child_name"></label> <label>Child's age <input name="age" type="number"></label> <label>Parent email <input name="email" type="email"></label> <button class="btn">Start free trial</button></form></main>${EDU_FOOTER}${EDU_BANNER}`,
+	'/edu/courses': `${EDU_NAV}<main><h1>Courses</h1><ul><li>Coding for kids (ages 8–11)</li><li>Maths Olympiad (ages 10–14)</li></ul></main>${EDU_FOOTER}`,
+	'/edu/parents': `${EDU_NAV}<main><h1>For parents</h1><p>Track your child's progress in the parent dashboard.</p></main>${EDU_FOOTER}`,
+	'/edu/about': `${EDU_NAV}<main><h1>About BrightPath</h1><p>BrightPath Academy is an online school for children, based in Bengaluru, India, teaching students in India and the United States.</p></main>${EDU_FOOTER}`,
+	'/edu/privacy': `${EDU_NAV}<main><h1>Privacy policy</h1><p>We collect your name, email address and usage data to provide our services and improve them. We use analytics cookies. We may share data with service providers. You can contact us at hello@brightpath.example to access or delete your data. This policy was last updated in 2025.</p><p>${'We take security seriously and use industry-standard measures to protect information. '.repeat(6)}</p></main>${EDU_FOOTER}`,
+	'/edu/terms': `${EDU_NAV}<main><h1>Terms of use</h1><p>By using BrightPath you agree to these terms.</p></main>${EDU_FOOTER}`
+};
+
 export function labHandler(request, response, { prefix = '' } = {}) {
 	const url = new URL(request.url, 'http://lab');
 	// Mounted under Express, the prefix is already stripped from request.url.
@@ -151,6 +174,11 @@ export function labHandler(request, response, { prefix = '' } = {}) {
 			response.setHeader('Set-Cookie', 'sessionid=lab-session-1234; Path=/');
 			return html(rewrite(layout('QA Lab', HOME, { head: HOME_HEAD, lang: '' })));
 		case '/clean': return html(rewrite(layout('Clean page', CLEAN)));
+		case '/edu': response.writeHead(301, { Location: link('/edu/') }); return response.end();
+		case '/edu/': case '/edu/courses': case '/edu/parents': case '/edu/about': case '/edu/privacy': case '/edu/terms':
+			// The analytics cookie is set on first load, before the visitor answers the cookie notice.
+			response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Set-Cookie': '_ga=GA1.1.123456.789; Path=/; Max-Age=63072000' });
+			return response.end(rewrite(layout(path === '/edu/' ? 'BrightPath Academy — online classes for kids' : `${path.split('/').pop()} — BrightPath Academy`, EDU_PAGES[path])));
 		case '/contact':
 			if (request.method === 'POST') return html(rewrite(layout('Thanks', '<main><h1>Thanks!</h1></main>')));
 			return html(rewrite(layout('Contact', CONTACT)));

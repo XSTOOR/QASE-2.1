@@ -1,5 +1,37 @@
 # QASE release notes
 
+## qase-2026-11-20-sqa-compliance-r4 (UI 20261120-5)
+
+**SQA is now compliance testing, and it starts.** The old SQA could not start
+without a qualification file and a SearXNG server. It is replaced by a new
+engine (`server/sqa/`) on the CleanSlate SDK that uses the reasoning model only
+(no JEV, no hybrid routing).
+
+- The agent reads the product's key pages, identifies what kind of product it
+  is (category, audience such as children or students, regions, data handled),
+  researches on the web which standards and laws apply (for example COPPA,
+  FERPA and WCAG for a US education product, the DPDP Act for India, GDPR for
+  Europe), breaks each into testable requirements, measures what can be
+  measured, tests the rest in the browser and reports per standard.
+- A framework is accepted only with a source the agent actually found in its
+  research. Scores and the verdict are computed by the host from the results.
+- Web research uses the SDK's built-in search; no setup. `QASE_SQA_SEARCH_URL`
+  optionally puts your own SearXNG first.
+- Every run ends with a report: without a model key or internet, it uses a
+  labelled baseline and the measured evidence.
+- UI: a simple launcher (URL, optional context and regions, permission), the
+  agent's narration and a report card in the conversation, a sign-in card when
+  a test account is needed, and a Compliance tab with progress, product
+  profile, standards with sources and scores, every requirement with its
+  result, evidence and fix, and the research sources. Markdown and PDF exports.
+- Failed requirements become compliance findings with fix prompts.
+- Removed: the old SQA catalog, qualification gate, JEV verifier, review and
+  versions workflow, their routes, scripts and the `sqa-release` CI workflow.
+  Runs made by the old SQA remain listed and readable.
+- Tests: `server/sqa/*.test.js` (unit and full engine) and
+  `npm run test:sqa` (end to end in the real UI), both with a scripted model and
+  a local search stub.
+
 ## qase-2026-11-20-qa-engine-r3 (UI 20261120-4)
 
 - Plan tab redesigned: an overview (current step, progress bar, viewports,

@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-11-20-qa-engine-r3",
-  "uiVersion": "20261120-4",
+  "releaseId": "qase-2026-11-20-sqa-compliance-r4",
+  "uiVersion": "20261120-5",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Push-SQA: QA mode in the run conversation (narration, finding and report cards), sign-in question with a secure vault card, harness-aware false-positive filtering and calibrated JEV triage."
+  "source": "Push-SQA: SQA rebuilt as compliance testing \u2014 identifies the product, researches the standards and laws that apply, tests each requirement and reports per standard, on the CleanSlate SDK with the reasoning model only."
 }

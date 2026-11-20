@@ -6,8 +6,8 @@ import { parseArgs } from 'node:util';
 import { request } from 'playwright';
 import { assertSqaTestBrowser, createSqaTestServer, launchSqaTestBrowser } from './sqa-test-runtime.mjs';
 import { createFounderBrowserFixture } from './founder-browser-fixture.mjs';
-import { createSqaState, finishSqaAssessment } from '../server/sqaService.js';
-import { evaluateSqaAssessment } from '../server/sqaAssessment.js';
+import { createSqaRunState } from '../server/sqa/engine.js';
+import { buildSqaReport } from '../server/sqa/report.js';
 
 const { values } = parseArgs({ options: { browser: { type: 'string', default: 'chromium' }, 'output-dir': { type: 'string' } } });
 const browserName = assertSqaTestBrowser(values.browser);
@@ -19,18 +19,29 @@ const checks = [], errors = [];
 let browser, page, api;
 let dispatches = 0;
 const now = Date.now();
-const quality = { id: randomUUID(), mode: 'sqa', title: 'Controlled quality UI fixture', targetUrl: 'https://fixture.test/', status: 'done', createdAt: now, updatedAt: now, messages: [], activities: [], findings: [], todos: [], secretNames: [], sqa: createSqaState({ authorizationConfirmed: true, target: { name: 'Controlled quality UI fixture', url: 'https://fixture.test/', release: 'ui-followup', environment: 'isolated browser fixture' } }) };
-quality.sqa.observations = quality.sqa.scope.applicableControlIds.map(controlId => ({ controlId, status: 'blocked', rationale: 'Controlled UI fixture: required evidence has not been supplied.', evidence: [] }));
-await finishSqaAssessment(quality, { async commit() {} });
-const failedQuality = structuredClone(quality);
-failedQuality.id = randomUUID();
-failedQuality.title = 'Controlled failed quality UI fixture';
-failedQuality.sqa.assessment = evaluateSqaAssessment({
-  target: { name: failedQuality.title, release: 'ui-followup', environment: 'isolated browser fixture' },
-  assessedAt: new Date(now).toISOString(),
-  observations: [{ controlId: 'SQA-GOV-001', status: 'fail', rationale: 'Controlled fixture: the reviewed risk baseline is absent.', evidence: [{ type: 'risk_register', reference: 'fixture/risk-gap', summary: 'Controlled fixture evidence for a failed control; no live product assertion.' }] }]
-});
-assert.equal(failedQuality.sqa.assessment.verdict, 'fail');
+// Compliance fixtures: a run where nothing could be tested, and one with a failed mandatory requirement.
+function complianceFixture(title, results) {
+  const session = { id: randomUUID(), mode: 'sqa', title, targetUrl: 'https://fixture.test/', status: 'done', createdAt: now, updatedAt: now, messages: [], activities: [], findings: [], todos: [], secretNames: [], sqa: createSqaRunState({ focus: 'Online courses for children' }) };
+  Object.assign(session.sqa, {
+    status: 'done', phase: 'report',
+    phases: Object.fromEntries(['open', 'signin', 'identify', 'research', 'requirements', 'evidence', 'test', 'report'].map(id => [id, { status: 'done', detail: id === 'signin' ? 'skipped' : undefined }])),
+    product: { name: 'Fixture Academy', category: 'education', subcategory: 'K-12 tutoring', summary: 'Courses for children with parent accounts.', audience: { description: 'Parents and pupils aged 8-14', children: true, students: true }, regions: ['United States'], dataHandled: ['children', 'accounts'], features: ['sign-up', 'video lessons'], evidence: ['/: hero names ages 8-14'] },
+    frameworks: [
+      { id: 'F1', name: 'COPPA (16 CFR Part 312)', url: 'https://www.ftc.gov/legal-library/browse/rules/childrens-online-privacy-protection-rule-coppa', kind: 'privacy', jurisdiction: 'United States', applicability: 'Directed at children under 13.', mandatory: true },
+      { id: 'F2', name: 'WCAG 2.2 Level AA', url: 'https://www.w3.org/TR/WCAG22/', kind: 'accessibility', jurisdiction: 'International', applicability: 'Accessibility baseline for a public learning site.', mandatory: false }
+    ],
+    requirements: results.map((result, index) => ({ id: `R${index + 1}`, frameworkId: index % 2 ? 'F2' : 'F1', clause: `${312 + index}.${index + 1}`, title: `Fixture requirement ${index + 1}`, check: 'A long, realistic requirement description that wraps across several lines on a narrow phone screen.', method: 'browser', severity: index ? 'medium' : 'critical', ...result })),
+    evidence: [{ id: 'E1', kind: 'privacy.policy', title: 'Privacy policy link', status: 'ok', detail: 'Linked from the footer of every page.', urls: ['https://fixture.test/privacy'] }],
+    sources: [{ url: 'https://www.ftc.gov/legal-library/browse/rules/childrens-online-privacy-protection-rule-coppa', title: 'COPPA rule', via: 'fetch' }],
+    limitations: [{ phase: 'signin', message: 'No test account was provided; signed-in pages were not tested.' }]
+  });
+  session.report = buildSqaReport(session);
+  return session;
+}
+const quality = complianceFixture('Controlled compliance UI fixture', [{ status: 'needs_documents', observed: 'Needs the parental consent records.' }, { status: 'untested' }]);
+assert.equal(quality.report.verdict, 'not_assessed');
+const failedQuality = complianceFixture('Controlled failed compliance UI fixture', [{ status: 'fail', observed: 'The privacy policy has no section for children.', fix: 'Add a children section with the COPPA notice items.', decidedBy: 'agent' }, { status: 'pass', observed: 'Every image has alternative text.', url: 'https://fixture.test/', decidedBy: 'agent' }]);
+assert.equal(failedQuality.report.verdict, 'non_compliant');
 const founder = await createFounderBrowserFixture();
 const qa = { id: randomUUID(), mode: 'qa', title: 'Ordinary completed QA fixture', targetUrl: 'https://fixture.test/', status: 'done', createdAt: now, updatedAt: now, messages: [], activities: [], findings: [], todos: [], secretNames: [], report: { verdict: 'pass', summary: 'Controlled display fixture only.', generatedAt: new Date(now).toISOString() } };
 
@@ -71,9 +82,9 @@ try {
   await fs.writeFile(path.join(directory, '.qase', 'sessions.json'), JSON.stringify([quality, failedQuality, founder, qa]));
   await runtime.start();
   const summaries = await (await api.get('/api/sessions')).json();
-  assert.equal(summaries.find(item => item.id === quality.id).sqaVerdict, 'blocked');
+  assert.equal(summaries.find(item => item.id === quality.id).reportVerdict, 'not_assessed');
   assert.equal(summaries.find(item => item.id === quality.id).sqa, undefined);
-  checks.push('Owned run summaries retain the SQA verdict without exposing full assessment/evidence data.');
+  checks.push('Owned run summaries retain the compliance verdict without exposing the full assessment.');
 
   browser = await launchSqaTestBrowser(browserName);
   const context = await browser.newContext({ storageState: await api.storageState(), viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
@@ -81,25 +92,28 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/api/sessions/*/message', route => { dispatches++; return route.abort('blockedbyclient'); });
   await openReport(quality);
-  assert.equal(await page.locator('#results-page-status').innerText(), 'Blocked');
-  assert.match(await page.locator('#results-page-findings').innerText(), /controls.*blocked/);
-  assert.doesNotMatch(await page.locator('#results-page-findings').innerText(), /findings/);
-  checks.push('A finished blocked assessment shows Blocked and unresolved control counts instead of Complete / zero findings.');
+  assert.equal(await page.locator('#results-page-status').innerText(), 'Not assessed');
+  assert.match(await page.locator('#results-page-findings').innerText(), /2 standards/);
+  assert.equal(await page.locator(`#run-list [data-run-id="${quality.id}"] .run-status-label`).innerText(), 'Blocked');
+  checks.push('A compliance run where nothing could be tested shows Not assessed, never Complete / zero findings.');
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: width < 500 ? 844 : 1000 });
-    assert.ok(await page.locator('#report-view .sqa-unresolved-group-description').first().evaluate(node => parseFloat(getComputedStyle(node).fontSize) >= 14));
-    assert.ok(await page.locator('#report-view .sqa-technical-counts dt').first().evaluate(node => parseFloat(getComputedStyle(node).fontSize) >= 12));
+    assert.ok(await page.locator('#report-view .cmp-framework-why').first().evaluate(node => parseFloat(getComputedStyle(node).fontSize) >= 13));
+    assert.ok(await page.locator('#report-view .cmp-section-sub').first().evaluate(node => parseFloat(getComputedStyle(node).fontSize) >= 12));
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await page.screenshot({ path: path.join(output, `sqa-${width}.png`), animations: 'disabled' });
   }
-  checks.push('SQA body text is at least 14px and metadata 12px, with no page overflow at 1440/390/320px.');
+  checks.push('Compliance report text stays readable, with no page overflow at 1440/390/320px.');
 
   await openReport(failedQuality);
-  assert.equal(await page.locator('#results-page-status').innerText(), 'Failed');
+  assert.equal(await page.locator('#results-page-status').innerText(), 'Serious compliance gaps');
   assert.match(await page.locator('#results-page-findings').innerText(), /1 failed/);
   assert.equal(await page.locator(`#run-list [data-run-id="${failedQuality.id}"] .run-status-label`).innerText(), 'Failed');
   assert.equal(await page.locator('#status-chip').innerText(), 'Failed');
-  checks.push('A failed SQA assessment shows Failed in the report, sidebar and workspace chip while its saved lifecycle remains done.');
+  await page.locator('#report-view .cmp-req.is-fail summary').first().click();
+  assert.match(await page.locator('#report-view .cmp-req.is-fail').first().innerText(), /Add a children section/);
+  assert.match(await page.locator('#report-view .cmp-framework').first().innerText(), /COPPA[\s\S]*Legally required[\s\S]*0%/);
+  checks.push('A failed compliance run shows Failed in the report, sidebar and workspace chip, with the gap, its fix and the per-standard score.');
 
   await openReport(founder);
   for (const width of [1440, 390, 320]) {

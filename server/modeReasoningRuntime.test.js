@@ -3,44 +3,12 @@ import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { selectsModeReasoning, qualifiedModeProfile, createModeReasoningRuntime, modeExplorationReadiness, MODE_REASONING_STRATEGY } from './modeReasoningRuntime.js';
 import { hybridProfile } from './hybridConfig.js';
-import { createSqaState } from './sqaService.js';
 
-function fixture(mode='sqa', store={async commit(){}}) {
+function fixture(mode='founder', store={async commit(){}}) {
  const session={id:randomUUID(),mode,[mode]:{observations:[]},activities:[],todos:[]};
  const record={};const runtime=createModeReasoningRuntime({session,runStore:store,profile:hybridProfile({apiKey:'fixture'}),record});
  return {session,runtime,record,state:session[mode].execution};
 }
-test('native SQA progress exposes paged contracts without model calls or state changes', async () => {
- const f=fixture();f.session.sqa.scope=createSqaState({authorizationConfirmed:true,target:{name:'Fixture',release:'1',environment:'test'}}).scope;
- const read=f.runtime.tools.find(t=>t.name==='mode_execution_progress'),before=structuredClone(f.session);
- const page=await read.run({sqa_view:'reviewer'});
- assert.equal(page.success,true);assert.ok(page.items.length<=4);assert.equal(page.items[0].owner,'reviewer');assert.deepEqual(f.session,before);
- assert.equal((await read.run({sqa_view:'browser',offset:-1})).success,false);
- const founder=fixture('founder');assert.equal((await founder.runtime.tools.find(t=>t.name==='mode_execution_progress').run({sqa_view:'reviewer'})).success,false);
-});
-for(const mode of ['sqa','founder']) test(`${mode} reasoning is opt-in and saved selection survives flag rollback`,()=>{
- const session={mode,[mode]:{observations:[]},activities:[]};
- assert.equal(selectsModeReasoning(session,{}),false);
- assert.equal(selectsModeReasoning(session,{[`QASE_${mode.toUpperCase()}_REASONING_ENABLED`]:'true',QASE_SQA_STANDALONE_ENABLED:'true'}),mode==='founder');
- session.activities.push({status:'done'});assert.equal(selectsModeReasoning(session,{[`QASE_${mode.toUpperCase()}_REASONING_ENABLED`]:'true'}),false);
- session[mode].execution={strategy:MODE_REASONING_STRATEGY};assert.equal(selectsModeReasoning(session,{}),true);
- session[mode].execution.strategy='unknown';assert.throws(()=>selectsModeReasoning(session,{}));
-});
-
-for(const mode of ['sqa','founder']) test(`${mode} durable publication stops SDK model prefetch, never model prose`,async()=>{
- const f=fixture(mode);let requests=0,published=0;
- f.record.onModePublished=()=>published++;
- const service={async chat(){requests++;throw new Error('No model dispatch after durable publication');}};
- f.runtime.wrapChat(service);
- const name=mode==='sqa'?'finish_sqa_assessment':'finish_founder_review';
- const rejected=f.runtime.wrapTool({name,async run(){return {success:false,published:false};}});
- await rejected.run({});assert.equal(f.record.modePublished,undefined);
- const tool=f.runtime.wrapTool({name,async run(){f.session[mode].finalizedAt=new Date().toISOString();return {success:true,published:true};}});
- await tool.run({});assert.equal(published,1);
- for await(const part of service.chat([]))assert.equal(part.type,'text');
- assert.equal(requests,0);assert.equal(f.state.telemetry.reasoner.calls,0);
-});
-
 test('a saved configured-provider Founder report cannot switch to qualified reasoning after a flag change',()=>{
  const session={mode:'founder',activities:[],founder:{observations:[],reportGeneration:{version:1,protocol:'section-draft-v1',evidenceHashVersion:1}}};
  assert.equal(selectsModeReasoning(session,{QASE_FOUNDER_REASONING_ENABLED:'true'}),false);
@@ -97,7 +65,7 @@ test('checkpoint failure prevents browser dispatch and usage uncertainty survive
  const restored=structuredClone(g.session);
  const runtime=createModeReasoningRuntime({session:restored,runStore:{async commit(){}},profile:hybridProfile({apiKey:'fixture'}),record:{}});
  await assert.rejects(runtime.beginTurn(new AbortController().signal),/unverified prior usage/);
- assert.equal(restored.sqa.execution.telemetry.reasoner.reservedTokens,500);
+ assert.equal(restored.founder.execution.telemetry.reasoner.reservedTokens,500);
 });
 
 test('tool failure leaves an uncertain action which cannot be automatically replayed',async()=>{
@@ -142,7 +110,7 @@ test('advisory classifier uses intact evidence, caches unchanged inputs and cann
  const input={evidence_ids:[f.state.evidence[0].id]};
  await tool.run(input);assert.equal((await tool.run(input)).cached,true);assert.equal(calls,1);
  f.state.evidence[0].result.bodyText='tampered';await assert.rejects(tool.run(input),/intact/);
- assert.equal(f.session.sqa.assessment,undefined);
+ assert.equal(f.session.founder.report,undefined);
 });
 
 test('SDK summary requests preserve their own contract without mode execution context or tools',async()=>{
@@ -177,11 +145,4 @@ test('download, external-window and mutating links cannot inflate mandatory mode
  await f.runtime.wrapTool({name:'browser_snapshot',async run(){return {success:true,url:f.session.targetUrl,bodyText:'Observed home',links};}}).run({});
  assert.deepEqual(f.state.routes.map(r=>r.url),['https://fixture.test/','https://fixture.test/docs']);
  assert.equal(modeExplorationReadiness(f.session).requiredPages,2);
-});
-
-test('a queued standalone assessment cannot fall back if the flag is disabled',()=>{
- const session={mode:'sqa',sqa:{requestedExecutionStrategy:'sqa-single-reasoner-v1'}};
- assert.equal(selectsModeReasoning(session,{}),true);
- assert.throws(()=>qualifiedModeProfile({}, {}, session),/standalone SQA flag is off/);
- assert.throws(()=>qualifiedModeProfile({}, {QASE_SQA_STANDALONE_ENABLED:'true'}, session),/QASE_SQA_SEARCH_URL/);
 });

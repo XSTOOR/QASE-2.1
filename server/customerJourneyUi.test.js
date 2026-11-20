@@ -59,12 +59,10 @@ test('interrupted or errored runs expose a resume affordance', () => {
 });
 
 test('SQA report actions include fix-prompt export parity with QA', () => {
-	assert.match(appJs, /qase-sqa-fix-prompts\.md/, 'SQA fix-prompt download filename');
-	const sqaActions = appJs.slice(
-		appJs.indexOf('function renderSqaReportActions'),
-		appJs.indexOf('function renderSqaVerdict')
-	);
-	assert.match(sqaActions, /'Copy fix prompts'/, 'copy fix prompts button');
+	const sqaActions = appJs.slice(appJs.indexOf('function sqaViewActions'), appJs.indexOf('function renderSqaReportTab'));
+	assert.match(sqaActions, /onCopyFixes[\s\S]*buildAllFixPromptsMarkdown\(session\)/, 'copy all fix prompts');
+	assert.match(sqaActions, /onDownloadPdf/, 'PDF export');
+	assert.match(sqaActions, /qase-compliance-report\.md/, 'Markdown export');
 });
 
 test('export failures map 409 pending-report errors to a friendly message', () => {

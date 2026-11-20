@@ -44,7 +44,7 @@ export function buildFindingFixPrompt(finding, { targetUrl, mode } = {}) {
 		? stepsList.map((step, index) => `  ${index + 1}. ${step}`).join('\n')
 		: '  (no explicit steps recorded — reproduce from the description)';
 
-	const modeLabel = mode === 'sqa' ? 'SQA assessment' : mode === 'founder' ? 'Founder review' : 'QA run';
+	const modeLabel = mode === 'sqa' ? 'compliance test' : mode === 'founder' ? 'Founder review' : 'QA run';
 	const selector = safeText(finding.selector);
 	const viewports = Array.isArray(finding.viewports) ? finding.viewports.map(safeText).filter(Boolean) : [];
 	const fix = safeText(finding.fix);
@@ -93,7 +93,7 @@ export function buildAllFixPromptsMarkdown(session) {
 	const header = [
 		`# Fix prompts — ${sorted.length} finding${sorted.length === 1 ? '' : 's'}`,
 		'',
-		`Source: Qase ${session.mode === 'sqa' ? 'SQA' : session.mode === 'founder' ? 'Founder' : 'QA'} run against ${safeText(session.targetUrl) || '(target URL not recorded)'}`,
+		`Source: Qase ${session.mode === 'sqa' ? 'compliance' : session.mode === 'founder' ? 'Founder' : 'QA'} run against ${safeText(session.targetUrl) || '(target URL not recorded)'}`,
 		`Run ID: ${session.id ?? '—'}`,
 		`Generated: ${new Date().toISOString()}`,
 		'',

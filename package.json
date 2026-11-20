@@ -13,7 +13,7 @@
     "worker": "node server/worker.js",
     "control-plane": "node server/controlPlane/index.js",
     "cell-heartbeat": "node server/cellHeartbeatController.js",
-    "test": "node --test --test-concurrency=2 server/*.test.js server/qa/*.test.js server/postgres/*.test.js server/controlPlane/*.test.js public/*.test.js",
+    "test": "node --test --test-concurrency=2 server/*.test.js server/qa/*.test.js server/sqa/*.test.js server/postgres/*.test.js server/controlPlane/*.test.js public/*.test.js",
     "validate:matrix": "node scripts/validate-matrix.mjs",
     "db:migrate": "node scripts/migrate.mjs",
     "control:db:migrate": "node scripts/migrate-control-plane.mjs",
@@ -37,16 +37,11 @@
     "install-browser": "playwright install chromium firefox webkit",
     "package": "node scripts/package.mjs",
     "test:auth": "node scripts/test-auth-browser.mjs",
-    "test:sqa-startup": "node scripts/test-sqa-startup.mjs",
-    "test:sqa-review": "node scripts/test-sqa-review.mjs",
-    "test:sqa-evidence": "node scripts/test-sqa-evidence.mjs",
-    "test:sqa-release": "node scripts/test-sqa-release.mjs",
-    "qualify:sqa-release": "node scripts/qualify-sqa-release.mjs",
-    "prepare:sqa-release": "node scripts/prepare-sqa-release.mjs",
     "test:reset": "node scripts/test-reset-browser.mjs",
     "test:ui": "node scripts/test-ui-responsive.mjs",
     "test:welcome": "node scripts/qualify-welcome.mjs",
-    "test:acceptance": "node scripts/test-acceptance.mjs"
+    "test:acceptance": "node scripts/test-acceptance.mjs",
+    "test:sqa": "node scripts/test-sqa-browser.mjs"
   },
   "engines": {
     "node": ">=22 <25"

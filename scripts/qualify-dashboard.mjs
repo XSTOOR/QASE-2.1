@@ -271,7 +271,7 @@ try {
 	await screenshot(page,'sqa-launch.png');
 	await page.locator('#sqa-submit').click();await page.locator('#sqa-start').waitFor({state:'hidden'});
 	await page.locator('#tab-sqa').waitFor({state:'visible'});await page.locator('#tab-sqa').click();
-	assert.ok([...sessions.values()].some(s=>s.mode==='sqa'&&s.sqa.scope.authorization.confirmed));
+	assert.ok([...sessions.values()].some(s=>s.mode==='sqa'&&s.sqa.version===3));
 	checks.push('SQA scope authorization, launcher API, pending assessment panel');
 	await page.locator('#new-founder').click();await page.locator('#founder-start[open]').waitFor();
 	assert.equal(await page.locator('#founder-customize').evaluate(node => node.open), false);
