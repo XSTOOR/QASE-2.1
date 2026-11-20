@@ -63,6 +63,7 @@ import { createPageRouter, routeHash } from './pageRouter.js';
 import { blockedRunReason, preferredResultTab, runPresentationLabel, runPresentationStatus } from './runPresentation.js';
 import { createQaJourney, normalizeWebsite } from './qaJourney.js';
 import { createQaEvidenceWorkspace, isQaEvidenceRun } from './qaEvidenceView.js';
+import { isQaConversationMessage, renderQaMessageBody } from './qaConversation.js';
 import { workflowStatus } from './workflowStatus.js';
 import { renderJevExecution } from './jevExecutionView.js';
 import { planPresentation } from './planPresentation.js';
@@ -418,15 +419,7 @@ const { update: updateQaEvidence, updatePreview: updateQaEvidencePreview } = cre
 	report: $('qa-report-evidence'),
 	onActivity: () => activateDetailTab($('tab-activity'), true),
 	onFindings: () => activateDetailTab($('tab-findings'), true),
-	onFinding: id => {
-		activateDetailTab($('tab-findings'), true);
-		const finding = [...el.findingsList.querySelectorAll('[data-finding-id]')].find(node => node.dataset.findingId === id);
-		const heading = finding?.querySelector('.finding-head');
-		if (!heading) return;
-		if (heading.getAttribute('aria-expanded') === 'false') heading.click();
-		heading.focus({ preventScroll: true });
-		finding.scrollIntoView({ block: 'start' });
-	}
+	onFinding: id => openFindingDetail(id)
 });
 const founderView = createFounderView({
 	getSession: () => state.session,
@@ -1339,10 +1332,13 @@ function applySessionSnapshot(session) {
 	const changedSession = state.session?.id !== session.id;
 	state.bubbles.clear();
 	state.session = session;
-	document.body.dataset.qaWorkspace = String(isQaEvidenceRun(session));
+	// QA runs use the conversation layout: the agent's messages, findings and report
+	// cards on the left, the live browser and the evidence tabs beside them.
+	document.body.dataset.qaWorkspace = 'false';
+	document.body.dataset.qaConversation = String(session.mode === 'qa');
 	if (changedSession && isQaEvidenceRun(session) && document.body.dataset.page === 'run') {
 		activateDetailTab($('tab-plan'));
-		setWorkspaceView(session.pendingQuestion ? 'agent' : 'results');
+		setWorkspaceView('agent');
 	}
 	updateQaEvidence(session, true);
 	// Refresh the clock-skew sample on every snapshot (load, resync, refresh).
@@ -1705,7 +1701,7 @@ function renderMiniSummary() {
 
 function renderHeader() {
 	const session = state.session;
-	$('qa-workspace-switch').hidden = !isQaEvidenceRun(session) || document.body.dataset.page !== 'run';
+	$('qa-workspace-switch').hidden = true;
 	const resumeBlock = workflowStatus(session).resumeBlocked;
 	el.resumeRun.disabled = Boolean(resumeBlock);
 	el.resumeRun.title = resumeBlock || '';
@@ -1897,7 +1893,7 @@ function setStatus(status) {
 	const justStarted = status === 'running' && previousStatus !== 'running';
 	if (state.session) state.session.status = status;
 	document.body.dataset.runStatus = status;
-	if (justStarted && matchMedia('(max-width: 720px)').matches && !isQaEvidenceRun(state.session)) setWorkspaceView('browser');
+	if (justStarted && matchMedia('(max-width: 720px)').matches) setWorkspaceView('browser');
 	const stopping = status === 'running' && state.stopRequests.has(state.sessionId);
 	const stoppedByUser = status === 'interrupted' && state.session?.statusDetail === 'Stopped by user.';
 	const displayStatus = runPresentationStatus(state.session);
@@ -1920,7 +1916,9 @@ function setStatus(status) {
 							: status;
 	renderMiniSummary();
 	const running = status === 'running';
-	el.stopRun.hidden = !running;
+	// The QA engine keeps its browser open while it waits for a sign-in answer; it can still be stopped.
+	const qaWaiting = status === 'awaiting_input' && state.session?.mode === 'qa' && state.session?.pendingQuestion?.kind === 'qa_credentials';
+	el.stopRun.hidden = !(running || qaWaiting);
 	el.stopRun.disabled = stopping;
 	el.stopRun.textContent = stopping ? 'Stopping…' : 'Stop';
 	el.resumeRun.hidden = !((status === 'interrupted' || status === 'error') && state.sessionId);
@@ -1931,6 +1929,11 @@ function setStatus(status) {
 	el.sendBtn.disabled = running;
 	el.composerInput.disabled = running;
 	el.composerHint.hidden = !running;
+	if (state.session?.mode === 'qa') {
+		el.composerHint.textContent = 'Qase is testing. Press Stop to end early; you still get the report.';
+		if (qaWaiting) el.composerInput.placeholder = 'Use the sign-in card above, or reply "skip" to test public pages only';
+		else if (el.composerInput.placeholder.startsWith('Use the sign-in card')) el.composerInput.placeholder = 'Paste a URL or tell Qase what to test…';
+	} else el.composerHint.textContent = 'Agent is working. You can reply when it pauses.';
 	el.livePill.hidden = !running;
 	el.browserDot.className = `dot${running ? ' is-busy' : state.session?.targetUrl ? ' is-live' : ''}`;
 	el.browserDot.dataset.status = displayStatus;
@@ -2682,18 +2685,59 @@ function renderTranscript() {
 	});
 }
 
-function renderMessage(message) {
+/** Opens one finding in the Findings tab (used by the evidence view and the conversation cards). */
+function openFindingDetail(id) {
+	activateDetailTab($('tab-findings'), true);
+	const finding = [...el.findingsList.querySelectorAll('[data-finding-id]')].find(node => node.dataset.findingId === id);
+	const heading = finding?.querySelector('.finding-head');
+	if (!heading) return;
+	if (heading.getAttribute('aria-expanded') === 'false') heading.click();
+	heading.focus({ preventScroll: true });
+	finding.scrollIntoView({ block: 'start' });
+}
+
+/** QA engine messages: step notes, finding cards and the report card, all in the conversation. */
+function renderQaMessage(message) {
 	const node = document.createElement('div');
-	node.className = `msg ${message.role}${message.kind ? ` ${message.kind}` : ''}`;
+	node.className = `msg agent qa-msg ${message.kind}`;
+	node.dataset.id = message.id;
+	const role = document.createElement('div');
+	role.className = 'msg-role';
+	role.textContent = 'Qase';
+	const body = renderQaMessageBody(message, state.session, {
+		onOpen: openFindingDetail,
+		onOpenReport: () => activateDetailTab($('tab-report'), true),
+		onDownloadPdf: async () => { try { await downloadReportPdf('qase-qa-report.pdf'); } catch (error) { exportError(error, 'The PDF export failed.'); } },
+		onCopyAll: async (target, label) => {
+			try { await navigator.clipboard.writeText(buildAllFixPromptsMarkdown(state.session)); target.textContent = 'Copied ✓'; toast('All fix prompts copied.', 'good'); }
+			catch { target.textContent = 'Copy failed'; }
+			setTimeout(() => { target.textContent = label; }, 1800);
+		}
+	}, { markdown });
+	if (!body.classList.contains('msg-body')) {
+		const wrap = document.createElement('div');
+		wrap.className = 'msg-body qa-card-wrap';
+		wrap.append(body);
+		node.append(role, wrap);
+	} else node.append(role, body);
+	state.bubbles.set(message.id, { node, body, text: message.text });
+	return node;
+}
+
+function renderMessage(message) {
+	if (isQaConversationMessage(message, state.session)) return renderQaMessage(message);
+	const node = document.createElement('div');
+	const agent = message.role === 'agent' || message.role === 'assistant';
+	node.className = `msg ${agent ? 'agent' : message.role}${message.kind ? ` ${message.kind}` : ''}`;
 	node.dataset.id = message.id;
 
 	const role = document.createElement('div');
 	role.className = 'msg-role';
-	role.textContent = message.role === 'agent' ? 'Qase' : message.role === 'user' ? 'You' : 'System';
+	role.textContent = agent ? 'Qase' : message.role === 'user' ? 'You' : 'System';
 
 	const body = document.createElement('div');
-	body.className = message.role === 'agent' ? 'msg-body md' : 'msg-body';
-	if (message.role === 'agent') {
+	body.className = agent ? 'msg-body md' : 'msg-body';
+	if (agent) {
 		body.innerHTML = markdown(message.text);
 	} else {
 		body.textContent = message.text;
@@ -2814,7 +2858,8 @@ function renderQuestion() {
 	const tag = document.createElement('span');
 	tag.className = 'question-tag';
 	const credentialLike = isCredentialQuestion(question);
-	tag.textContent = credentialLike ? 'Credentials needed' : 'Decision needed';
+	tag.textContent = question.kind === 'qa_credentials' ? 'Sign-in needed' : credentialLike ? 'Credentials needed' : 'Decision needed';
+	if (question.kind === 'qa_credentials') card.classList.add('qa-signin-card');
 
 	const text = document.createElement('div');
 	text.className = 'question-text';
@@ -2829,8 +2874,9 @@ function renderQuestion() {
 		card.append(summary);
 	}
 
-	card.append(credentialLike ? credentialForm() : optionForm(question));
+	card.append(question.kind === 'qa_credentials' ? qaSignInForm() : credentialLike ? credentialForm() : optionForm(question));
 	el.questionSlot.append(card);
+	if (question.kind === 'qa_credentials') scrollTranscript();
 	card.querySelector('input')?.focus();
 }
 
@@ -2970,6 +3016,67 @@ function credentialForm() {
 		} finally { submit.disabled = false; }
 	};
 
+	return form;
+}
+
+/**
+ * QA engine sign-in card. The account goes to the run's encrypted vault; the
+ * engine types it into the site's sign-in form itself, so no model sees it.
+ */
+function qaSignInForm() {
+	const form = document.createElement('form');
+	form.className = 'cred-form qa-signin-form';
+	const host = (() => { try { return new URL(state.session?.targetUrl).host; } catch { return 'this site'; } })();
+	const field = (label, input) => { const wrap = document.createElement('label'); wrap.className = 'qa-field'; const text = document.createElement('span'); text.textContent = label; wrap.append(text, input); return wrap; };
+	const username = document.createElement('input');
+	username.autocomplete = 'off'; username.spellcheck = false; username.required = true; username.placeholder = 'qa@example.com';
+	const password = document.createElement('input');
+	password.type = 'password'; password.autocomplete = 'new-password'; password.required = true; password.placeholder = '••••••••';
+	const loginUrl = document.createElement('input');
+	loginUrl.type = 'url'; loginUrl.placeholder = `https://${host}/login`; loginUrl.spellcheck = false;
+	const row = document.createElement('div');
+	row.className = 'qa-field-row';
+	row.append(field('Username or email', username), field('Password', password));
+	const advanced = document.createElement('details');
+	advanced.className = 'qa-advanced';
+	const summary = document.createElement('summary');
+	summary.textContent = 'Sign-in page (optional)';
+	advanced.append(summary, field('Sign-in page URL, if Qase should not find it itself', loginUrl));
+	const consent = document.createElement('label');
+	consent.className = 'qa-consent';
+	const authorize = document.createElement('input');
+	authorize.type = 'checkbox'; authorize.required = true;
+	consent.append(authorize, document.createTextNode(` This is a test account I'm allowed to use on ${host}.`));
+	const note = document.createElement('p');
+	note.className = 'cred-note';
+	note.textContent = 'Encrypted for this run and deleted when it ends. The AI models never see it: Qase types it into the sign-in form itself, signs in once and then tests read-only.';
+	const actions = document.createElement('div');
+	actions.className = 'cred-actions';
+	const skip = document.createElement('button');
+	skip.type = 'button'; skip.className = 'btn btn-ghost btn-sm'; skip.textContent = 'Continue without signing in';
+	skip.onclick = () => sendAnswer('Continue with the public pages only.');
+	const submit = document.createElement('button');
+	submit.type = 'submit'; submit.className = 'btn btn-primary btn-sm'; submit.textContent = 'Sign in and continue';
+	actions.append(skip, submit);
+	form.append(row, advanced, consent, note, actions);
+	form.onsubmit = async event => {
+		event.preventDefault();
+		if (!username.value.trim() || !password.value || !authorize.checked) {
+			toast('Enter the username and password and confirm you may use this account, or continue without signing in.', 'bad');
+			return;
+		}
+		submit.disabled = true; skip.disabled = true;
+		submit.textContent = 'Signing in…';
+		try {
+			await api(`/sessions/${state.sessionId}/credentials`, { method: 'POST', body: JSON.stringify({ fields: { QA_USERNAME: username.value.trim(), QA_PASSWORD: password.value }, authorizeLogin: true, ...(loginUrl.value.trim() ? { loginUrl: loginUrl.value.trim() } : {}) }) });
+			el.questionSlot.replaceChildren();
+			state.session.pendingQuestion = undefined;
+			password.value = ''; username.value = '';
+		} catch (error) {
+			fail(error);
+			submit.textContent = 'Sign in and continue';
+		} finally { submit.disabled = false; skip.disabled = false; }
+	};
 	return form;
 }
 
@@ -7511,9 +7618,8 @@ async function applyPageRoute(route) {
 				document.title = `Results — ${state.session?.title ?? 'Qase'}`;
 			} else {
 				if (isQaEvidenceRun(state.session)) {
-					$('qa-workspace-switch').hidden = false;
 					activateDetailTab($('tab-plan'));
-					setWorkspaceView(state.session.pendingQuestion ? 'agent' : 'results');
+					setWorkspaceView(matchMedia('(max-width: 720px)').matches && state.session?.status === 'running' && !state.session.pendingQuestion ? 'browser' : 'agent');
 				} else if (matchMedia('(max-width: 720px)').matches && state.session?.status === 'running') setWorkspaceView('browser');
 				else if (matchMedia('(max-width: 720px)').matches) setWorkspaceView('agent');
 				else if (document.body.dataset.workspaceView === 'runs') setWorkspaceView('agent');
@@ -9012,7 +9118,6 @@ const detailTabs = [...document.querySelectorAll('#tabs .tab')];
 
 function setWorkspaceView(view) {
 	if (!['runs', 'agent', 'browser', 'results'].includes(view)) view = 'agent';
-	if (view === 'browser' && document.body.dataset.page === 'run' && isQaEvidenceRun(state.session)) view = 'results';
 	const nav = document.querySelector('.workspace-mobile-nav');
 	const focusedPanel = document.activeElement?.closest('.panel');
 	document.body.dataset.workspaceView = view;

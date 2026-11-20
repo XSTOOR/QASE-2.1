@@ -12,7 +12,7 @@ import { storeSecrets, clearSecrets } from '../secrets.js';
 
 const ENV = {
 	...process.env, NODE_ENV: 'test', QASE_BROWSER_ALLOWED_PRIVATE_HOSTS: '127.0.0.1',
-	QASE_QA_MAX_MINUTES: '15', QASE_QA_MAX_PAGES: '5', QASE_QA_VIEWPORT_PAGES: '1', QASE_QA_INTERACTION_PAGES: '1', QASE_QA_EXPLORE_STEPS: '6'
+	QASE_QA_MAX_MINUTES: '15', QASE_QA_MAX_PAGES: '5', QASE_QA_VIEWPORT_PAGES: '1', QASE_QA_INTERACTION_PAGES: '1', QASE_QA_EXPLORE_STEPS: '6', QASE_QA_ASK_CREDENTIALS: 'false'
 };
 
 function harness(targetUrl) {
@@ -139,5 +139,58 @@ test('a provided test account signs in once and signed-in pages are tested', { t
 		assert.equal(session.hybrid.signedIn, true);
 		assert.ok(session.findings.some(item => item.detector === 'page.broken_text' && item.url.endsWith('/account')), 'the signed-in page was audited');
 		assert.ok(!JSON.stringify(session).includes('lab-pass'), 'the password never appears in run state');
+	} finally { await lab.close(); }
+});
+
+/** Waits until the engine asks its sign-in question. */
+async function waitForQuestion(session, timeoutMs = 120_000) {
+	const end = Date.now() + timeoutMs;
+	while (Date.now() < end) {
+		if (session.pendingQuestion?.kind === 'qa_credentials') return session.pendingQuestion;
+		await new Promise(resolve => setTimeout(resolve, 200));
+	}
+	throw new Error('The engine never asked for a test account.');
+}
+
+test('a sign-in wall makes the agent ask for a test account in the conversation, then test signed in', { timeout: 300_000 }, async () => {
+	const lab = await startQaLab();
+	try {
+		const { session, runStore, artifactStore, statuses } = harness(`${lab.url}account`);
+		const record = {};
+		const run = runQaEngine({ session, runStore, record, env: { ...ENV, QASE_QA_ASK_CREDENTIALS: 'true', QASE_QA_MAX_PAGES: '2' }, settings: qaModelSettings({}, {}), artifactStore });
+		const question = await waitForQuestion(session);
+		assert.match(question.question, /sign-in page/);
+		assert.equal(session.status, 'awaiting_input');
+		assert.equal(typeof record.qaAnswer, 'function');
+		storeSecrets(session.id, { QA_USERNAME: 'qa@lab.test', QA_PASSWORD: 'lab-pass' });
+		record.qaAnswer({ credentials: {} });
+		await run;
+		assert.equal(session.status, 'done');
+		assert.equal(session.hybrid.signedIn, true);
+		assert.ok(statuses.some(item => item.status === 'awaiting_input'));
+		assert.ok(session.findings.some(item => item.url.endsWith('/account')), 'the signed-in page was audited');
+		const agent = session.messages.filter(message => message.role === 'agent');
+		assert.ok(agent.some(message => /Signed in/.test(message.text)), 'the agent reports the sign-in');
+		assert.ok(agent.some(message => message.kind === 'qa-finding' && message.id.startsWith('qaf-')), 'findings are posted as cards');
+		assert.equal(agent.filter(message => message.kind === 'qa-report').length, 1, 'one report card');
+		assert.equal(session.pendingQuestion, undefined);
+		assert.ok(!JSON.stringify(session).includes('lab-pass'), 'the password never appears in run state');
+	} finally { await lab.close(); }
+});
+
+test('skipping the sign-in question finishes with public pages and records the gap', { timeout: 300_000 }, async () => {
+	const lab = await startQaLab();
+	try {
+		const { session, runStore, artifactStore } = harness(`${lab.url}account`);
+		const record = {};
+		const run = runQaEngine({ session, runStore, record, env: { ...ENV, QASE_QA_ASK_CREDENTIALS: 'true', QASE_QA_MAX_PAGES: '2' }, settings: qaModelSettings({}, {}), artifactStore });
+		await waitForQuestion(session);
+		await new Promise(resolve => setTimeout(resolve, 1500));
+		record.qaAnswer({ skip: true });
+		await run;
+		assert.equal(session.status, 'done');
+		assert.notEqual(session.hybrid.signedIn, true);
+		assert.ok(session.report.notCovered.some(line => /sign-in/i.test(line)));
+		assert.ok(session.hybrid.elapsedMs < Date.now() - session.hybrid.startedAt, 'waiting time is not counted against the budget');
 	} finally { await lab.close(); }
 });

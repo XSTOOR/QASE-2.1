@@ -1,5 +1,40 @@
 # QASE release notes
 
+## qase-2026-11-20-qa-engine-r2 (UI 20261120-2)
+
+**QA mode talks again, asks for sign-in, and reports fewer false positives.**
+Reviewed against a real run on studio.drytis.ai (a login wall: 25 findings, of
+which about a third were caused by the test harness itself).
+
+- Conversation layout: the agent narrates every phase in the run conversation,
+  posts confirmed findings as cards (severity, page, viewports, screenshot,
+  Copy fix prompt) and ends with a report card (verdict, counts, gaps, PDF,
+  all fix prompts). The live browser and the evidence tabs sit beside it.
+- Sign-in: when the start page is a sign-in wall, or the crawl finds a sign-in
+  form, the agent pauses and asks for a test account with a secure card in the
+  conversation (or "skip"). The account goes to the run vault; the engine signs
+  in once and then crawls the signed-in area read-only. A failed sign-in is
+  re-asked once. Waiting time does not count against the run budget; after
+  `QASE_QA_CREDENTIAL_WAIT_MINUTES` (default 10) it continues public-only.
+  `QASE_QA_ASK_CREDENTIALS=false` turns the question off.
+- False positives removed: icon buttons inside fields (show-password) are not
+  "covering" the field; contrast is re-measured on rendered pixels (pseudo-
+  element and gradient backgrounds); spinners and sign-in-with/off-site
+  hand-offs are not graded as animations; explorer findings right after a
+  blocked request are flagged as harness side effects; JEV and the reasoner are
+  told how the harness works.
+- Triage: score = 0.35·detector confidence + 0.65·verifier probability, so a
+  verifier that is sure an item is a false positive can now dismiss it (before,
+  a 0.85-confidence detector could never be dismissed). Measured severities are
+  no longer inflated by one-step verifier grades. The same automated finding on
+  several pages is reported once with every page listed.
+- Speed and stability: adaptive phase budgets (unused time flows to later
+  phases), faster reloads between interaction tests, QA progress no longer
+  rewrites the local history file synchronously on every event (it did, which
+  stalled large local stores), report refinement has a 150 s cap.
+- Fix: engine messages were stored with role "assistant" and showed as
+  "System" without formatting.
+
 ## qase-2026-11-20-qa-engine-r1 (UI 20261120-1)
 
 **QA mode rebuilt.** QA runs now use the QA engine in `server/qa/`

@@ -318,7 +318,11 @@ export function createLocalApplicationServices(options = {}) {
 			// Checkpoints and human decisions must survive an immediate restart
 			// once acknowledged. Browser activity progress can be batched.
 			const sqaDecision = type === 'sqa' && (payload.final === true || Number.isSafeInteger(payload.reviewRevision));
-			emit(session, type, payload, { durable: session.qaExecutionMode === 'hybrid' || session.mode === 'founder' || sqaDecision });
+			// The QA engine marks its own durable checkpoints (phase boundaries, questions, the
+			// report); its frequent progress updates are batched so a large history file is not
+			// rewritten synchronously on every event.
+			const qaDurable = session.mode === 'qa' && (payload.checkpoint === true || ['report', 'question'].includes(type));
+			emit(session, type, payload, { durable: session.mode === 'qa' ? qaDurable : session.qaExecutionMode === 'hybrid' || session.mode === 'founder' || sqaDecision });
 			return session;
 		},
 		async setFindingStatus(session, findingId, patch) {

@@ -27,13 +27,13 @@ function deterministicSummary({ target, findings, coverage, verdict }) {
 }
 
 /** Optional: let the reasoner write the summary and sharpen fix guidance. */
-export async function refineWithReasoner({ models, target, findings, coverage, signal }) {
+export async function refineWithReasoner({ models, target, findings, coverage, limitations = [], signal }) {
 	if (!models.reasonerAvailable() || !findings.length) return {};
 	const list = findings.slice(0, 30).map((item, index) => `${index}. [${item.severity}] ${item.title} — ${item.actual.slice(0, 300)}${item.selector ? ` (element ${item.selector})` : ''}${item.fix ? `\n   Current guidance: ${item.fix.slice(0, 300)}` : ''}`).join('\n');
 	const result = await models.json([
-		{ role: 'system', content: 'You write the conclusion of a website QA report and precise fix guidance for developers. Answer JSON only: {"summary":"3-5 sentence executive summary for a product owner","recommendations":["top priorities, most important first, max 6"],"fixes":[{"index":0,"fix":"specific, actionable fix guidance (2-5 sentences): likely root cause, what to change, how to verify"}]}' },
-		{ role: 'user', content: `Site: ${target}\nCoverage: ${JSON.stringify(coverage)}\nConfirmed findings:\n${list}` }
-	], { maxTokens: 4000, signal, purpose: 'report' });
+		{ role: 'system', content: 'You write the conclusion of a website QA report and precise fix guidance for developers. Only describe the confirmed findings listed; mention what could not be tested. Answer JSON only: {"summary":"3-5 sentence executive summary for a product owner","recommendations":["top priorities, most important first, max 6"],"fixes":[{"index":0,"fix":"specific, actionable fix guidance (2-4 sentences): likely root cause, what to change, how to verify"}]}' },
+		{ role: 'user', content: `Site: ${target}\nCoverage: ${JSON.stringify(coverage)}\nNot covered: ${limitations.map(item => item.message).join(' | ') || 'nothing'}\nConfirmed findings:\n${list}` }
+	], { maxTokens: 9000, signal, purpose: 'report' });
 	if (!result || typeof result !== 'object') return {};
 	const fixes = new Map((Array.isArray(result.fixes) ? result.fixes : []).filter(item => Number.isInteger(item?.index) && typeof item.fix === 'string').map(item => [item.index, item.fix.slice(0, 2500)]));
 	return {

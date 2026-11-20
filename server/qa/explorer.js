@@ -36,8 +36,9 @@ Automated detectors already cover static layout, contrast, headers, console erro
 Rules:
 - Work like a tester: pick a realistic journey, execute it step by step, check every result against what a user would expect.
 - Try edge cases: empty input, very long input, special characters (e.g. Ünïcödé, 😀, <b>x</b>), zero/negative numbers, rapid repeated clicks, back/forward navigation, reload mid-flow.
-- Submissions are blocked by the test harness so no data is written. A blocked submission is NOT a defect; judge only the page's own behaviour (validation, feedback, state).
-- Never try to sign in with guessed credentials, attack the site, or perform destructive actions.
+- Submissions are blocked by the test harness so no data is written, and navigations to other websites (Sign in with Google/GitHub, SSO, payment providers) are blocked too. A blocked request is NOT a defect, and neither is what the page shows because of it: "Failed to fetch", a generic network error, a spinner that never ends, a button stuck in a loading state. Judge only behaviour that does not depend on the blocked request: client-side validation, labels, feedback before submitting, layout, navigation within the site.
+- When a tool result says a request was blocked, do not report the page's reaction to it.
+- Never try to sign in with guessed credentials, attack the site, or perform destructive actions. If you are signed in, stay signed in (do not click sign out).
 - Report each defect once with report_issue, with exact reproducible steps. Do not report things you did not observe. Do not report missing features or style opinions.
 - Use look when visual state matters. Be efficient; finish when you have covered the main journeys.`;
 
@@ -64,18 +65,21 @@ async function observe(page, log) {
 	return `URL: ${snapshot.url}\nTitle: ${snapshot.title}\nScroll: ${snapshot.scroll}\n${errors.length ? `Recent errors:\n${errors.join('\n')}\n` : ''}Interactive elements:\n${snapshot.items.join('\n')}\n\nVisible text:\n${snapshot.text}`;
 }
 
-export async function explore({ browser, profile, startUrl, models, knownIssues = [], maxSteps = 30, deadline, signal, blockedWrites, save, onStep = () => {}, focus }) {
+export async function explore({ browser, profile, startUrl, models, knownIssues = [], maxSteps = 30, deadline, signal, blockedWrites, save, onStep = () => {}, focus, signedIn = false, pages = [] }) {
 	const out = [];
 	const summary = { steps: 0, finished: false, summary: '', visited: new Set() };
 	if (!models.reasonerAvailable()) return { candidates: out, summary: { ...summary, skipped: 'reasoner unavailable' } };
 	const { page, log } = await browser.openPage(profile);
 	browser.setActivePage(page);
 	const trail = [];
+	// Requests QASE refused at each step: issues observed right after a refusal are harness side-effects.
+	const refusals = [];
+	const offsiteBlocked = () => browser.blocked?.().offsite_navigation ?? 0;
 	try {
 		await browser.goto(page, startUrl, log).catch(() => {});
 		const messages = [
 			{ role: 'system', content: SYSTEM },
-			{ role: 'user', content: `Site under test: ${startUrl}\nViewport: ${profile.label}\n${focus ? `Owner's focus: ${focus}\n` : ''}Already reported by automated checks (do not repeat): ${knownIssues.slice(0, 40).join('; ') || 'none'}\n\nCurrent page:\n${await observe(page, log)}` }
+			{ role: 'user', content: `Site under test: ${startUrl}\nViewport: ${profile.label}\nSession: ${signedIn ? 'signed in with the owner\'s test account (read-only: writes are still blocked)' : 'not signed in'}\n${focus ? `Owner's focus: ${focus}\n` : ''}${pages.length ? `Pages already found by the crawler: ${pages.slice(0, 25).join(', ')}\n` : ''}Already reported by automated checks (do not repeat): ${knownIssues.slice(0, 40).join('; ') || 'none'}\n\nCurrent page:\n${await observe(page, log)}` }
 		];
 		while (summary.steps < maxSteps && Date.now() < deadline && models.reasonerAvailable()) {
 			signal?.throwIfAborted();
@@ -121,11 +125,18 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 		const locate = ref => page.locator(`[data-qase-ref="${String(ref).replace(/"/g, '')}"]`).first();
 		const describeRef = async ref => (await locate(ref).evaluate(element => (element.getAttribute('aria-label') || element.innerText || element.value || element.placeholder || '').trim().slice(0, 60)).catch(() => '')) || ref;
 		const blockedBefore = blockedWrites();
+		const offsiteBefore = offsiteBlocked();
 		const after = async () => {
 			await browser.settle(page, { quietMs: 1200 });
 			summary.visited.add(page.url().split('#')[0]);
 			const blocked = blockedWrites() - blockedBefore;
-			return `${blocked ? `(The page attempted ${blocked} write request${blocked > 1 ? 's' : ''}; QASE blocked ${blocked > 1 ? 'them' : 'it'}.)\n` : ''}${await observe(page, log)}`;
+			const offsite = offsiteBlocked() - offsiteBefore;
+			refusals.push(blocked + offsite);
+			const notes = [
+				blocked ? `(The page sent ${blocked} write request${blocked > 1 ? 's' : ''}; QASE blocked ${blocked > 1 ? 'them' : 'it'}. Any error or loading state that follows is caused by the block.)` : '',
+				offsite ? '(The page tried to leave the site, e.g. a sign-in-with or payment hand-off; QASE blocked it. A spinner or unchanged page that follows is caused by the block.)' : ''
+			].filter(Boolean).join('\n');
+			return `${notes ? `${notes}\n` : ''}${await observe(page, log)}`;
 		};
 		switch (name) {
 			case 'click': {
@@ -177,10 +188,13 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 			case 'report_issue': {
 				if (!args.title || !args.actual) return 'Rejected: title and actual are required.';
 				const bytes = await page.screenshot({ type: 'jpeg', quality: 65 }).catch(() => undefined);
-				out.push(candidate({ source: 'explorer', detector: 'agent.exploration', category: args.category, severity: args.severity, confidence: 0.65,
+				const recentRefusals = refusals.slice(-4).reduce((sum, value) => sum + value, 0);
+				const harness = recentRefusals && ['functional', 'content', 'forms', 'network', 'animation', 'visual'].includes(args.category)
+					? `QASE blocked ${recentRefusals} request${recentRefusals === 1 ? '' : 's'} (write or off-site navigation) in the steps just before this was observed, so it may be caused by the test harness.` : undefined;
+				out.push(candidate({ source: 'explorer', detector: 'agent.exploration', category: args.category, severity: args.severity, confidence: harness ? 0.3 : 0.65,
 					title: args.title, url: page.url(), viewport: profile.name, expected: args.expected, actual: args.actual, evidence: args.evidence,
 					steps: Array.isArray(args.steps) && args.steps.length ? args.steps : trail.slice(-8),
-					artifactId: bytes ? await save(bytes, `Explorer: ${args.title}`) : undefined, data: { key: args.title, trail: trail.slice(-12) } }));
+					artifactId: bytes ? await save(bytes, `Explorer: ${args.title}`) : undefined, data: { key: args.title, trail: trail.slice(-12), harness } }));
 				return `Recorded issue ${out.length}. Continue testing.`;
 			}
 			case 'finish':

@@ -7,19 +7,41 @@
 import { resolveSecrets } from '../secrets.js';
 
 const LOGIN_HINT = /log ?in|sign ?in|account|auth/i;
+const SUBMIT_HINT = /^\s*(log ?in|sign ?in|continue|next|submit|enter)\b/i;
+
+/**
+ * True when the page shows a sign-in form: a visible password field inside a
+ * form with a submit control, or next to a "Sign in"/"Log in" button. A lone
+ * password field (a settings page, a demo widget) is not a sign-in wall.
+ */
+export async function hasLoginForm(page) {
+	return page.evaluate(hint => {
+		const hintRe = new RegExp(hint, 'i');
+		const visible = element => { const r = element.getBoundingClientRect(); const s = getComputedStyle(element); return r.width > 2 && r.height > 2 && s.visibility !== 'hidden' && s.display !== 'none'; };
+		for (const field of document.querySelectorAll('input[type=password]')) {
+			if (!visible(field)) continue;
+			const form = field.closest('form');
+			if (form && form.querySelector('button:not([type=button]):not([type=reset]), input[type=submit], input[type=image]')) return true;
+			if ([...document.querySelectorAll('button, [role=button], input[type=submit]')].some(button => visible(button) && hintRe.test(button.innerText || button.value || button.getAttribute('aria-label') || ''))) return true;
+		}
+		return false;
+	}, SUBMIT_HINT.source).catch(() => false);
+}
 
 async function findLoginPage(browser, profile, candidates) {
-	for (const url of candidates) {
+	// Pages whose URL looks like a sign-in route are tried first.
+	const ordered = [...candidates.filter(url => LOGIN_HINT.test(new URL(url).pathname)), ...candidates.filter(url => !LOGIN_HINT.test(new URL(url).pathname))];
+	for (const url of ordered) {
 		const { page, log } = await browser.openPage(profile);
 		try {
 			await browser.goto(page, url, log, { timeoutMs: 20000 });
-			if (await page.locator('input[type=password]').first().isVisible().catch(() => false)) return { page, log, url };
+			if (await hasLoginForm(page)) return { page, log, url };
 			// A "Sign in" link on the page leads to the form.
 			const link = page.locator('a, button').filter({ hasText: LOGIN_HINT }).first();
 			if (await link.count()) {
 				await link.click({ timeout: 4000 }).catch(() => {});
 				await browser.settle(page, { quietMs: 1500 });
-				if (await page.locator('input[type=password]').first().isVisible().catch(() => false)) return { page, log, url: page.url() };
+				if (await hasLoginForm(page)) return { page, log, url: page.url() };
 			}
 		} catch { /* try the next candidate */ }
 		await page.close().catch(() => {});
@@ -36,20 +58,25 @@ export async function signIn({ browser, profile, session, candidates }) {
 	if (!found) return { ok: false, reason: 'No sign-in form was found on the target or its common sign-in routes.' };
 	const { page, url } = found;
 	try {
-		const passwordField = page.locator('input[type=password]').first();
+		const passwordField = page.locator('input[type=password]:visible').first();
 		const form = passwordField.locator('xpath=ancestor::form[1]');
 		const scope = await form.count() ? form : page;
+		// Prefer the button that says "Sign in"/"Log in"; an icon button inside the form
+		// (show password) must never be mistaken for the submit control.
+		const hinted = scope.locator('button, [role=button], input[type=submit]').filter({ hasText: SUBMIT_HINT }).first();
+		const typed = scope.locator('button[type=submit], input[type=submit]').first();
+		const submitButton = await hinted.count() ? hinted : await typed.count() ? typed : scope.locator('button:not([type])').last();
 		const userField = scope.locator('input[type=email], input[autocomplete=username], input[name*=user i], input[name*=email i], input[name*=login i], input[type=text]').first();
 		if (await userField.count()) await userField.fill(username, { timeout: 4000 });
 		await passwordField.fill(password, { timeout: 4000 });
 		await browser.permitWritesFor(10000, async () => {
-			const submit = scope.locator('button[type=submit], input[type=submit], button:not([type])').first();
+			const submit = submitButton;
 			if (await submit.count()) await submit.click({ timeout: 4000 });
 			else await passwordField.press('Enter');
 			await page.waitForLoadState('load', { timeout: 15000 }).catch(() => {});
 			await browser.settle(page, { quietMs: 2000 });
 		});
-		const stillOnForm = await page.locator('input[type=password]').first().isVisible().catch(() => false);
+		const stillOnForm = await hasLoginForm(page);
 		const expected = session.qaAuth?.expectedUrl;
 		const reachedExpected = expected ? page.url().startsWith(expected) : undefined;
 		if (stillOnForm || reachedExpected === false) {

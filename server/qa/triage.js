@@ -3,7 +3,8 @@
  * JEV is unavailable), grade severity, and decide what becomes a finding.
  *
  * Decision rule (documented in docs/QA-ENGINE.md):
- *   detector candidates: score = 0.6·detector confidence + 0.4·verifier probability
+ *   detector candidates: score = 0.35·detector confidence + 0.65·verifier probability
+ *                        (a verifier that is confident it is a false positive can dismiss it)
  *   model candidates:    score = verifier probability (or 0.85·own confidence unverified)
  *   promote when score ≥ 0.5. Without any verifier, detector confidence alone decides.
  * Nothing in triage can fail the run: if both models are down, the deterministic
@@ -12,7 +13,18 @@
 import { mergeCandidates, SEVERITIES, severityRank } from './findings.js';
 
 const SEVERITY_SCALE = ['info', 'low', 'medium', 'high', 'critical'];
-const BATCH = 20;
+const BATCH = 15;
+
+/** What the verifier must know about how QASE tests, so harness side-effects are not reported. */
+export const HARNESS_NOTE = 'How QASE tests: it uses a real browser but blocks every write request (POST/PUT/PATCH/DELETE, form submissions) and every navigation to another website (including "Sign in with Google/GitHub" and other SSO hand-offs), unless the owner allowed it. Errors, spinners, "Failed to fetch"/network-error messages or stuck loading states that appear right after submitting a form or clicking a sign-in-with button are caused by this block, not by the site. Fake test values typed into forms are QASE\'s own input.';
+
+const SEVERITY_RUBRIC = [
+	'info: no user impact (best-practice note, e.g. missing security.txt)',
+	'low: cosmetic or minor (small touch targets, minor contrast shortfall, missing Referrer-Policy, a console warning with no visible effect)',
+	'medium: a real but survivable problem (unlabelled form fields, low contrast on body text, disabled pinch-zoom, missing CSP/HSTS/clickjacking protection, a console error, a confusing validation message)',
+	'high: breaks an important flow or blocks a group of users (control that cannot be clicked, content unreadable or hidden, a broken page or API, keyboard trap, reflected XSS without exploit proof)',
+	'critical: the core flow is blocked for everyone, data is exposed (secrets, personal data) or a vulnerability is exploitable'
+];
 
 function summary(item) {
 	return [
@@ -22,17 +34,19 @@ function summary(item) {
 		`Observed: ${item.actual}`,
 		`Expected: ${item.expected}`,
 		item.evidence ? `Evidence: ${item.evidence.slice(0, 600)}` : '',
-		item.steps?.length ? `Steps: ${item.steps.join(' → ')}` : ''
+		item.steps?.length ? `Steps: ${item.steps.join(' → ')}` : '',
+		item.urls?.length > 1 ? `Seen on ${item.urls.length} pages` : '',
+		item.data?.harness ? `Harness note: ${item.data.harness}` : ''
 	].filter(Boolean).join('\n').slice(0, 3500);
 }
 
 async function verifyWithJev(models, batch, context, signal) {
 	const questions = {};
 	batch.forEach((item, index) => {
-		questions[`g${index}`] = { type: 'noul', instructions: `Is this a genuine defect that affects real users of the website under test? Answer the probability it is real and user-impacting (not a false positive of automated tooling, not intentional design, not a test-harness artifact such as blocked submissions).\n\n${summary(item)}` };
-		questions[`s${index}`] = { type: 'score', instructions: `Rate the user impact of this defect.\n\n${summary(item)}`, criteria: ['info: no user impact', 'low: cosmetic or minor', 'medium: real but survivable problem', 'high: breaks an important flow, accessibility barrier or security weakness', 'critical: blocks the core flow, data exposure or exploitable vulnerability'] };
+		questions[`g${index}`] = { type: 'noul', instructions: `Is this a genuine defect that real users of the website would hit? Give the probability that it is real and user-impacting. Answer low for: false positives of automated tooling, intentional design (e.g. an icon button placed inside a field), and side-effects of the test harness.\n${HARNESS_NOTE}\n\n${summary(item)}` };
+		questions[`s${index}`] = { type: 'score', instructions: `Rate the user impact of this defect using the criteria. Be conservative: most automated accessibility and header findings are medium or low.\n\n${summary(item)}`, criteria: SEVERITY_RUBRIC };
 	});
-	const answers = await models.decide({ task: 'QA defect triage', target: context.target, pages: context.pages, viewports: context.viewports }, questions, { signal });
+	const answers = await models.decide({ task: 'QA defect triage', target: context.target, pages: context.pages, viewports: context.viewports, harness: HARNESS_NOTE, blockedDuringRun: context.blocked }, questions, { signal });
 	if (!answers) return undefined;
 	return batch.map((_, index) => ({
 		probability: answers[`g${index}`]?.noul,
@@ -42,7 +56,7 @@ async function verifyWithJev(models, batch, context, signal) {
 
 async function verifyWithReasoner(models, batch, context, signal) {
 	const result = await models.json([
-		{ role: 'system', content: 'You triage automated QA results for a website. For each candidate decide how likely it is a genuine, user-impacting defect (0–1) and its severity (info, low, medium, high, critical). Blocked form submissions are a property of the test harness, not defects. Answer JSON only: {"results":[{"index":0,"probability":0.0,"severity":"medium","reason":"…"}]}' },
+		{ role: 'system', content: `You triage automated QA results for a website. For each candidate decide how likely it is a genuine, user-impacting defect (0–1) and its severity. ${HARNESS_NOTE}\nSeverity scale:\n${SEVERITY_RUBRIC.join('\n')}\nAnswer JSON only: {"results":[{"index":0,"probability":0.0,"severity":"medium","reason":"one sentence"}]}` },
 		{ role: 'user', content: `Site: ${context.target}\n\n${batch.map((item, index) => `### Candidate ${index}\n${summary(item)}`).join('\n\n')}` }
 	], { maxTokens: 3000, signal, purpose: 'triage' });
 	if (!Array.isArray(result?.results)) return undefined;
@@ -84,14 +98,16 @@ export async function triage({ candidates, models, context, signal, deadline = I
 	for (const item of merged) {
 		const verification = item.verification;
 		let score;
-		if (verification) score = item.source === 'detector' ? 0.6 * item.confidence + 0.4 * verification.probability : verification.probability;
+		if (verification) score = item.source === 'detector' ? 0.35 * item.confidence + 0.65 * verification.probability : verification.probability;
 		else { stats.unverified++; score = item.source === 'detector' ? item.confidence : 0.85 * item.confidence; }
 		item.score = Math.round(score * 100) / 100;
 		if (verification?.severity) {
 			const proposed = SEVERITY_SCALE.indexOf(item.severity), graded = SEVERITY_SCALE.indexOf(verification.severity);
-			// Model-sourced items take the verifier's grade; detector items move at most one step.
+			// Model-sourced items take the verifier's grade. A detector's severity comes from a
+			// measured rule: the verifier may lower it one step, or raise it one step only when it
+			// rates the impact at least two steps higher.
 			if (item.source !== 'detector') item.severity = verification.severity;
-			else if (graded !== proposed) item.severity = SEVERITY_SCALE[proposed + Math.sign(graded - proposed)];
+			else if (graded < proposed || graded - proposed >= 2) item.severity = SEVERITY_SCALE[proposed + Math.sign(graded - proposed)];
 		}
 		(score >= 0.5 ? promoted : dismissed).push(item);
 	}

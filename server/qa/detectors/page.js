@@ -102,6 +102,52 @@ async function hiddenAfterScroll(page) {
 }
 
 /**
+ * Computed-style contrast cannot see pseudo-element backgrounds, gradients or
+ * images, so every low-contrast claim is re-measured on real pixels: the
+ * element is screenshotted and the darkest and lightest pixel bands give the
+ * rendered contrast. Claims the pixels disprove are dropped.
+ */
+async function measureRenderedContrast(page, selector) {
+	try {
+		const locator = page.locator(selector).first();
+		const bytes = await locator.screenshot({ type: 'png', timeout: 3000, animations: 'disabled' });
+		return await page.evaluate(async base64 => {
+			const image = new Image();
+			image.src = `data:image/png;base64,${base64}`;
+			await image.decode();
+			const canvas = document.createElement('canvas');
+			canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+			const context = canvas.getContext('2d', { willReadFrequently: true });
+			context.drawImage(image, 0, 0);
+			const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+			const channel = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+			const values = [];
+			for (let i = 0; i < data.length; i += 4) values.push(0.2126 * channel(data[i]) + 0.7152 * channel(data[i + 1]) + 0.0722 * channel(data[i + 2]));
+			if (values.length < 16) return undefined;
+			values.sort((a, b) => a - b);
+			const low = values[Math.floor(values.length * 0.03)], high = values[Math.floor(values.length * 0.97)];
+			return Math.round(((high + 0.05) / (low + 0.05)) * 100) / 100;
+		}, bytes.toString('base64'));
+	} catch { return undefined; }
+}
+
+async function verifyContrast(issue, page) {
+	const confirmed = [];
+	for (const item of issue.measurements ?? []) {
+		const rendered = await measureRenderedContrast(page, item.selector);
+		// Text rarely fills its box, so rendered contrast can only under-state; a clearly
+		// higher rendered value means the computed colours were wrong.
+		if (rendered !== undefined && rendered >= item.required * 0.95) continue;
+		confirmed.push({ ...item, rendered });
+	}
+	if (!confirmed.length) return undefined;
+	const describe = item => `"${item.label}" ${(item.rendered ?? item.ratio).toFixed(2)}:1 (needs ${item.required}:1${item.rendered !== undefined ? ', measured on screen' : ''})`;
+	return { ...issue, title: `${confirmed.length} text element${confirmed.length === 1 ? ' has' : 's have'} insufficient colour contrast`,
+		actual: `Examples: ${confirmed.slice(0, 4).map(describe).join('; ')}.`, examples: confirmed.map(item => item.selector), selector: confirmed[0].selector,
+		severity: confirmed.some(item => (item.rendered ?? item.ratio) < 3) ? 'medium' : 'low', confidence: confirmed.every(item => item.rendered !== undefined) ? 0.9 : 0.7 };
+}
+
+/**
  * Audits one loaded page. `save(bytes, label)` stores an artifact and returns its id.
  * Returns { candidates, metrics }.
  */
@@ -148,9 +194,12 @@ export async function auditPage(page, { url, viewport, touch = false, log, save,
 			expected: 'Content becomes visible once it is scrolled into view.', selector: item.selector, rect: item.rect, key: item.selector } });
 	}
 
+	for (const entry of candidates) {
+		if (entry.issue.kind === 'low_contrast') entry.issue = await verifyContrast(entry.issue, page);
+	}
 	const out = [];
 	let shots = 0;
-	for (const { issue } of candidates) {
+	for (const { issue } of candidates.filter(entry => entry.issue)) {
 		let artifactId;
 		if (issue.rect && shots < 8 && ['high', 'medium'].includes(issue.severity)) {
 			const bytes = await highlight(page, issue.rect, issue.title);

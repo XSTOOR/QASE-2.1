@@ -92,6 +92,15 @@ export function pageAudit(options = {}) {
 	for (const element of controls.slice(0, 400)) items.push({ element, rects: [element.getBoundingClientRect()], kind: 'control' });
 	const limited = items.slice(0, MAX_ITEMS);
 
+	// An icon button placed inside a field (show-password, clear, search) is an
+	// intentional adornment, not an element covering the field.
+	const isAdornment = (field, cover) => {
+		if (!field || !cover || !field.matches?.('input, textarea, select')) return false;
+		const f = field.getBoundingClientRect(), c = cover.getBoundingClientRect();
+		const inside = c.left >= f.left - 4 && c.right <= f.right + 4 && c.top >= f.top - 4 && c.bottom <= f.bottom + 4;
+		return inside && c.width <= 56 && c.height <= 56 && c.width * c.height <= f.width * f.height * 0.3;
+	};
+
 	// ---------- Overlapping text / obscured content ----------
 	const reported = new Set();
 	const grid = new Map();
@@ -158,7 +167,7 @@ export function pageAudit(options = {}) {
 						actual: `"${label(a.element).slice(0, 50)}" and "${label(b.element).slice(0, 50)}" are drawn on top of each other, so both are hard to read.`,
 						expected: 'Each block of text has its own space and does not collide with neighbouring text.',
 						selector: cssPath(a.element), otherSelector: cssPath(b.element), rect: toPage(overlap), key: `${cssPath(a.element)}|${cssPath(b.element)}` });
-				} else if (lower.kind === 'control') {
+				} else if (lower.kind === 'control' && !isAdornment(lower.element, upper.element)) {
 					add({ kind: 'control_obscured', severity: 'high', confidence: 0.85,
 						title: `Control "${label(lower.element) || lower.element.tagName.toLowerCase()}" is covered by another element`,
 						actual: `The ${lower.element.tagName.toLowerCase()} "${label(lower.element)}" is partly covered by "${label(upper.element) || cssPath(upper.element)}"; clicks on the covered area land on the wrong element.`,
@@ -188,7 +197,7 @@ export function pageAudit(options = {}) {
 		if (r.width < 8 || r.height < 8 || r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw) continue;
 		const cx = Math.min(vw - 1, Math.max(0, r.left + r.width / 2)), cy = Math.min(vh - 1, Math.max(0, r.top + r.height / 2));
 		const top = document.elementFromPoint(cx, cy);
-		if (!top || element.contains(top) || top.contains(element) || element.closest('label')?.contains(top)) continue;
+		if (!top || element.contains(top) || top.contains(element) || element.closest('label')?.contains(top) || isAdornment(element, top.closest('button, a, [role=button], svg') ?? top)) continue;
 		const topFixed = fixedAncestor(top);
 		if (topFixed && !fixedAncestor(element)) continue; // a sticky header covering scrolled content is expected
 		const key = cssPath(element);
@@ -366,7 +375,12 @@ export function pageAudit(options = {}) {
 	const background = element => {
 		for (let node = element; node; node = node.parentElement) {
 			const s = style(node);
-			if (s.backgroundImage !== 'none' || s.filter !== 'none' && s.filter) return null;
+			if (s.backgroundImage !== 'none' || s.filter !== 'none' && s.filter || s.mixBlendMode !== 'normal' && s.mixBlendMode) return null;
+			// A ::before/::after layer often paints a button's real background.
+			for (const pseudo of ['::before', '::after']) {
+				const p = getComputedStyle(node, pseudo);
+				if (p.content && p.content !== 'none' && (p.backgroundImage !== 'none' || !transparent(p.backgroundColor))) return null;
+			}
 			const color = parseColor(s.backgroundColor);
 			if (color && color.a >= 0.95) return color;
 			if (color && color.a > 0.05) return null;
@@ -379,6 +393,7 @@ export function pageAudit(options = {}) {
 		const fg = parseColor(s.color);
 		const bg = background(element);
 		if (!fg || !bg || fg.a < 0.5) continue;
+		if (s.webkitTextFillColor && s.webkitTextFillColor !== s.color || /text/.test(s.backgroundClip ?? s.webkitBackgroundClip ?? '')) continue; // gradient or filled text
 		const ratio = (Math.max(luminance(fg), luminance(bg)) + 0.05) / (Math.min(luminance(fg), luminance(bg)) + 0.05);
 		const size = parseFloat(s.fontSize), bold = Number(s.fontWeight) >= 700;
 		const required = size >= 24 || size >= 18.66 && bold ? 3 : 4.5;
@@ -388,7 +403,8 @@ export function pageAudit(options = {}) {
 		title: `${lowContrast.length} text element${lowContrast.length === 1 ? ' has' : 's have'} insufficient colour contrast`,
 		actual: `Examples: ${lowContrast.slice(0, 4).map(item => `"${label(item.element).slice(0, 30)}" ${item.ratio.toFixed(2)}:1 (needs ${item.required}:1)`).join('; ')}.`,
 		expected: 'Body text has at least 4.5:1 contrast and large text 3:1 (WCAG 1.4.3).', selector: cssPath(lowContrast[0].element),
-		examples: lowContrast.slice(0, 8).map(item => cssPath(item.element)), rect: toPage(lowContrast[0].element.getBoundingClientRect()), key: 'low_contrast' });
+		examples: lowContrast.slice(0, 8).map(item => cssPath(item.element)), rect: toPage(lowContrast[0].element.getBoundingClientRect()), key: 'low_contrast',
+		measurements: lowContrast.slice(0, 6).map(item => ({ selector: cssPath(item.element), label: label(item.element).slice(0, 30), ratio: Math.round(item.ratio * 100) / 100, required: item.required })) });
 
 	// ---------- Content defects ----------
 	const bodyText = document.body?.innerText ?? '';

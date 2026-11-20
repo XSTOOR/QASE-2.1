@@ -23,7 +23,7 @@ a fixed, complete test plan and uses models only where judgement helps.
 | Phase | What happens | Module |
 | --- | --- | --- |
 | `open` | Load the target (3 attempts), capture response headers and cookies | `engine.js` |
-| `signin` | Optional: sign in once with the run's test account | `signin.js` |
+| `signin` | Sign in once with the run's test account. Without one, when the start page is a sign-in wall (or the crawl finds a sign-in form) the agent asks for one in the conversation, then crawls the signed-in area too | `signin.js`, `engine.js` |
 | `crawl` | Same-scope crawl (default 12 pages, ≤2 URLs per path pattern); page audit + page security on each | `crawl.js`, `detectors/page.js`, `detectors/security.js` |
 | `viewports` | Re-audit key pages on mobile/tablet (or desktop when the run's device is mobile) | `detectors/page.js` |
 | `motion` | Click toggles, menus, dialogs, accordions; hover desktop submenus; reduced-motion check | `detectors/interactions.js` |
@@ -35,7 +35,9 @@ a fixed, complete test plan and uses models only where judgement helps.
 | `triage` | Merge duplicates, verify with JEV (fallback reasoner, then deterministic), grade severity | `triage.js` |
 | `publish` | Findings with fix guidance, deterministic verdict, report | `report.js`, `engine.js` |
 
-Each phase has a time slice of the run budget (`PHASE_END` in `engine.js`).
+Each phase gets a share of the *remaining* run budget (`PHASE_SHARE` in
+`engine.js`), so time an early phase does not use flows to later phases. Time
+spent waiting for the owner to answer the sign-in question is not counted.
 A phase that runs out of time, throws, or is stopped is recorded in
 `session.hybrid.phases` and as a limitation; the next phase still runs.
 `triage` and `publish` always run — after a stop they publish a partial report.
@@ -117,16 +119,67 @@ and per-run call/token caps.
 Keys: `QASE_REASONER_API_KEY` / `JEV_API_KEY`, falling back to the account's
 configured key / `QASE_API_KEY`. Neither model is required.
 
+## The conversation
+
+The engine talks in the run conversation (`role: 'agent'`):
+
+| Message kind | When | Rendered by |
+| --- | --- | --- |
+| `qa-step` | Start of the run and the end of every phase: what was tested, how many possible issues (by category) | `public/qaConversation.js` (markdown) |
+| `qa-finding` | After triage, one per confirmed finding (most severe first, up to 15); id `qaf-<findingId>` | finding card: severity, page, viewports, screenshot, Copy fix prompt, Details |
+| `qa-report` | Last message; id `qa-report-<ts>` | report card: verdict, counts, summary, what was not tested, PDF, all fix prompts |
+
+Messages carry only id, role, kind and text, so they survive the PostgreSQL
+store unchanged; the cards read the finding and report from the session.
+
+### Asking for a test account
+
+When no test account was given at launch and the site has a sign-in form
+(`hasLoginForm` in `signin.js`: a visible password field in a form with a
+submit control, or next to a "Sign in"/"Log in" button), the engine sets
+`session.pendingQuestion = { kind: 'qa_credentials', … }`, moves the run to
+`awaiting_input` and waits on `record.qaAnswer`:
+
+- `POST /api/sessions/:id/credentials` stores the account in the run vault and
+  resumes the engine, which signs in (one write window) and continues signed in;
+- `POST /api/sessions/:id/answer`, or a chat reply such as "skip", continues
+  with public pages only. A password typed into the chat is never accepted;
+- no answer within `QASE_QA_CREDENTIAL_WAIT_MINUTES` (10) continues public-only;
+- a failed sign-in is reported and asked once more;
+- after a server restart the question is still pending; answering it resumes
+  the run from its last completed phase.
+
+Scheduled/matrix runs (`session.matrixRunId`) never ask.
+
+## Avoiding false positives
+
+QASE blocks writes and off-site navigations while testing. Their side effects
+are not defects, so:
+
+- interaction tests skip controls whose click tried to leave the site or send
+  data, and never grade spinners or other infinite animations;
+- explorer findings observed right after a blocked request carry
+  `data.harness` and a low confidence; JEV and the reasoner get `HARNESS_NOTE`
+  (`triage.js`) with every verification;
+- an icon button inside a field (show password, clear) is an adornment, not an
+  element covering the field;
+- low contrast is re-measured on rendered pixels; claims the pixels disprove
+  (pseudo-element, gradient or image backgrounds) are dropped;
+- the same automated finding on several pages is merged into one finding that
+  lists every page.
+
 ## Triage rule
 
 ```
-detector candidate:  score = 0.6 × detector confidence + 0.4 × verifier probability
+detector candidate:  score = 0.35 × detector confidence + 0.65 × verifier probability
 model candidate:     score = verifier probability   (unverified: 0.85 × own confidence)
 promote when score ≥ 0.5
 ```
 
-Model-sourced candidates take the verifier's severity; detector candidates
-move at most one severity step. Dismissed candidates are listed in the report
+A verifier that is confident a candidate is a false positive can therefore
+dismiss even a high-confidence detector result. Model-sourced candidates take
+the verifier's severity; a detector's measured severity may drop one step, and
+rises one step only when the verifier rates it at least two steps higher. Dismissed candidates are listed in the report
 (`report.qaEngine.dismissed`) so nothing is silently dropped.
 
 The verdict is deterministic: `blocked` if the target never loaded, `fail`
@@ -167,7 +220,9 @@ readable; continuing one starts the engine.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `QASE_QA_MAX_MINUTES` | 25 | Run budget (phases get fixed fractions) |
+| `QASE_QA_MAX_MINUTES` | 25 | Run budget (phases share the remaining time; waiting for the owner is not counted) |
+| `QASE_QA_ASK_CREDENTIALS` | true | `false`: never ask for a test account |
+| `QASE_QA_CREDENTIAL_WAIT_MINUTES` | 10 | How long the agent waits for the sign-in answer |
 | `QASE_QA_MAX_PAGES` | 12 | Pages crawled and audited |
 | `QASE_QA_VIEWPORT_PAGES` | 5 | Pages re-audited on extra viewports |
 | `QASE_QA_INTERACTION_PAGES` | 4 | Pages whose toggles and animations are tested |

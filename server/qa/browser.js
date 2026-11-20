@@ -97,6 +97,16 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	let frameTimer;
 	let lastFrameKey;
 	let lastFrame;
+	// Every refusal is counted so detectors and the explorer can tell harness
+	// side-effects (a blocked write or sign-in redirect) from real site defects.
+	const blockedCounts = { write_blocked: 0, offsite_navigation: 0, policy: 0 };
+	const recentBlocked = [];
+	const noteBlocked = event => {
+		blockedCounts[event.kind] = (blockedCounts[event.kind] ?? 0) + 1;
+		recentBlocked.push({ ...event, ts: Date.now() });
+		if (recentBlocked.length > 50) recentBlocked.shift();
+		onBlocked?.(event);
+	};
 
 	async function context(profile, { reducedMotion } = {}) {
 		const key = `${profile.name}:${reducedMotion ?? 'no-preference'}`;
@@ -123,15 +133,15 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 				// the current page (with its state) instead of showing a browser error page.
 				const refuse = () => topLevel ? route.fulfill({ status: 204, body: '' }) : route.abort('blockedbyclient');
 				if (topLevel && !originAllowed(request.url(), origins)) {
-					onBlocked?.({ kind: 'offsite_navigation', url: request.url(), method: request.method() });
+					noteBlocked({ kind: 'offsite_navigation', url: request.url(), method: request.method() });
 					return await refuse();
 				}
 				if (!await policyAllows(request.url(), false)) {
-					onBlocked?.({ kind: 'policy', url: request.url(), method: request.method() });
+					noteBlocked({ kind: 'policy', url: request.url(), method: request.method() });
 					return await refuse();
 				}
 				if (!allowWrites && Date.now() > writesAllowedUntil && !SAFE_METHODS.has(request.method()) && (interacting > 0 || request.isNavigationRequest()) && !isGraphQlQuery(request)) {
-					onBlocked?.({ kind: 'write_blocked', url: request.url(), method: request.method(), navigation: request.isNavigationRequest() });
+					noteBlocked({ kind: 'write_blocked', url: request.url(), method: request.method(), navigation: request.isNavigationRequest() });
 					return await refuse();
 				}
 				return await route.continue();
@@ -174,7 +184,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	}
 
 	/** Navigates and waits for a settled render. Returns the main response or undefined. */
-	async function goto(page, url, log, { timeoutMs = 30000 } = {}) {
+	async function goto(page, url, log, { timeoutMs = 30000, quietMs } = {}) {
 		let response;
 		try {
 			response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
@@ -182,7 +192,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 			if (log) log.navigationError = String(error.message).split('\n')[0].slice(0, 300);
 			throw error;
 		}
-		await settle(page);
+		await settle(page, quietMs ? { quietMs } : undefined);
 		if (log && response) {
 			let headers = {};
 			try { headers = await response.allHeaders(); } catch { /* headers unavailable */ }
@@ -194,7 +204,8 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	/** Waits briefly for network quiet and fonts/images, never failing. */
 	async function settle(page, { quietMs = 2500 } = {}) {
 		await page.waitForLoadState('load', { timeout: 15000 }).catch(() => {});
-		await page.waitForLoadState('networkidle', { timeout: quietMs + 2000 }).catch(() => {});
+		// Sites with analytics or long-polling never reach network idle; the wait is capped.
+		await page.waitForLoadState('networkidle', { timeout: quietMs + 1000 }).catch(() => {});
 		await page.evaluate(() => document.fonts?.ready?.then(() => true)).catch(() => {});
 		await page.waitForTimeout(300).catch(() => {});
 	}
@@ -265,6 +276,9 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 		signedIn: () => Boolean(storageState),
 		startFrames, stopFrames,
 		getLastFrame: () => lastFrame,
+		/** Counts of refused requests by kind, and the most recent refusals. */
+		blocked: () => ({ ...blockedCounts }),
+		recentBlocked: (sinceTs = 0) => recentBlocked.filter(event => event.ts >= sinceTs),
 		setActivePage: page => { activePage = page; },
 		close
 	};

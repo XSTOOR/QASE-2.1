@@ -2452,6 +2452,32 @@ export function createApplication(options = {}) {
 	});
 
 	/** A URL starts a run; any other chat message steers the current one. */
+	/**
+	 * QA engine sign-in question. The running engine waits on record.qaAnswer;
+	 * after a restart (no live waiter) the answer is applied and the run resumes.
+	 */
+	const SKIP_REPLY = /^(skip|no|nope|later|not now|public( pages)?( only)?|continue( without( signing in| login| an account)?)?|without (login|signing in))\b/i;
+	async function answerQaCredentials(session, answer) {
+		const record = services.runs.liveFor?.(session.id) ?? services.agent.getLiveState?.(session.id);
+		if (answer.credentials) {
+			await services.secrets.store(session.id, { QA_USERNAME: answer.credentials.username, QA_PASSWORD: answer.credentials.password });
+			session.secretNames = await services.secrets.names(session.id);
+			session.qaAuth = { ...(session.qaAuth ?? {}), authorized: true, ...(answer.credentials.loginUrl ? { loginUrl: answer.credentials.loginUrl } : {}) };
+			await services.runs.addMessage(session, { role: 'user', kind: 'credentials', text: 'Shared a test account securely (stored encrypted for this run; never sent to the model).' });
+		} else {
+			await services.runs.addMessage(session, { role: 'user', kind: 'answer', text: answer.text || 'Continue with the public pages only.' });
+		}
+		if (typeof record?.qaAnswer === 'function') {
+			record.qaAnswer(answer.credentials ? { credentials: { loginUrl: answer.credentials.loginUrl } } : { skip: true });
+			return;
+		}
+		// No engine is waiting (the server restarted): record the decision and resume the run.
+		if (session.hybrid && !answer.credentials) session.hybrid.credentialsDeclined = true;
+		session.pendingQuestion = undefined;
+		await services.runs.commit(session, 'question', { question: null });
+		startTurn(session, { task: 'resume' });
+	}
+
 	app.post('/api/sessions/:id/message', async (request, response) => {
 		const session = await requireSession(request, response);
 		if (!session) return;
@@ -2463,6 +2489,18 @@ export function createApplication(options = {}) {
 		const text = String(request.body?.text ?? '').trim();
 		if (!text) {
 			response.status(400).json({ error: 'Message is empty.' });
+			return;
+		}
+		if (session.mode === 'qa' && session.pendingQuestion?.kind === 'qa_credentials') {
+			// Passwords never go through the chat: only a "skip" reply is accepted here.
+			if (SKIP_REPLY.test(text)) {
+				await answerQaCredentials(session, { skip: true, text });
+				response.json({ ok: true });
+				return;
+			}
+			await services.runs.addMessage(session, { role: 'user', text: text.length > 400 ? `${text.slice(0, 400)}…` : text });
+			await services.runs.addMessage(session, { role: 'agent', kind: 'qa-step', text: 'Please share the test account with the secure sign-in card below, so the password is encrypted and never stored in this conversation. Or reply **skip** to continue with the public pages only.' });
+			response.json({ ok: true });
 			return;
 		}
 		if (session.status === 'running' || services.agent.getLiveState(session.id).running) {
@@ -2571,6 +2609,11 @@ export function createApplication(options = {}) {
 			response.status(400).json({ error: 'Answer is empty.' });
 			return;
 		}
+		if (session.mode === 'qa' && session.pendingQuestion.kind === 'qa_credentials') {
+			await answerQaCredentials(session, { skip: true, text: answer.slice(0, 400) });
+			response.json({ ok: true });
+			return;
+		}
 		const founderLaunch = session.mode === 'founder' && session.pendingQuestion.kind === 'founder_launch_credentials';
 		const applyAnswer = async () => {
 			if (session.mode === 'founder' && session.pendingQuestion.credentialLike === true) {
@@ -2601,6 +2644,22 @@ export function createApplication(options = {}) {
 		const fields = request.body?.fields;
 		if (!fields || typeof fields !== 'object' || Object.keys(fields).length === 0) {
 			response.status(400).json({ error: 'No credentials supplied.' });
+			return;
+		}
+		if (session.mode === 'qa' && session.pendingQuestion.kind === 'qa_credentials') {
+			let account;
+			try {
+				account = validateTestAccount({ username: fields.QA_USERNAME, password: fields.QA_PASSWORD, authorized: request.body?.authorizeLogin === true, loginUrl: request.body?.loginUrl || undefined });
+			} catch (error) {
+				response.status(400).json({ error: error.message });
+				return;
+			}
+			if (!account) {
+				response.status(400).json({ error: 'Provide both the username and the password, or choose Continue without signing in.' });
+				return;
+			}
+			await answerQaCredentials(session, { credentials: account });
+			response.json({ ok: true, secretNames: ['QA_USERNAME', 'QA_PASSWORD'] });
 			return;
 		}
 		const founderLaunch = session.mode === 'founder' && session.pendingQuestion.kind === 'founder_launch_credentials';

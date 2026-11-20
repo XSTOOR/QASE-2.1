@@ -15,6 +15,11 @@
  */
 import { candidate } from '../findings.js';
 
+// Sign-in-with buttons hand off to another site; QASE blocks that navigation, so
+// their spinner/loading state is a harness artifact, not an animation to grade.
+const HANDOFF = /\b(continue|sign ?in|log ?in|sign ?up|register) with\b|\b(google|github|gitlab|apple|microsoft|facebook|linkedin|twitter|okta|sso|saml|oauth)\b/i;
+const SPINNER = /spin|spinner|loader|loading|progress|skeleton|shimmer|pulse/i;
+
 const DESTRUCTIVE = /\b(delete|remove|destroy|erase|log ?out|sign ?out|unsubscribe|deactivate|cancel (?:my )?(?:subscription|account|order)|pay|purchase|buy|checkout|place order|confirm|submit|send|transfer|book now|reset)\b/i;
 
 export const MOTION_FIX = {
@@ -38,8 +43,9 @@ export const MOTION_FIX = {
 
 /** Marks and returns toggle-like controls in priority order. */
 async function findTriggers(page, limit) {
-	return page.evaluate(({ limit, destructive }) => {
+	return page.evaluate(({ limit, destructive, handoff }) => {
 		const destructiveRe = new RegExp(destructive, 'i');
+		const handoffRe = new RegExp(handoff, 'i');
 		const visible = element => {
 			const r = element.getBoundingClientRect();
 			const s = getComputedStyle(element);
@@ -62,6 +68,7 @@ async function findTriggers(page, limit) {
 			if (element.closest('form') && (element.type === 'submit' || element.matches('form button:not([type])'))) continue;
 			if (element.tagName === 'A' && element.getAttribute('href') && !element.getAttribute('href').startsWith('#') && !element.hasAttribute('aria-expanded') && !element.hasAttribute('aria-haspopup')) continue;
 			if (destructiveRe.test(name(element))) continue;
+			if (handoffRe.test(name(element)) || element.closest('a[target=_blank]')) continue;
 			if (element.disabled || element.getAttribute('aria-disabled') === 'true') continue;
 			const id = `t${out.length}`;
 			element.setAttribute('data-qase-trigger', id);
@@ -69,7 +76,7 @@ async function findTriggers(page, limit) {
 				selector: element.id ? `#${element.id}` : `${element.tagName.toLowerCase()}${element.className && typeof element.className === 'string' && element.className.trim() ? '.' + element.className.trim().split(/\s+/).slice(0, 2).join('.') : ''}` });
 		}
 		return out;
-	}, { limit, destructive: DESTRUCTIVE.source }).catch(() => []);
+	}, { limit, destructive: DESTRUCTIVE.source, handoff: HANDOFF.source }).catch(() => []);
 }
 
 /** Records the pre-interaction state inside the page. */
@@ -219,6 +226,7 @@ export async function testInteractions(page, { url, viewport, browser, reload, s
 		if (!armed) continue;
 		const frames = [];
 		let clicked = true;
+		const blockedBefore = browser.blocked?.() ?? {};
 		await browser.interact(async () => {
 			try {
 				await page.locator(`[data-qase-trigger="${trigger.id}"]`).first().click({ timeout: 8000 });
@@ -233,6 +241,14 @@ export async function testInteractions(page, { url, viewport, browser, reload, s
 		const result = await inspect(page, trigger.id);
 		if (!clicked || !result) { await reload(); triggers = await findTriggers(page, limit); continue; }
 		tested++;
+		// A control that tried to leave the site or submit data is a link or a submit button:
+		// what follows (spinners, "Failed to fetch") is caused by QASE's block, so it is not graded.
+		const blockedAfter = browser.blocked?.() ?? {};
+		if ((blockedAfter.offsite_navigation ?? 0) > (blockedBefore.offsite_navigation ?? 0) || (blockedAfter.write_blocked ?? 0) > (blockedBefore.write_blocked ?? 0)) {
+			await reload();
+			triggers = await findTriggers(page, limit);
+			continue;
+		}
 		const base = { url, viewport, selector: trigger.selector, steps: [`Open ${url} at the ${viewport} viewport`, `Click "${trigger.label}" (${trigger.selector})`] };
 		const changed = result.navigated || result.mutations > 0 || result.region;
 		const add = (kind, fields) => out.push(candidate({ detector: `motion.${kind}`, category: fields.category ?? 'animation', fix: MOTION_FIX[kind], ...base, ...fields, data: { key: `${kind}:${trigger.selector}:${trigger.label}`, ...(fields.data ?? {}) } }));
@@ -303,7 +319,9 @@ export async function testInteractions(page, { url, viewport, browser, reload, s
 			}
 		}
 		// Animation quality.
-		const starts = result.events.filter(event => event.type === 'transitionrun' || event.type === 'animationstart');
+		// Loading spinners and other infinite animations are not open/close transitions.
+		const starts = result.events.filter(event => (event.type === 'transitionrun' || event.type === 'animationstart')
+			&& event.iterations !== 'infinite' && !SPINNER.test(`${event.target} ${event.name ?? ''}`));
 		const longest = Math.max(0, ...starts.map(event => seconds(event.duration)));
 		if (longest >= 1) {
 			add('slow_animation', { severity: longest >= 1.5 ? 'medium' : 'low', confidence: 0.75, title: `"${trigger.label}" animation takes ${longest.toFixed(1)} s`,
@@ -335,8 +353,15 @@ export async function testInteractions(page, { url, viewport, browser, reload, s
 					actual: `After pressing Escape the ${result.modal ? 'dialog' : 'menu'} ${result.regionSelector} is still open.`, expected: 'Escape closes menus and dialogs.' });
 			}
 		}
-		await reload();
-		triggers = await findTriggers(page, limit);
+		// Restore the base state only when the control left something changed.
+		const stillOpen = result.region && await regionVisible(page, result.regionSelector);
+		if (stillOpen || result.mutations > 20 || result.position === 'fixed') {
+			await reload();
+			triggers = await findTriggers(page, limit);
+		} else {
+			await page.keyboard.press('Escape').catch(() => {});
+			triggers = await findTriggers(page, limit);
+		}
 	}
 	return { candidates: out, tested, filmstrips };
 }

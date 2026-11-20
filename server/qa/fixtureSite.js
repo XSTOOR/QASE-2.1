@@ -115,7 +115,13 @@ const CLEAN = `<header><a href="/">Lab</a><a href="/clean">Clean page</a></heade
 <p>This page is intentionally well built: readable contrast, labelled controls, responsive layout.</p>
 <details><summary>More information</summary><p>Hidden details that open instantly.</p></details>
 <form action="/clean" method="get"><label for="name">Your name</label> <input id="name" name="name" required> <button class="btn" type="submit">Go</button></form>
-<img src="/static/pixel.png" alt="Decorative dot" width="40" height="40"></main>`;
+<img src="/static/pixel.png" alt="Decorative dot" width="40" height="40">
+<style>.pseudo-cta{position:relative;z-index:0;color:#fff;background:transparent;border:0;padding:12px 20px;font:600 16px system-ui}.pseudo-cta::before{content:"";position:absolute;inset:0;z-index:-1;background:#111;border-radius:8px}
+.pw-wrap{position:relative;display:inline-block}.pw-wrap input{padding-right:40px;height:36px}.pw-eye{position:absolute;right:6px;top:6px;width:24px;height:24px;border:0;background:#fff;padding:0;cursor:pointer}
+.handoff.busy::after{content:"";display:inline-block;width:12px;height:12px;margin-left:6px;border:2px solid #555;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}</style>
+<p><button type="button" class="pseudo-cta" onclick="this.blur()">Get started</button></p>
+<p><label for="pw">Password</label> <span class="pw-wrap"><input id="pw" type="password" autocomplete="current-password"><button type="button" class="pw-eye" aria-label="Show password" onclick="var f=document.getElementById('pw');f.type=f.type==='password'?'text':'password'">◉</button></span></p>
+<p><button type="button" class="handoff" onclick="this.classList.add('busy');location.href='https://accounts.example.invalid/oauth'">Continue with Google</button> <button type="button" class="handoff" onclick="this.classList.add('busy');location.href='https://docs.example.invalid/'">Docs</button></p></main>`;
 
 const CONTACT = `<header><a href="/">Lab</a></header><main><h1>Contact us</h1>
 <form action="/contact" method="post" novalidate>

@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-11-20-qa-engine-r1",
-  "uiVersion": "20261120-1",
+  "releaseId": "qase-2026-11-20-qa-engine-r2",
+  "uiVersion": "20261120-2",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Push-SQA: QA mode rebuilt on the host-orchestrated QA engine (deterministic detectors, reasoning-model exploration and visual review, JEV verification). Every QA run completes with a report and fix prompts."
+  "source": "Push-SQA: QA mode in the run conversation (narration, finding and report cards), sign-in question with a secure vault card, harness-aware false-positive filtering and calibrated JEV triage."
 }

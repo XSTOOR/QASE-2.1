@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createQaModels, parseModelJson, qaModelSettings } from './models.js';
 import { candidate, mergeCandidates } from './findings.js';
-import { triage } from './triage.js';
+import { triage, HARNESS_NOTE } from './triage.js';
+import { describeCandidates } from './engine.js';
 import { buildReport, verdictFor } from './report.js';
 import { createFrontier } from './crawl.js';
 import { buildFindingFixPrompt } from '../../public/fixPromptBuilder.js';
@@ -134,4 +135,39 @@ test('crawl frontier stays in scope, skips destructive and binary URLs, and caps
 	assert.equal(frontier.add('/item/1'), true);
 	assert.equal(frontier.add('/item/2'), true);
 	assert.equal(frontier.add('/item/3'), false, 'at most two URLs per pattern');
+});
+
+test('triage: a verifier confident it is a false positive dismisses even a high-confidence detector', async () => {
+	const toggle = candidate({ detector: 'motion.slow_animation', category: 'animation', severity: 'low', confidence: 0.85, title: '"Google" animation takes 1.0 s', actual: 'spinner', url: 'https://x.test/login' });
+	const header = candidate({ detector: 'security.csp_missing', category: 'security', severity: 'medium', confidence: 0.95, title: 'No CSP', actual: 'missing', url: 'https://x.test/' });
+	let seenContext;
+	const fetchImpl = async (_url, init) => {
+		const body = JSON.parse(init.body);
+		seenContext = body;
+		const answers = {};
+		for (const [id, question] of Object.entries(body.questions)) answers[id] = question.type === 'noul' ? { type: 'noul', noul: id === 'g0' ? 0.8 : 0.2 } : { type: 'score', score: 3 };
+		return json({ model: 'jev-1.13', answers, usage: { input_tokens: 5, output_tokens: 5 } });
+	};
+	const models = createQaModels({ settings: settings({ reasoner: { enabled: false } }), state: {}, fetchImpl });
+	const result = await triage({ candidates: [toggle, header], models, context: { target: 'https://x.test/', blocked: '3 write requests were blocked.' } });
+	assert.deepEqual(result.findings.map(item => item.title), ['No CSP']);
+	assert.equal(result.findings[0].severity, 'medium', 'a one-step-higher grade does not inflate a measured severity');
+	assert.deepEqual(result.dismissed.map(item => item.title), ['"Google" animation takes 1.0 s']);
+	assert.ok(JSON.stringify(seenContext).includes('blocks every write request'), 'JEV is told how the harness works');
+	assert.match(HARNESS_NOTE, /Failed to fetch/);
+});
+
+test('the same automated finding on several pages becomes one finding listing every page', () => {
+	const make = path => candidate({ detector: 'page.zoom_disabled', category: 'accessibility', severity: 'medium', confidence: 0.95, title: 'Pinch-zoom is disabled', actual: 'meta', url: `https://x.test${path}`, viewport: 'desktop', data: { key: 'zoom' } });
+	const merged = mergeCandidates([make('/login'), make('/register'), make('/forgot-password')]);
+	assert.equal(merged.length, 1);
+	assert.equal(merged[0].urls.length, 3);
+	const explorer = [candidate({ source: 'explorer', detector: 'agent.exploration', title: 'A', actual: 'a', url: 'https://x.test/a' }), candidate({ source: 'explorer', detector: 'agent.exploration', title: 'B', actual: 'b', url: 'https://x.test/b' })];
+	assert.equal(mergeCandidates(explorer).length, 2, 'distinct model findings are kept apart');
+});
+
+test('narration summarises candidates by category', () => {
+	assert.equal(describeCandidates([]), 'nothing suspicious');
+	const list = ['layout', 'accessibility', 'accessibility'].map(category => ({ category }));
+	assert.equal(describeCandidates(list), '3 possible issues (2 accessibility, 1 layout)');
 });

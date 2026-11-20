@@ -16,6 +16,7 @@ Report only clear, concrete defects you can see, for example:
 - unreadable text (very low contrast, text over busy images)
 - for animation filmstrips (frames in time order): elements flying in from the wrong place, flicker, content jumping, a menu/panel that appears behind content, ends half-transparent or misplaced
 Do NOT report design preferences, missing features, or anything you are unsure about.
+The test harness blocks form submissions and navigations to other websites, so a loading spinner on a just-clicked sign-in-with or submit button, or a page that did not change after such a click, is NOT a defect.
 Answer with JSON only: {"issues":[{"title":"…","severity":"high|medium|low","category":"layout|visual|animation|responsive|content|accessibility","location":"where on screen / which element","actual":"what is wrong","expected":"what it should look like","confidence":0.0-1.0}]}. Use {"issues":[]} when nothing is clearly wrong.`;
 
 const image = bytes => ({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${bytes.toString('base64')}` } });

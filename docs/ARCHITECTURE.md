@@ -6,7 +6,7 @@ ES modules (no build step). There are three testing modes:
 
 | Mode | What it produces | Engine |
 | --- | --- | --- |
-| **QA** | Defects with evidence and a fix prompt each; verdict pass / pass_with_issues / partial / fail / blocked | `server/qa/` — host-orchestrated detectors + reasoning model + JEV ([QA-ENGINE.md](QA-ENGINE.md)) |
+| **QA** | Defects with evidence and a fix prompt each; verdict pass / pass_with_issues / partial / fail / blocked | `server/qa/` — host-orchestrated detectors + reasoning model + JEV; talks in the run conversation and asks for a test account when needed ([QA-ENGINE.md](QA-ENGINE.md)) |
 | **SQA** | Standards-informed quality assessment with a deterministic control evaluator | CleanSlate SDK agent loop (`agent.js`) with SQA tools ([sqa.md](sqa.md)) |
 | **Founder** | Product and go-to-market review with evidence-bound recommendations | CleanSlate SDK agent loop with Founder tools ([founder-mode.md](founder-mode.md)) |
 

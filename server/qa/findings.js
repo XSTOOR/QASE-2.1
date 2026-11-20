@@ -77,7 +77,22 @@ export function mergeCandidates(items) {
 		if (!existing.artifactId && item.artifactId) existing.artifactId = item.artifactId;
 		if (!existing.evidence && item.evidence) existing.evidence = item.evidence;
 	}
-	return [...byKey.values()];
+	// The same automated finding on several pages (a shared header, the same
+	// console error, one auth layout behind /login, /register, /reset) is one
+	// defect in one component: report it once and list where it appears.
+	const byTitle = new Map();
+	for (const item of byKey.values()) {
+		const key = item.source === 'detector' ? `${item.detector}|${item.title.toLowerCase()}` : item.fingerprint;
+		const existing = byTitle.get(key);
+		if (!existing) { byTitle.set(key, item); continue; }
+		existing.occurrences += item.occurrences;
+		for (const viewport of item.viewports) if (!existing.viewports.includes(viewport)) existing.viewports.push(viewport);
+		for (const url of item.urls) if (!existing.urls.includes(url) && existing.urls.length < 10) existing.urls.push(url);
+		if (SEVERITIES.indexOf(item.severity) < SEVERITIES.indexOf(existing.severity)) existing.severity = item.severity;
+		existing.confidence = Math.max(existing.confidence, item.confidence);
+		if (!existing.artifactId && item.artifactId) existing.artifactId = item.artifactId;
+	}
+	return [...byTitle.values()];
 }
 
 export function severityRank(severity) {
