@@ -25,7 +25,7 @@ function browserLabel(session) {
 		[engineLabel, facts?.browserVersion].filter(Boolean).join(' ')];
 }
 
-function present(root, session, evidence, { live, preview, error, retry, onFinding, onFindings, onActivity }) {
+function present(root, session, evidence, { live, error, retry, onFinding, onFindings, onActivity }) {
 	const doc = root.ownerDocument;
 	const create = (tag, className, text) => {
 		const node = doc.createElement(tag);
@@ -90,7 +90,6 @@ function present(root, session, evidence, { live, preview, error, retry, onFindi
 	if (coverage.exploration) metric(coverage.exploration, 'AI exploration steps');
 	workspace.append(metrics);
 
-	if (live && preview) workspace.append(preview);
 
 	// Phases.
 	const phases = create('section', 'qe-card');
@@ -197,44 +196,169 @@ function present(root, session, evidence, { live, preview, error, retry, onFindi
 	root.replaceChildren(workspace);
 }
 
+
+const STEP_STATE = {
+	done: { label: 'Done', icon: '✓' },
+	running: { label: 'In progress', icon: '' },
+	failed: { label: 'Did not finish', icon: '!' },
+	skipped: { label: 'Skipped', icon: '–' },
+	pending: { label: 'Up next', icon: '' }
+};
+
+function duration(ms) {
+	if (!Number.isFinite(ms) || ms < 0) return '';
+	const seconds = Math.round(ms / 1000);
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`;
+}
+
+function hostOf(url) {
+	try { return new URL(url).host; } catch { return url ?? ''; }
+}
+
+/**
+ * The Plan tab: a clean, scannable test plan. Progress and the current step
+ * at the top, what has been covered so far, then every step with its status,
+ * outcome and duration. The live browser is shown above the tabs, so it is not
+ * repeated here.
+ */
+function presentPlan(root, session, { error, retry, onFindings }) {
+	const doc = root.ownerDocument;
+	const create = (tag, className, text) => {
+		const node = doc.createElement(tag);
+		if (className) node.className = className;
+		if (text != null) node.textContent = text;
+		return node;
+	};
+	const state = session.hybrid ?? {};
+	const coverage = state.coverage ?? {};
+	const phases = state.phases ?? [];
+	const findings = session.findings ?? [];
+	const finished = phases.filter(phase => ['done', 'skipped', 'failed'].includes(phase.status)).length;
+	const percent = phases.length ? Math.round(finished / phases.length * 100) : 0;
+	const current = phases.find(phase => phase.status === 'running');
+	const running = ['running', 'awaiting_input'].includes(session.status);
+
+	const plan = create('section', 'qp');
+	plan.setAttribute('aria-label', 'Test plan');
+
+	// Overview: what is happening now and how far along the run is.
+	const overview = create('header', 'qp-overview');
+	const top = create('div', 'qp-overview-top');
+	const titles = create('div', 'qp-titles');
+	titles.append(create('p', 'qp-eyebrow', `Test plan · ${hostOf(session.targetUrl)}`));
+	const headline = session.status === 'awaiting_input' ? 'Waiting for your answer in the conversation'
+		: running ? (current ? current.label : 'Preparing the next step')
+			: session.report ? 'Testing complete' : 'Run stopped';
+	titles.append(create('h2', 'qp-headline', headline));
+	const sub = running && current?.detail ? current.detail : running ? `Step ${Math.min(finished + 1, phases.length)} of ${phases.length}` : session.report?.summary ?? '';
+	if (sub) titles.append(create('p', 'qp-sub', sub));
+	const pill = create('span', `qp-pill qp-pill-${session.status === 'awaiting_input' ? 'wait' : running ? 'live' : session.report?.verdict === 'fail' ? 'fail' : session.report ? 'done' : 'gap'}`,
+		session.status === 'awaiting_input' ? 'Needs you' : running ? 'Running' : runPresentationLabel(session));
+	top.append(titles, pill);
+	overview.append(top);
+	const progress = create('div', 'qp-progress');
+	const bar = create('div', 'qp-bar');
+	bar.setAttribute('role', 'progressbar');
+	bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', String(phases.length)); bar.setAttribute('aria-valuenow', String(finished));
+	bar.setAttribute('aria-label', 'Steps completed');
+	const fill = create('span', 'qp-bar-fill');
+	fill.style.width = `${percent}%`;
+	bar.append(fill);
+	progress.append(bar, create('span', 'qp-progress-label', `${finished} of ${phases.length} steps · ${percent}%`));
+	overview.append(progress);
+	const [, engine] = browserLabel(session);
+	const meta = create('ul', 'qp-meta');
+	const models = state.models ?? {};
+	const viewports = coverage.viewports ?? [];
+	for (const [label, value] of [
+		['Viewports', viewports.length ? `${viewports[0]}${viewports.length > 1 ? ` + ${viewports.length - 1} more` : ''}` : 'Desktop, then tablet and mobile'], ['Browser', engine],
+		['Signed in', state.signedIn ? 'Yes, read-only' : state.loginWall ? 'No (public pages)' : 'Not needed'],
+		['AI', [models.reasoner?.enabled ? 'Reasoning model' : '', models.jev?.enabled ? 'JEV verification' : ''].filter(Boolean).join(' + ') || 'Automated checks only']
+	]) {
+		const item = create('li');
+		item.append(create('span', 'qp-meta-label', label), create('span', 'qp-meta-value', value));
+		meta.append(item);
+	}
+	overview.append(meta);
+	plan.append(overview);
+	if (error) {
+		const notice = create('p', 'qe-notice', 'Live progress could not be refreshed. ');
+		const again = create('button', 'qe-link', 'Retry');
+		again.type = 'button'; again.onclick = retry;
+		notice.append(again);
+		plan.append(notice);
+	}
+
+	// Coverage so far.
+	const stats = create('div', 'qp-stats');
+	const stat = (value, label, action) => {
+		const node = create(action ? 'button' : 'div', 'qp-stat');
+		if (action) { node.type = 'button'; node.onclick = action; }
+		node.append(create('strong', '', String(value ?? 0)), create('span', '', label));
+		stats.append(node);
+	};
+	stat(findings.length, findings.length === 1 ? 'Finding' : 'Findings', findings.length && onFindings ? onFindings : undefined);
+	stat(coverage.pages, coverage.pages === 1 ? 'Page' : 'Pages');
+	stat((coverage.viewports ?? []).length, 'Viewports');
+	stat(coverage.interactions, 'Controls');
+	stat(coverage.forms, 'Forms');
+	stat(coverage.securityChecks, 'Security checks');
+	if (!findings.length && state.candidates) stat(state.candidates, 'To verify');
+	plan.append(stats);
+
+	// Every step, in order.
+	const card = create('section', 'qp-card');
+	const head = create('div', 'qp-card-head');
+	head.append(create('h3', '', 'Steps'), create('span', 'qp-card-note', running ? 'Updates live' : `Took ${duration((state.updatedAt ?? Date.now()) - (state.startedAt ?? Date.now()))}`));
+	card.append(head);
+	const list = create('ol', 'qp-steps');
+	phases.forEach((phase, index) => {
+		const info = STEP_STATE[phase.status] ?? STEP_STATE.pending;
+		const item = create('li', 'qp-step');
+		item.dataset.status = phase.status;
+		if (phase.status === 'running') item.setAttribute('aria-current', 'step');
+		const marker = create('span', 'qp-marker', info.icon || String(index + 1));
+		marker.setAttribute('aria-hidden', 'true');
+		const body = create('div', 'qp-step-body');
+		body.append(create('span', 'qp-step-title', phase.label));
+		if (phase.detail) body.append(create('span', 'qp-step-detail', phase.detail));
+		const side = create('div', 'qp-step-side');
+		side.append(create('span', 'qp-step-state', info.label));
+		const took = phase.status !== 'skipped' && phase.startedAt && phase.endedAt ? (phase.endedAt - phase.startedAt < 1000 ? '<1s' : duration(phase.endedAt - phase.startedAt)) : '';
+		if (took) side.append(create('span', 'qp-step-time', took));
+		item.append(marker, body, side);
+		list.append(item);
+	});
+	card.append(list);
+	plan.append(card);
+
+	// What could not be covered, as soon as it is known.
+	const gaps = (session.report?.notCovered?.length ? session.report.notCovered : (state.limitations ?? []).map(item => item.message));
+	if (gaps.length) {
+		const callout = create('section', 'qp-gaps');
+		callout.append(create('h3', '', `Not covered (${gaps.length})`));
+		const items = create('ul');
+		for (const gap of gaps.slice(0, 6)) items.append(create('li', '', gap));
+		callout.append(items);
+		plan.append(callout);
+	}
+	root.replaceChildren(plan);
+}
+
 /** Live-updating workspace; checkpoints coalesce into one fetch per interval. */
 export function createQaEvidenceWorkspace({ api, plan, report, ...actions }) {
-	let session, evidence, error, timer, inFlight, pending, signature, frame, connection, preview;
-
-	function createPreview() {
-		const doc = plan.ownerDocument;
-		const panel = doc.createElement('section');
-		panel.className = 'qe-card qe-preview';
-		const heading = doc.createElement('h3');
-		heading.textContent = 'Browser preview';
-		const description = doc.createElement('p');
-		description.setAttribute('role', 'status');
-		const image = doc.createElement('img');
-		image.hidden = true;
-		image.alt = 'Live browser preview';
-		panel.append(heading, description, image);
-		return { panel, description, image };
-	}
-
-	function renderPreview() {
-		if (!session || !preview) return;
-		const active = session.status === 'running';
-		const src = frame ? `data:${frame.mimeType};base64,${frame.base64}` : null;
-		preview.description.textContent = src ? `${active && connection === 'live' ? 'Live browser preview' : 'Last received browser frame'}${frame.url ? ` · ${frame.url}` : ''}`
-			: active ? 'The preview appears when QASE captures a browser frame.' : 'The live preview is available while a run is in progress.';
-		if (src && preview.image.getAttribute('src') !== src) preview.image.src = src;
-		preview.image.hidden = !src;
-	}
+	let session, evidence, error, timer, inFlight, pending, signature;
 
 	function render() {
 		if (!session) return;
-		const snapshot = JSON.stringify([session.id, session.status, session.statusDetail, session.report?.ts, session.findings?.length, session.hybrid?.phases, session.hybrid?.coverage, session.hybrid?.limitations, evidence?.dismissed?.length, error]);
+		const snapshot = JSON.stringify([session.id, session.status, session.statusDetail, session.report?.ts, session.findings?.length, session.hybrid?.phases, session.hybrid?.coverage, session.hybrid?.limitations, session.hybrid?.signedIn, session.hybrid?.candidates, evidence?.dismissed?.length, error]);
 		if (snapshot === signature) return;
 		signature = snapshot;
 		const options = { ...actions, error, retry: () => schedule(0) };
-		present(plan, session, evidence, { ...options, live: true, preview: preview.panel });
+		presentPlan(plan, session, options);
 		present(report, session, evidence, { ...options, live: false });
-		renderPreview();
 	}
 
 	function schedule(delay = 1500) {
@@ -268,8 +392,7 @@ export function createQaEvidenceWorkspace({ api, plan, report, ...actions }) {
 		const changed = session?.id !== engineRun?.id;
 		if (changed) {
 			clearTimeout(timer);
-			timer = inFlight = evidence = signature = frame = connection = undefined;
-			preview = engineRun ? createPreview() : undefined;
+			timer = inFlight = evidence = signature = undefined;
 			error = pending = false;
 			plan.replaceChildren();
 			report.replaceChildren();
@@ -280,12 +403,5 @@ export function createQaEvidenceWorkspace({ api, plan, report, ...actions }) {
 		if (changed || refresh) schedule(changed ? 0 : undefined);
 	}
 
-	function updatePreview(id, { nextFrame, streamConnection } = {}) {
-		if (session?.id !== id) return;
-		connection = streamConnection;
-		if (nextFrame?.base64 && /^image\/(?:png|jpeg|webp)$/.test(nextFrame.mimeType) && !(nextFrame.ts && frame?.ts && nextFrame.ts < frame.ts)) frame = nextFrame;
-		renderPreview();
-	}
-
-	return { update, updatePreview };
+	return { update };
 }

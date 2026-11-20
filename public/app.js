@@ -413,7 +413,7 @@ const founderActions = createFounderActionController({
 		document.body.append(save); save.click(); save.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 0);
 	}
 });
-const { update: updateQaEvidence, updatePreview: updateQaEvidencePreview } = createQaEvidenceWorkspace({
+const { update: updateQaEvidence } = createQaEvidenceWorkspace({
 	api,
 	plan: $('qa-plan-evidence'),
 	report: $('qa-report-evidence'),
@@ -3125,7 +3125,6 @@ function applyFrame(frame) {
 	if (frame.viewportTesting && state.session?.hybrid) state.session.hybrid.viewport = frame.viewportTesting;
 	renderViewportStatus();
 	if (holdPrimaryPreview(frame, state.session)) return;
-	updateQaEvidencePreview(state.session?.id, { nextFrame: frame, streamConnection: state.streamConnection });
 	el.frame.src = `data:${frame.mimeType};base64,${frame.base64}`;
 	el.stageEmpty.hidden = true;
 	el.stageInner.hidden = false;
@@ -5224,7 +5223,6 @@ function connect(id) {
 	const connection = next => {
 		if (state.stream !== stream || state.sessionId !== id) return;
 		state.streamConnection = next;
-		updateQaEvidencePreview(id, { streamConnection: next });
 		const reconnected = next === 'live' && state.connectionLostAt !== undefined;
 		if (next === 'live') state.connectionLostAt = undefined; else state.connectionLostAt ??= Date.now();
 		if (state.session) renderHeader();

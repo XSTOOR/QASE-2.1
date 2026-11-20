@@ -1,7 +1,12 @@
 # QASE release notes
 
-## qase-2026-11-20-qa-engine-r3 (UI 20261120-3)
+## qase-2026-11-20-qa-engine-r3 (UI 20261120-4)
 
+- Plan tab redesigned: an overview (current step, progress bar, viewports,
+  browser, sign-in and AI status), coverage tiles (findings open the Findings
+  tab), a step timeline with status, outcome and duration, and what was not
+  covered. The duplicate browser preview was removed from the tab; the live
+  browser above the tabs is the one preview.
 - Sign-in: the engine now waits up to 20 s for the site's answer (slow auth
   APIs and client-side redirects used to be read as a rejection), keeps the
   write window open for the whole sign-in, and reports the real reason: the

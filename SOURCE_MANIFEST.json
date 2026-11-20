@@ -260,7 +260,7 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "2956c2574d8fe3b655d5afd276d630b84cd6bf6f650512bae24081954f81522b"
+      "sha256": "7cd60f963a290d61f917a1d5e201e0acf94790a67ee9270af6a466d0e0c7a279"
     },
     {
       "path": "public/auth.css",
@@ -500,7 +500,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "9418114d3ffbc115c656c9a72377b52b6470454461eeb3348c916cf0cac45ffa"
+      "sha256": "11676f827120f751fec3c95df6f8cf3fc4014ba4e3fc45cd181e03d02e07ef36"
     },
     {
       "path": "public/jevExecutionView.js",
@@ -608,7 +608,7 @@
     },
     {
       "path": "public/qaConversation.css",
-      "sha256": "408a7bb0d9cfaa613ca38cc5b7a26f5a40417ccbf0b0f0af19bad59e4d252f7f"
+      "sha256": "b185328772383e80db6fa0593d6758ea1a7eb74f529d1ff82bbb646f895b115a"
     },
     {
       "path": "public/qaConversation.js",
@@ -620,11 +620,11 @@
     },
     {
       "path": "public/qaEvidence.css",
-      "sha256": "28b2b5e27b79c15c88162927a4c50d54bebcd2fb977a4bf521af94345bb19148"
+      "sha256": "1198f59bfae61d92831bb9d822ae6d8ee6ca7e7ec655488af5ccf263f7ad772d"
     },
     {
       "path": "public/qaEvidenceView.js",
-      "sha256": "c5e91bdd13fad61afa5550b3b850b6ac01e0aa94e10e3f54cc547f367047fc18"
+      "sha256": "f3000815943728b0eb0eb1645780f01f9d15c100d6c96b531075f8326866355f"
     },
     {
       "path": "public/qaExecutionView.js",
@@ -716,7 +716,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "a15d89e28fedafac9dda0d50acfc99492a5a352e06e68c5875c4345f43a7d56b"
+      "sha256": "0e63a6f6482e63f7f1faaa3e9f062fc2e5d3a0eba6c85f53db595a5f26598b9f"
     },
     {
       "path": "public/renderHealth.js",
@@ -924,7 +924,7 @@
     },
     {
       "path": "RELEASE_NOTES.md",
-      "sha256": "f78c8a9f391e5c0b8eaa5a231b9de0756fc16ac4e59aab339cdcadc7b63b73dd"
+      "sha256": "9580f9c384849f2733bb9f01c80926b4467e85ff30a1e1f7780902eff2176dbc"
     },
     {
       "path": "run-jev.command",
@@ -2608,7 +2608,7 @@
     },
     {
       "path": "server/qa/engine.js",
-      "sha256": "72655ce3532c89062d5edb3c16db7af46be2c35e2e91b989140683c14b498ea4"
+      "sha256": "50e1ed7e08ebfd65342a1be4a13640310b0a48205a715cd05f2d3dfd5a64edc8"
     },
     {
       "path": "server/qa/explorer.js",

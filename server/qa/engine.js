@@ -125,9 +125,10 @@ export function publicQaState(session) {
 	if (state?.version !== ENGINE_VERSION) return undefined;
 	return {
 		version: state.version, engine: state.engine, status: state.status, phase: state.phase,
-		phases: PHASES.map(([id, label]) => ({ id, label, status: state.phases?.[id]?.status ?? 'pending', detail: state.phases?.[id]?.detail })),
+		phases: PHASES.map(([id, label]) => ({ id, label, status: state.phases?.[id]?.status ?? 'pending', detail: state.phases?.[id]?.detail, startedAt: state.phases?.[id]?.startedAt, endedAt: state.phases?.[id]?.endedAt })),
 		coverage: state.coverage, limitations: state.limitations, models: state.models,
-		candidates: state.candidates?.length ?? 0, startedAt: state.startedAt, updatedAt: state.updatedAt
+		candidates: state.candidates?.length ?? 0, startedAt: state.startedAt, updatedAt: state.updatedAt,
+		signedIn: Boolean(state.signedIn), awaitingCredentials: Boolean(state.awaitingCredentials), loginWall: Boolean(state.loginWall || state.coverage?.loginForm)
 	};
 }
 
@@ -234,7 +235,8 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		if (['done', 'skipped'].includes(state.phases[id]?.status)) return;
 		if (stopped()) { state.phases[id] = { status: 'skipped', detail: 'Stopped by user' }; return; }
 		state.phase = id;
-		state.phases[id] = { status: 'running', startedAt: Date.now() };
+		const phaseStartedAt = Date.now();
+		state.phases[id] = { status: 'running', startedAt: phaseStartedAt };
 		await syncTodos();
 		await persist();
 		const activityId = randomUUID();
@@ -249,7 +251,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			} else {
 				detail = await work(phaseDeadline(id));
 				// A phase that decided not to run (e.g. no model configured) reports "skipped …".
-				state.phases[id] = { status: /^skipped/i.test(detail ?? '') ? 'skipped' : 'done', detail: detail ?? undefined, endedAt: Date.now() };
+				state.phases[id] = { status: /^skipped/i.test(detail ?? '') ? 'skipped' : 'done', detail: detail ?? undefined, startedAt: phaseStartedAt, endedAt: Date.now() };
 			}
 		} catch (error) {
 			if (stopped()) {
@@ -257,7 +259,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			} else {
 				const message = String(error?.message ?? error).split('\n')[0].slice(0, 300);
 				console.warn(`[qa-engine] phase ${id} failed:`, error);
-				state.phases[id] = { status: 'failed', detail: message };
+				state.phases[id] = { status: 'failed', detail: message, startedAt: phaseStartedAt, endedAt: Date.now() };
 				limitation(id, `${PHASES.find(([key]) => key === id)[1]} did not complete: ${message}`, ['open', 'crawl'].includes(id));
 			}
 		}
@@ -699,14 +701,14 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 	if (stopped() && session.status === 'awaiting_input') await runStore.setStatus(session, 'running', 'Publishing the results');
 	const triageSignal = undefined; // triage must not be cancelled by the stop that ended testing
 	state.phase = 'triage';
-	state.phases.triage = { status: 'running' };
+	state.phases.triage = { status: 'running', startedAt: Date.now() };
 	await syncTodos();
 	const triageActivity = randomUUID();
 	try { await runStore.addActivity(session, { id: triageActivity, type: 'tool', toolName: 'qa_triage', status: 'running', label: PHASES.find(([key]) => key === 'triage')[1] }); } catch { /* best effort */ }
 	const blockedContext = blocked.writes || blocked.offsite ? `${blocked.writes} write requests and ${blocked.offsite} off-site navigations were blocked during testing (e.g. ${blocked.samples.slice(0, 3).map(item => `${item.method} ${pathOf(item.url)}`).join(', ')}).` : 'No requests were blocked.';
 	try {
 		result = await triage({ candidates: state.candidates, models, context: { target: session.targetUrl, pages: state.coverage.pages, viewports: state.coverage.viewports, blocked: blockedContext }, signal: triageSignal, deadline: Date.now() + 4 * 60_000 });
-		state.phases.triage = { status: 'done', detail: `${result.findings.length} confirmed of ${result.stats.merged}` };
+		state.phases.triage = { status: 'done', detail: `${result.findings.length} confirmed of ${result.stats.merged}`, startedAt: state.phases.triage.startedAt, endedAt: Date.now() };
 	} catch (error) {
 		console.warn('[qa-engine] triage failed, using deterministic confidence:', error);
 		result = { findings: state.candidates.filter(item => item.source === 'detector' && item.confidence >= 0.7), dismissed: [], stats: { candidates: state.candidates.length, verifiedBy: [], unverified: state.candidates.length } };
@@ -723,7 +725,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		: `I grouped ${plural(result.stats.merged ?? 0, 'possible issue')} and kept the ${result.findings.length} backed by high-confidence automated checks (no model was available to verify the rest).`, { id: `qa-step-triage-${state.startedAt}` });
 
 	state.phase = 'publish';
-	state.phases.publish = { status: 'running' };
+	state.phases.publish = { status: 'running', startedAt: Date.now() };
 	await syncTodos();
 	try {
 		const refined = await refineWithReasoner({ models, target: session.targetUrl, findings: result.findings, coverage: state.coverage, limitations: state.limitations, signal: AbortSignal.timeout(150_000) }).catch(() => ({}));
@@ -746,7 +748,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			runtime: { engine: session.runtimeFacts?.launchedEngineId, version: session.runtimeFacts?.browserVersion } }));
 		session.report = report;
 		state.status = 'done';
-		state.phases.publish = { status: 'done', detail: `${published.length} findings, verdict ${report.verdict}` };
+		state.phases.publish = { status: 'done', detail: `${published.length} findings, verdict ${report.verdict}`, startedAt: state.phases.publish.startedAt, endedAt: Date.now() };
 		await syncTodos();
 		await persist({ checkpoint: true });
 		await runStore.commit(session, 'report', { report });

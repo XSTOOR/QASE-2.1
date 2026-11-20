@@ -1,6 +1,6 @@
 {
   "releaseId": "qase-2026-11-20-qa-engine-r3",
-  "uiVersion": "20261120-3",
+  "uiVersion": "20261120-4",
   "productionOrigin": "https://qase.drytis.com",
   "source": "Push-SQA: QA mode in the run conversation (narration, finding and report cards), sign-in question with a secure vault card, harness-aware false-positive filtering and calibrated JEV triage."
 }
