@@ -2053,11 +2053,12 @@ export function createApplication(options = {}) {
 				severity: request.query.severity,
 				runId: request.query.run,
 				search: request.query.q,
+				source: request.query.source,
 				limit: Number.isSafeInteger(rawLimit) ? rawLimit : undefined
 			});
 			response.json({ findings, serverNow: Date.now() });
 		} catch (error) {
-			if (error?.code === 'QASE_FINDING_STATUS_INVALID' || error?.code === 'QASE_FINDING_SEVERITY_INVALID') {
+			if (['QASE_FINDING_STATUS_INVALID', 'QASE_FINDING_SEVERITY_INVALID', 'QASE_FINDING_SOURCE_INVALID'].includes(error?.code)) {
 				return response.status(400).json({ error: error.message });
 			}
 			safeErrorResponse(request, response, error);

@@ -492,3 +492,22 @@ test('aggregateFindings filters by owner, composes filters, and sorts severity-f
 	assert.throws(() => store.aggregateFindings({ severity: 'blocker' }),
 		error => error.code === 'QASE_FINDING_SEVERITY_INVALID');
 });
+
+test('the bug backlog covers QA bugs, compliance gaps and Founder do-now items, filterable by source', async () => {
+	const { aggregateSessionFindings, normalizeFindingStatus, FINDING_SOURCES } = await import('./store.js');
+	const owner = randomUUID();
+	const run = (mode, title, severity, ts) => ({ id: randomUUID(), mode, ownerUserId: owner, title: `${mode} run`, findings: [normalizeFindingStatus({ id: randomUUID(), ts, severity, title })] });
+	const sessions = [
+		run('qa', 'Checkout 500', 'critical', 1),
+		run('sqa', 'COPPA consent missing', 'high', 2),
+		run('founder', 'Do now: publish pricing', 'high', 3),
+		{ ...run('qa', 'other owner', 'critical', 4), ownerUserId: randomUUID() },
+		{ id: randomUUID(), mode: 'matrix', ownerUserId: owner, findings: [normalizeFindingStatus({ id: randomUUID(), ts: 5, severity: 'low', title: 'not a backlog mode' })] }
+	];
+	assert.deepEqual(FINDING_SOURCES, ['qa', 'sqa', 'founder']);
+	const all = aggregateSessionFindings(sessions, { ownerUserId: owner });
+	assert.deepEqual(all.map(row => [row.source, row.title]), [['qa', 'Checkout 500'], ['founder', 'Do now: publish pricing'], ['sqa', 'COPPA consent missing']]);
+	assert.deepEqual(aggregateSessionFindings(sessions, { ownerUserId: owner, source: 'sqa' }).map(row => row.title), ['COPPA consent missing']);
+	assert.deepEqual(aggregateSessionFindings(sessions, { ownerUserId: owner, source: 'founder' }).map(row => row.title), ['Do now: publish pricing']);
+	assert.throws(() => aggregateSessionFindings(sessions, { source: 'matrix' }), { code: 'QASE_FINDING_SOURCE_INVALID' });
+});

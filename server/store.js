@@ -480,8 +480,8 @@ export function setFindingStatus(session, findingId, { status, note } = {}) {
  * tracked bugs), filtered by status/severity/run/free-text search, ordered
  * severity-major then newest first.
  */
-export function aggregateFindings({ ownerUserId, status, severity, runId, search, limit } = {}) {
-	return aggregateSessionFindings(sessions.values(), { ownerUserId, status, severity, runId, search, limit });
+export function aggregateFindings({ ownerUserId, status, severity, runId, search, limit, source } = {}) {
+	return aggregateSessionFindings(sessions.values(), { ownerUserId, status, severity, runId, search, limit, source });
 }
 
 /**
@@ -489,7 +489,15 @@ export function aggregateFindings({ ownerUserId, status, severity, runId, search
  * and returns the filtered, severity-ordered finding rows. Shared by the local
  * JSON store and the PostgreSQL in-memory aggregate view.
  */
-export function aggregateSessionFindings(sessionIterable, { ownerUserId, status, severity, runId, search, limit } = {}) {
+/** Where a backlog row came from: QA bugs, compliance gaps or Founder do-now items. */
+export const FINDING_SOURCES = Object.freeze(['qa', 'sqa', 'founder']);
+
+export function aggregateSessionFindings(sessionIterable, { ownerUserId, status, severity, runId, search, limit, source } = {}) {
+	if (source !== undefined && !FINDING_SOURCES.includes(source)) {
+		const error = new TypeError('Invalid finding source filter.');
+		error.code = 'QASE_FINDING_SOURCE_INVALID';
+		throw error;
+	}
 	if (status !== undefined && !isFindingStatus(status)) {
 		const error = new TypeError('Invalid finding status filter.');
 		error.code = 'QASE_FINDING_STATUS_INVALID';
@@ -505,7 +513,8 @@ export function aggregateSessionFindings(sessionIterable, { ownerUserId, status,
 	const rows = [];
 	for (const session of sessionIterable) {
 		if (ownerUserId && session.ownerUserId !== ownerUserId) continue;
-		if (session.mode !== 'qa') continue;
+		if (!FINDING_SOURCES.includes(session.mode)) continue;
+		if (source !== undefined && session.mode !== source) continue;
 		for (const finding of (session.findings ?? []).map(normalizeFindingStatus)) {
 			if (status !== undefined && finding.status !== status) continue;
 			if (severity !== undefined && finding.severity !== severity) continue;
@@ -517,6 +526,7 @@ export function aggregateSessionFindings(sessionIterable, { ownerUserId, status,
 			rows.push({
 				id: finding.id,
 				runId: session.id,
+				source: session.mode,
 				runTitle: session.title,
 				runStatus: session.status,
 				targetUrl: session.targetUrl,

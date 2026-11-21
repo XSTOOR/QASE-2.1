@@ -1,5 +1,26 @@
 # QASE release notes
 
+## qase-2026-11-21-field-manual-r6 (UI 20261121-2)
+
+**A complete makeover in a restrained "field manual" style**, approved on the
+design canvas, for both dark and light themes.
+
+- One design layer (`public/fieldManual.css`, loaded last): warm charcoal and
+  warm paper, a single lime signal colour, Geist with Geist Mono for labels and
+  actions, hairline rules, near-square corners and mechanical motion. Respects
+  reduced-motion settings.
+- New sign-in page: scan-line field, a live agent log that types and checks
+  itself, and a focused sign-in form.
+- Workspace: pixel-grid QASE mark; Runs, Bugs and Settings as icon buttons at
+  the bottom of the sidebar with counts, plus an account row with sign-out; a
+  right toolbar of QA, SQA, Founder and Bugs with labels, an active marker and
+  an open-bug badge; agent messages as natural prose with a pixel avatar, your
+  messages as replies, a three-dot "working" line, and a scanning beam over the
+  live browser while a run works. Running runs show a moving meter.
+- Bug tracker now covers every mode: QA bugs, compliance gaps and Founder
+  do-now items, with a Source filter and column (`GET /api/findings?source=`).
+- Fixed: a shadow from the off-screen skip link smudged the top of every page.
+
 ## qase-2026-11-21-founder-business-r5 (UI 20261121-1)
 
 **Founder is now a business review that tells you how to win users.** The old

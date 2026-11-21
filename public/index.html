@@ -22,8 +22,9 @@
 <link rel="stylesheet" href="runStartup.css?v=20261016-1">
 <link rel="stylesheet" href="reportReadability.css?v=20261109-1">
 <link rel="stylesheet" href="qaEvidence.css?v=20261121-1">
-<link rel="stylesheet" href="qaConversation.css?v=20261121-1">
-<link rel="stylesheet" href="sqaCompliance.css?v=20261121-1">
+<link rel="stylesheet" href="qaConversation.css?v=20261121-2">
+<link rel="stylesheet" href="sqaCompliance.css?v=20261121-2">
+<link rel="stylesheet" href="fieldManual.css?v=20261121-2">
 <link rel="icon" type="image/svg+xml" href="qase-mark.svg">
 </head>
 <body class="cli-theme studio-workspace" data-has-run="false">
@@ -36,19 +37,24 @@
     </div>
   </header>
   <div class="auth-story">
-    <p class="auth-kicker">AUTONOMOUS QUALITY ASSURANCE</p>
-    <h2>Confidence.<br><span>Built into every release.</span></h2>
-    <p class="auth-story-copy">From the first interaction to the final report.<br>Understand what works, uncover what doesn’t,<br class="auth-desktop-break"> and move forward with evidence.</p>
-    <div class="auth-method" aria-label="How QASE works">
-      <div><span class="auth-method-number">01</span><strong>Explore</strong><p>A real browser.<br>Your application.</p></div>
-      <div><span class="auth-method-number">02</span><strong>Verify</strong><p>Thoughtful checks.<br>Observable evidence.</p></div>
-      <div><span class="auth-method-number">03</span><strong>Improve</strong><p>Clear findings.<br>Actionable next steps.</p></div>
+    <p class="auth-kicker">[ autonomous qa · compliance · growth ]</p>
+    <h2>ship it.<br><span>we already clicked<br>every button.</span></h2>
+    <p class="auth-story-copy">QASE agents use your product like real people — testing every flow, checking the laws that apply, and telling you what to fix first.</p>
+    <div class="auth-field" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="auth-agent" aria-hidden="true">
+      <div class="auth-agent-head"><span>agent_07 · checkout.flow</span><span class="auth-agent-live">● running</span></div>
+      <ol class="auth-agent-log">
+        <li><span>01</span>open /pricing <b class="is-pass">pass</b></li>
+        <li><span>02</span>fill sign-up with keyboard only <b class="is-pass">pass</b></li>
+        <li><span>03</span>tap “pay” at 390px <b class="is-fail">fail · hidden by cookie banner</b></li>
+        <li><span>04</span><em>check coppa notice on /privacy</em><i class="auth-caret">_</i></li>
+      </ol>
+      <div class="auth-agent-meter"></div>
     </div>
-    <p class="auth-story-caption"><span aria-hidden="true"></span> One workspace. A clearer path to quality.</p>
+    <p class="auth-story-caption">[ 001 ] qa · [ 002 ] compliance · [ 003 ] founder review</p>
   </div>
   <div class="auth-panel" id="signin-panel"><div class="auth-card">
-    <div class="auth-card-emblem" aria-hidden="true"><span></span></div>
-    <p class="auth-card-kicker">YOUR QUALITY WORKSPACE</p>
+    <p class="auth-card-kicker">[ sign in ]</p>
     <h1 id="auth-title">Welcome back.</h1>
     <p class="auth-copy" id="auth-copy">Sign in to pick up where you left off.</p>
     <form id="auth-form">
@@ -242,15 +248,24 @@
     <p class="journey-no-matches" id="journey-no-matches" role="status" hidden>No matching runs. Try another website or title.</p>
     <div class="run-list" id="run-list" role="list" aria-label="Recent runs"></div>
     <footer class="sidebar-foot" aria-label="Account and workspace controls">
+      <button class="sidebar-foot-btn" id="sidebar-open-runs" type="button" title="Runs">
+        <span class="sidebar-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></span><span class="sidebar-control-label">Runs</span><span class="sidebar-foot-count" id="sidebar-runs-count"></span>
+      </button>
+      <button class="sidebar-foot-btn" id="sidebar-open-bugs" type="button" title="Bugs">
+        <span class="sidebar-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 8a4 4 0 0 1 8 0v1H8z"/><rect x="7" y="9" width="10" height="11" rx="5"/><path d="M12 13v7M3 13h4M17 13h4M4 7l3 2M20 7l-3 2M4 20l3-2M20 20l-3-2"/></svg></span><span class="sidebar-control-label">Bugs</span><span class="sidebar-foot-count" id="sidebar-bugs-count"></span>
+      </button>
       <button class="sidebar-foot-btn" id="sidebar-open-settings" type="button" title="Settings">
-        <span class="sidebar-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m9 3-.7 3-2.8 1L3 9l1 3-1 3 2.5 2 2.8 1 .7 3h6l.7-3 2.8-1 2.5-2-1-3 1-3-2.5-2-2.8-1L15 3H9Z"/><circle cx="12" cy="12" r="3"/></svg></span><span class="sidebar-control-label">Settings</span>
+        <span class="sidebar-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></span><span class="sidebar-control-label">Settings</span>
       </button>
-      <button class="sidebar-foot-btn" id="sidebar-open-profile" type="button" title="My account">
-        <span class="sidebar-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></span><span class="sidebar-control-label">Account</span>
-      </button>
-      <button class="sidebar-foot-btn sidebar-foot-btn--signout" id="sidebar-sign-out" type="button" title="Sign out">
-        <span class="sidebar-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 4H4v16h5m6-12 4 4-4 4M9 12h10"/></svg></span><span class="sidebar-control-label">Sign out</span>
-      </button>
+      <div class="sidebar-account">
+        <button class="sidebar-account-open" id="sidebar-open-profile" type="button" title="My account">
+          <span class="sidebar-avatar" id="sidebar-avatar" aria-hidden="true">Q</span>
+          <span class="sidebar-account-text"><span class="sidebar-account-name" id="sidebar-account-name">Account</span><span class="sidebar-account-email" id="sidebar-account-email"></span></span>
+        </button>
+        <button class="sidebar-foot-btn sidebar-foot-btn--signout" id="sidebar-sign-out" type="button" title="Sign out">
+          <span class="sidebar-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 4H4v16h5m6-12 4 4-4 4M9 12h10"/></svg></span><span class="sidebar-control-label">Sign out</span>
+        </button>
+      </div>
     </footer>
   </aside>
 
@@ -552,13 +567,14 @@
       <span class="feature-tooltip" id="feature-tip-sqa" role="tooltip">Test against the standards and laws that apply</span>
     </button>
     <button id="new-founder" class="feature-action feature-action--founder" type="button" aria-label="Start Founder review" aria-describedby="feature-tip-founder" data-feature="founder">
-      <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 9 7-9 11L3 10l9-7Z"/><path d="m3 10 18 0M8 10l4 11 4-11M8 10l4-7 4 7"/></svg></span>
+      <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></span>
       <span class="feature-label">Founder</span>
       <span class="feature-tooltip" id="feature-tip-founder" role="tooltip">How to make your product attract and keep users</span>
     </button>
     <button id="open-bugs" class="feature-action" type="button" aria-label="Open the bug tracker" aria-describedby="feature-tip-bugs" data-feature="bugs" aria-pressed="false">
       <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="13" rx="5"/><path d="m9 7-2-3m8 3 2-3M3 10h4m10 0h4M3 15h4m10 0h4M5 21l3-3m8 0 3 3M12 10v7"/></svg></span>
       <span class="feature-label">Bugs</span>
+      <span class="feature-badge" id="feature-bugs-badge" hidden></span>
       <span class="feature-tooltip" id="feature-tip-bugs" role="tooltip">Track every bug across runs</span>
     </button>
     <span class="feature-dock-status" aria-hidden="true">03 tools</span>
@@ -575,9 +591,9 @@
 <section class="bugs-view" id="bugs-view" hidden aria-labelledby="bugs-title">
   <header class="bugs-head">
     <div class="bugs-head-id">
-      <p class="bugs-eyebrow"><span aria-hidden="true">❯</span> QASE / Findings</p>
-      <h2 id="bugs-title" tabindex="-1">Bug tracker</h2>
-      <p class="subtle" id="bugs-subtitle">Every finding from every run, one backlog</p>
+      <p class="bugs-eyebrow">[ every run · one backlog ]</p>
+      <h2 id="bugs-title" tabindex="-1">Bugs &amp; fixes</h2>
+      <p class="subtle" id="bugs-subtitle">QA bugs, compliance gaps and Founder do-now items from all your runs</p>
     </div>
     <div class="bugs-head-actions">
       <button class="btn btn-ghost btn-sm" id="bugs-refresh" type="button">Refresh</button>
@@ -586,6 +602,12 @@
   </header>
 
   <div class="bugs-toolbar" role="search">
+    <div class="bugs-filter-group" role="group" aria-label="Filter by source" id="bugs-source-filter">
+      <button class="bugs-chip is-active" data-source="" type="button" aria-pressed="true">All</button>
+      <button class="bugs-chip" data-source="qa" type="button" aria-pressed="false">QA bugs</button>
+      <button class="bugs-chip" data-source="sqa" type="button" aria-pressed="false">Compliance</button>
+      <button class="bugs-chip" data-source="founder" type="button" aria-pressed="false">Founder</button>
+    </div>
     <div class="bugs-filter-group" role="group" aria-label="Filter by status" id="bugs-status-filter">
       <button class="bugs-chip is-active" data-status="" type="button" aria-pressed="true">All</button>
       <button class="bugs-chip" data-status="open" type="button" aria-pressed="false">Open</button>
@@ -622,6 +644,7 @@
           <th scope="col" class="bugs-col-sev">Severity</th>
           <th scope="col" class="bugs-col-status">Status</th>
           <th scope="col" class="bugs-col-title">Bug</th>
+          <th scope="col" class="bugs-col-source">Source</th>
           <th scope="col" class="bugs-col-run">Run</th>
           <th scope="col" class="bugs-col-page">Page</th>
           <th scope="col" class="bugs-col-found">Found</th>
@@ -1698,6 +1721,6 @@
   </div>
 </dialog>
 <script src="entry.js?v=20261014-6" type="module"></script>
-<script src="app.js?v=20261121-1" type="module"></script>
+<script src="app.js?v=20261121-2" type="module"></script>
 </body>
 </html>

@@ -1149,6 +1149,18 @@ test('GET /api/findings returns the owned backlog with composed filters', async 
 	const badSeverity = await fixture.request('/api/findings?severity=blocker');
 	assert.equal(badSeverity.status, 400);
 
+	const founder = fixture.services.runs.create('Founder review');
+	founder.mode = 'founder';
+	founder.findings = [{ id: randomUUID(), ts: 400, severity: 'high', title: 'Do now: publish pricing', category: 'business', url: 'https://shop.test/' }];
+	const withFounder = await body(await fixture.request('/api/findings'));
+	assert.equal(withFounder.findings.length, 4, 'Founder do-now items join the backlog');
+	assert.equal(withFounder.findings.find(row => row.title === 'Do now: publish pricing').source, 'founder');
+	const onlyFounder = await body(await fixture.request('/api/findings?source=founder'));
+	assert.deepEqual(onlyFounder.findings.map(row => row.title), ['Do now: publish pricing']);
+	const onlyQa = await body(await fixture.request('/api/findings?source=qa'));
+	assert.equal(onlyQa.findings.length, 3);
+	assert.equal((await fixture.request('/api/findings?source=matrix')).status, 400);
+
 	const empty = await body(await fixture.request('/api/findings?q=nothing-matches'));
 	assert.deepEqual(empty.findings, []);
 });

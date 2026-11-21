@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "releaseId": "qase-2026-11-21-founder-business-r5",
+  "releaseId": "qase-2026-11-21-field-manual-r6",
   "files": [
     {
       "path": ".dockerignore",
@@ -88,7 +88,7 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "92d1037ecfbaa084174c2fd59a856ace6689fe2a127f85f880010ef8ddad8878"
+      "sha256": "be5d8e27d41fdc330cfaa33ced268f4774ee2250a8a9f991a99dd94716a14d26"
     },
     {
       "path": "docs/ARCHITECTURE.md",
@@ -244,7 +244,7 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "5e4e48a8ad0398730b51456552f7a9552699892ea75d15b2a52fdea1ff479ab9"
+      "sha256": "c1c3d096c07bc10782c30640547ee2a254edfb881e4ca67295b8c0703113da57"
     },
     {
       "path": "public/auth.css",
@@ -296,7 +296,7 @@
     },
     {
       "path": "public/bugsView.js",
-      "sha256": "ac0dd006cc899d1a85b731ee7349af20a66bf9e4e898c92350a66fea77c56416"
+      "sha256": "aa89ab197bc5a9d82c2d6b744e9b6cf884b58d24ee72c10b3a27fa1e25041421"
     },
     {
       "path": "public/bugView.js",
@@ -395,6 +395,10 @@
       "sha256": "b2dbf03d7d93cc9dfa57ca37367f0ed22980c0ff091645b42907d66a55b8abe2"
     },
     {
+      "path": "public/fieldManual.css",
+      "sha256": "8f56d287549ebec360b0b263f550f7c92a43e49aa443dd7843813b7177c5f6de"
+    },
+    {
       "path": "public/fixPromptBuilder.js",
       "sha256": "2518ce05264df4fd1e1b4c5bb5463b120305205bd25aebfb7932db8a4a3d2c8d"
     },
@@ -460,7 +464,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "7e1d773caa4a054a2a9965861438b448e6fd6e5f5d31c83a33b14ee21bfae5ae"
+      "sha256": "6cfe57294bcccec8c3ca5aa4c6ed61c0400c26b9d578224a32340a0056e63099"
     },
     {
       "path": "public/jevExecutionView.js",
@@ -676,7 +680,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "3a792286b099521b8e843b3268ca2f4c0338dbe616d1b5eac85dd18b6b027e61"
+      "sha256": "9b9cc32347bdd00488bcc6cc3fb3b22800460a6fe3e0b2517f7fbdd100794529"
     },
     {
       "path": "public/renderHealth.js",
@@ -856,7 +860,7 @@
     },
     {
       "path": "RELEASE_NOTES.md",
-      "sha256": "3c71e27af4ab138b6cc3e44cc02c8d162c9b5628996a6661885eca11846270d3"
+      "sha256": "f078c5efcf4392c275ff59a9963eaee57799b68c6fb5649fc6337b7c8fd6e3d4"
     },
     {
       "path": "run-jev.command",
@@ -1012,7 +1016,7 @@
     },
     {
       "path": "scripts/test-founder-browser.mjs",
-      "sha256": "c87b8d7d5986ba15803abeccddbbb9d32e1d5def31ca2885db8bea392431c0ae"
+      "sha256": "8f9580162015164b3d19bad9ff4a5e390b2ef013658e77bcd94bfdea5e2f1e69"
     },
     {
       "path": "scripts/test-reset-browser.mjs",
@@ -1020,7 +1024,7 @@
     },
     {
       "path": "scripts/test-sqa-browser.mjs",
-      "sha256": "aa6f20208b8c05a07b276b7db41e3e8ceab48308090013ce5f9fce2c9ac2e4f4"
+      "sha256": "ff63dff9f90870f9463a860f8df709f58a118f07de37dbd7a15289e8ec01ee27"
     },
     {
       "path": "scripts/test-ui-followup-browser.mjs",
@@ -1060,11 +1064,11 @@
     },
     {
       "path": "server/app.js",
-      "sha256": "013e32b6bcb46057ddcef022215b4038a009544d1e8ea71d89f7f35e082e9cbc"
+      "sha256": "e9a780e25a7e6bd498d49c71f2479280bd4bd66ec89b3a550dc9219c7e4f2b0b"
     },
     {
       "path": "server/app.test.js",
-      "sha256": "26fd16d9cdddb7023abde5b4ae0b7818abb213017960c885545b3aada455179e"
+      "sha256": "4d2d5158d938e6b36535e2bf4c7830ea694609098fa1936395aa0838eb7c522f"
     },
     {
       "path": "server/appQaSelection.js",
@@ -1556,7 +1560,7 @@
     },
     {
       "path": "server/founder/fixtureReview.js",
-      "sha256": "6ae83eb7941c97ec063e6a607eaa265d15bf81c2fbb071324798d6704c138978"
+      "sha256": "e5c3e177617d6bf3f161d4b43493e4b3e915629df2c73769ee195948029df8ef"
     },
     {
       "path": "server/founder/founder.integration.test.js",
@@ -2436,11 +2440,11 @@
     },
     {
       "path": "server/store.js",
-      "sha256": "94e431e736fcdfa77071bdc5bc249f78f06459675e93b5ad957d29dd6174024e"
+      "sha256": "68403fa2aa8ea5b8d91b7689b0563de83803d858eea58f03bf7827e32c35de84"
     },
     {
       "path": "server/store.test.js",
-      "sha256": "08536310dec8af192bac1b3b003d1b119535fe65ee4e3ce2f1b70689983c85ad"
+      "sha256": "4a4592f7babf86120106f3ef3158ae9381ca3a31119f40b7fcb36a8b1682400e"
     },
     {
       "path": "server/storeListSessions.test.js",

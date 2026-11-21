@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-11-21-founder-business-r5",
-  "uiVersion": "20261121-1",
+  "releaseId": "qase-2026-11-21-field-manual-r6",
+  "uiVersion": "20261121-2",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Push-SQA: Founder rebuilt as a business review on the SQA stage architecture — understands the product, researches competitors, measures business signals, walks key journeys, scores ten lenses and advises what to do, avoid and keep, on the CleanSlate SDK with the reasoning model only."
+  "source": "Push-SQA: complete UI makeover in a restrained \"field manual\" style (warm charcoal / warm paper, lime signal, Geist + Geist Mono, hairlines, mechanical motion) across sign-in, workspace, launchers, reports and a Bug tracker that now covers QA, compliance and Founder findings."
 }

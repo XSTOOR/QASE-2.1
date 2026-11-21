@@ -493,6 +493,7 @@ const renderFounder = founderView.render;
 
 const bugsView = createBugsView({
 	elements: {
+		sourceFilter: $('bugs-source-filter'),
 		statusFilter: $('bugs-status-filter'),
 		severityFilter: $('bugs-severity-filter'),
 		runSelect: $('bugs-run-filter-select'),
@@ -524,6 +525,8 @@ function setBugsViewOpen(open) {
 	state.bugsViewOpen = open;
 	el.bugsView.hidden = !open;
 	el.openBugs.setAttribute('aria-pressed', String(open));
+	syncSidebarNav();
+	if (open) void refreshBugCounts();
 	// The three-panel workspace and the bugs view are exclusive regions.
 	document.querySelector('.app')?.classList.toggle('is-hidden', open);
 	if (open) {
@@ -542,6 +545,45 @@ el.openBugs.onclick = () => {
 	if (state.bugsViewOpen) pageRouter.leave({ name: 'runs' });
 	else void pageRouter.navigate({ name: 'bugs' });
 };
+
+// Sidebar footer navigation: Runs and Bugs sit beside Settings and the account.
+$('sidebar-open-runs')?.addEventListener('click', () => {
+	if (state.bugsViewOpen) pageRouter.leave({ name: 'runs' });
+	else void pageRouter.navigate(state.sessionId ? { name: 'run', runId: state.sessionId } : { name: 'runs' });
+});
+$('sidebar-open-bugs')?.addEventListener('click', () => { if (!state.bugsViewOpen) void pageRouter.navigate({ name: 'bugs' }); });
+function syncSidebarNav() {
+	const page = document.body.dataset.page;
+	const bugs = Boolean(state.bugsViewOpen) || page === 'bugs';
+	const runs = !bugs && ['run', 'runs', 'results', 'matrix-run'].includes(page);
+	$('sidebar-open-bugs')?.setAttribute('aria-current', bugs ? 'page' : 'false');
+	$('sidebar-open-runs')?.setAttribute('aria-current', runs ? 'page' : 'false');
+}
+/** Open bugs across every run: the sidebar count and the toolbar badge. */
+let bugCountTimer;
+async function refreshBugCounts() {
+	try {
+		const { findings = [] } = await api('/findings?status=open&limit=500');
+		const count = findings.length;
+		const label = count >= 500 ? '500+' : String(count);
+		const sidebar = $('sidebar-bugs-count');
+		if (sidebar) { sidebar.textContent = count ? label : ''; sidebar.classList.toggle('is-alert', count > 0); }
+		const badge = $('feature-bugs-badge');
+		if (badge) { badge.hidden = !count; badge.textContent = count > 99 ? '99+' : label; }
+		el.openBugs.setAttribute('aria-label', count ? `Open the bug tracker, ${label} open` : 'Open the bug tracker');
+	} catch { /* Counts are a convenience; the tracker itself reports errors. */ }
+}
+function scheduleBugCountRefresh() {
+	if (bugCountTimer) return;
+	bugCountTimer = setTimeout(() => { bugCountTimer = undefined; void refreshBugCounts(); }, 3000);
+}
+function renderSidebarAccount(user) {
+	if (!user) return;
+	const name = user.displayName || user.email || 'Account';
+	const nameNode = $('sidebar-account-name'); if (nameNode) nameNode.textContent = name;
+	const emailNode = $('sidebar-account-email'); if (emailNode) emailNode.textContent = user.email ?? '';
+	const avatar = $('sidebar-avatar'); if (avatar) avatar.textContent = (name.trim()[0] || 'Q').toUpperCase();
+}
 /* ── Bugs tab (Phase 6) ──────────────────────────────────────────── */
 
 const bugView = createBugView({
@@ -4644,6 +4686,7 @@ function handleEvent(event) {
 			// The backlog view is server-sourced; a new finding anywhere in
 			// this account's stream coalesces to one throttled refetch.
 			if (state.bugsViewOpen) bugsView.scheduleRefresh();
+			scheduleBugCountRefresh();
 			// Founder do-now items are already posted in the conversation; no toast per item.
 			if (session.mode !== 'founder' && (event.finding.severity === 'critical' || event.finding.severity === 'high')) {
 				toast(`${event.finding.severity.toUpperCase()}: ${event.finding.title}`, 'bad');
@@ -6396,6 +6439,7 @@ function renderResultsPageHeader() {
 async function applyPageRoute(route) {
 	if (!workspaceBooted || !el.authGate?.hidden) return;
 	document.body.dataset.page = route.name;
+	syncSidebarNav();
 	const workspace = document.querySelector('.app');
 	if (route.name === 'matrix-run') { workspace?.setAttribute('inert', ''); workspace?.setAttribute('aria-hidden', 'true'); }
 	else { workspace?.removeAttribute('inert'); workspace?.removeAttribute('aria-hidden'); }
@@ -8010,6 +8054,8 @@ async function bootWorkspace() {
 	if (workspaceBooted) return;
 	workspaceBooted = true;
 	hideAuthGate();
+	renderSidebarAccount(state.user);
+	void refreshBugCounts();
 	await window.qaseEntryReady;
 
 	const config = await api('/config').catch(() => undefined);
@@ -8248,6 +8294,7 @@ async function showAccountPage() {
 }
 $('profile-form').onsubmit = event => { event.preventDefault(); accountAction(event.submitter, async () => {
   state.user = await api('/profile', { method:'PUT', body:JSON.stringify({displayName:$('profile-name').value,profile:{timezone:$('profile-timezone').value}}) });
+  renderSidebarAccount(state.user);
   $('profile-message').textContent = 'Profile saved.';
 }); };
 $('password-form').onsubmit = event => { event.preventDefault(); accountAction(event.submitter, async () => {

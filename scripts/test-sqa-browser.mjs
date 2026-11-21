@@ -92,7 +92,7 @@ try {
 	const conversation = await page.locator('#transcript, .transcript, #messages').first().innerText().catch(() => page.locator('body').innerText());
 	assert.match(conversation, /What kind of product|This looks like/i, 'the agent narrates the product identification');
 	const card = await page.locator('.qa-msg.sqa-report').innerText();
-	for (const expected of [/Compliance test complete/, /Serious gaps/, /COPPA\s+0%/, /DPDP/, /Open compliance report/]) assert.match(card, expected);
+	for (const expected of [/Compliance test complete/, /Serious gaps/, /COPPA\s+0%/, /DPDP/, /Open compliance report/i]) assert.match(card, expected);
 	// The finished run asks for feedback, as every run does; close it.
 	await page.locator('#feedback-modal[open]').waitFor({ timeout: 5000 }).catch(() => {});
 	if (await page.locator('#feedback-modal[open]').count()) await page.locator('#feedback-close').click();

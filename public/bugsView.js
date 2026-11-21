@@ -17,6 +17,8 @@ export const BUG_STATUS_LABELS = Object.freeze({
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'info'];
 const REFRESH_COALESCE_MS = 4_000;
 
+const SOURCE_LABELS = Object.freeze({ qa: 'QA', sqa: 'Compliance', founder: 'Founder' });
+
 export function createBugsView({
 	documentRef = globalThis.document,
 	elements,
@@ -27,13 +29,14 @@ export function createBugsView({
 	humanizeRunTitle
 }) {
 	const doc = documentRef;
-	const filters = { status: '', severity: '', runId: '', search: '' };
+	const filters = { source: '', status: '', severity: '', runId: '', search: '' };
 	let rows = [];
 	let refreshTimer;
 	let searchDebounce;
 
 	function filterParams() {
 		const params = new URLSearchParams();
+		if (filters.source) params.set('source', filters.source);
 		if (filters.status) params.set('status', filters.status);
 		if (filters.severity) params.set('severity', filters.severity);
 		if (filters.runId) params.set('run', filters.runId);
@@ -285,9 +288,20 @@ export function createBugsView({
 			const sevCell = doc.createElement('td');
 			sevCell.className = 'bugs-col-sev';
 			sevCell.append(severityChip(row.severity));
-			tr.append(sevCell, statusCell(row), titleCell(row), runCell(row), pageCell(row), foundCell(row));
+			tr.append(sevCell, statusCell(row), titleCell(row), sourceCell(row), runCell(row), pageCell(row), foundCell(row));
 			body.append(tr);
 		}
+	}
+
+	function sourceCell(row) {
+		const cell = doc.createElement('td');
+		cell.className = 'bugs-col-source';
+		const tag = doc.createElement('span');
+		tag.className = 'bugs-source';
+		tag.dataset.source = row.source ?? 'qa';
+		tag.textContent = SOURCE_LABELS[row.source] ?? 'QA';
+		cell.append(tag);
+		return cell;
 	}
 
 	function renderRunOptions() {
@@ -334,6 +348,17 @@ export function createBugsView({
 	}
 
 	function bind() {
+		elements.sourceFilter?.addEventListener('click', event => {
+			const chip = event.target.closest('[data-source]');
+			if (!chip || chip.parentElement !== elements.sourceFilter) return;
+			filters.source = chip.dataset.source;
+			for (const sibling of elements.sourceFilter.querySelectorAll('[data-source]')) {
+				const active = sibling === chip;
+				sibling.classList.toggle('is-active', active);
+				sibling.setAttribute('aria-pressed', String(active));
+			}
+			load().catch(fail);
+		});
 		elements.statusFilter.addEventListener('click', event => {
 			const chip = event.target.closest('[data-status]');
 			if (!chip || chip.parentElement !== elements.statusFilter) return;

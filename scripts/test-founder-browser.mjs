@@ -83,7 +83,7 @@ try {
 	await page.locator('#tab-founder').waitFor({ state: 'visible' });
 	await page.locator('.qa-msg.founder-report').waitFor({ timeout: 8 * 60_000 });
 	const card = await page.locator('.qa-msg.founder-report').innerText();
-	for (const expected of [/Founder review complete/, /Not ready to scale|Major gaps/, /to do now/, /Open the review/]) assert.match(card, expected);
+	for (const expected of [/Founder review complete/, /Not ready to scale|Major gaps/, /to do now/, /Open the review/i]) assert.match(card, expected);
 	assert.ok(await page.locator('.qa-msg.founder-rec').count() >= 1, 'do-now recommendations are posted in the conversation');
 	await page.locator('#feedback-modal[open]').waitFor({ timeout: 5000 }).catch(() => {});
 	if (await page.locator('#feedback-modal[open]').count()) await page.locator('#feedback-close').click();

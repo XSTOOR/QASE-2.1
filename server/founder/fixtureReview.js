@@ -95,7 +95,7 @@ export async function createFounderReviewFixture({ name = 'Taskly', brief = { go
 	state.phase = 'report';
 	state.report = buildFounderReport(session);
 	state.finalizedAt = new Date(now).toISOString();
-	session.findings = founderFindings(session);
+	session.findings = founderFindings(session).map(item => ({ id: randomUUID(), ts: now, status: 'open', statusTs: now, statusNote: '', ...item }));
 	session.messages.push(
 		{ id: `founder-report-${now}`, role: 'assistant', kind: 'founder-report', ts: now, text: state.report.summary }
 	);
