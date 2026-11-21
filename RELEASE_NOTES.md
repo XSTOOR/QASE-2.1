@@ -1,6 +1,16 @@
 # QASE release notes
 
-## qase-2026-11-21-field-manual-r6 (UI 20261121-2)
+## qase-2026-11-21-field-manual-r6 (UI 20261121-3)
+
+Refinement pass:
+- Sidebar runs show only the product, one status line with duration, and the
+  mode; device pills, step counts, ages and the "recent tests" label are gone.
+- Buttons are calm sentence-case Geist with 6px corners; mono stays for small
+  labels only.
+- Conversation header: a short mode label above the product name, one status
+  pill with a live dot, the timer, Stop and an icon-only theme switch. The
+  tagline, token counter and run-summary block are replaced by a 2px progress
+  line under the header.
 
 **A complete makeover in a restrained "field manual" style**, approved on the
 design canvas, for both dark and light themes.

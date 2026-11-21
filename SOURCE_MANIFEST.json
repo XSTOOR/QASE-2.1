@@ -244,7 +244,7 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "c1c3d096c07bc10782c30640547ee2a254edfb881e4ca67295b8c0703113da57"
+      "sha256": "58456cd9578a78164ca906f5967e16034315017a34edd093017dd34bf1d15d50"
     },
     {
       "path": "public/auth.css",
@@ -396,7 +396,7 @@
     },
     {
       "path": "public/fieldManual.css",
-      "sha256": "8f56d287549ebec360b0b263f550f7c92a43e49aa443dd7843813b7177c5f6de"
+      "sha256": "725d100c6d1e977ab5b04a093ea5e9978422ef840b46839a2b3ae8d987d5660a"
     },
     {
       "path": "public/fixPromptBuilder.js",
@@ -464,7 +464,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "6cfe57294bcccec8c3ca5aa4c6ed61c0400c26b9d578224a32340a0056e63099"
+      "sha256": "c8c2a5b19bf603f62bbb98d4162a94ce137e35642987d7c45b8107b9d6d072db"
     },
     {
       "path": "public/jevExecutionView.js",
@@ -680,7 +680,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "9b9cc32347bdd00488bcc6cc3fb3b22800460a6fe3e0b2517f7fbdd100794529"
+      "sha256": "d1807962aff58491285f04a07de3dbdd9eec7ec220d09a84edcf9bb5c7c957a3"
     },
     {
       "path": "public/renderHealth.js",
@@ -860,7 +860,7 @@
     },
     {
       "path": "RELEASE_NOTES.md",
-      "sha256": "f078c5efcf4392c275ff59a9963eaee57799b68c6fb5649fc6337b7c8fd6e3d4"
+      "sha256": "345d2c25eb5e208b3c1d183e55f0701f7e06bac0563e1f25c2ac1e703617aae7"
     },
     {
       "path": "run-jev.command",
@@ -1016,7 +1016,7 @@
     },
     {
       "path": "scripts/test-founder-browser.mjs",
-      "sha256": "8f9580162015164b3d19bad9ff4a5e390b2ef013658e77bcd94bfdea5e2f1e69"
+      "sha256": "be23bfc48a5ac0940ea673c02f97e4323fc125b5d705d9b189c5d79a19b61a86"
     },
     {
       "path": "scripts/test-reset-browser.mjs",

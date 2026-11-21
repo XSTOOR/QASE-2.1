@@ -56,7 +56,7 @@ html[data-theme] body.studio-workspace .btn {
 html[data-theme] body.studio-workspace .btn:not(:disabled):active { transform: translateY(1px); }
 html[data-theme] body.studio-workspace .btn-primary {
   background: var(--brand-primary); border: 1px solid var(--brand-primary); color: var(--brand-on-primary);
-  text-transform: uppercase; letter-spacing: .08em;
+  text-transform: none;
 }
 html[data-theme] body.studio-workspace .btn-primary:not(:disabled):hover { background: var(--brand-primary-hover); border-color: var(--brand-primary-hover); }
 html[data-theme] body.studio-workspace .btn-ghost { background: transparent; border: 1px solid var(--border-strong); color: var(--text); }
@@ -308,13 +308,13 @@ html[data-theme] body.studio-workspace .fdr-kind { font-family: var(--fm-mono); 
 /* ── Older ID-scoped overrides, brought into the system ───────────────── */
 html[data-theme] body.studio-workspace :is(#sidebar-new-run, #empty-start, #qa-submit, #journey-run-action, #resume-run, #sqa-submit, #founder-submit, #auth-submit):is(.btn, .btn-primary) {
   background: var(--brand-primary) !important; border: 1px solid var(--brand-primary) !important; color: var(--brand-on-primary) !important;
-  border-radius: var(--fm-radius) !important; box-shadow: none !important; font: 500 12.5px/1 var(--fm-mono) !important; letter-spacing: .08em !important; text-transform: uppercase;
+  border-radius: var(--fm-radius) !important; box-shadow: none !important; font: 500 13px/1 var(--font-ui) !important; letter-spacing: -.005em !important; text-transform: none !important;
 }
 html[data-theme] body.studio-workspace :is(#sidebar-new-run, #empty-start, #qa-submit, #journey-run-action, #resume-run, #sqa-submit, #founder-submit, #auth-submit):not(:disabled):hover { background: var(--brand-primary-hover) !important; border-color: var(--brand-primary-hover) !important; }
 html[data-theme] body.studio-workspace :is(#sqa-submit, #founder-submit, #qa-submit):disabled { opacity: .45; }
 html[data-theme] body.studio-workspace #sidebar-new-run { justify-content: center; padding-inline: 12px; min-height: 40px; }
 html[data-theme] body.studio-workspace #sidebar-new-run::before { content: none !important; }
-html[data-theme] body.studio-workspace #stop-run { background: transparent !important; border: 1px solid color-mix(in srgb, var(--fm-bad) 55%, transparent) !important; color: var(--fm-bad) !important; border-radius: var(--fm-radius) !important; font: 500 12px var(--fm-mono) !important; box-shadow: none !important; }
+html[data-theme] body.studio-workspace #stop-run { background: transparent !important; border: 1px solid color-mix(in srgb, var(--fm-bad) 55%, transparent) !important; color: var(--fm-bad) !important; border-radius: 6px !important; font: 500 12.5px var(--font-ui) !important; box-shadow: none !important; }
 html[data-theme] body.studio-workspace #status-chip { border-radius: var(--fm-radius) !important; background: transparent !important; font: 11.5px var(--fm-mono) !important; box-shadow: none !important; }
 html[data-theme] body.studio-workspace #status-chip[data-status="running"] { border-color: var(--fm-signal) !important; color: var(--fm-signal-text) !important; }
 html[data-theme] body.studio-workspace .journey-run-guide { margin: 16px 24px 0; padding: 14px 16px; border: 1px solid var(--border-strong); border-radius: var(--fm-radius-lg); background: var(--surface-1); box-shadow: none; }
@@ -407,7 +407,7 @@ html[data-theme] body.studio-workspace .skip-link { border-radius: var(--fm-radi
 html[data-theme] body.studio-workspace .bugs-head { border-bottom: 0 !important; padding-bottom: 20px !important; margin-bottom: 0 !important; }
 html[data-theme] body.studio-workspace .bugs-toolbar { margin-top: 0 !important; padding-block: 14px !important; }
 html[data-theme] body.studio-workspace .bugs-head-id h2 { font-size: clamp(36px, 4vw, 52px); line-height: 1; margin: 6px 0 8px; }
-html[data-theme] body.studio-workspace #journey-next { background: transparent !important; border: 1px solid var(--border-strong) !important; color: var(--text) !important; border-radius: var(--fm-radius) !important; box-shadow: none !important; font: 500 12.5px/1 var(--fm-mono) !important; text-transform: none; letter-spacing: .02em !important; }
+html[data-theme] body.studio-workspace #journey-next { background: transparent !important; border: 1px solid var(--border-strong) !important; color: var(--text) !important; border-radius: var(--fm-radius) !important; box-shadow: none !important; font: 500 13px/1 var(--font-ui) !important; text-transform: none; letter-spacing: -.005em !important; }
 
 /* When the toolbar becomes a bottom bar, its active marker runs along the top. */
 @media (max-width: 1100px) {
@@ -417,3 +417,82 @@ html[data-theme] body.studio-workspace #journey-next { background: transparent !
 }
 /* Headings focused by the app for screen readers keep no visible ring. */
 html[data-theme] body.studio-workspace :is(h1, h2, h3)[tabindex="-1"]:focus { outline: none; }
+
+
+/* ── Refinement: calm buttons, lean sidebar, one clean header ─────────── */
+/* Buttons: sentence case, Geist, 6px corners. Mono stays for small labels. */
+html[data-theme] body.studio-workspace .btn { font: 500 13px/1 var(--font-ui); letter-spacing: -.005em; text-transform: none; border-radius: 6px; min-height: 34px; padding-inline: 14px; gap: 8px; }
+html[data-theme] body.studio-workspace .btn-primary { text-transform: none; letter-spacing: -.005em; }
+html[data-theme] body.studio-workspace .btn-sm { min-height: 30px; font-size: 12.5px; padding-inline: 12px; }
+html[data-theme] body.studio-workspace :is(#sidebar-new-run, #empty-start, #qa-submit, #journey-run-action, #resume-run, #sqa-submit, #founder-submit, #auth-submit, #journey-next, #stop-run) { border-radius: 6px !important; }
+html[data-theme] body.studio-workspace .btn-ghost { border-color: var(--border); }
+html[data-theme] body.studio-workspace #send-btn { min-width: 0; padding-inline: 16px; }
+
+/* Sidebar: title, one status line, mode on the right. Nothing else. */
+html[data-theme] body.studio-workspace .run-explorer-label { display: none !important; }
+html[data-theme] body.studio-workspace #sidebar-new-run { min-height: 36px !important; justify-content: center; font-size: 13px !important; }
+html[data-theme] body.studio-workspace .journey-run-search { padding: 4px 12px 6px; }
+html[data-theme] body.studio-workspace .journey-run-search input { min-height: 32px; border-color: transparent; background: var(--surface-2); font: 13px var(--font-ui); padding-inline: 10px; }
+html[data-theme] body.studio-workspace .journey-run-search input:focus { border-color: var(--border-strong); background: var(--surface-1); }
+html[data-theme] body.studio-workspace .run-list { padding: 2px 8px; display: flex; flex-direction: column; gap: 2px; }
+html[data-theme] body.studio-workspace .run {
+  display: grid !important; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title mode" "meta meta"; column-gap: 8px; row-gap: 3px;
+  padding: 9px 10px !important; border: 0 !important; border-radius: 6px !important; text-align: left;
+}
+html[data-theme] body.studio-workspace .run-row:first-child .run { border-top: 0 !important; }
+html[data-theme] body.studio-workspace .run-title { grid-area: title; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+html[data-theme] body.studio-workspace .run-context { grid-area: mode; display: flex !important; align-items: center; margin: 0 !important; }
+html[data-theme] body.studio-workspace .run-mode-badge { border: 0 !important; padding: 0 !important; background: none !important; font: 10.5px var(--fm-mono) !important; color: var(--text-faint) !important; text-transform: lowercase; }
+html[data-theme] body.studio-workspace :is(.run-device-pill, .run-progress, .run-footer) { display: none !important; }
+html[data-theme] body.studio-workspace .run-meta { grid-area: meta; display: flex !important; align-items: center; gap: 7px; margin: 0 !important; font: 12px var(--font-ui) !important; color: var(--text-muted) !important; min-width: 0; }
+html[data-theme] body.studio-workspace .run-meta .dot { width: 6px; height: 6px; flex: none; }
+html[data-theme] body.studio-workspace .run-status-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+html[data-theme] body.studio-workspace .run-duration { margin-left: auto; font: 11px var(--fm-mono); color: var(--text-faint); flex: none; }
+html[data-theme] body.studio-workspace .run[data-status="running"]::after { grid-column: 1 / -1; height: 2px; margin-top: 6px; }
+html[data-theme] body.studio-workspace .run.is-active::before { top: 9px; bottom: 9px; }
+
+/* Conversation header: mode label, product, one status pill, two quiet controls. */
+html[data-theme] body.studio-workspace .chat > .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; padding: 12px 20px 12px 24px; }
+html[data-theme] body.studio-workspace .chat-id { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+html[data-theme] body.studio-workspace #chat-target { order: -1; margin: 0; font: 11px var(--fm-mono); letter-spacing: .02em; color: var(--text-faint); text-transform: lowercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html[data-theme] body.studio-workspace #chat-title { margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -.025em; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html[data-theme] body.studio-workspace #qa-agent-mode { display: none !important; }
+html[data-theme] body.studio-workspace .head-actions { display: flex; align-items: center; gap: 6px; flex: none; flex-wrap: nowrap; }
+html[data-theme] body.studio-workspace #status-chip {
+  display: inline-flex !important; align-items: center; gap: 7px; height: 28px; padding: 0 11px !important; border: 1px solid var(--border) !important; border-radius: 999px !important;
+  background: var(--surface-2) !important; color: var(--text-secondary) !important; font: 500 12px var(--font-ui) !important; text-transform: none !important; letter-spacing: 0 !important;
+}
+html[data-theme] body.studio-workspace #status-chip::before { content: "" !important; width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); flex: none; animation: none; box-shadow: none; }
+html[data-theme] body.studio-workspace #status-chip[data-status="running"] { color: var(--text) !important; border-color: var(--border) !important; }
+html[data-theme] body.studio-workspace #status-chip[data-status="running"]::before { background: var(--fm-signal); box-shadow: 0 0 0 0 color-mix(in srgb, var(--fm-signal) 60%, transparent); animation: fm-pulse 1.6s ease-out infinite; }
+html[data-theme="light"] body.studio-workspace #status-chip[data-status="running"]::before { background: #65a30d; }
+html[data-theme] body.studio-workspace #status-chip[data-status="done"]::before { background: var(--fm-good); }
+html[data-theme] body.studio-workspace #status-chip:is([data-status="error"], [data-status="failed"])::before { background: var(--fm-bad); }
+html[data-theme] body.studio-workspace #status-chip[data-status="awaiting_input"]::before { background: var(--fm-warn); }
+html[data-theme] body.studio-workspace #timer-chip { border: 0 !important; background: none !important; padding: 0 6px 0 2px !important; font: 12px var(--fm-mono) !important; color: var(--text-faint) !important; }
+html[data-theme] body.studio-workspace #token-chip { display: none !important; }
+html[data-theme] body.studio-workspace #stop-run { min-height: 28px !important; height: 28px; padding: 0 11px 0 9px !important; display: inline-flex; align-items: center; gap: 7px; }
+html[data-theme] body.studio-workspace #stop-run::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
+html[data-theme] body.studio-workspace #resume-run { min-height: 28px !important; height: 28px; }
+html[data-theme] body.studio-workspace .chat .theme-toggle { width: 28px; height: 28px; min-height: 28px; padding: 0; justify-content: center; border-radius: 6px; border: 1px solid var(--border); background: transparent; }
+html[data-theme] body.studio-workspace .chat .theme-toggle-text { display: none !important; }
+html[data-theme] body.studio-workspace .chat .theme-toggle-icon { margin: 0; background: none; width: 16px; height: 16px; }
+
+/* Run summary collapses to a 2px segmented progress line under the header. */
+html[data-theme] body.studio-workspace .run-summary { padding: 0 !important; margin: 0 !important; border: 0 !important; background: none !important; }
+html[data-theme] body.studio-workspace :is(.token-summary, .run-summary-mini, .progress-top, .current-activity, .execution-details, .run-summary-toggle) { display: none !important; }
+html[data-theme] body.studio-workspace .run-summary-detail, html[data-theme] body.studio-workspace .progress-card { padding: 0 !important; margin: 0 !important; border: 0 !important; display: block !important; }
+html[data-theme] body.studio-workspace .progress-bar { height: 2px !important; margin: 0 !important; border-radius: 0 !important; background: var(--border) !important; }
+html[data-theme] body.studio-workspace .progress-bar > i { background: var(--fm-signal) !important; transition: width 400ms var(--fm-ease); }
+html[data-theme="light"] body.studio-workspace .progress-bar > i { background: #141412 !important; }
+html[data-theme] body.studio-workspace .journey-run-guide { margin: 14px 24px 0 !important; }
+
+/* Composer: the working hint reads as a quiet line, not a box of text. */
+html[data-theme] body.studio-workspace .composer-hint { font: 12.5px var(--font-ui) !important; color: var(--text-faint) !important; }
+@keyframes fm-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--fm-signal) 55%, transparent); } 100% { box-shadow: 0 0 0 6px transparent; } }
+html[data-theme] body.studio-workspace .chat > .panel-head { flex-wrap: nowrap !important; flex-direction: row !important; }
+html[data-theme] body.studio-workspace .chat > .panel-head .chat-id { flex: 1 1 auto !important; width: auto !important; max-width: none !important; }
+html[data-theme] body.studio-workspace .chat > .panel-head .head-actions { margin: 0 !important; width: auto !important; justify-content: flex-end; }
+html[data-theme] body.studio-workspace .run-meta .dot.is-busy { background: var(--fm-signal) !important; box-shadow: none !important; animation: fm-blink 1.2s steps(1) infinite; }
+html[data-theme="light"] body.studio-workspace .run-meta .dot.is-busy { background: #65a30d !important; }
+@media (max-width: 720px) { html[data-theme] body.studio-workspace .chat > .panel-head { flex-wrap: wrap !important; } }

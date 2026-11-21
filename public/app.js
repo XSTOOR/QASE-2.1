@@ -1809,10 +1809,12 @@ function renderHeader() {
 	renderProgressCard();
 	if (session.mode === 'founder') {
 		const name = session.founder?.business?.name ?? session.founder?.scope?.target?.name;
-		el.chatTitle.textContent = isFounderReviewRun(session) ? `Founder review${name ? ` · ${name}` : ''}` : session.founder?.scope?.target?.name ?? session.title ?? 'Founder review';
+		const host = session.targetUrl ? hostOf(session.targetUrl) : '';
 		const report = session.founder?.report;
+		// Product first; the mode sits above it as a short label.
+		el.chatTitle.textContent = isFounderReviewRun(session) ? (name || host || 'Founder review') : session.founder?.scope?.target?.name ?? session.title ?? 'Founder review';
 		el.chatTarget.textContent = isFounderReviewRun(session)
-			? [session.targetUrl ? hostOf(session.targetUrl) : '', report?.readiness !== undefined && report?.readiness !== null ? `Readiness ${report.readiness}/100 · ${report.verdictLabel}` : 'Business review: what to do, avoid and keep'].filter(Boolean).join(' · ')
+			? ['Founder review', Number.isFinite(report?.readiness) ? `readiness ${report.readiness}/100` : ''].filter(Boolean).join(' · ')
 			: 'Earlier Founder review';
 		setStatus(session.status);
 		return;
@@ -1821,10 +1823,10 @@ function renderHeader() {
 		const host = session.targetUrl ? hostOf(session.targetUrl) : '';
 		const product = session.sqa?.product?.name;
 		el.chatTitle.textContent = isSqaComplianceRun(session)
-			? `Compliance test${product || host ? ` · ${product || host}` : ''}`
+			? (product || host || 'Compliance test')
 			: session.sqa?.scope?.target?.name ?? session.title ?? 'Quality review';
 		el.chatTarget.textContent = isSqaComplianceRun(session)
-			? [host, session.sqa?.frameworks?.length ? session.sqa.frameworks.map(item => item.name).slice(0, 3).join(', ') : 'Standards and laws that apply'].filter(Boolean).join(' · ')
+			? ['Compliance test', session.sqa?.frameworks?.length ? session.sqa.frameworks.map(item => item.name).slice(0, 2).join(', ') : ''].filter(Boolean).join(' · ')
 			: 'Earlier quality review';
 		setStatus(session.status);
 		return;
@@ -1846,7 +1848,7 @@ function renderHeader() {
 		chip.title = `Run executed on ${session.engine}`;
 		el.chatTitle.append(' ', chip);
 	}
-	el.chatTarget.textContent = session.targetUrl ?? 'Send a URL to begin';
+	el.chatTarget.textContent = session.targetUrl ? `QA test · ${hostOf(session.targetUrl)}` : 'Send a URL to begin';
 	setStatus(session.status);
 }
 
@@ -1962,7 +1964,7 @@ function setStatus(status) {
 	el.composerInput.disabled = running;
 	el.composerHint.hidden = !running;
 	if (state.session?.mode === 'qa' || isSqaComplianceRun(state.session) || isFounderReviewRun(state.session)) {
-		el.composerHint.textContent = state.session?.mode === 'founder' ? 'Qase is reviewing. Press Stop to end early; you still get the review.' : 'Qase is testing. Press Stop to end early; you still get the report.';
+		el.composerHint.textContent = state.session?.mode === 'founder' ? 'Reviewing… Stop ends it early and still gives you the review.' : 'Testing… Stop ends it early and still gives you the report.';
 		if (qaWaiting) el.composerInput.placeholder = 'Use the sign-in card above, or reply "skip" to test public pages only';
 		else if (el.composerInput.placeholder.startsWith('Use the sign-in card')) el.composerInput.placeholder = 'Paste a URL or tell Qase what to test…';
 	} else el.composerHint.textContent = 'Agent is working. You can reply when it pauses.';

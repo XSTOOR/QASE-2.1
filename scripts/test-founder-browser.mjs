@@ -81,6 +81,12 @@ try {
 
 	// The agent works in the conversation and posts the review card.
 	await page.locator('#tab-founder').waitFor({ state: 'visible' });
+	// While it works: one clean header, a live status pill, the working line.
+	await page.locator('#status-chip[data-status="running"]').waitFor({ timeout: 60_000 });
+	await page.locator('#transcript .msg.agent').nth(1).waitFor({ timeout: 60_000 });
+	assert.equal(await page.locator('#token-chip').isVisible(), false, 'no token counter in the header');
+	assert.doesNotMatch(await page.locator('#chat-target').innerText(), /what to do, avoid and keep/i, 'no tagline in the header');
+	await page.screenshot({ path: path.join(output, 'running.png') });
 	await page.locator('.qa-msg.founder-report').waitFor({ timeout: 8 * 60_000 });
 	const card = await page.locator('.qa-msg.founder-report').innerText();
 	for (const expected of [/Founder review complete/, /Not ready to scale|Major gaps/, /to do now/, /Open the review/i]) assert.match(card, expected);
