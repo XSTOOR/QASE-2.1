@@ -2115,7 +2115,7 @@ function renderStageCollapse() {
 			el.stage.setAttribute('tabindex', '0');
 			el.stage.setAttribute('aria-label', 'Show live preview');
 		} else {
-			el.stageNote.textContent = 'Preview unavailable · No saved browser image was captured for this run.';
+			el.stageNote.textContent = 'No preview was saved for this run';
 			el.stage.removeAttribute('role');
 			el.stage.removeAttribute('tabindex');
 			el.stage.removeAttribute('aria-label');
@@ -3299,6 +3299,22 @@ function renderTodos() {
 		el.planList.innerHTML = '<div class="feed-empty">No test plan generated yet — the agent writes one at the start of each run.</div>';
 		return;
 	}
+	const strip = document.createElement('div');
+	strip.className = 'plan-strip';
+	const cells = document.createElement('div');
+	cells.className = 'plan-strip-cells';
+	cells.setAttribute('role', 'img');
+	cells.setAttribute('aria-label', `${done} of ${total} plan steps done`);
+	for (const todo of todos) {
+		const cell = document.createElement('span');
+		cell.dataset.state = planPresentation(todo).key;
+		cells.append(cell);
+	}
+	const stripLabel = document.createElement('span');
+	stripLabel.className = 'plan-strip-label';
+	stripLabel.textContent = `${done} / ${total}`;
+	strip.append(cells, stripLabel);
+	el.planList.append(strip);
 	for (const todo of todos) {
 		const presentation = planPresentation(todo);
 		const node = document.createElement('div');
@@ -3343,6 +3359,7 @@ function renderFindings() {
 		(a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity)
 	);
 	const selection = findingSelectionFor(sorted);
+	el.findingsList.append(renderSeveritySummary(sorted));
 	const selectionBar = document.createElement('div');
 	selectionBar.className = 'findings-selection';
 
@@ -3362,7 +3379,7 @@ function renderFindings() {
 	const copySelected = document.createElement('button');
 	copySelected.className = 'btn btn-primary btn-sm';
 	copySelected.type = 'button';
-	copySelected.textContent = 'Copy selected fixes';
+	copySelected.textContent = 'Copy fixes';
 	copySelected.onclick = async () => {
 		const selected = sorted.filter(finding => selection.selected.has(finding.id));
 		const markdown = buildAllFixPromptsMarkdown({ ...state.session, findings: selected });
@@ -3396,6 +3413,43 @@ function renderFindings() {
 		syncSelection();
 	};
 	syncSelection();
+}
+
+/** A stacked bar of findings by severity, with a count per level. */
+function renderSeveritySummary(findings) {
+	const wrap = document.createElement('div');
+	wrap.className = 'sev-summary';
+	const bar = document.createElement('div');
+	bar.className = 'sev-summary-bar';
+	bar.setAttribute('role', 'img');
+	const legend = document.createElement('div');
+	legend.className = 'sev-summary-legend';
+	const parts = [];
+	for (const level of SEVERITY_ORDER) {
+		const count = findings.filter(finding => finding.severity === level).length;
+		if (!count) continue;
+		parts.push(`${count} ${level}`);
+		const segment = document.createElement('span');
+		segment.dataset.sev = level;
+		segment.style.flexGrow = String(count);
+		bar.append(segment);
+		const key = document.createElement('span');
+		key.className = 'sev-summary-key';
+		key.dataset.sev = level;
+		const value = document.createElement('strong');
+		value.textContent = String(count);
+		key.append(value, ` ${level}`);
+		legend.append(key);
+	}
+	bar.setAttribute('aria-label', `Findings by severity: ${parts.join(', ')}`);
+	wrap.append(bar, legend);
+	return wrap;
+}
+
+/** "Do now: X" / "Avoid: X" titles carry their kind as a tag. */
+function splitFindingTitle(text) {
+	const match = /^(Do now|Avoid|Gap|Fail):\s+/i.exec(String(text ?? ''));
+	return match ? { tag: match[1].toLowerCase(), title: text.slice(match[0].length) } : { tag: '', title: text };
 }
 
 function findingSelectionFor(findings) {
@@ -3449,7 +3503,15 @@ function renderFinding(finding, selection, syncSelection) {
 	head.setAttribute('aria-controls', disclosureId);
 	const title = document.createElement('span');
 	title.className = 'finding-title';
-	title.textContent = finding.title;
+	const split = splitFindingTitle(finding.title);
+	if (split.tag) {
+		const tag = document.createElement('span');
+		tag.className = 'finding-kind';
+		tag.dataset.kind = split.tag;
+		tag.textContent = split.tag;
+		title.append(tag, ' ');
+	}
+	title.append(split.title);
 	const sev = document.createElement('span');
 	sev.className = 'sev';
 	sev.textContent = finding.severity;

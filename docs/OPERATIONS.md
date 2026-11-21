@@ -33,7 +33,7 @@ All variables, with defaults, are documented in `.env.example`.
 | --- | --- | --- |
 | `npm test` | Unit, integration and browser tests (server, QA engine, PostgreSQL contracts, control plane, dashboard view logic) | free |
 | `npm run verify` | Syntax, source credential signatures, ignore rules, then `npm test` | free |
-| `npm run test:browser` | Real-Chromium media, meeting, form-validity and mobile checks | free |
+| `npm run test:browser` | Real-Chromium integration runs of the QA, SQA and Founder engines | free |
 | `npm run test:dashboard`, `test:ui`, `test:acceptance`, `test:auth`, `test:reset` | Dashboard flows against the real app with stub models | free |
 | `npm run test:sqa` | SQA compliance test end to end in the real UI (scripted model, local search stub) | free |
 | `npm run qualify:qa-live [-- <url>]` | QA engine with the real reasoner and JEV against the QA Lab (+ optional target) | capped model usage |

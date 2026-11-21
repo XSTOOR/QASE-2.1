@@ -1,10 +1,9 @@
 import { spawnSync } from 'node:child_process';
+// Real-Chromium integration suites of the three stage engines.
 const files = [
-	'server/browserMedia.integration.test.js',
-	'server/browserMedia.camera.integration.test.js',
-	'server/browserBridge.video.integration.test.js',
-	'server/securitySuite.integration.test.js',
-	'server/multiEngine.integration.test.js'
+	'server/qa/engine.integration.test.js',
+	'server/sqa/sqa.integration.test.js',
+	'server/founder/founder.integration.test.js'
 ];
 let failed = false;
 for (const file of files) {

@@ -172,7 +172,7 @@
     },
     {
       "path": "docs/OPERATIONS.md",
-      "sha256": "22dccf3160b0fac012a6471010c034280b92e5bbae765e8104b552fbe8fd2c25"
+      "sha256": "b0db2021c9f2d09cbee360aa233ca3870af026f0a1d64f2a8bd4c9aafd38461c"
     },
     {
       "path": "docs/QA-ENGINE.md",
@@ -244,7 +244,7 @@
     },
     {
       "path": "public/app.js",
-      "sha256": "58456cd9578a78164ca906f5967e16034315017a34edd093017dd34bf1d15d50"
+      "sha256": "475a8e47293987e2fc5879aef19eb0389605a2a22205579c0e904b9404a953d1"
     },
     {
       "path": "public/auth.css",
@@ -396,7 +396,7 @@
     },
     {
       "path": "public/fieldManual.css",
-      "sha256": "725d100c6d1e977ab5b04a093ea5e9978422ef840b46839a2b3ae8d987d5660a"
+      "sha256": "2d4ed6228f35d5bcb4974b2fedd136a488cf4ae9157ccee2824bb3212b6a8b42"
     },
     {
       "path": "public/fixPromptBuilder.js",
@@ -464,7 +464,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "c8c2a5b19bf603f62bbb98d4162a94ce137e35642987d7c45b8107b9d6d072db"
+      "sha256": "9309c3b06b5c8430179a5c5c73aa95023f23891670b9b2fa15a21784a764fec6"
     },
     {
       "path": "public/jevExecutionView.js",
@@ -680,7 +680,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "d1807962aff58491285f04a07de3dbdd9eec7ec220d09a84edcf9bb5c7c957a3"
+      "sha256": "a9e18d6a0b75c32af0947c4f8f3ba1db788f7b7f303e4f9d29d2926ac7d4f223"
     },
     {
       "path": "public/renderHealth.js",
@@ -860,7 +860,7 @@
     },
     {
       "path": "RELEASE_NOTES.md",
-      "sha256": "345d2c25eb5e208b3c1d183e55f0701f7e06bac0563e1f25c2ac1e703617aae7"
+      "sha256": "e63e270320143d87c93a5a43e370851481d55362c5bcdf3c79284cbab9204ac7"
     },
     {
       "path": "run-jev.command",
@@ -1012,7 +1012,7 @@
     },
     {
       "path": "scripts/test-browser.mjs",
-      "sha256": "0a6a6d407c0022c383bfef7c6768d6ad22169ee06b0b566f4da2d10f526e4a90"
+      "sha256": "978efacc87057109b677ce848d8ebcdbec7c58fcd20b3b43deaa31c23479ec0e"
     },
     {
       "path": "scripts/test-founder-browser.mjs",

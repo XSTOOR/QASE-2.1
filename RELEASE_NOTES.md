@@ -1,6 +1,18 @@
 # QASE release notes
 
-## qase-2026-11-21-field-manual-r6 (UI 20261121-3)
+## qase-2026-11-21-field-manual-r6 (UI 20261121-4)
+
+Right panel, the same in all three modes:
+- Preview: device and one status pill; the duplicate browser bar is gone and a
+  missing preview is one quiet line instead of a crowded strip.
+- Tabs in sentence case with quiet counts.
+- Plan: a segmented progress strip and a check-circle timeline (running steps
+  spin, failures turn red); the per-row status chips are gone.
+- Activity: an animated timeline — items slide in, the current step pulses
+  and failures stand out.
+- Findings: a severity bar with counts, a slim select row, clean rows with a
+  severity dot and "do now" / "avoid" tags.
+- Reports share one card, verdict-pill and bar style; bars fill on open.
 
 Refinement pass:
 - Sidebar runs show only the product, one status line with duration, and the
