@@ -632,3 +632,54 @@ html[data-theme] body.studio-workspace .fdr-score { animation: fm-rise .5s var(-
 @keyframes fm-slide { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
 @keyframes fm-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 @keyframes fm-spin { to { transform: rotate(360deg); } }
+
+/* ── QA adaptive plan + coverage (Plan and Results tabs) ─────────────────────────── */
+html[data-theme] body.studio-workspace .qx-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 12px; }
+html[data-theme] body.studio-workspace .qx-chip { font: 500 11px/1 var(--fm-mono); padding: 5px 8px; border-radius: 3px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); }
+html[data-theme] body.studio-workspace .qx-chip.qx-passed { color: var(--fm-good); background: var(--fm-good-soft); border-color: transparent; }
+html[data-theme] body.studio-workspace .qx-chip.qx-failed { color: var(--fm-bad); background: var(--fm-bad-soft); border-color: transparent; }
+html[data-theme] body.studio-workspace .qx-chip.qx-running { color: var(--fm-signal-ink); background: var(--fm-signal); border-color: transparent; }
+html[data-theme] body.studio-workspace .qx-chip.qx-blocked,
+html[data-theme] body.studio-workspace .qx-chip.qx-inconclusive { color: var(--fm-warn); background: var(--fm-warn-soft); border-color: transparent; }
+html[data-theme] body.studio-workspace .qx-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 420px; overflow: auto; }
+html[data-theme] body.studio-workspace .qx-row { display: grid; grid-template-columns: 10px 1fr auto; gap: 10px; align-items: start; padding: 8px 6px; border-radius: var(--fm-radius); animation: fm-rise .32s var(--fm-ease) both; }
+html[data-theme] body.studio-workspace .qx-row:hover { background: var(--surface-2); }
+html[data-theme] body.studio-workspace .qx-dot { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--border-strong); }
+html[data-theme] body.studio-workspace .qx-row[data-state="passed"] .qx-dot { background: var(--fm-good); }
+html[data-theme] body.studio-workspace .qx-row[data-state="failed"] .qx-dot { background: var(--fm-bad); }
+html[data-theme] body.studio-workspace .qx-row[data-state="blocked"] .qx-dot,
+html[data-theme] body.studio-workspace .qx-row[data-state="inconclusive"] .qx-dot { background: var(--fm-warn); }
+html[data-theme] body.studio-workspace .qx-row[data-state="running"] .qx-dot { background: var(--fm-signal); box-shadow: 0 0 0 4px var(--fm-signal-soft); animation: fm-pulse 1.2s ease-in-out infinite; }
+html[data-theme] body.studio-workspace .qx-row[data-state="pending"] .qx-dot { background: transparent; border: 1px solid var(--text-faint); }
+html[data-theme] body.studio-workspace .qx-row-body { display: grid; gap: 2px; min-width: 0; }
+html[data-theme] body.studio-workspace .qx-row-title { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html[data-theme] body.studio-workspace .qx-row-reason { font-size: 12px; color: var(--text-muted); }
+html[data-theme] body.studio-workspace .qx-row-new { font: 500 10.5px/1.4 var(--fm-mono); color: var(--fm-signal-text); }
+html[data-theme] body.studio-workspace .qx-row-state { font: 500 10.5px/1.6 var(--fm-mono); text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint); }
+html[data-theme] body.studio-workspace .qx-row[data-state="failed"] .qx-row-state { color: var(--fm-bad); }
+html[data-theme] body.studio-workspace .qx-row[data-state="passed"] .qx-row-state { color: var(--fm-good); }
+html[data-theme] body.studio-workspace .qx-total { margin: 0 0 8px; font: 500 12px/1 var(--fm-mono); color: var(--text-muted); }
+html[data-theme] body.studio-workspace .qx-bar { display: flex; height: 14px; gap: 2px; border-radius: 3px; overflow: hidden; background: var(--surface-3); }
+html[data-theme] body.studio-workspace .qx-seg { flex-basis: 0; min-width: 3px; transform-origin: left; animation: fm-fill .7s var(--fm-ease) both; }
+html[data-theme] body.studio-workspace .qx-seg.qx-passed { background: var(--fm-good); }
+html[data-theme] body.studio-workspace .qx-seg.qx-failed { background: var(--fm-bad); }
+html[data-theme] body.studio-workspace .qx-seg.qx-blocked { background: var(--fm-warn); }
+html[data-theme] body.studio-workspace .qx-seg.qx-inconclusive { background: color-mix(in srgb, var(--fm-warn) 55%, var(--surface-3)); }
+html[data-theme] body.studio-workspace .qx-seg.qx-not_executed { background: var(--text-faint); }
+html[data-theme] body.studio-workspace .qx-seg.qx-not_applicable { background: var(--border-strong); }
+html[data-theme] body.studio-workspace .qx-seg.qx-unsupported { background: repeating-linear-gradient(135deg, var(--border-strong) 0 3px, transparent 3px 6px); }
+html[data-theme] body.studio-workspace .qx-legend { list-style: none; display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0 0; padding: 0; }
+html[data-theme] body.studio-workspace .qx-key { display: flex; align-items: baseline; gap: 6px; font-size: 12px; color: var(--text-muted); }
+html[data-theme] body.studio-workspace .qx-key::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--border-strong); align-self: center; }
+html[data-theme] body.studio-workspace .qx-key.qx-passed::before { background: var(--fm-good); }
+html[data-theme] body.studio-workspace .qx-key.qx-failed::before { background: var(--fm-bad); }
+html[data-theme] body.studio-workspace .qx-key.qx-blocked::before { background: var(--fm-warn); }
+html[data-theme] body.studio-workspace .qx-key.qx-not_executed::before { background: var(--text-faint); }
+html[data-theme] body.studio-workspace .qx-key strong { font: 600 13px/1 var(--fm-mono); color: var(--text); }
+html[data-theme] body.studio-workspace .qx-gate { font: 600 10.5px/1 var(--fm-mono); text-transform: uppercase; letter-spacing: .05em; padding: 5px 8px; border-radius: 3px; background: var(--fm-warn-soft); color: var(--fm-warn); }
+html[data-theme] body.studio-workspace .qx-gate-complete { background: var(--fm-signal); color: var(--fm-signal-ink); }
+html[data-theme] body.studio-workspace .qx-gate-blocked { background: var(--fm-bad-soft); color: var(--fm-bad); }
+html[data-theme] body.studio-workspace .qx-coverage, html[data-theme] body.studio-workspace .qx-scenarios { margin-top: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme] body.studio-workspace .qx-row, html[data-theme] body.studio-workspace .qx-seg, html[data-theme] body.studio-workspace .qx-row[data-state="running"] .qx-dot { animation: none; }
+}

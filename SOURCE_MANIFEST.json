@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "releaseId": "qase-2026-11-21-field-manual-r6",
+  "releaseId": "qase-2026-11-21-adaptive-qa-r7",
   "files": [
     {
       "path": ".dockerignore",
@@ -88,7 +88,7 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "be5d8e27d41fdc330cfaa33ced268f4774ee2250a8a9f991a99dd94716a14d26"
+      "sha256": "58849b13d0bb4a17e16f83c1ccbf31fa311bfc979fde79437efcedaef5208c84"
     },
     {
       "path": "docs/ARCHITECTURE.md",
@@ -176,7 +176,7 @@
     },
     {
       "path": "docs/QA-ENGINE.md",
-      "sha256": "9216ef2ca822a157b0a23514b89e037ccb5c4898338d7adced391863798eb645"
+      "sha256": "09654043b566cfb3a2ec7260b6b1fe4fbf4b740e74a41d34b5a5a7b0ea268cef"
     },
     {
       "path": "docs/smtp-password-reset-setup.md",
@@ -396,7 +396,7 @@
     },
     {
       "path": "public/fieldManual.css",
-      "sha256": "2d4ed6228f35d5bcb4974b2fedd136a488cf4ae9157ccee2824bb3212b6a8b42"
+      "sha256": "2ea2b2f51bd386e5b6bad2a19ab9f241d6b9e1f8bbc859051406f22f8dc453fc"
     },
     {
       "path": "public/fixPromptBuilder.js",
@@ -464,7 +464,7 @@
     },
     {
       "path": "public/index.html",
-      "sha256": "9309c3b06b5c8430179a5c5c73aa95023f23891670b9b2fa15a21784a764fec6"
+      "sha256": "d27a4bdfdad93144c733c5ab3771527ac1420470658a9dcd06e5ee9e72678234"
     },
     {
       "path": "public/jevExecutionView.js",
@@ -588,7 +588,7 @@
     },
     {
       "path": "public/qaEvidenceView.js",
-      "sha256": "f3000815943728b0eb0eb1645780f01f9d15c100d6c96b531075f8326866355f"
+      "sha256": "651f22f134c790bd16575e9debc0a71a8e306b1770f2da8c76ab129dc399bed7"
     },
     {
       "path": "public/qaExecutionView.js",
@@ -680,7 +680,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "a9e18d6a0b75c32af0947c4f8f3ba1db788f7b7f303e4f9d29d2926ac7d4f223"
+      "sha256": "203d64d386a811e9b7713aadeab9a2fe5f47bf7ad46d48f9ede78afb1d7fc850"
     },
     {
       "path": "public/renderHealth.js",
@@ -1632,7 +1632,7 @@
     },
     {
       "path": "server/hybridPersistence.js",
-      "sha256": "b60c99c28e2cb26a07d9ed1428b1496a2b9632423c31e060f18ac5f20bde25d6"
+      "sha256": "1ddf677a39c0c40c04a090df2feb8c16ed789d5d4a94d2ffee6a53908e53d6a4"
     },
     {
       "path": "server/hybridQuickLaunch.test.js",
@@ -2139,12 +2139,32 @@
       "sha256": "1b9f479fc1274c987d9fbd0544d3f352ccd2ea1c95f0cb41d59d4b0a6bdf35fa"
     },
     {
+      "path": "server/qa/adaptive.integration.test.js",
+      "sha256": "1fc0abc4dc40d40eb7ae58c7946617bf8b1df9c33da1a86dc45101a9f80917d1"
+    },
+    {
+      "path": "server/qa/adaptive.test.js",
+      "sha256": "6c04ebf17e600f4016ad8130faaa333076af55d5038f1c007ee6fd8168366518"
+    },
+    {
+      "path": "server/qa/appGraph.js",
+      "sha256": "dc1ac4e0f27ee49bb4ec9c4acc139a3ba21d8c54ceb26c7244b5a7bf8c1541cb"
+    },
+    {
       "path": "server/qa/browser.js",
-      "sha256": "e10ab5298d49f78ace9490b51a3550e278d861c270f9975a3af322b6bbae039d"
+      "sha256": "b067a4e54364f0cc6c1a418d35f52e507d67a4af186f94a3498036140c3af790"
     },
     {
       "path": "server/qa/browser.test.js",
       "sha256": "7b9b4921e8ca45f35ed1be7627741e6105afe3fd8527220dcf8c42144a4cdc2c"
+    },
+    {
+      "path": "server/qa/capabilities.js",
+      "sha256": "ea784c9c05181a7888f903e717325fbf74bb703ff803ff9744f13cb6e73457d5"
+    },
+    {
+      "path": "server/qa/completionGate.js",
+      "sha256": "35c6bc7873833cef02e0a90d515dd3eac6d0b786c6105f3d69c60a26bd6c5407"
     },
     {
       "path": "server/qa/crawl.js",
@@ -2176,19 +2196,27 @@
     },
     {
       "path": "server/qa/engine.js",
-      "sha256": "4c3d025f0926f4beeb20b0b8db4babb0aa38301f4f185cf596141e306d8e33aa"
+      "sha256": "d283995554e17b5fc3a2676c09c5de4bd14a3ff7ea14b6787f78891ff4ba509c"
+    },
+    {
+      "path": "server/qa/executors.js",
+      "sha256": "45f37d23b535a24621f009d4125f62f27a23d5b963bc98fa459ea9fb7d0a178b"
     },
     {
       "path": "server/qa/explorer.js",
-      "sha256": "9c032b03385cc4122d6a812c2ff7045a13b5e3a61d82a51211da6d472b6eef34"
+      "sha256": "956fbfe17cc05b35b4680c2cb8f286decae7eb77ed491ae16d8e1ed181a989bf"
     },
     {
       "path": "server/qa/findings.js",
-      "sha256": "37aa9aa4d8214e1b14027b6726f74ad1c3ae6820e928c771f785392336ee4e19"
+      "sha256": "f9e9bdbd2c80706d622f752526ae7497d749e16aa66c98a616dabbddc1e0f6c1"
     },
     {
       "path": "server/qa/fixtureSite.js",
-      "sha256": "4eedc203b2b09e70dd958bc70ab7d1307b6a8f1fa5a53cdf95468d47f9ed64b8"
+      "sha256": "aa5a9d934a21a46e00a77ccce7b26dc76dfcd886e2c7186997042b68913bd8d3"
+    },
+    {
+      "path": "server/qa/fixtureWorkspace.js",
+      "sha256": "8b4fc12e2baed174f28fe8aa27c1f1a9d4b2e2f4c367e09c92c15c4cdb4a3e33"
     },
     {
       "path": "server/qa/index.js",
@@ -2199,20 +2227,28 @@
       "sha256": "dd57ff9b997c586363515029262e5d8fc09deed23e6f52a9cb2fb93ca722c824"
     },
     {
+      "path": "server/qa/planner.js",
+      "sha256": "07a593eedee84038fede81d9162d8ed419695c18cde9a345ef46d4b2828e6e29"
+    },
+    {
       "path": "server/qa/qa.test.js",
       "sha256": "d2b6090d667a9c44814d5a923b80bd270b66af1d43e72d367b934abee5352ab5"
     },
     {
       "path": "server/qa/report.js",
-      "sha256": "c147a99250119dc7b0164ca4d7fffd3bd3be432d588e3c4e03f194c7481faa1b"
+      "sha256": "d9e8d114182f80af5b432ad2ba6df7e09f8d3f03e7454e619fa17cdfe9fd89e2"
+    },
+    {
+      "path": "server/qa/router.js",
+      "sha256": "161911db81e9ccda851c3c568edb958713cb099b3acbaeb69595114455e0d7e2"
     },
     {
       "path": "server/qa/signin.js",
-      "sha256": "62bdf63e5a3ecaff41ff602c472ae6fee001b9a4c723d9f18119eaaa14de9bbd"
+      "sha256": "701f4c110e8e24c1767807eab7036a9f918437766e6d7bca48aea9fe21de0817"
     },
     {
       "path": "server/qa/triage.js",
-      "sha256": "fd1ecdcdb6e7740ab0452a0a88d4015232eeced727cafde3554ffc1792a2885a"
+      "sha256": "2aeac1baa2f8826b97c7f32dc390b777217129973a29dd9069da6de94d855bed"
     },
     {
       "path": "server/qa/visualReview.js",

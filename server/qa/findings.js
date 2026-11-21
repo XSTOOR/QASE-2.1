@@ -66,10 +66,11 @@ export function mergeCandidates(items) {
 	for (const item of items) {
 		const existing = byKey.get(item.fingerprint);
 		if (!existing) {
-			byKey.set(item.fingerprint, { ...item, viewports: item.viewport ? [item.viewport] : [], occurrences: 1, urls: item.url ? [item.url] : [] });
+			byKey.set(item.fingerprint, { ...item, viewports: item.viewport ? [item.viewport] : [], occurrences: 1, urls: item.url ? [item.url] : [], scenarioIds: item.scenarioId ? [item.scenarioId] : [] });
 			continue;
 		}
 		existing.occurrences++;
+		if (item.scenarioId && !existing.scenarioIds.includes(item.scenarioId)) existing.scenarioIds.push(item.scenarioId);
 		if (item.viewport && !existing.viewports.includes(item.viewport)) existing.viewports.push(item.viewport);
 		if (item.url && !existing.urls.includes(item.url) && existing.urls.length < 10) existing.urls.push(item.url);
 		if (SEVERITIES.indexOf(item.severity) < SEVERITIES.indexOf(existing.severity)) existing.severity = item.severity;
@@ -86,6 +87,7 @@ export function mergeCandidates(items) {
 		const existing = byTitle.get(key);
 		if (!existing) { byTitle.set(key, item); continue; }
 		existing.occurrences += item.occurrences;
+		for (const id of item.scenarioIds ?? []) if (!existing.scenarioIds.includes(id)) existing.scenarioIds.push(id);
 		for (const viewport of item.viewports) if (!existing.viewports.includes(viewport)) existing.viewports.push(viewport);
 		for (const url of item.urls) if (!existing.urls.includes(url) && existing.urls.length < 10) existing.urls.push(url);
 		if (SEVERITIES.indexOf(item.severity) < SEVERITIES.indexOf(existing.severity)) existing.severity = item.severity;

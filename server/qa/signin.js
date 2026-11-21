@@ -8,6 +8,7 @@ import { resolveSecrets } from '../secrets.js';
 
 const LOGIN_HINT = /log ?in|sign ?in|account|auth/i;
 const SUBMIT_HINT = /^\s*(log ?in|sign ?in|continue|next|submit|enter)\b/i;
+const USER_FIELD = ['input[type=email]', 'input[autocomplete=username]', 'input[name*=user i]', 'input[name*=email i]', 'input[name*=login i]', 'input[type=text]'].map(selector => `${selector}:visible`).join(', ');
 
 /**
  * True when the page shows a sign-in form: a visible password field inside a
@@ -28,6 +29,40 @@ export async function hasLoginForm(page) {
 	}, SUBMIT_HINT.source).catch(() => false);
 }
 
+/**
+ * What the page tells us about authentication, without submitting anything:
+ * a password form, an identifier-first step (email, then "Continue"), sign-in
+ * links, sign-out controls, single-sign-on buttons and human-only challenges.
+ */
+export async function detectAuth(page) {
+	return page.evaluate(({ hint, submit }) => {
+		const hintRe = new RegExp(hint, 'i');
+		const submitRe = new RegExp(submit, 'i');
+		const visible = element => { const r = element.getBoundingClientRect(); const s = getComputedStyle(element); return r.width > 2 && r.height > 2 && s.visibility !== 'hidden' && s.display !== 'none'; };
+		const label = element => (element.innerText || element.value || element.getAttribute('aria-label') || '').trim();
+		const password = [...document.querySelectorAll('input[type=password]')].some(visible);
+		const identifierStep = !password && [...document.querySelectorAll('form')].some(form => {
+			const id = [...form.querySelectorAll('input[type=email], input[autocomplete=username], input[name*=email i], input[name*=user i], input[name*=login i]')].find(visible);
+			const button = [...form.querySelectorAll('button, input[type=submit]')].find(item => visible(item) && submitRe.test(label(item)));
+			return Boolean(id && button && form.querySelectorAll('input:not([type=hidden])').length <= 3);
+		});
+		const anchors = [...document.querySelectorAll('a[href]')].filter(visible);
+		const loginLinks = anchors.filter(a => /^(log ?in|sign ?in|login|signin|my account|account)$/i.test(label(a)) || /\/(log-?in|sign-?in|auth\/login)(\/|$|\?)/i.test(new URL(a.href, location.href).pathname)).map(a => a.href).slice(0, 5);
+		const logout = [...document.querySelectorAll('a, button, [role=button]')].some(item => visible(item) && /^(log ?out|sign ?out|logout|signout)$/i.test(label(item)));
+		const sso = [...document.querySelectorAll('a, button')].filter(item => visible(item) && /continue with|sign in with|log in with/i.test(label(item))).map(label).slice(0, 4);
+		const text = document.body?.innerText ?? '';
+		const challenge = document.querySelector('iframe[src*=captcha], iframe[src*=turnstile], iframe[src*=hcaptcha], [class*=captcha i], .g-recaptcha') ? 'captcha'
+			: document.querySelector('input[autocomplete=one-time-code]') || /verification code|authenticator code|two-factor|one-time code/i.test(text) ? 'mfa' : undefined;
+		return { password, identifierStep, loginLinks, logout, sso, challenge, loginPath: hintRe.test(location.pathname) };
+	}, { hint: LOGIN_HINT.source, submit: SUBMIT_HINT.source }).catch(() => ({ password: false, identifierStep: false, loginLinks: [], logout: false, sso: [] }));
+}
+
+/** True when the page is a sign-in form of either kind (password or identifier-first). */
+export async function isSignInPage(page) {
+	const auth = await detectAuth(page);
+	return Boolean((auth.password && await hasLoginForm(page)) || auth.identifierStep);
+}
+
 async function findLoginPage(browser, profile, candidates) {
 	// Pages whose URL looks like a sign-in route are tried first.
 	const ordered = [...candidates.filter(url => LOGIN_HINT.test(new URL(url).pathname)), ...candidates.filter(url => !LOGIN_HINT.test(new URL(url).pathname))];
@@ -35,13 +70,13 @@ async function findLoginPage(browser, profile, candidates) {
 		const { page, log } = await browser.openPage(profile);
 		try {
 			await browser.goto(page, url, log, { timeoutMs: 20000 });
-			if (await hasLoginForm(page)) return { page, log, url };
+			if (await isSignInPage(page)) return { page, log, url: page.url() };
 			// A "Sign in" link on the page leads to the form.
 			const link = page.locator('a, button').filter({ hasText: LOGIN_HINT }).first();
 			if (await link.count()) {
 				await link.click({ timeout: 4000 }).catch(() => {});
 				await browser.settle(page, { quietMs: 1500 });
-				if (await hasLoginForm(page)) return { page, log, url: page.url() };
+				if (await isSignInPage(page)) return { page, log, url: page.url() };
 			}
 		} catch { /* try the next candidate */ }
 		await page.close().catch(() => {});
@@ -100,7 +135,26 @@ export async function signIn({ browser, profile, session, candidates }) {
 	const found = await findLoginPage(browser, profile, [...new Set([session.qaAuth?.loginUrl, ...candidates].filter(Boolean))]);
 	if (!found) return { ok: false, reason: 'No sign-in form was found on the target or its common sign-in routes.' };
 	const { page, url } = found;
+	const steps = [];
 	try {
+		// Identifier-first sign-in: fill the email/username, continue, wait for the password step.
+		if (!await page.locator('input[type=password]:visible').count()) {
+			const idField = page.locator(USER_FIELD).first();
+			if (!await idField.count()) return { ok: false, url, retry: false, reason: 'The sign-in page shows no username or password field QASE could fill.' };
+			await idField.fill(username, { timeout: 4000 });
+			const idScope = idField.locator('xpath=ancestor::form[1]');
+			const next = (await idScope.count() ? idScope : page).locator('button, [role=button], input[type=submit]').filter({ hasText: SUBMIT_HINT }).first();
+			await browser.permitWritesFor(15000, async () => {
+				if (await next.count()) await next.click({ timeout: 5000 }); else await idField.press('Enter');
+				await page.locator('input[type=password]:visible').first().waitFor({ timeout: 12000 }).catch(() => {});
+			});
+			steps.push('identifier');
+			if (!await page.locator('input[type=password]:visible').count()) {
+				const state = await detectAuth(page);
+				if (state.challenge) return { ok: false, url, retry: false, human: state.challenge, steps, reason: 'The site asked for extra verification (a CAPTCHA or a one-time code), which needs a person to complete.' };
+				return { ok: false, url, retry: true, steps, reason: 'After entering the username, the site did not show a password step.' };
+			}
+		}
 		const passwordField = page.locator('input[type=password]:visible').first();
 		const form = passwordField.locator('xpath=ancestor::form[1]');
 		const scope = await form.count() ? form : page;
@@ -109,8 +163,9 @@ export async function signIn({ browser, profile, session, candidates }) {
 		const hinted = scope.locator('button, [role=button], input[type=submit]').filter({ hasText: SUBMIT_HINT }).first();
 		const typed = scope.locator('button[type=submit], input[type=submit]').first();
 		const submitButton = await hinted.count() ? hinted : await typed.count() ? typed : scope.locator('button:not([type])').last();
-		const userField = scope.locator('input[type=email], input[autocomplete=username], input[name*=user i], input[name*=email i], input[name*=login i], input[type=text]').first();
-		if (await userField.count()) await userField.fill(username, { timeout: 4000 });
+		const userField = scope.locator(USER_FIELD).first();
+		if (await userField.count() && !await userField.inputValue().catch(() => '')) await userField.fill(username, { timeout: 4000 });
+		steps.push('password');
 		await passwordField.fill(password, { timeout: 4000 });
 		// Watch what the sign-in actually does: the requests it sends (and how the site
 		// answers), whether the page leaves the form, and any error message it shows.
@@ -147,9 +202,12 @@ export async function signIn({ browser, profile, session, candidates }) {
 		if (outcome.kind === 'left_form' && expected && !page.url().startsWith(expected)) {
 			return { ok: false, url, retry: false, reason: `Signed in, but the browser reached ${page.url()} instead of the expected ${expected}.` };
 		}
-		if (outcome.kind !== 'left_form') return { ok: false, url, ...diagnose(outcome, authResponses, failed, sent) };
+		if (outcome.kind !== 'left_form') return { ok: false, url, steps, ...(outcome.kind === 'verification' ? { human: 'verification' } : {}), ...diagnose(outcome, authResponses, failed, sent) };
+		// Verify the session from what the page shows, not only from the form disappearing.
+		const after = await detectAuth(page);
+		const verified = { leftForm: true, logoutControl: after.logout, leftLoginPath: !after.loginPath, cookies: (await page.context().cookies()).length };
 		await browser.useSignedInState(await page.context().storageState());
-		return { ok: true, url: page.url() };
+		return { ok: true, url: page.url(), steps, verified };
 	} catch (error) {
 		return { ok: false, url, reason: `Sign-in failed: ${String(error.message).split('\n')[0].slice(0, 160)}` };
 	} finally {

@@ -3,7 +3,7 @@
 //
 // Version 1 states come from the retired hybrid SDK runtime and are kept
 // read-only so old runs still open. Version 2 is the current QA engine
-// (server/qa/engine.js). The finding child table predates engine metadata, so
+// (server/qa/engine.js); adaptive runs add graph, plan and routing state. The finding child table predates engine metadata, so
 // per-finding details (fix guidance, selector, viewports, screenshot) are
 // stored here and re-attached on load.
 const MAX_BYTES = 4_000_000;
@@ -15,7 +15,13 @@ export function hybridStorage(session) {
   let serialized = JSON.stringify({ version: 1, executionMode: 'hybrid', state });
   if (Buffer.byteLength(serialized) > MAX_BYTES && state?.version === 2) {
     // Candidates are working data; the published findings and report are durable elsewhere.
-    state = { ...state, candidates: state.candidates.slice(0, 200), pages: undefined, links: undefined };
+    state = {
+      ...state, candidates: state.candidates.slice(0, 200), pages: undefined, links: undefined,
+      // Adaptive engine: the graph keeps its pages and auth; transitions and per-scenario evidence are trimmed.
+      graph: state.graph ? { ...state.graph, transitions: (state.graph.transitions ?? []).slice(0, 100), history: (state.graph.history ?? []).slice(-40) } : undefined,
+      plan: state.plan ? { ...state.plan, scenarios: (state.plan.scenarios ?? []).map(item => ({ ...item, evidence: (item.evidence ?? []).slice(0, 3) })) } : undefined,
+      routing: state.routing ? { ...state.routing, decisions: (state.routing.decisions ?? []).slice(-80) } : undefined
+    };
     serialized = JSON.stringify({ version: 1, executionMode: 'hybrid', state });
   }
   if (Buffer.byteLength(serialized) > MAX_BYTES) throw new TypeError('QA engine state exceeds its durable storage budget.');

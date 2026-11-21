@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-11-21-field-manual-r6",
-  "uiVersion": "20261121-4",
+  "releaseId": "qase-2026-11-21-adaptive-qa-r7",
+  "uiVersion": "20261121-5",
   "productionOrigin": "https://qase.drytis.com",
   "source": "Push-SQA: complete UI makeover in a restrained \"field manual\" style (warm charcoal / warm paper, lime signal, Geist + Geist Mono, hairlines, mechanical motion) across sign-in, workspace, launchers, reports and a Bug tracker that now covers QA, compliance and Founder findings."
 }

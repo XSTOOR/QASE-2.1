@@ -6,6 +6,7 @@
  * false-positive checks.
  */
 import http from 'node:http';
+import { workspaceHandler } from './fixtureWorkspace.js';
 
 export const SEEDED_DEFECTS = [
 	{ id: 'overlap', detector: 'page.text_overlap', where: '/' },
@@ -191,6 +192,11 @@ export function labHandler(request, response, { prefix = '' } = {}) {
 	const html = (body, status = 200) => { response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(body); };
 	const link = href => `${prefix}${href}`;
 	const rewrite = text => prefix ? text.replace(/(href|src|action)="\//g, `$1="${prefix}/`).replace(/fetch\('\//g, `fetch('${prefix}/`) : text;
+	// The multi-page "Projectly" app (sign-in, roles, protected routes) lives under /workspace.
+	if (!prefix && path.startsWith('/workspace')) {
+		return workspaceHandler(request, response, path, url).then(handled => { if (!handled) html(layout('Not found', '<main><h1>404</h1></main>'), 404); })
+			.catch(() => { if (!response.headersSent) html('error', 500); });
+	}
 	switch (path) {
 		case '/':
 			response.setHeader('Set-Cookie', 'sessionid=lab-session-1234; Path=/');

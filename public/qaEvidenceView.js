@@ -91,9 +91,13 @@ function present(root, session, evidence, { live, error, retry, onFinding, onFin
 	workspace.append(metrics);
 
 
-	// Phases.
-	const phases = create('section', 'qe-card');
-	phases.append(create('h3', '', 'Test phases'));
+	// Coverage and the dynamic plan replace the old fixed phase list.
+	const coverageView = coverageCard(create, session);
+	if (coverageView) workspace.append(coverageView);
+	const scenarioView = scenarioCard(create, session, { live });
+	if (scenarioView) workspace.append(scenarioView);
+	const phases = create('section', 'qe-card qx-stages');
+	phases.append(create('h3', '', 'Stages'));
 	const phaseList = create('ol', 'qe-list qe-phases');
 	for (const phase of state.phases ?? []) {
 		const item = create('li', 'qe-phase');
@@ -333,6 +337,10 @@ function presentPlan(root, session, { error, retry, onFindings }) {
 	});
 	card.append(list);
 	plan.append(card);
+	const scenarioView = scenarioCard(create, session, { live: running });
+	if (scenarioView) plan.append(scenarioView);
+	const coverageView = coverageCard(create, session);
+	if (coverageView) plan.append(coverageView);
 
 	// What could not be covered, as soon as it is known.
 	const gaps = (session.report?.notCovered?.length ? session.report.notCovered : (state.limitations ?? []).map(item => item.message));
@@ -347,13 +355,81 @@ function presentPlan(root, session, { error, retry, onFindings }) {
 	root.replaceChildren(plan);
 }
 
+const COVERAGE_ORDER = [['passed', 'Passed'], ['failed', 'Failed'], ['blocked', 'Blocked'], ['inconclusive', 'Inconclusive'], ['not_executed', 'Not run'], ['not_applicable', 'N/A'], ['unsupported', 'Unsupported']];
+const SCENARIO_LABEL = { pending: 'Queued', running: 'Running', passed: 'Passed', failed: 'Issues', blocked: 'Blocked', inconclusive: 'Inconclusive', not_applicable: 'N/A', unsupported: 'Unsupported', not_executed: 'Not run' };
+
+/** The dynamic plan: scenarios as they are planned, revised and executed. */
+function scenarioCard(create, session, { live } = {}) {
+	const state = session.hybrid ?? {};
+	const scenarios = state.plan?.scenarios ?? session.report?.qaEngine?.plan?.scenarios ?? [];
+	if (!scenarios.length) return undefined;
+	const revisions = state.plan?.revisions ?? session.report?.qaEngine?.plan?.revisions ?? [];
+	const card = create('section', 'qp-card qx-scenarios');
+	const head = create('div', 'qp-card-head');
+	head.append(create('h3', '', 'Test plan'), create('span', 'qp-card-note', `${scenarios.length} scenarios · ${revisions.length > 1 ? `revised ${revisions.length - 1}×` : 'from observation'}${live ? ' · live' : ''}`));
+	card.append(head);
+	const counts = {};
+	for (const item of scenarios) counts[item.state] = (counts[item.state] ?? 0) + 1;
+	const chips = create('div', 'qx-chips');
+	for (const [key, text] of Object.entries(SCENARIO_LABEL)) if (counts[key]) { const chip = create('span', `qx-chip qx-${key}`, `${counts[key]} ${text}`); chips.append(chip); }
+	card.append(chips);
+	const list = create('ol', 'qx-list');
+	const order = { running: 0, failed: 1, blocked: 2, inconclusive: 3, pending: 4, passed: 5, not_executed: 6, not_applicable: 7, unsupported: 8 };
+	for (const item of [...scenarios].sort((a, b) => (order[a.state] ?? 9) - (order[b.state] ?? 9)).slice(0, 40)) {
+		const row = create('li', 'qx-row');
+		row.dataset.state = item.state;
+		const dot = create('span', 'qx-dot');
+		dot.setAttribute('aria-hidden', 'true');
+		const body = create('div', 'qx-row-body');
+		body.append(create('span', 'qx-row-title', item.title));
+		if (item.reason && item.state !== 'passed') body.append(create('span', 'qx-row-reason', item.reason));
+		const tag = create('span', 'qx-row-state', SCENARIO_LABEL[item.state] ?? item.state);
+		if (item.revision > 1) body.append(create('span', 'qx-row-new', `added in revision ${item.revision}`));
+		row.append(dot, body, tag);
+		list.append(row);
+	}
+	card.append(list);
+	if (scenarios.length > 40) card.append(create('p', 'qp-card-note', `…and ${scenarios.length - 40} more in the report.`));
+	return card;
+}
+
+/** 140 categories as one stacked bar, plus the completion gate. */
+function coverageCard(create, session) {
+	const state = session.hybrid ?? {};
+	const summary = state.capabilities ?? state.capabilitySummary ?? session.report?.qaEngine?.capabilitySummary;
+	if (!summary?.total) return undefined;
+	const gate = state.gate ?? session.report?.qaEngine?.completion;
+	const card = create('section', 'qp-card qx-coverage');
+	const head = create('div', 'qp-card-head');
+	head.append(create('h3', '', 'Coverage'), create('span', `qx-gate qx-gate-${gate?.status ?? 'partial'}`, gate ? `Gate: ${gate.status}` : ''));
+	card.append(head);
+	const bar = create('div', 'qx-bar');
+	bar.setAttribute('role', 'img');
+	bar.setAttribute('aria-label', COVERAGE_ORDER.map(([key, text]) => `${summary[key] ?? 0} ${text}`).join(', '));
+	const legend = create('ul', 'qx-legend');
+	for (const [key, text] of COVERAGE_ORDER) {
+		const value = summary[key] ?? 0;
+		if (!value) continue;
+		const segment = create('span', `qx-seg qx-${key}`);
+		segment.style.flexGrow = String(value);
+		segment.title = `${value} ${text}`;
+		bar.append(segment);
+		const item = create('li', `qx-key qx-${key}`);
+		item.append(create('strong', '', String(value)), create('span', '', text));
+		legend.append(item);
+	}
+	card.append(create('p', 'qx-total', `${summary.total} test categories`), bar, legend);
+	if (gate?.failed?.length) card.append(create('p', 'qp-card-note', `Open gate checks: ${gate.failed.join(', ').replace(/_/g, ' ')}`));
+	return card;
+}
+
 /** Live-updating workspace; checkpoints coalesce into one fetch per interval. */
 export function createQaEvidenceWorkspace({ api, plan, report, ...actions }) {
 	let session, evidence, error, timer, inFlight, pending, signature;
 
 	function render() {
 		if (!session) return;
-		const snapshot = JSON.stringify([session.id, session.status, session.statusDetail, session.report?.ts, session.findings?.length, session.hybrid?.phases, session.hybrid?.coverage, session.hybrid?.limitations, session.hybrid?.signedIn, session.hybrid?.candidates, evidence?.dismissed?.length, error]);
+		const snapshot = JSON.stringify([session.id, session.status, session.statusDetail, session.report?.ts, session.findings?.length, session.hybrid?.phases, session.hybrid?.coverage, session.hybrid?.plan?.summary, (session.hybrid?.plan?.scenarios ?? []).map(item => item.state[0]).join(''), session.hybrid?.capabilities, session.hybrid?.gate, session.hybrid?.limitations, session.hybrid?.signedIn, session.hybrid?.candidates, evidence?.dismissed?.length, error]);
 		if (snapshot === signature) return;
 		signature = snapshot;
 		const options = { ...actions, error, retry: () => schedule(0) };

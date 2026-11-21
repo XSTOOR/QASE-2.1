@@ -18,29 +18,68 @@ on the model choosing the right fixed checks, so layout, animation and
 security defects were rarely reported. The engine inverts this: the host runs
 a fixed, complete test plan and uses models only where judgement helps.
 
-## Pipeline
+## Pipeline (adaptive architecture)
 
-| Phase | What happens | Module |
+The engine observes the application before it plans anything. Nothing in it is
+application specific: what gets tested follows from what it finds.
+
+| Stage | What happens | Module |
 | --- | --- | --- |
-| `open` | Load the target (3 attempts), capture response headers and cookies | `engine.js` |
-| `signin` | Sign in once with the run's test account. Without one, when the start page is a sign-in wall (or the crawl finds a sign-in form) the agent asks for one in the conversation, then crawls the signed-in area too | `signin.js`, `engine.js` |
-| `crawl` | Same-scope crawl (default 12 pages, ≤2 URLs per path pattern); page audit + page security on each | `crawl.js`, `detectors/page.js`, `detectors/security.js` |
-| `viewports` | Re-audit key pages on mobile/tablet (or desktop when the run's device is mobile) | `detectors/page.js` |
-| `motion` | Click toggles, menus, dialogs, accordions; hover desktop submenus; reduced-motion check | `detectors/interactions.js` |
-| `forms` | Empty and malformed submissions with writes blocked | `detectors/forms.js` |
-| `security` | Origin checks, injection probes, open-redirect probes | `detectors/security.js` |
-| `links` | HEAD/GET every discovered link once | `crawl.js` |
-| `explore` | Reasoning model drives the browser through user journeys and reports issues | `explorer.js` |
-| `visual` | Reasoning model reviews page screenshots and animation filmstrips | `visualReview.js` |
-| `triage` | Merge duplicates, verify with JEV (fallback reasoner, then deterministic), grade severity | `triage.js` |
-| `publish` | Findings with fix guidance, deterministic verdict, report | `report.js`, `engine.js` |
+| `observe` | Open the target; record DOM features, accessibility snapshot, console/network counts, sign-in entry points (password form, two-step identifier form, sign-in links, SSO, CAPTCHA/MFA) and a screenshot. **No plan exists yet.** | `engine.js`, `appGraph.js`, `signin.js` |
+| `signin` | When sign-in exists (or an account was supplied): use the vault account, asking once through the secure card if none was given; handle identifier-first sign-in; verify the session by opening the next page; MFA/CAPTCHA pause for a person and are never bypassed | `signin.js`, `engine.js` |
+| `discover` | Crawl public pages in a **signed-out** context, then the signed-in area, into the application graph (pages, features, transitions, auth state, roles). A signed-in page that bounces to sign-in triggers re-authentication (bounded by `QASE_QA_MAX_REAUTH`) and a retry | `crawl.js`, `appGraph.js`, `engine.js` |
+| `plan` | Scenarios = graph × capability registry (`planner.js`), plus user journeys the reasoner proposes from the graph summary; a deterministic journey when the reasoner fails | `planner.js`, `capabilities.js` |
+| `execute` | Scenarios run by priority (access control and core flows first, visual review last). Each scenario is checkpointed. After every scenario the plan is re-derived from the graph; new pages, features, roles or sessions add scenarios and record a **revision** | `engine.js`, `executors.js`, detectors |
+| `triage` | Merge duplicates, verify with JEV, **escalate** JEV verdicts between 0.35 and 0.65 to the reasoner, grade severity | `triage.js`, `router.js` |
+| `publish` | Capability coverage for all 140 categories, the **completion gate**, findings with fix guidance, the 25-section report | `capabilities.js`, `completionGate.js`, `report.js` |
 
-Each phase gets a share of the *remaining* run budget (`PHASE_SHARE` in
-`engine.js`), so time an early phase does not use flows to later phases. Time
-spent waiting for the owner to answer the sign-in question is not counted.
-A phase that runs out of time, throws, or is stopped is recorded in
-`session.hybrid.phases` and as a limitation; the next phase still runs.
-`triage` and `publish` always run — after a stop they publish a partial report.
+Stages share the remaining budget (`STAGE_SHARE`); scenarios share the
+execute budget (journeys and visual review get larger slices). Time spent
+waiting for the owner is not counted. A user stop, budget end or error marks
+every scenario that did not run as `not_executed` with the reason, and
+`triage` and `publish` still run.
+
+### Application graph and plan
+
+`session.hybrid.graph` holds pages (`discoveredBy`: observe / crawl /
+signed-in / explore; `auth`: public / signed-in / protected), per-page
+features (search, filter, sort, pagination, table, forms, upload, media,
+menus, dialogs, manifest, websocket, restricted…), transitions, auth state
+and roles. `session.hybrid.plan` holds scenarios
+(`{ id, unit, title, targets, capabilities, priority, state, reason, origin, revision }`)
+and every revision with its trigger. Pages reached only by a journey join the
+graph unaudited and get a `page_audit` scenario in the next revision.
+
+### Capability registry (140 categories)
+
+`capabilities.js` lists every category with applicability (a graph feature),
+access (public / signed-in), executor units, safety class, evidence,
+pass/fail criteria, recovery and support (`executed`, `partial` with a note,
+or `unsupported` with the prerequisite that would make it runnable). Coverage
+states are `passed`, `failed`, `blocked`, `inconclusive`, `not_applicable`,
+`unsupported` and `not_executed`. A category is `passed` only when one of
+its executors actually ran; writes, destructive tests, load tests, payments,
+MFA/CAPTCHA and SSO are `unsupported` until the owner authorizes them.
+
+### Completion gate
+
+`completionGate.js` decides `complete` / `partial` / `blocked` from recorded
+state only: target loaded, observation before planning, graph and plan
+exist, every scenario terminal and executed, non-pass states explained,
+authentication resolved (signed in or a recorded reason), no unexecuted
+category marked passed, every finding has an observed result and evidence,
+triage ran. A model saying "testing is complete" (the explorer's `finish`)
+ends only that journey; it never satisfies a gate check. A clean verdict
+becomes `partial` when the gate is not `complete`.
+
+### Hybrid routing
+
+`router.js` wraps the model client. Planning, exploration, visual review and
+report writing go to the reasoner; verification goes to JEV; uncertain JEV
+verdicts escalate to the reasoner; when a model is unavailable the router
+falls back (JEV → reasoner → deterministic) and logs why. Every decision and
+its token cost per task is kept in `hybrid.routing` and shown in report
+sections 23–24.
 
 ## What it detects
 
@@ -207,13 +246,15 @@ with any critical/high finding, `pass_with_issues` with other findings,
 
 ## Persistence and resume
 
-State lives in `session.hybrid` (version 2; the PostgreSQL column
+State lives in `session.hybrid` (version 2, `architecture: "adaptive"`; the PostgreSQL column
 `qa_runs.hybrid_qa` from migration 043 stores it, see `hybridPersistence.js`).
 Per-finding details that the findings table has no columns for (fix guidance,
 selector, viewports, screenshot) are kept in `hybrid.findingDetails` and
 re-attached on load. After a process restart `runResume.js` hands
 interrupted QA runs straight back to the engine, which skips completed
-phases. Runs created by the previous hybrid runtime (version 1) remain
+stages and resumes the plan: a scenario that was running is re-queued when it
+is read-only and marked `inconclusive` (never replayed) when it could have
+side effects. Runs created by the previous hybrid runtime (version 1) remain
 readable; continuing one starts the engine.
 
 ## Configuration
@@ -234,6 +275,9 @@ readable; continuing one starts the engine.
 | `QASE_QA_REASONER`, `QASE_QA_JEV` | true | Set `false` to disable a model |
 | `QASE_REASONER_MODEL`, `QASE_REASONER_BASE_URL`, `QASE_REASONER_VISION` | Opus / Drytis gateway / true | Reasoner endpoint |
 | `QASE_QA_MAX_ARTIFACTS` | 120 | Screenshots saved per run |
+| `QASE_QA_JOURNEYS` | 3 | User journeys the reasoner may plan |
+| `QASE_QA_MAX_SCENARIOS` | 80 | Upper bound on planned scenarios (all revisions) |
+| `QASE_QA_MAX_REAUTH` | 3 | Re-authentications after session expiry per run |
 
 ## Testing it
 
@@ -241,6 +285,21 @@ readable; continuing one starts the engine.
   fix prompts, crawl rules, browser safety, and end-to-end engine runs against
   the **QA Lab** with models simulated at the HTTP boundary (full run, both
   models failing, user stop, unreachable target, test-account sign-in).
+- `server/qa/adaptive.test.js` covers the registry (exactly 140 categories,
+  every field present), coverage states, planning and replanning, resume
+  safety, the completion gate (including a false completion claim), routing
+  and escalation. `server/qa/adaptive.integration.test.js` runs the engine in
+  a real browser against the **Projectly** workspace app with a scripted
+  reasoner and JEV stub: two-step sign-in, session expiry and
+  re-authentication, protected routes, seeded defects, a stop after planning,
+  and a wrong password.
+- `server/qa/fixtureWorkspace.js` ("Projectly", under `/workspace/` in the
+  QA Lab) is a multi-page app with two-step sign-in, member/admin roles, a
+  signed-out-readable reports page, search with an unescaped echo, filters,
+  sorting, pagination that fails on page 3, an unvalidated create form with
+  a file input, a failing stats API and sessions that expire after
+  `QASE_LAB_SESSION_HITS` page loads. `WORKSPACE_DEFECTS` lists what the
+  engine must find.
 - The QA Lab (`server/qa/fixtureSite.js`) is a seeded-defect site;
   `SEEDED_DEFECTS` lists every planted defect and the detector expected to
   find it. Outside production it is served at `/demo/qa-lab/`. `/clean` is a
@@ -256,6 +315,8 @@ readable; continuing one starts the engine.
    `findings.js`). Give it a stable `detector` id (`area.kind`), a
    `data.key` that identifies the same defect across viewports, a realistic
    `confidence`, and `fix` guidance written for a developer.
-2. Call it from the right phase in `engine.js`, inside the phase deadline.
+2. Add it as an executor unit (`executors.js` for new browser checks, or a
+   unit in `engine.js`), plan it in `planner.js` from the graph feature it
+   needs, and map its detector ids to categories in `capabilities.js`.
 3. Plant the defect in `fixtureSite.js`, add it to `SEEDED_DEFECTS`, and make
    sure `/clean` still produces no page-level findings.

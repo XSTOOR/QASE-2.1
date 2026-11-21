@@ -54,11 +54,11 @@ async function verifyWithJev(models, batch, context, signal) {
 	}));
 }
 
-async function verifyWithReasoner(models, batch, context, signal) {
+async function verifyWithReasoner(models, batch, context, signal, purpose = 'triage') {
 	const result = await models.json([
 		{ role: 'system', content: `You triage automated QA results for a website. For each candidate decide how likely it is a genuine, user-impacting defect (0–1) and its severity. ${HARNESS_NOTE}\nSeverity scale:\n${SEVERITY_RUBRIC.join('\n')}\nAnswer JSON only: {"results":[{"index":0,"probability":0.0,"severity":"medium","reason":"one sentence"}]}` },
 		{ role: 'user', content: `Site: ${context.target}\n\n${batch.map((item, index) => `### Candidate ${index}\n${summary(item)}`).join('\n\n')}` }
-	], { maxTokens: 3000, signal, purpose: 'triage' });
+	], { maxTokens: 3000, signal, purpose });
 	if (!Array.isArray(result?.results)) return undefined;
 	return batch.map((_, index) => {
 		const entry = result.results.find(item => Number(item?.index) === index);
@@ -67,7 +67,7 @@ async function verifyWithReasoner(models, batch, context, signal) {
 	});
 }
 
-export async function triage({ candidates, models, context, signal, deadline = Infinity, log = () => {} }) {
+export async function triage({ candidates, models, context, signal, deadline = Infinity, log = () => {}, onDecision = () => {}, escalationBand = [0.35, 0.65] }) {
 	const merged = mergeCandidates(candidates).sort((a, b) => severityRank(a.severity) - severityRank(b.severity) || b.confidence - a.confidence);
 	const stats = { candidates: candidates.length, merged: merged.length, verifiedBy: new Set(), unverified: 0 };
 	// High-confidence deterministic checks with exact evidence do not need a model's opinion,
@@ -92,6 +92,27 @@ export async function triage({ candidates, models, context, signal, deadline = I
 			const verdict = verdicts[index];
 			if (verdict?.probability !== undefined) item.verification = { probability: verdict.probability, severity: verdict.severity, by, reason: verdict.reason };
 		});
+	}
+	// Escalation: JEV verdicts in the uncertain band get a second opinion from the reasoner,
+	// which decides. Logged so the report can show which model settled each case.
+	const uncertain = queue.filter(item => item.verification?.by === 'jev' && item.verification.probability >= escalationBand[0] && item.verification.probability <= escalationBand[1]).slice(0, 30);
+	stats.escalated = 0;
+	if (uncertain.length && models.reasonerAvailable() && Date.now() < deadline) {
+		for (let start = 0; start < uncertain.length; start += BATCH) {
+			const batch = uncertain.slice(start, start + BATCH);
+			const verdicts = await verifyWithReasoner(models, batch, context, signal, 'escalation');
+			onDecision({ task: 'escalation', model: verdicts ? 'reasoner' : 'none', reason: `${batch.length} JEV verdict(s) between ${escalationBand[0]} and ${escalationBand[1]}`, outcome: verdicts ? 'reasoner decided' : 'reasoner unavailable; JEV verdict kept' });
+			if (!verdicts) break;
+			stats.verifiedBy.add('reasoner');
+			batch.forEach((item, index) => {
+				const verdict = verdicts[index];
+				if (verdict?.probability === undefined) return;
+				item.verification = { probability: verdict.probability, severity: verdict.severity ?? item.verification.severity, by: 'reasoner', reason: verdict.reason, escalatedFrom: { by: 'jev', probability: item.verification.probability } };
+				stats.escalated++;
+			});
+		}
+	} else if (uncertain.length) {
+		onDecision({ task: 'escalation', model: 'none', reason: `${uncertain.length} uncertain JEV verdict(s); reasoner unavailable`, outcome: 'JEV verdict kept', fallback: true });
 	}
 	const promoted = [];
 	const dismissed = [];

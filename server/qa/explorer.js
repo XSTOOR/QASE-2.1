@@ -65,9 +65,14 @@ export async function observe(page, log) {
 	return `URL: ${snapshot.url}\nTitle: ${snapshot.title}\nScroll: ${snapshot.scroll}\n${errors.length ? `Recent errors:\n${errors.join('\n')}\n` : ''}Interactive elements:\n${snapshot.items.join('\n')}\n\nVisible text:\n${snapshot.text}`;
 }
 
-export async function explore({ browser, profile, startUrl, models, knownIssues = [], maxSteps = 30, deadline, signal, blockedWrites, save, onStep = () => {}, focus, signedIn = false, pages = [] }) {
+export async function explore({ browser, profile, startUrl, models, knownIssues = [], maxSteps = 30, deadline, signal, blockedWrites, save, onStep = () => {}, focus, goal, signedIn = false, pages = [] }) {
 	const out = [];
-	const summary = { steps: 0, finished: false, summary: '', visited: new Set() };
+	const summary = { steps: 0, finished: false, summary: '', visited: new Set(), loopWarnings: 0, loopStopped: false };
+	// Loop detection: the same action on the same element and page, repeated, means the
+	// model is stuck. It is told so (with what it repeated); a third warning ends the journey.
+	const signatures = new Map();
+	let samePageSteps = 0;
+	let lastUrl;
 	if (!models.reasonerAvailable()) return { candidates: out, summary: { ...summary, skipped: 'reasoner unavailable' } };
 	const { page, log } = await browser.openPage(profile);
 	browser.setActivePage(page);
@@ -79,7 +84,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 		await browser.goto(page, startUrl, log).catch(() => {});
 		const messages = [
 			{ role: 'system', content: SYSTEM },
-			{ role: 'user', content: `Site under test: ${startUrl}\nViewport: ${profile.label}\nSession: ${signedIn ? 'signed in with the owner\'s test account (read-only: writes are still blocked)' : 'not signed in'}\n${focus ? `Owner's focus: ${focus}\n` : ''}${pages.length ? `Pages already found by the crawler: ${pages.slice(0, 25).join(', ')}\n` : ''}Already reported by automated checks (do not repeat): ${knownIssues.slice(0, 40).join('; ') || 'none'}\n\nCurrent page:\n${await observe(page, log)}` }
+			{ role: 'user', content: `Site under test: ${startUrl}\nViewport: ${profile.label}\nSession: ${signedIn ? 'signed in with the owner\'s test account (read-only: writes are still blocked)' : 'not signed in'}\n${goal ? `Journey to test now (from the test plan): ${goal}\n` : ''}${focus ? `Owner's focus: ${focus}\n` : ''}${pages.length ? `Pages already found by the crawler: ${pages.slice(0, 25).join(', ')}\n` : ''}Already reported by automated checks (do not repeat): ${knownIssues.slice(0, 40).join('; ') || 'none'}\n\nCurrent page:\n${await observe(page, log)}` }
 		];
 		while (summary.steps < maxSteps && Date.now() < deadline && models.reasonerAvailable()) {
 			signal?.throwIfAborted();
@@ -112,14 +117,32 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 				messages.push({ role: 'tool', tool_call_id: call.id, content: String(result).slice(0, 6000) });
 				onStep({ name, args, url: page.url() });
 				if (name === 'finish') { summary.finished = true; summary.summary = String(args.summary ?? '').slice(0, 2000); break; }
+				const loop = detectLoop(name, args, page.url());
+				if (loop) {
+					summary.loopWarnings++;
+					if (summary.loopWarnings >= 3) { summary.loopStopped = true; break; }
+					messages.push({ role: 'user', content: `Loop detected: ${loop}. Do not repeat it. Choose a different feature or page${goal ? ' that serves the goal' : ''}, or call finish if the goal is covered.` });
+				}
 			}
-			if (summary.finished) break;
+			if (summary.finished || summary.loopStopped) break;
 			if (screenshot) messages.push({ role: 'user', content: [{ type: 'text', text: 'Screenshot of the current viewport:' }, { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${screenshot.toString('base64')}` } }] });
 		}
 	} finally {
 		await page.close().catch(() => {});
 	}
 	return { candidates: out, summary: { ...summary, visited: [...summary.visited] } };
+
+	function detectLoop(name, args, url) {
+		if (['look', 'report_issue'].includes(name)) return undefined;
+		const key = `${name}:${args.ref ?? args.url ?? args.key ?? args.text ?? args.direction ?? ''}@${String(url).split('#')[0]}`;
+		const count = (signatures.get(key) ?? 0) + 1;
+		signatures.set(key, count);
+		samePageSteps = url === lastUrl ? samePageSteps + 1 : 0;
+		lastUrl = url;
+		if (count >= 3) { signatures.set(key, 0); return `"${name}" on ${args.ref ?? args.url ?? 'the same target'} was repeated ${count} times on ${url}`; }
+		if (samePageSteps >= 10) { samePageSteps = 0; return `10 actions in a row stayed on ${url} without leaving it`; }
+		return undefined;
+	}
 
 	async function runTool(name, args) {
 		const locate = ref => page.locator(`[data-qase-ref="${String(ref).replace(/"/g, '')}"]`).first();
@@ -167,6 +190,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 			case 'navigate': {
 				const url = new URL(String(args.url), page.url()).href;
 				if (!browser.inScope(url)) return 'Refused: that URL is outside the site under test.';
+				if (/\/(log-?out|sign-?out|delete|remove|destroy|unsubscribe)(\/|$|\?)/i.test(new URL(url).pathname)) return 'Refused: that URL would sign out or change data. Choose another page.';
 				trail.push(`Open ${url}`);
 				await browser.goto(page, url, log);
 				return after();

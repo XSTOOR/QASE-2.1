@@ -108,9 +108,11 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 		onBlocked?.(event);
 	};
 
-	async function context(profile, { reducedMotion } = {}) {
-		const key = `${profile.name}:${reducedMotion ?? 'no-preference'}`;
-		if (contexts.has(key)) return contexts.get(key);
+	// anonymous: never carries the signed-in state (authorization checks).
+	// isolated: a private context the caller owns (offline/network emulation).
+	async function context(profile, { reducedMotion, colorScheme, anonymous = false, isolated = false } = {}) {
+		const key = `${profile.name}:${reducedMotion ?? 'no-preference'}:${colorScheme ?? 'light'}:${anonymous ? 'anon' : 'user'}`;
+		if (!isolated && contexts.has(key)) return contexts.get(key);
 		const created = await browser.newContext({
 			viewport: profile.viewport,
 			deviceScaleFactor: profile.deviceScaleFactor,
@@ -120,7 +122,8 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 			// pages and firewalls reject; desktop profiles use the regular Chrome string.
 			...(profile.userAgent ? { userAgent: profile.userAgent } : engine.id === 'chromium' ? { userAgent: `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${String(browser.version()).split('.')[0]}.0.0.0 Safari/537.36` } : {}),
 			reducedMotion: reducedMotion ?? 'no-preference',
-			...(storageState ? { storageState } : {}),
+			colorScheme: colorScheme ?? 'light',
+			...(storageState && !anonymous ? { storageState } : {}),
 			serviceWorkers: 'block',
 			acceptDownloads: false,
 			ignoreHTTPSErrors: false
@@ -153,7 +156,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 				else await route.continue().catch(() => {});
 			}
 		});
-		contexts.set(key, created);
+		if (!isolated) contexts.set(key, created);
 		return created;
 	}
 
@@ -161,7 +164,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	async function openPage(profile, options = {}) {
 		const ctx = await context(profile, options);
 		const page = await ctx.newPage();
-		const log = { console: [], pageErrors: [], failedRequests: [], responses: [], dialogs: [], mainResponse: undefined };
+		const log = { console: [], pageErrors: [], failedRequests: [], responses: [], dialogs: [], websockets: [], mainResponse: undefined };
 		const push = (list, item) => { if (list.length < MAX_EVENTS) list.push(item); };
 		page.on('console', message => {
 			if (['error', 'warning'].includes(message.type())) push(log.console, { type: message.type(), text: message.text().slice(0, 1000), location: message.location()?.url, ts: Date.now() });
@@ -181,7 +184,17 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 			dialog.dismiss().catch(() => {});
 		});
 		page.on('popup', popup => popup.close().catch(() => {}));
+		page.on('websocket', socket => {
+			const entry = { url: socket.url().slice(0, 300), frames: 0, errors: [], closedAt: undefined, openedAt: Date.now() };
+			push(log.websockets, entry);
+			socket.on('framereceived', () => { entry.frames++; });
+			socket.on('framesent', () => { entry.frames++; });
+			socket.on('socketerror', error => { if (entry.errors.length < 5) entry.errors.push(String(error).slice(0, 200)); });
+			socket.on('close', () => { entry.closedAt = Date.now(); });
+		});
 		activePage = page;
+		// Isolated pages own their context: closing the page closes it.
+		if (options.isolated) page.once('close', () => { ctx.close().catch(() => {}); });
 		return { page, log };
 	}
 
@@ -228,7 +241,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 
 	/** Later contexts start signed in; existing contexts are closed and recreated on demand. */
 	async function useSignedInState(state) {
-		storageState = state;
+		storageState = state || undefined;
 		for (const ctx of contexts.values()) await ctx.close().catch(() => {});
 		contexts.clear();
 	}
