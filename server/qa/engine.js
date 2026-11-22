@@ -48,6 +48,8 @@ import { capabilityCoverage, summarizeCoverage, CAPABILITY_COUNT } from './capab
 import { createRouter, ESCALATION_BAND } from './router.js';
 import { evaluateCompletion } from './completionGate.js';
 import { EXECUTORS } from './executors.js';
+import { dismissOverlays } from './overlays.js';
+import { discoverViews, routeTemplate } from './uiCrawl.js';
 
 export const ENGINE_VERSION = 2;
 export const ENGINE_ARCHITECTURE = 'adaptive';
@@ -106,7 +108,8 @@ export function engineOptions(env = process.env) {
 		interactionPages: positive(env.QASE_QA_INTERACTION_PAGES, 4, 20),
 		triggersPerPage: positive(env.QASE_QA_TRIGGERS_PER_PAGE, 8, 30),
 		exploreSteps: positive(env.QASE_QA_EXPLORE_STEPS, 30, 120),
-		journeys: positive(env.QASE_QA_JOURNEYS, 3, 8),
+		journeys: positive(env.QASE_QA_JOURNEYS, 6, 12),
+		uiScreens: positive(env.QASE_QA_UI_SCREENS, 12, 40),
 		visualShots: positive(env.QASE_QA_VISUAL_SHOTS, 8, 30),
 		maxArtifacts: positive(env.QASE_QA_MAX_ARTIFACTS, 120, 500),
 		maxScenarios: positive(env.QASE_QA_MAX_SCENARIOS, 80, 300),
@@ -393,6 +396,14 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			await browser.goto(page, url, log, quietMs ? { quietMs } : undefined);
 			if (!again) log.sessionLost = true;
 		}
+		// Tours, welcome modals and consent banners block every click: clear them first.
+		if (url && url !== 'about:blank' && !page.isClosed()) {
+			const cleared = await dismissOverlays(page, { cursor: (target, text) => browser.pointAt(page, target, text) }).catch(() => []);
+			for (const item of cleared) if (!(state.overlaysDismissed ??= []).includes(item) && state.overlaysDismissed.length < 20) {
+				state.overlaysDismissed.push(item);
+				void say(`A pop-up was covering the app (${item}); I closed it so testing can continue.`, { id: `qa-overlay-${state.overlaysDismissed.length}-${state.startedAt}` });
+			}
+		}
 		return { page, log };
 	}
 
@@ -464,6 +475,8 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			// A signed-in page that bounced to sign-in in the anonymous pass is protected.
 			if (anonymous && finalUrl !== url && isLoginUrl(finalUrl)) { model.addPage(url, { status: 302, auth: 'protected', discoveredBy, depth, audited: true, protection: 'redirects to sign-in', features: { protected: 1 } }); return 'skip'; }
 			if (finalUrl !== url && (state.visited.includes(finalUrl) || pages.has(finalUrl))) return 'skip';
+			// A redirect to a fresh id of a screen we already have (e.g. a new chat per visit) adds nothing.
+			if (finalUrl !== url && model.hasTemplate(finalUrl) && !model.page(finalUrl)) { if (!model.page(url)) model.addTransition(url, finalUrl, 'redirect'); return 'skip'; }
 			const status = log.mainResponse?.status ?? 200;
 			if (status >= 400) {
 				if (status >= 500) addCandidates([candidate({ detector: 'page.http_error_page', category: 'functional', severity: 'critical', confidence: 0.95, title: `Page returns HTTP ${status}`, url: finalUrl, viewport: primary.name,
@@ -483,6 +496,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			if (log.websockets?.length) model.websocket(finalUrl);
 			if (added.length) state.discoveries = [...(state.discoveries ?? []), ...added.map(feature => `${feature} on ${pathOf(finalUrl)}`)].slice(-40);
 			await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
+			await browser.hideCursor(page);
 			const shot = await page.screenshot({ type: 'jpeg', quality: 60 }).catch(() => undefined);
 			if (shot && shots.length < options.visualShots) shots.push({ url: finalUrl, viewport: primary.label, bytes: shot });
 			for (const link of result.metrics?.links ?? []) {
@@ -514,6 +528,8 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		let audited = 0;
 		while ((url = frontier.next()) && pages.size < maxPages && Date.now() < deadline && !stopped()) {
 			if (state.visited.includes(url) && pages.has(url)) continue;
+			// /items/123 and /items/456 are one screen: audit a route template once.
+			if (!starts.includes(url) && model.hasTemplate(url) && !model.page(url)) { state.visited.push(url); continue; }
 			await progress(`Mapping ${pathOf(url)}`);
 			const outcome = await auditInto(url, { discoveredBy, depth: depthOf.get(url) ?? 0, frontier, anonymous });
 			state.visited.push(url);
@@ -563,6 +579,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 						addCandidates((await auditPage(page, { url, viewport: profile.name, touch: profile.hasTouch, log, save })).candidates);
 						tested++;
 						await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
+			await browser.hideCursor(page);
 						const shot = await page.screenshot({ type: 'jpeg', quality: 60 }).catch(() => undefined);
 						if (shot && shots.length < options.visualShots + 4 && profile.isMobile) shots.push({ url, viewport: profile.label, bytes: shot });
 					} catch { /* one page failing is recorded by its own candidates */ }
@@ -676,9 +693,11 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			// Pages the journey reached that the crawl never saw join the graph (and get audited).
 			for (const url of result.summary.visited ?? []) {
 				const normalized = normalizeUrl(url, session.targetUrl);
-				if (normalized && browser.inScope(normalized) && !model.page(normalized) && !isLoginUrl(normalized)) model.addPage(normalized, { discoveredBy: 'explore', audited: false, depth: 1 });
+				if (normalized && browser.inScope(normalized) && !model.page(normalized) && !model.hasTemplate(normalized) && !isLoginUrl(normalized)) model.addPage(normalized, { discoveredBy: 'explore', audited: false, depth: 1, auth: state.signedIn ? 'signed-in' : 'public' });
 			}
 			exploreSummaries.push(result.summary.summary);
+			// The step-by-step trail is kept so a run can be reviewed (and the agent improved) afterwards.
+			scenario.trail = (result.summary.trail ?? []).slice(-60).map(step => redact(session.id, step));
 			state.coverage.explorationSummary = exploreSummaries.filter(Boolean).join(' ').slice(0, 1500);
 			const evidence = [`${result.summary.steps} step(s); ${result.summary.finished ? 'the model finished the journey' : 'stopped by its step/time limit'}${result.summary.loopWarnings ? `; ${result.summary.loopWarnings} loop warning(s)${result.summary.loopStopped ? ', ended for looping' : ''}` : ''}.`];
 			if (result.summary.summary) evidence.push(`Model summary (not used as completion evidence): ${result.summary.summary.slice(0, 300)}`);
@@ -833,12 +852,29 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 				await crawlPass(deadline, [state.signedInUrl, session.targetUrl].filter(Boolean), { maxPages: pages.size + Math.max(4, Math.ceil(options.maxPages / 2)), discoveredBy: 'signed-in' });
 				state.coverage.signedInPages = pages.size - before;
 			}
+			// Walk the UI itself: sidebars, tabs and menus that navigate without links.
+			if (!stopped() && Date.now() < deadline) {
+				const starts = model.ranked(session.targetUrl, state.signedInUrl).filter(url => !model.page(url)?.login && (state.signedIn ? model.page(url)?.auth !== 'public' || url === state.signedInUrl : true)).slice(0, 4);
+				const discovered = await discoverViews({
+					browser, open: url => openPage(url), prepare: page => dismissOverlays(page, { cursor: (target, text) => browser.pointAt(page, target, text) }).catch(() => []), starts: starts.length ? starts : [state.signedInUrl ?? session.targetUrl], inScope: browser.inScope, deadline, maxScreens: options.uiScreens,
+					knownTemplates: new Set(model.pages().map(routeTemplate)), progress,
+					onView: async view => {
+						if (view.kind === 'route') {
+							model.addTransition(view.from, view.url, `click "${view.label}"`);
+							await auditInto(view.url, { discoveredBy: state.signedIn ? 'signed-in' : 'crawl', depth: 1, from: view.from });
+							if (model.page(view.url)) model.page(view.url).via = { from: view.from, label: view.label };
+						} else model.addView(view);
+					}
+				}).catch(error => { console.warn('[qa-engine] UI walk failed:', error?.message); return []; });
+				state.coverage.uiViews = discovered.length;
+			}
 			const stats = model.stats();
-			return `${plural(stats.pages, 'page')} mapped${stats.protected ? `, ${stats.protected} signed-in only` : ''}`;
+			return `${plural(stats.screens, 'screen')} mapped${stats.views ? `, ${plural(stats.views, 'panel')}` : ''}${stats.protected ? `, ${stats.protected} signed-in only` : ''}`;
 		}, () => {
 			const stats = model.stats();
 			const features = Object.keys(stats.features).filter(key => !['external_links', 'third_party', 'navigation', 'headings'].includes(key));
-			return `I mapped ${plural(stats.pages, 'page')}${state.coverage.signedInPages ? ` (${state.coverage.signedInPages} in the signed-in area)` : ''} and found: ${features.join(', ') || 'basic pages only'}.`;
+			const views = model.graph.views.slice(0, 8).map(view => view.label);
+			return `I mapped ${plural(stats.screens, 'screen')}${state.coverage.signedInPages ? ' including the signed-in area' : ''}${stats.views ? ` and ${plural(stats.views, 'panel/tab/dialog')} reached by clicking (${views.join(', ')}${stats.views > 8 ? '…' : ''})` : ''}. Features: ${features.join(', ') || 'basic pages only'}.`;
 		});
 		if (state.phases.signin?.status === 'pending') {
 			state.phases.signin = { status: 'skipped', detail: model.graph.auth.detected ? 'Public pages only' : 'No sign-in found' };
@@ -878,7 +914,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 				if (remaining <= 0) break;
 				const pending = plan.scenarios.filter(item => item.state === 'pending').length;
 				const weight = scenario.unit === 'explore' ? 3 : scenario.unit === 'visual' ? 2 : 1;
-				const slice = Math.max(20_000, remaining * weight / (pending + 2));
+				const slice = Math.max(scenario.unit === 'explore' ? 180_000 : 20_000, remaining * weight / (pending + 2));
 				await progress(scenario.title);
 				await runScenario(scenario, Math.min(deadline, Date.now() + slice));
 				ran++;

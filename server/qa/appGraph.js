@@ -11,6 +11,8 @@
  *   history      observations that changed the model (they trigger replanning)
  */
 
+import { routeTemplate } from './uiCrawl.js';
+
 /** DOM features of the open page; runs in the browser. */
 export async function observeFeatures(page) {
 	return page.evaluate(() => {
@@ -58,7 +60,7 @@ export function createAppGraph(saved) {
 	const graph = saved && typeof saved === 'object'
 		? saved
 		: { pages: {}, transitions: [], features: {}, auth: { detected: false }, roles: ['public'], history: [], observedAt: Date.now() };
-	graph.pages ??= {}; graph.transitions ??= []; graph.features ??= {}; graph.auth ??= { detected: false }; graph.roles ??= ['public']; graph.history ??= [];
+	graph.pages ??= {}; graph.views ??= []; graph.transitions ??= []; graph.features ??= {}; graph.auth ??= { detected: false }; graph.roles ??= ['public']; graph.history ??= [];
 
 	const recount = () => {
 		const totals = Object.fromEntries(FEATURE_KEYS.map(key => [key, 0]));
@@ -76,6 +78,7 @@ export function createAppGraph(saved) {
 			graph.pages[url] = {
 				...existing,
 				...info,
+				template: routeTemplate(url),
 				features: { ...(existing?.features ?? {}), ...(info.features ?? {}) },
 				discoveredBy: existing?.discoveredBy ?? info.discoveredBy ?? 'crawl',
 				firstSeen: existing?.firstSeen ?? Date.now()
@@ -86,6 +89,14 @@ export function createAppGraph(saved) {
 			for (const key of added) note('feature', `${key} on ${url}`);
 			return added;
 		},
+		/** A panel, tab or dialog reached by clicking on a screen (same URL). */
+		addView(view) {
+			if (graph.views.length >= 200 || graph.views.some(item => item.url === view.url && item.label === view.label)) return false;
+			graph.views.push({ url: view.url, label: String(view.label).slice(0, 60), heading: String(view.heading ?? '').slice(0, 120), kind: view.kind, ts: Date.now() });
+			note('view', `${view.label} on ${view.url}`);
+			return true;
+		},
+		hasTemplate: url => Object.values(graph.pages).some(page => page.template === routeTemplate(url)),
 		addTransition(from, to, via) {
 			if (!from || !to || from === to || graph.transitions.length > 600) return;
 			if (!graph.transitions.some(item => item.from === from && item.to === to)) graph.transitions.push({ from, to, via: String(via ?? '').slice(0, 80) });
@@ -116,9 +127,20 @@ export function createAppGraph(saved) {
 			const score = ([url, page]) => (url === start ? 1000 : 0) + (url === signedInUrl ? 900 : 0)
 				+ Object.values(page.features ?? {}).filter(value => typeof value === 'number' && value > 0).length * 10
 				+ (page.auth === 'protected' ? 25 : 0) - (page.depth ?? 0) * 3;
-			return Object.entries(graph.pages).filter(([, page]) => (page.status ?? 200) < 400 && !page.login).sort((a, b) => score(b) - score(a)).map(([url]) => url);
+			const seen = new Set();
+			return Object.entries(graph.pages).filter(([, page]) => (page.status ?? 200) < 400 && !page.login).sort((a, b) => score(b) - score(a))
+				.filter(([url, page]) => { const key = page.template ?? routeTemplate(url); if (seen.has(key)) return false; seen.add(key); return true; }).map(([url]) => url);
 		},
-		withFeature: key => Object.entries(graph.pages).filter(([, page]) => (page.features?.[key] ?? 0) > 0 && (page.status ?? 200) < 400).map(([url]) => url),
+		withFeature: key => {
+			const seen = new Set();
+			return Object.entries(graph.pages).filter(([url, page]) => {
+				if (!((page.features?.[key] ?? 0) > 0 && (page.status ?? 200) < 400)) return false;
+				const template = page.template ?? routeTemplate(url);
+				if (seen.has(template)) return false;
+				seen.add(template);
+				return true;
+			}).map(([url]) => url);
+		},
 		/** A short text model of the application for the reasoner. */
 		summary(limit = 30) {
 			const rows = Object.entries(graph.pages).slice(0, limit).map(([url, page]) => {
@@ -127,8 +149,11 @@ export function createAppGraph(saved) {
 				return `${path} — "${page.heading || page.title || ''}"${page.auth === 'protected' ? ' [signed-in only]' : ''}${features.length ? ` {${features.join(', ')}}` : ''}`;
 			});
 			const auth = graph.auth.detected ? `Authentication: ${graph.auth.signedIn ? 'signed in with the owner\'s test account' : 'detected, not signed in'}${graph.auth.identifierStep ? ' (two-step sign-in)' : ''}.` : 'Authentication: none detected.';
-			return `${auth}\nRoles seen: ${graph.roles.join(', ')}\nPages:\n${rows.join('\n')}`;
+			const templates = new Set();
+			const unique = rows.filter((row, index) => { const key = routeTemplate(Object.keys(graph.pages)[index]); if (templates.has(key)) return false; templates.add(key); return true; });
+			const views = graph.views.slice(0, 40).map(view => { let path = view.url; try { path = new URL(view.url).pathname; } catch { /* keep */ } return `"${view.label}" on ${path} → ${view.kind}${view.heading ? ` "${view.heading}"` : ''}`; });
+			return `${auth}\nRoles seen: ${graph.roles.join(', ')}\nScreens:\n${unique.join('\n')}${views.length ? `\nPanels, tabs and dialogs reached by clicking:\n${views.join('\n')}` : ''}`;
 		},
-		stats: () => ({ pages: Object.keys(graph.pages).length, protected: Object.values(graph.pages).filter(page => page.auth === 'protected').length, transitions: graph.transitions.length, features: Object.fromEntries(Object.entries(graph.features).filter(([, n]) => n > 0)), roles: graph.roles })
+		stats: () => ({ pages: Object.keys(graph.pages).length, screens: new Set(Object.keys(graph.pages).map(routeTemplate)).size, views: graph.views.length, protected: Object.values(graph.pages).filter(page => page.auth === 'protected').length, transitions: graph.transitions.length, features: Object.fromEntries(Object.entries(graph.features).filter(([, n]) => n > 0)), roles: graph.roles })
 	};
 }

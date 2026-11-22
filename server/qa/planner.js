@@ -92,8 +92,8 @@ export function scenariosFromGraph({ graph: model, start, signedInUrl, signedIn,
 export async function proposeJourneys({ models, model, focus, signal, max = 3 }) {
 	if (!models.reasonerAvailable()) return { journeys: [], source: 'none' };
 	const result = await models.json([
-		{ role: 'system', content: 'You plan exploratory QA for a web application you have just observed. Propose the most valuable end-to-end user journeys to test, based only on the pages and features listed. Each journey must be read-only (writes are blocked) and achievable in under 15 browser actions. Answer JSON only: {"journeys":[{"goal":"…","start":"/path","why":"…","priority":1}]}' },
-		{ role: 'user', content: `${model.summary(40)}${focus ? `\nOwner's focus: ${focus}` : ''}\nPropose up to ${max} journeys, most important first.` }
+		{ role: 'system', content: 'You plan exploratory QA for a web application you have just observed. Together, your journeys must cover EVERY feature area listed (each screen and each panel/tab/dialog reached by clicking): give each area its own journey that opens it, exercises its sub-features (tabs, menus, buttons, filters, settings, empty and error states) and checks the results. Journeys are read-only (writes are blocked) and achievable in about 20 browser actions; say in the goal which controls to use to get there (e.g. click "Projects" in the sidebar). Do not plan journeys about the sign-in page when the session is signed in. Answer JSON only: {"journeys":[{"goal":"…","start":"/path","why":"…","priority":1}]}' },
+		{ role: 'user', content: `${model.summary(40)}${focus ? `\nOwner's focus: ${focus}` : ''}\nPropose up to ${max} journeys covering every feature area, most important first.` }
 	], { maxTokens: 1500, signal, purpose: 'planning' }).catch(() => undefined);
 	const journeys = (Array.isArray(result?.journeys) ? result.journeys : [])
 		.filter(item => typeof item?.goal === 'string' && item.goal.trim())

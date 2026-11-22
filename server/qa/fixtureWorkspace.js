@@ -83,6 +83,22 @@ function spaPage(title, body) {
 	return shell(title, `${SPA_GUARD}<div id="app">${body}</div>`, { head: '' }).replace('<nav class="top" aria-label="Main">', '<nav class="top" aria-label="Main"><a href="/workspace/spa/app">Home</a><a href="/workspace/spa/app/settings">Settings</a><a href="/workspace/spa/app/billing">Billing</a>');
 }
 
+/**
+ * "/workspace/rail": an app navigated only by an icon rail of buttons (no links),
+ * with a welcome tour on every load, a new chat id per visit, tabs and a dialog
+ * that do not change the URL, and a failing API on a screen reachable only by clicking.
+ */
+const RAIL_TOUR = `<div role="dialog" aria-modal="true" aria-label="Welcome to Rail" id="tour" style="position:fixed;inset:0;background:rgba(0,0,0,.45);display:grid;place-items:center;z-index:50">
+<div style="background:#fff;padding:24px;border-radius:10px;width:340px"><h2>Welcome to Rail</h2><p>Build things faster. Take a quick tour to see how.</p>
+<button id="tour-go" type="button">Take a quick tour</button> <button id="tour-skip" type="button">Skip</button></div></div>
+<script>document.getElementById('tour-skip').onclick = () => document.getElementById('tour').remove();</script>`;
+function railPage(title, body) {
+	const rail = ['Projects', 'Meeting', 'Chat', 'About'].map(name => `<button type="button" aria-label="${name}" data-go="/workspace/rail/${name.toLowerCase()}" style="display:block;width:56px;height:56px;border:0;background:none;font-size:10px">◻<br>${name}</button>`).join('');
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} — Rail</title><style>body{margin:0;font-family:system-ui}#rail{position:fixed;left:0;top:0;bottom:0;width:60px;background:#f4f4f5}main{margin-left:72px;padding:20px}</style></head>
+<body><div id="rail">${rail}</div><main>${body}</main>${RAIL_TOUR}
+<script>for (const b of document.querySelectorAll('[data-go]')) b.onclick = () => { location.href = b.dataset.go; };</script></body></html>`;
+}
+
 /** Handles /workspace/*. Returns true when the request was handled. */
 export async function workspaceHandler(request, response, path, url) {
 	if (!path.startsWith('/workspace')) return false;
@@ -93,7 +109,31 @@ export async function workspaceHandler(request, response, path, url) {
 		if (!session || session.expired) { redirect(`/workspace/login?next=${encodeURIComponent(path + url.search)}${session?.expired ? '&expired=1' : ''}`); return undefined; }
 		return session;
 	};
+	if (path === '/workspace/rail/' || path === '/workspace/rail' || path === '/workspace/rail/chat') { redirect(`/workspace/rail/chat/${randomUUID()}`); return true; }
+	if (/^\/workspace\/rail\/chat\/[0-9a-f-]{36}$/.test(path)) {
+		html(railPage('Chat', '<h1>New chat</h1><form onsubmit="return false"><label>Message <textarea name="m"></textarea></label><button type="submit">Send</button></form>'));
+		return true;
+	}
 	switch (path) {
+		case '/workspace/rail/projects':
+			html(railPage('Projects', `<h1>Projects</h1><div role="tablist"><button role="tab" id="t1" aria-selected="true" type="button">Active</button><button role="tab" id="t2" type="button">Archived</button></div>
+<section id="p1"><p>TaskFlow · Atlas · Beacon</p><button type="button" data-go="/workspace/rail/projects/42">Open TaskFlow</button></section><section id="p2" hidden><p>Archived</p></section>
+<script>t1.onclick = () => { p1.hidden = false; p2.hidden = true; }; t2.onclick = () => { p1.hidden = true; p2.hidden = false; p2.innerHTML = '<h2>Archived projects</h2><p>You have ' + window.archivedCount + ' archived projects.</p>'; };</script>`));
+			return true;
+		case '/workspace/rail/projects/42':
+			html(railPage('TaskFlow', '<h1>TaskFlow</h1><p>Owner: Asha. 12 open tasks.</p>'));
+			return true;
+		case '/workspace/rail/meeting':
+			html(railPage('Meeting', `<h1>Meetings</h1><p id="list">Loading meetings…</p><script>fetch('/workspace/rail/api/meetings').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(d => { list.textContent = d.length + ' meetings'; }).catch(() => {});</script>`));
+			return true;
+		case '/workspace/rail/api/meetings':
+			response.writeHead(500, { 'Content-Type': 'application/json' }); response.end('{"error":"meetings unavailable"}');
+			return true;
+		case '/workspace/rail/about':
+			html(railPage('About', `<h1>About Rail</h1><p>Version 3.2</p><button type="button" id="prefs">Preferences</button>
+<div role="dialog" aria-label="Preferences" id="dlg" hidden style="position:fixed;top:80px;left:120px;background:#fff;border:1px solid #ccc;padding:16px;z-index:40"><h2>Preferences</h2><label><input type="checkbox"> Compact mode</label> <button type="button" id="close">Close</button></div>
+<script>prefs.onclick = () => { dlg.hidden = false; }; close.onclick = () => { dlg.hidden = true; };</script>`));
+			return true;
 		case '/workspace/spa/login':
 			html(shell('Sign in', `<h1>Welcome back</h1><form id="f"><label>Email <input type="email" name="email" autocomplete="username" required></label><label>Password <input type="password" name="password" required></label><button class="btn" type="submit">Sign in</button></form><p role="alert" id="err"></p>
 <script>document.getElementById('f').addEventListener('submit', e => { e.preventDefault(); const d = new FormData(e.target);

@@ -186,3 +186,22 @@ test('a single-page app that keeps its session in sessionStorage is signed into 
 		assert.ok(!JSON.stringify(session).includes(WORKSPACE_ACCOUNTS.user.password));
 	} finally { await lab.close(); }
 });
+
+test('a button-navigated app behind a welcome tour is walked screen by screen, tabs and dialogs included', { timeout: 300_000 }, async () => {
+	const lab = await startQaLab();
+	try {
+		const { session, runStore, artifactStore } = harness(`${lab.url}workspace/rail/`);
+		await runQaEngine({ session, runStore, record: {}, env: { ...ENV, QASE_QA_MAX_MINUTES: '8', QASE_QA_MAX_PAGES: '6' }, settings: qaModelSettings({}, {}), artifactStore });
+		const graph = session.hybrid.graph;
+		const paths = Object.keys(graph.pages).map(url => new URL(url).pathname);
+		for (const path of ['/workspace/rail/projects', '/workspace/rail/meeting', '/workspace/rail/about', '/workspace/rail/projects/42']) assert.ok(paths.includes(path), `reached ${path} by clicking (got ${paths.join(', ')})`);
+		assert.equal(paths.filter(path => path.startsWith('/workspace/rail/chat/')).length, 1, 'one chat screen, not one per visit');
+		const views = graph.views.map(view => view.label);
+		assert.ok(views.includes('Archived'), `tab found (views: ${views.join(', ')})`);
+		assert.ok(views.includes('Preferences'), 'dialog found');
+		assert.ok(!graph.views.some(view => /Welcome to Rail/.test(view.heading)), 'a returning tour is not mistaken for a feature');
+		assert.ok(session.hybrid.overlaysDismissed?.some(item => /Welcome to Rail/.test(item) && /Skip/.test(item)), 'the tour was closed with Skip');
+		assert.ok(session.hybrid.graph.transitions.some(item => /click "Projects"/.test(item.via)));
+		assert.ok(session.hybrid.candidates.some(item => item.detector === 'page.failed_request' && item.url.includes('/workspace/rail/meeting')), 'the failing API on a click-only screen was found');
+	} finally { await lab.close(); }
+});

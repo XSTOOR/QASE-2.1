@@ -20,6 +20,52 @@ import { environmentEmulationOptions } from '../browserstackProvider.js';
 import { OBSERVER_SCRIPT } from './detectors/pageAudit.js';
 import { createBrowserPolicy } from '../browserPolicy.js';
 
+/**
+ * The agent cursor: a pointer drawn inside the page (closed shadow root,
+ * pointer-events none, invisible to elementFromPoint and to text detectors) so
+ * the live preview shows where the agent is about to act. It glides to the
+ * target, shows a short label, ripples on click and fades when idle.
+ */
+const CURSOR_SCRIPT = `(() => {
+	if (window.__qaseCursor) return;
+	let host, root, dot, tag, ring, hideTimer, x = -40, y = -40;
+	function mount() {
+		if (host?.isConnected) return true;
+		if (!document.documentElement) return false;
+		host = document.createElement('qase-cursor');
+		host.setAttribute('data-qase-ignore', '');
+		host.setAttribute('aria-hidden', 'true');
+		host.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;z-index:2147483647;pointer-events:none;';
+		root = host.attachShadow({ mode: 'closed' });
+		root.innerHTML = '<style>' +
+			'.c{position:fixed;left:0;top:0;transition:transform .42s cubic-bezier(.2,.8,.2,1),opacity .3s;opacity:0;will-change:transform}' +
+			'.c svg{display:block;filter:drop-shadow(0 2px 4px rgba(0,0,0,.35))}' +
+			'.t{position:absolute;left:20px;top:20px;white-space:nowrap;font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.02em;color:#0b0d0a;background:#C8F560;padding:5px 7px;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.25);max-width:280px;overflow:hidden;text-overflow:ellipsis}' +
+			'.r{position:fixed;left:0;top:0;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;border:2px solid #C8F560;opacity:0;pointer-events:none}' +
+			'.r.go{animation:p .55s ease-out}' +
+			'@keyframes p{0%{opacity:.9;transform:var(--at) scale(.3)}100%{opacity:0;transform:var(--at) scale(1.5)}}' +
+			'</style><div class="r"></div><div class="c"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M4 2.5l15 8.6-6.6 1.6 3.9 7-2.6 1.4-3.9-7-4.8 4.6z" fill="#C8F560" stroke="#0b0d0a" stroke-width="1.4" stroke-linejoin="round"/></svg><div class="t">QASE</div></div>';
+		dot = root.querySelector('.c'); tag = root.querySelector('.t'); ring = root.querySelector('.r');
+		document.documentElement.appendChild(host);
+		return true;
+	}
+	window.__qaseCursor = (nx, ny, label, click) => {
+		if (!mount()) return;
+		x = nx; y = ny;
+		dot.style.opacity = '1';
+		dot.style.transform = 'translate(' + (x - 4) + 'px,' + (y - 3) + 'px)';
+		tag.textContent = label || 'QASE';
+		tag.style.display = label === '' ? 'none' : 'block';
+		if (click) {
+			ring.style.setProperty('--at', 'translate(' + x + 'px,' + y + 'px)');
+			ring.classList.remove('go'); void ring.offsetWidth; ring.classList.add('go');
+		}
+		clearTimeout(hideTimer);
+		hideTimer = setTimeout(() => { if (dot) dot.style.opacity = '0'; }, 2600);
+	};
+	window.__qaseCursorHide = () => { clearTimeout(hideTimer); if (dot) { dot.style.transition = 'none'; dot.style.opacity = '0'; void dot.offsetWidth; dot.style.transition = ''; } };
+})();`;
+
 /** Runs in every new page of a signed-in context: puts back the sign-in tab's sessionStorage. */
 function RESTORE_SESSION_STORAGE(snapshot) {
 	try {
@@ -85,6 +131,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	if (!engine.available) throw Object.assign(new Error(engine.reason ?? `The ${engine.id} browser is not available.`), { code: 'ENGINE_UNAVAILABLE' });
 	const browser = await engine.type.launch({ headless, ...engine.launch });
 	const origins = allowedOrigins(session.targetUrl, env);
+	const showCursor = env.QASE_AGENT_CURSOR !== 'false';
 	// The existing browser policy keeps private-network (SSRF) protection and
 	// scheme rules identical to every other QASE mode. Verdicts are cached per origin.
 	const policy = createBrowserPolicy({ getTargetUrl: () => session.targetUrl, environment: env });
@@ -140,6 +187,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 		});
 		contextKeys.set(created, key);
 		await created.addInitScript(OBSERVER_SCRIPT);
+		if (showCursor) await created.addInitScript(CURSOR_SCRIPT);
 		if (sessionSnapshot && !anonymous) await created.addInitScript(RESTORE_SESSION_STORAGE, sessionSnapshot);
 		await created.route('**/*', async route => {
 			const request = route.request();
@@ -238,6 +286,28 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	}
 
 	/** Runs `work` with non-GET requests blocked (unless writes are authorized). */
+	/**
+	 * Moves the agent cursor to a locator (or a point) and labels the action.
+	 * Purely visual; never throws, and costs ~0.4 s so viewers can follow it.
+	 */
+	async function pointAt(page, target, label, { click = true } = {}) {
+		if (!showCursor || !page || page.isClosed()) return;
+		try {
+			let box = target && typeof target.boundingBox === 'function' ? await target.boundingBox({ timeout: 1500 }) : target;
+			if (!box) return;
+			const x = Math.round(box.x + (box.width ?? 0) / 2);
+			const y = Math.round(box.y + Math.min((box.height ?? 0) / 2, 24));
+			await page.evaluate(([px, py, text]) => window.__qaseCursor?.(px, py, text, false), [x, y, String(label ?? '').slice(0, 60)]);
+			await page.waitForTimeout(420);
+			if (click) await page.evaluate(([px, py, text]) => window.__qaseCursor?.(px, py, text, true), [x, y, String(label ?? '').slice(0, 60)]);
+		} catch { /* the cursor is cosmetic */ }
+	}
+
+	/** Hides the cursor before evidence screenshots, so reviewers never see it. */
+	async function hideCursor(page) {
+		if (showCursor && page && !page.isClosed()) await page.evaluate(() => window.__qaseCursorHide?.()).catch(() => {});
+	}
+
 	async function interact(work) {
 		interacting++;
 		try { return await work(); }
@@ -302,6 +372,8 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	}
 
 	return {
+		pointAt,
+		hideCursor,
 		engine: engine.id,
 		version: browser.version(),
 		origins,

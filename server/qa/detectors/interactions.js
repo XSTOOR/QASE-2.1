@@ -229,6 +229,8 @@ export async function testInteractions(page, { url, viewport, browser, reload, s
 		const blockedBefore = browser.blocked?.() ?? {};
 		await browser.interact(async () => {
 			try {
+				await browser.pointAt?.(page, page.locator(`[data-qase-trigger="${trigger.id}"]`).first(), `Click "${String(trigger.label ?? '').slice(0, 30)}"`);
+				await browser.hideCursor?.(page); // filmstrip frames must show the app, not the cursor
 				await page.locator(`[data-qase-trigger="${trigger.id}"]`).first().click({ timeout: 8000 });
 			} catch { clicked = false; }
 			// Filmstrip at roughly 90 ms, 220 ms and 450 ms after the click.

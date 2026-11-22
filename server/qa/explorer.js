@@ -10,6 +10,7 @@
  * phase, never the run.
  */
 import { candidate } from './findings.js';
+import { dismissOverlays, openOverlays } from './overlays.js';
 
 const DESTRUCTIVE = /\b(delete|remove|destroy|erase|log ?out|sign ?out|unsubscribe|deactivate|pay|purchase|buy now|checkout|place order|transfer|close account)\b/i;
 
@@ -40,7 +41,11 @@ Rules:
 - When a tool result says a request was blocked, do not report the page's reaction to it.
 - Never try to sign in with guessed credentials, attack the site, or perform destructive actions. If you are signed in, stay signed in (do not click sign out).
 - Report each defect once with report_issue, with exact reproducible steps. Do not report things you did not observe. Do not report missing features or style opinions.
-- Use look when visual state matters. Be efficient; finish when you have covered the main journeys.`;
+- Explore systematically, like a new user learning the product: open each section from the navigation (sidebars and icon rails count: buttons with labels such as "Projects" or "Settings"), then its sub-features (tabs, menus, filters, toggles, settings panes, item details, empty states). Check every result.
+- Each step, choose an element from the observation by its ref and act. Elements marked (covered) are behind a pop-up: close the pop-up first (QASE already closes tours and banners it recognises).
+- Use look at most once per screen, when visual state matters; then act on what you saw. Never call look twice in a row.
+- If an action fails, try another way (a different element, scrolling it into view, keyboard) instead of repeating it.
+- Finish only when the journey goal is covered; summarise what you exercised and what you could not reach.`;
 
 /** Tags interactive elements and returns a compact observation. */
 export async function observe(page, log) {
@@ -56,18 +61,24 @@ export async function observe(page, log) {
 			element.setAttribute('data-qase-ref', id);
 			const name = String(element.getAttribute('aria-label') || element.innerText || element.value || element.placeholder || element.title || element.alt || '').replace(/\s+/g, ' ').trim().slice(0, 70);
 			const inView = r.bottom > 0 && r.top < innerHeight;
-			items.push(`${id} ${element.tagName.toLowerCase()}${element.type && element.tagName === 'INPUT' ? `[${element.type}]` : ''}${element.getAttribute('role') ? `(${element.getAttribute('role')})` : ''} "${name}"${element.tagName === 'A' ? ` → ${element.getAttribute('href')?.slice(0, 80)}` : ''}${element.disabled ? ' [disabled]' : ''}${element.getAttribute('aria-expanded') ? ` [expanded=${element.getAttribute('aria-expanded')}]` : ''}${element.checked ? ' [checked]' : ''}${'value' in element && element.value && element.tagName !== 'BUTTON' ? ` value="${String(element.value).slice(0, 40)}"` : ''}${inView ? '' : ' (off-screen)'}`);
+			const cx = Math.min(innerWidth - 1, Math.max(0, r.left + r.width / 2)); const cy = Math.min(innerHeight - 1, Math.max(0, r.top + Math.min(r.height / 2, 20)));
+			const hit = inView ? document.elementFromPoint(cx, cy) : null;
+			const covered = inView && hit && hit !== element && !element.contains(hit) && !hit.contains(element);
+			items.push(`${id} ${element.tagName.toLowerCase()}${element.type && element.tagName === 'INPUT' ? `[${element.type}]` : ''}${element.getAttribute('role') ? `(${element.getAttribute('role')})` : ''} "${name}"${element.tagName === 'A' ? ` → ${element.getAttribute('href')?.slice(0, 80)}` : ''}${element.disabled ? ' [disabled]' : ''}${element.getAttribute('aria-expanded') ? ` [expanded=${element.getAttribute('aria-expanded')}]` : ''}${element.checked ? ' [checked]' : ''}${'value' in element && element.value && element.tagName !== 'BUTTON' ? ` value="${String(element.value).slice(0, 40)}"` : ''}${inView ? '' : ' (off-screen)'}${covered ? ' (covered)' : ''}`);
 		}
 		const text = (document.body?.innerText ?? '').replace(/\n{2,}/g, '\n').slice(0, 2500);
+		items.sort((a, b) => Number(/\(covered\)|\(below\)|\(above\)|off-screen/.test(a)) - Number(/\(covered\)|\(below\)|\(above\)|off-screen/.test(b)));
 		return { url: location.href, title: document.title, items, text, scroll: `${Math.round(scrollY)}/${document.documentElement.scrollHeight - innerHeight}` };
 	}).catch(() => ({ url: page.url(), title: '', items: [], text: '(page could not be read)' }));
+	const overlays = (await openOverlays(page)).filter(item => item.modal);
 	const errors = [...(log.pageErrors ?? []).slice(-3).map(error => `JS error: ${error.message}`), ...(log.console ?? []).filter(item => item.type === 'error').slice(-3).map(item => `console: ${item.text}`)];
-	return `URL: ${snapshot.url}\nTitle: ${snapshot.title}\nScroll: ${snapshot.scroll}\n${errors.length ? `Recent errors:\n${errors.join('\n')}\n` : ''}Interactive elements:\n${snapshot.items.join('\n')}\n\nVisible text:\n${snapshot.text}`;
+	return `URL: ${snapshot.url}\nTitle: ${snapshot.title}\nScroll: ${snapshot.scroll}\n${overlays.length ? `Open pop-up(s): ${overlays.map(item => `"${item.text.slice(0, 80)}"${item.close ? ` (close with "${item.close}")` : ''}`).join('; ')}\n` : ''}${errors.length ? `Recent errors:\n${errors.join('\n')}\n` : ''}Interactive elements:\n${snapshot.items.join('\n')}\n\nVisible text:\n${snapshot.text}`;
 }
 
 export async function explore({ browser, profile, startUrl, models, knownIssues = [], maxSteps = 30, deadline, signal, blockedWrites, save, onStep = () => {}, focus, goal, signedIn = false, pages = [] }) {
 	const out = [];
-	const summary = { steps: 0, finished: false, summary: '', visited: new Set(), loopWarnings: 0, loopStopped: false };
+	const summary = { steps: 0, finished: false, summary: '', visited: new Set(), loopWarnings: 0, loopStopped: false, trail: [] };
+	let consecutiveLooks = 0;
 	// Loop detection: the same action on the same element and page, repeated, means the
 	// model is stuck. It is told so (with what it repeated); a third warning ends the journey.
 	const signatures = new Map();
@@ -114,6 +125,9 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 					result = `Error: ${String(error.message).split('\n')[0].slice(0, 200)}`;
 				}
 				if (result?.image) { screenshot = result.image; result = 'Screenshot attached below.'; }
+				consecutiveLooks = name === 'look' ? consecutiveLooks + 1 : 0;
+				// Reviewable trail: what the agent did and the first line of what it saw.
+				summary.trail.push(`${summary.steps}. ${name}${args.ref ? ` ${args.ref}` : ''}${args.url ? ` ${args.url}` : ''}${args.text ? ` "${String(args.text).slice(0, 40)}"` : ''}${args.key ? ` ${args.key}` : ''}${name === 'report_issue' ? ` "${String(args.title ?? '').slice(0, 80)}"` : ''}${name === 'finish' ? ` "${String(args.summary ?? '').slice(0, 160)}"` : ''} → ${String(result).split('\n').find(line => line && !line.startsWith('(')) ?.slice(0, 140) ?? ''} @ ${page.url().replace(/^https?:\/\/[^/]+/, '')}`);
 				messages.push({ role: 'tool', tool_call_id: call.id, content: String(result).slice(0, 6000) });
 				onStep({ name, args, url: page.url() });
 				if (name === 'finish') { summary.finished = true; summary.summary = String(args.summary ?? '').slice(0, 2000); break; }
@@ -151,6 +165,8 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 		const offsiteBefore = offsiteBlocked();
 		const after = async () => {
 			await browser.settle(page, { quietMs: 1200 });
+			const cleared = await dismissOverlays(page, { cursor: (target, text) => browser.pointAt?.(page, target, text) }).catch(() => []);
+			if (cleared.length) trail.push(`Close the pop-up (${cleared[0]})`);
 			summary.visited.add(page.url().split('#')[0]);
 			const blocked = blockedWrites() - blockedBefore;
 			const offsite = offsiteBlocked() - offsiteBefore;
@@ -166,12 +182,22 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 				const label = await describeRef(args.ref);
 				if (DESTRUCTIVE.test(label)) return `Refused: "${label}" looks destructive. Choose another action.`;
 				trail.push(`Click "${label}"`);
-				await browser.interact(() => locate(args.ref).click({ timeout: 5000 }));
+				await locate(args.ref).scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+				await browser.pointAt?.(page, locate(args.ref), `Click "${label}"`);
+				try {
+					await browser.interact(() => locate(args.ref).click({ timeout: 5000 }));
+				} catch (error) {
+					// Usually a pop-up or another element is in the way: clear it and retry once.
+					const cleared = await dismissOverlays(page).catch(() => []);
+					try { await browser.interact(() => locate(args.ref).click({ timeout: 4000, ...(cleared.length ? {} : { force: false }) })); }
+					catch { return `Click on "${label}" failed (${/intercepts pointer|not visible|outside of the viewport/.test(error.message) ? 'another element covers it or it is off-screen' : String(error.message).split('\n')[0].slice(0, 120)}). Try a different element, scroll, or close what covers it.\n${await observe(page, log)}`; }
+				}
 				return after();
 			}
 			case 'type': {
 				const label = await describeRef(args.ref);
 				trail.push(`Type "${String(args.text).slice(0, 60)}" into "${label}"${args.submit ? ' and press Enter' : ''}`);
+				await browser.pointAt?.(page, locate(args.ref), `Type "${String(args.text ?? '').slice(0, 24)}"`);
 				await browser.interact(async () => {
 					await locate(args.ref).fill(String(args.text ?? '').slice(0, 2000), { timeout: 5000 });
 					if (args.submit) await locate(args.ref).press('Enter');
@@ -208,9 +234,12 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 				return after();
 			case 'look':
 				if (!models.visionAvailable()) return 'Screenshots are not available for this model; rely on the observation text.';
+				if (consecutiveLooks >= 1) return `You just looked at this screen. Act now: pick an element ref from this observation.\n${await observe(page, log)}`;
+				await browser.hideCursor?.(page);
 				return { image: await page.screenshot({ type: 'jpeg', quality: 60 }) };
 			case 'report_issue': {
 				if (!args.title || !args.actual) return 'Rejected: title and actual are required.';
+				await browser.hideCursor?.(page);
 				const bytes = await page.screenshot({ type: 'jpeg', quality: 65 }).catch(() => undefined);
 				const recentRefusals = refusals.slice(-4).reduce((sum, value) => sum + value, 0);
 				const harness = recentRefusals && ['functional', 'content', 'forms', 'network', 'animation', 'visual'].includes(args.category)
