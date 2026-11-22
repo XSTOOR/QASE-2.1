@@ -206,7 +206,13 @@ export async function signIn({ browser, profile, session, candidates }) {
 		// Verify the session from what the page shows, not only from the form disappearing.
 		const after = await detectAuth(page);
 		const verified = { leftForm: true, logoutControl: after.logout, leftLoginPath: !after.loginPath, cookies: (await page.context().cookies()).length };
-		await browser.useSignedInState(await page.context().storageState());
+		// Let the app finish storing its tokens (SPAs often write them just after the redirect).
+		await browser.settle(page, { quietMs: 1500 }).catch(() => {});
+		const context = page.context();
+		const state = await context.storageState({ indexedDB: true }).catch(() => context.storageState());
+		const tabStorage = await page.evaluate(() => ({ origin: location.origin, items: Object.fromEntries(Object.entries(sessionStorage)) })).catch(() => undefined);
+		verified.storage = { cookies: state.cookies?.length ?? 0, localStorageOrigins: state.origins?.length ?? 0, indexedDB: (state.origins ?? []).some(item => item.indexedDB?.length), sessionStorageKeys: Object.keys(tabStorage?.items ?? {}).length };
+		await browser.useSignedInState(state, { sessionStorage: tabStorage, keep: context });
 		return { ok: true, url: page.url(), steps, verified };
 	} catch (error) {
 		return { ok: false, url, reason: `Sign-in failed: ${String(error.message).split('\n')[0].slice(0, 160)}` };

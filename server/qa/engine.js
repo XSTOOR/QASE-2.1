@@ -344,12 +344,20 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		if (outcome.ok) {
 			// Verification: a page reached through the session must not bounce back to sign-in.
 			const { page } = await openPage(outcome.url, { noReauth: true });
-			const bounced = await isSignInPage(page);
+			let bounced = await isSignInPage(page);
+			// Single-page apps often show their sign-in screen for a moment while they restore
+			// the session from storage; give them time before concluding the session was lost.
+			for (let wait = 0; bounced && wait < 3; wait++) {
+				await page.waitForTimeout(2000);
+				await browser.settle(page, { quietMs: 800 }).catch(() => {});
+				bounced = await isSignInPage(page);
+			}
 			const after = await detectAuth(page);
 			await page.close().catch(() => {});
 			if (bounced) {
 				await browser.useSignedInState(undefined);
-				return { ok: false, retry: false, reason: 'The sign-in form disappeared, but opening the next page showed the sign-in form again, so the session was not kept.' };
+				const kept = outcome.verified?.storage;
+				return { ok: false, retry: false, reason: `The sign-in form disappeared, but a new tab opened on ${pathOf(outcome.url)} showed the sign-in form again, even with the session's cookies (${kept?.cookies ?? 0}), local storage, IndexedDB and session storage (${kept?.sessionStorageKeys ?? 0} keys) carried over. The app may tie its session to a single tab or device check.` };
 			}
 			outcome.verifiedBy = [outcome.verified?.logoutControl || after.logout ? 'sign-out control visible' : '', !isLoginUrl(outcome.url) ? `landed on ${pathOf(outcome.url)}` : '', 'reload kept the session'].filter(Boolean).join(', ');
 		}

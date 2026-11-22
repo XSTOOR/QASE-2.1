@@ -20,6 +20,14 @@ import { environmentEmulationOptions } from '../browserstackProvider.js';
 import { OBSERVER_SCRIPT } from './detectors/pageAudit.js';
 import { createBrowserPolicy } from '../browserPolicy.js';
 
+/** Runs in every new page of a signed-in context: puts back the sign-in tab's sessionStorage. */
+function RESTORE_SESSION_STORAGE(snapshot) {
+	try {
+		if (location.origin !== snapshot.origin) return;
+		for (const [key, value] of Object.entries(snapshot.items)) if (sessionStorage.getItem(key) === null) sessionStorage.setItem(key, value);
+	} catch { /* storage disabled */ }
+}
+
 export const VIEWPORTS = Object.freeze({
 	desktop: { name: 'desktop', label: 'Desktop 1440×900', viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false },
 	tablet: { name: 'tablet', label: 'Tablet 820×1180', viewport: { width: 820, height: 1180 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true },
@@ -93,6 +101,8 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	let interacting = 0;
 	let writesAllowedUntil = 0;
 	let storageState;
+	let sessionSnapshot; // { origin, items } — sessionStorage is per tab and never part of storageState
+	const contextKeys = new WeakMap();
 	let activePage;
 	let frameTimer;
 	let lastFrameKey;
@@ -128,7 +138,9 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 			acceptDownloads: false,
 			ignoreHTTPSErrors: false
 		});
+		contextKeys.set(created, key);
 		await created.addInitScript(OBSERVER_SCRIPT);
+		if (sessionSnapshot && !anonymous) await created.addInitScript(RESTORE_SESSION_STORAGE, sessionSnapshot);
 		await created.route('**/*', async route => {
 			const request = route.request();
 			try {
@@ -240,10 +252,23 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	}
 
 	/** Later contexts start signed in; existing contexts are closed and recreated on demand. */
-	async function useSignedInState(state) {
+	/**
+	 * Adopts a signed-in session for every later page. `state` carries cookies,
+	 * localStorage and IndexedDB; `sessionStorage` (one origin's items) is restored
+	 * into each new tab, because many single-page apps keep their tokens there.
+	 * `keep` is the context that actually signed in: it stays open and is reused,
+	 * so pages for that profile run in the exact browser state that logged in.
+	 */
+	async function useSignedInState(state, { sessionStorage, keep } = {}) {
 		storageState = state || undefined;
-		for (const ctx of contexts.values()) await ctx.close().catch(() => {});
+		sessionSnapshot = state && sessionStorage?.origin && Object.keys(sessionStorage.items ?? {}).length ? sessionStorage : undefined;
+		const keepKey = keep && state ? contextKeys.get(keep) : undefined;
+		for (const ctx of contexts.values()) if (ctx !== keep || !keepKey) await ctx.close().catch(() => {});
 		contexts.clear();
+		if (keepKey) {
+			contexts.set(keepKey, keep);
+			if (sessionSnapshot) await keep.addInitScript(RESTORE_SESSION_STORAGE, sessionSnapshot).catch(() => {});
+		}
 	}
 
 	function startFrames(intervalMs = Number(env.QASE_FRAME_INTERVAL_MS) || 700) {

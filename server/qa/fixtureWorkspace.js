@@ -73,6 +73,16 @@ function readForm(request) {
 	});
 }
 
+/**
+ * "/workspace/spa": a single-page app whose session lives only in sessionStorage
+ * (no cookie). Its pages bounce to sign-in when the tab has no token, which is how
+ * many SPAs behave. Signing in must carry sessionStorage into new tabs.
+ */
+const SPA_GUARD = `<script>if (!sessionStorage.getItem('spa_token')) location.replace('/workspace/spa/login');</script>`;
+function spaPage(title, body) {
+	return shell(title, `${SPA_GUARD}<div id="app">${body}</div>`, { head: '' }).replace('<nav class="top" aria-label="Main">', '<nav class="top" aria-label="Main"><a href="/workspace/spa/app">Home</a><a href="/workspace/spa/app/settings">Settings</a><a href="/workspace/spa/app/billing">Billing</a>');
+}
+
 /** Handles /workspace/*. Returns true when the request was handled. */
 export async function workspaceHandler(request, response, path, url) {
 	if (!path.startsWith('/workspace')) return false;
@@ -84,6 +94,21 @@ export async function workspaceHandler(request, response, path, url) {
 		return session;
 	};
 	switch (path) {
+		case '/workspace/spa/login':
+			html(shell('Sign in', `<h1>Welcome back</h1><form id="f"><label>Email <input type="email" name="email" autocomplete="username" required></label><label>Password <input type="password" name="password" required></label><button class="btn" type="submit">Sign in</button></form><p role="alert" id="err"></p>
+<script>document.getElementById('f').addEventListener('submit', e => { e.preventDefault(); const d = new FormData(e.target);
+if (d.get('email') === ${JSON.stringify(WORKSPACE_ACCOUNTS.user.email)} && d.get('password') === ${JSON.stringify(WORKSPACE_ACCOUNTS.user.password)}) { sessionStorage.setItem('spa_token', 'tok-' + Date.now()); location.href = '/workspace/spa/app'; }
+else document.getElementById('err').textContent = 'Invalid email or password.'; });</script>`));
+			return true;
+		case '/workspace/spa/app':
+			html(spaPage('Home', '<h1>Your projects</h1><p>3 active projects.</p><p><a href="/workspace/spa/app/settings">Account settings</a></p>'));
+			return true;
+		case '/workspace/spa/app/settings':
+			html(spaPage('Settings', '<h1>Account settings</h1><form><label>Display name <input name="name"></label><button class="btn" type="button">Save</button></form>'));
+			return true;
+		case '/workspace/spa/app/billing':
+			html(spaPage('Billing', '<h1>Billing</h1><table><tr><th>Plan</th><td>Team</td></tr></table>'));
+			return true;
 		case '/workspace': return redirect('/workspace/'), true;
 		case '/workspace/':
 			html(shell('Projects without chaos', `<h1>Projects without chaos</h1><p>Plan, track and ship work with your team.</p><p><a class="btn" href="/workspace/login">Log in</a> <a href="/workspace/pricing">See pricing</a></p>`));

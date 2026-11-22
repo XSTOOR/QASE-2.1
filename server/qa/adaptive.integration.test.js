@@ -172,3 +172,17 @@ test('a wrong password is explained, never echoed, and leaves signed-in categori
 		assert.ok(!JSON.stringify(session).includes('definitely-wrong-pass'));
 	} finally { await lab.close(); }
 });
+
+test('a single-page app that keeps its session in sessionStorage is signed into and tested beyond the login page', { timeout: 300_000 }, async () => {
+	const lab = await startQaLab();
+	try {
+		const { session, runStore, artifactStore } = harness(`${lab.url}workspace/spa/login`);
+		storeSecrets(session.id, { QA_USERNAME: WORKSPACE_ACCOUNTS.user.email, QA_PASSWORD: WORKSPACE_ACCOUNTS.user.password });
+		session.qaAuth = { authorized: true };
+		await runQaEngine({ session, runStore, record: {}, env: { ...ENV, QASE_QA_MAX_MINUTES: '3', QASE_QA_MAX_PAGES: '6' }, settings: qaModelSettings({}, {}), artifactStore });
+		assert.equal(session.hybrid.signedIn, true, session.hybrid.graph.auth.blockedReason);
+		const signedInPages = Object.entries(session.hybrid.graph.pages).filter(([, page]) => page.discoveredBy === 'signed-in').map(([url]) => new URL(url).pathname);
+		for (const path of ['/workspace/spa/app/settings', '/workspace/spa/app/billing']) assert.ok(signedInPages.includes(path), `tested ${path} (got ${signedInPages.join(', ')})`);
+		assert.ok(!JSON.stringify(session).includes(WORKSPACE_ACCOUNTS.user.password));
+	} finally { await lab.close(); }
+});
