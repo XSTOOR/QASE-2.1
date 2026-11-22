@@ -53,11 +53,15 @@ export async function observe(page, log) {
 	const snapshot = await page.evaluate(() => {
 		let ref = 0;
 		const items = [];
+		// Controls that were not in the previous observation are marked NEW and listed first,
+		// so features revealed by the last action are never cut off by the list limit.
+		const previous = window.__qasePrevKeys ? new Set(window.__qasePrevKeys) : undefined;
+		const seenKeys = [];
 		for (const element of document.querySelectorAll('a[href],button,input:not([type=hidden]),select,textarea,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=switch],summary,[contenteditable=true]')) {
 			const r = element.getBoundingClientRect();
 			const s = getComputedStyle(element);
 			if (r.width < 2 || r.height < 2 || s.visibility === 'hidden' || s.display === 'none' || Number(s.opacity) < 0.05) continue;
-			if (items.length >= 120) break;
+			if (ref >= 500) break;
 			const id = `e${ref++}`;
 			element.setAttribute('data-qase-ref', id);
 			const name = String(element.getAttribute('aria-label') || element.innerText || element.value || element.placeholder || element.title || element.alt || '').replace(/\s+/g, ' ').trim().slice(0, 70);
@@ -65,11 +69,17 @@ export async function observe(page, log) {
 			const cx = Math.min(innerWidth - 1, Math.max(0, r.left + r.width / 2)); const cy = Math.min(innerHeight - 1, Math.max(0, r.top + Math.min(r.height / 2, 20)));
 			const hit = inView ? document.elementFromPoint(cx, cy) : null;
 			const covered = inView && hit && hit !== element && !element.contains(hit) && !hit.contains(element);
-			items.push(`${id} ${element.tagName.toLowerCase()}${element.type && element.tagName === 'INPUT' ? `[${element.type}]` : ''}${element.getAttribute('role') ? `(${element.getAttribute('role')})` : ''} "${name}"${element.tagName === 'A' ? ` → ${element.getAttribute('href')?.slice(0, 80)}` : ''}${element.disabled ? ' [disabled]' : ''}${element.getAttribute('aria-expanded') ? ` [expanded=${element.getAttribute('aria-expanded')}]` : ''}${element.checked ? ' [checked]' : ''}${'value' in element && element.value && element.tagName !== 'BUTTON' ? ` value="${String(element.value).slice(0, 40)}"` : ''}${inView ? '' : ' (off-screen)'}${covered ? ' (covered)' : ''}`);
+			const key = `${element.tagName}:${name}`;
+			const fresh = Boolean(previous) && !previous.has(key);
+			seenKeys.push(key);
+			items.push({ rank: (fresh ? 0 : 10) + (covered ? 4 : 0) + (inView ? 0 : 2), line: `${fresh ? 'NEW ' : ''}${id} ${element.tagName.toLowerCase()}${element.type && element.tagName === 'INPUT' ? `[${element.type}]` : ''}${element.getAttribute('role') ? `(${element.getAttribute('role')})` : ''} "${name}"${element.tagName === 'A' ? ` → ${element.getAttribute('href')?.slice(0, 80)}` : ''}${element.disabled ? ' [disabled]' : ''}${element.getAttribute('aria-expanded') ? ` [expanded=${element.getAttribute('aria-expanded')}]` : ''}${element.checked ? ' [checked]' : ''}${'value' in element && element.value && element.tagName !== 'BUTTON' ? ` value="${String(element.value).slice(0, 40)}"` : ''}${inView ? '' : ' (off-screen)'}${covered ? ' (covered)' : ''}` });
 		}
 		const text = (document.body?.innerText ?? '').replace(/\n{2,}/g, '\n').slice(0, 2500);
-		items.sort((a, b) => Number(/\(covered\)|\(below\)|\(above\)|off-screen/.test(a)) - Number(/\(covered\)|\(below\)|\(above\)|off-screen/.test(b)));
-		return { url: location.href, title: document.title, items, text, scroll: `${Math.round(scrollY)}/${document.documentElement.scrollHeight - innerHeight}` };
+		window.__qasePrevKeys = seenKeys;
+		const ranked = items.map((item, index) => ({ ...item, index })).sort((a, b) => a.rank - b.rank || a.index - b.index);
+		const shown = ranked.slice(0, 140).sort((a, b) => a.rank - b.rank || a.index - b.index).map(item => item.line);
+		if (ranked.length > 140) shown.push(`(${ranked.length - 140} more controls further down or covered — scroll to reach them)`);
+		return { url: location.href, title: document.title, items: shown, text, scroll: `${Math.round(scrollY)}/${document.documentElement.scrollHeight - innerHeight}` };
 	}).catch(() => ({ url: page.url(), title: '', items: [], text: '(page could not be read)' }));
 	const overlays = (await openOverlays(page)).filter(item => item.modal);
 	const errors = [...(log.pageErrors ?? []).slice(-3).map(error => `JS error: ${error.message}`), ...(log.console ?? []).filter(item => item.type === 'error').slice(-3).map(item => `console: ${item.text}`)];
@@ -128,12 +138,18 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 					result = `Error: ${String(error.message).split('\n')[0].slice(0, 200)}`;
 				}
 				if (result?.image) { screenshot = result.image; result = 'Screenshot attached below.'; }
+				// Visual grounding: a new screen (URL or dialog) is shown to the model automatically.
+				else if (!screenshot && models.visionAvailable() && /^RESULT: (URL changed|.*Dialog opened)/m.test(String(result))) {
+					await browser.hideCursor?.(page);
+					screenshot = await page.screenshot({ type: 'jpeg', quality: 55 }).catch(() => undefined);
+					if (screenshot) { result = `${result}\n(A screenshot of the new screen is attached below.)`; actionsSinceLook = 0; urlAtLook = page.url(); }
+				}
 				consecutiveLooks = name === 'look' ? consecutiveLooks + 1 : 0;
 				if (name !== 'look') actionsSinceLook++;
 				// Reviewable trail: what the agent did and the first line of what it saw.
 				summary.trail.push(`${summary.steps}. ${name}${args.ref ? ` ${args.ref}` : ''}${args.url ? ` ${args.url}` : ''}${args.text ? ` "${String(args.text).slice(0, 40)}"` : ''}${args.key ? ` ${args.key}` : ''}${name === 'report_issue' ? ` "${String(args.title ?? '').slice(0, 80)}"` : ''}${name === 'finish' ? ` "${String(args.summary ?? '').slice(0, 160)}"` : ''} → ${(String(result).split('\n').find(line => line.startsWith('RESULT:')) ?? String(result).split('\n').find(line => line && !line.startsWith('('))) ?.slice(0, 160) ?? ''} @ ${page.url().replace(/^https?:\/\/[^/]+/, '')}`);
 				messages.push({ role: 'tool', tool_call_id: call.id, content: String(result).slice(0, 6000) });
-				onStep({ name, args, url: page.url() });
+				onStep({ name, args, url: page.url(), line: summary.trail.at(-1) });
 				if (name === 'finish') { summary.finished = true; summary.summary = String(args.summary ?? '').slice(0, 2000); break; }
 				const loop = detectLoop(name, args, page.url());
 				if (loop) {
@@ -171,7 +187,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 		const beforeScreen = acting ? await page.evaluate(screenSignature).catch(() => undefined) : undefined;
 		const after = async () => {
 			await browser.settle(page, { quietMs: 1200 });
-			const cleared = await dismissOverlays(page, { cursor: (target, text) => browser.pointAt?.(page, target, text) }).catch(() => []);
+			const cleared = await dismissOverlays(page, { includeToasts: true, cursor: (target, text) => browser.pointAt?.(page, target, text) }).catch(() => []);
 			if (cleared.length) trail.push(`Close the pop-up (${cleared[0]})`);
 			summary.visited.add(page.url().split('#')[0]);
 			const blocked = blockedWrites() - blockedBefore;
@@ -212,7 +228,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 					await browser.interact(() => locate(args.ref).click({ timeout: 5000 }));
 				} catch (error) {
 					// Usually a pop-up or another element is in the way: clear it and retry once.
-					const cleared = await dismissOverlays(page).catch(() => []);
+					const cleared = await dismissOverlays(page, { includeToasts: true }).catch(() => []);
 					try { await browser.interact(() => locate(args.ref).click({ timeout: 4000, ...(cleared.length ? {} : { force: false }) })); }
 					catch { return `Click on "${label}" failed (${/intercepts pointer|not visible|outside of the viewport/.test(error.message) ? 'another element covers it or it is off-screen' : String(error.message).split('\n')[0].slice(0, 120)}). Try a different element, scroll, or close what covers it.\n${await observe(page, log)}`; }
 				}

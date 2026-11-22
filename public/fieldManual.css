@@ -568,6 +568,13 @@ html[data-theme="light"] body.studio-workspace .act.running .act-icon::before { 
 html[data-theme] body.studio-workspace .act.failed .act-icon::before { background: var(--fm-bad); }
 html[data-theme] body.studio-workspace .act-label { font: 500 13.5px/1.45 var(--font-ui); color: var(--text); }
 html[data-theme] body.studio-workspace .act.failed .act-label { color: var(--fm-bad); }
+html[data-theme] body.studio-workspace .act.blocked .act-icon::before { background: var(--fm-warn); }
+html[data-theme] body.studio-workspace .act.cancelled .act-icon::before { background: transparent; box-shadow: inset 0 0 0 1px var(--text-faint); }
+html[data-theme] body.studio-workspace .act.cancelled .act-label { color: var(--text-muted); }
+/* Agent steps and discoveries sit under their scenario: smaller and indented. */
+html[data-theme] body.studio-workspace .act[data-type="agent_step"], html[data-theme] body.studio-workspace .act[data-type="discovery"] { padding-left: 18px; }
+html[data-theme] body.studio-workspace .act[data-type="agent_step"] .act-label, html[data-theme] body.studio-workspace .act[data-type="discovery"] .act-label { font-size: 12.5px; font-weight: 500; }
+html[data-theme] body.studio-workspace .act[data-type="plan"] .act-label { color: var(--fm-signal-text); }
 html[data-theme] body.studio-workspace .act-detail { margin-top: 2px; font: 12.5px/1.45 var(--font-ui); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 html[data-theme] body.studio-workspace .act-time { font: 11px var(--fm-mono); color: var(--text-faint); padding-top: 3px; }
 html[data-theme] body.studio-workspace .act.running .act-label::after { content: "_"; margin-left: 2px; color: var(--fm-signal-text); animation: fm-blink 1s steps(1) infinite; }

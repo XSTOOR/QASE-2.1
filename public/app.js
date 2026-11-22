@@ -3233,11 +3233,12 @@ function renderActivity(activity) {
 	node.className = `act ${activity.status}`;
 	node.setAttribute('role', 'listitem');
 	node.dataset.id = activity.id;
+	if (activity.type) node.dataset.type = activity.type;
 
 	const icon = document.createElement('span');
 	icon.className = 'act-icon';
 	icon.setAttribute('aria-hidden', 'true');
-	icon.textContent = activity.status === 'running' ? '◉' : activity.status === 'failed' ? '✕' : '●';
+	icon.textContent = activity.status === 'running' ? '◉' : activity.status === 'failed' ? '✕' : activity.status === 'blocked' ? '◐' : activity.status === 'cancelled' ? '○' : '●';
 
 	const main = document.createElement('div');
 	main.className = 'act-main';

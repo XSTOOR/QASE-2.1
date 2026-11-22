@@ -28,6 +28,23 @@ const UNIT_TITLES = {
 // Lower is earlier. Authorization and core flows first, broad review last.
 const PRIORITY = { authz: 1, roles: 1, explore: 2, search: 2, forms: 2, interactions: 3, viewports: 3, keyboard: 3, injection: 3, security_origin: 3, persistence: 4, history: 4, redirects: 4, links: 4, performance: 4, offline: 5, slow_network: 5, storage: 5, seo: 5, pwa: 5, i18n: 5, media: 4, permissions: 5, websocket: 4, hover: 4, reduced_motion: 4, dark_mode: 5, memory: 6, visual: 7 };
 
+/**
+ * The scenario contract: why it exists (the observed feature), what it does, what
+ * a pass looks like, which evidence it must leave, and when it counts as done.
+ * Built from the registry entries of the categories the unit covers.
+ */
+function describe(unit, targets = [], feature) {
+	const caps = CAPABILITIES.filter(item => item.units.includes(unit) && item.support !== 'unsupported');
+	return {
+		feature: feature ?? (targets.length ? `${UNIT_TITLES[unit] ?? unit} on ${targets.slice(0, 3).map(pathOf).join(', ')}` : 'site-wide'),
+		objective: UNIT_TITLES[unit] ?? unit,
+		preconditions: caps.some(item => item.access === 'signed_in') ? 'Signed-in session' : 'Page reachable',
+		expected: caps.slice(0, 4).map(item => item.pass),
+		evidenceRequired: [...new Set(caps.flatMap(item => item.evidence))].slice(0, 5),
+		completion: targets.length ? `Every target (${targets.length}) checked, or the reason it was not recorded` : 'The site-level check ran to the end'
+	};
+}
+
 const capabilitiesFor = unit => CAPABILITIES.filter(item => item.units.includes(unit) && item.support !== 'unsupported').map(item => item.id);
 
 const pathOf = url => { try { const parsed = new URL(url); return `${parsed.pathname}${parsed.search}` || '/'; } catch { return url; } };
@@ -40,7 +57,7 @@ export function scenariosFromGraph({ graph: model, start, signedInUrl, signedIn,
 	const out = [];
 	const add = (unit, targets, extra = {}) => {
 		const id = `${unit}:${(targets ?? []).map(pathOf).join('|') || 'site'}`;
-		out.push({ id, unit, title: extra.title ?? `${UNIT_TITLES[unit] ?? unit}${targets?.length === 1 ? ` — ${pathOf(targets[0])}` : ''}`, targets: targets ?? [], capabilities: capabilitiesFor(unit), priority: PRIORITY[unit] ?? 5, sideEffects: false, ...extra });
+		out.push({ id, unit, title: extra.title ?? `${UNIT_TITLES[unit] ?? unit}${targets?.length === 1 ? ` — ${pathOf(targets[0])}` : ''}`, targets: targets ?? [], capabilities: capabilitiesFor(unit), priority: PRIORITY[unit] ?? 5, sideEffects: false, ...describe(unit, targets, extra.feature), ...extra });
 	};
 	if (!ranked.length) return out;
 	// Pages first seen during execution (journeys, redirects) get the full page audit.
@@ -50,7 +67,7 @@ export function scenariosFromGraph({ graph: model, start, signedInUrl, signedIn,
 	if (!model.withFeature('menus').length) add('interactions', [ranked[0]]);
 	for (const url of model.withFeature('forms').filter(url => !graph.pages[url]?.login).slice(0, 6)) add('forms', [url]);
 	const byPath = new Map();
-	for (const url of [...model.withFeature('search'), ...model.withFeature('pagination'), ...model.withFeature('filter').filter(url => model.page(url)?.features?.table)]) {
+	for (const url of [...model.withFeature('search'), ...model.withFeature('pagination'), ...model.withFeature('sort'), ...model.withFeature('filter').filter(url => model.page(url)?.features?.table || model.page(url)?.features?.forms)]) {
 		const key = new URL(url).pathname;
 		if (!byPath.has(key) || new URL(url).search.length < new URL(byPath.get(key)).search.length) byPath.set(key, url);
 	}
@@ -92,7 +109,7 @@ export function scenariosFromGraph({ graph: model, start, signedInUrl, signedIn,
 export async function proposeJourneys({ models, model, focus, signal, max = 3 }) {
 	if (!models.reasonerAvailable()) return { journeys: [], source: 'none' };
 	const result = await models.json([
-		{ role: 'system', content: 'You plan exploratory QA for a web application you have just observed. Together, your journeys must cover EVERY feature area listed (each screen and each panel/tab/dialog reached by clicking): give each area its own journey that opens it, exercises its sub-features (tabs, menus, buttons, filters, settings, empty and error states) and checks the results. Journeys are read-only (writes are blocked) and achievable in about 20 browser actions; say in the goal which controls to use to get there (e.g. click "Projects" in the sidebar). Do not plan journeys about the sign-in page when the session is signed in. Answer JSON only: {"journeys":[{"goal":"…","start":"/path","why":"…","priority":1}]}' },
+		{ role: 'system', content: 'You plan exploratory QA for a web application you have just observed. Together, your journeys must cover EVERY feature area listed (each screen and each panel/tab/dialog reached by clicking): give each area its own journey that opens it, exercises its sub-features (tabs, menus, buttons, filters, settings, empty and error states) and checks the results. Journeys are read-only (writes are blocked) and achievable in about 20 browser actions; say in the goal which controls to use to get there (e.g. click "Projects" in the sidebar). Do not plan journeys about the sign-in page when the session is signed in. Journeys run in one desktop browser window: do not plan viewport/mobile/resize journeys (responsive layout, accessibility audits, security headers and performance are covered by separate automated checks); spend journeys on behaviour inside the app, going into sub-features (tabs inside panels, list items, settings sections). Answer JSON only: {"journeys":[{"goal":"…","start":"/path","why":"…","priority":1}]}' },
 		{ role: 'user', content: `${model.summary(40)}${focus ? `\nOwner's focus: ${focus}` : ''}\nPropose up to ${max} journeys covering every feature area, most important first.` }
 	], { maxTokens: 1500, signal, purpose: 'planning' }).catch(() => undefined);
 	const journeys = (Array.isArray(result?.journeys) ? result.journeys : [])
@@ -144,7 +161,7 @@ export function revisePlan(plan, derived, { trigger, journeys = [] } = {}) {
 	for (const journey of journeys) {
 		const id = `explore:${journey.goal.slice(0, 60)}`;
 		if (known.has(id) || plan.scenarios.some(item => item.id === id)) continue;
-		plan.scenarios.push({ id, unit: 'explore', title: `Journey — ${journey.goal}`, goal: journey.goal, start: journey.start, why: journey.why, targets: [], capabilities: capabilitiesFor('explore'), priority: journey.priority ?? 2, sideEffects: false, state: 'pending', origin: journey.origin ?? 'reasoner', revision });
+		plan.scenarios.push({ id, unit: 'explore', title: `Journey — ${journey.goal}`, goal: journey.goal, feature: journey.why ?? journey.goal, objective: journey.goal, expected: ['Each step of the journey behaves as a user would expect'], evidenceRequired: ['step trail with what each action changed', 'screenshots of new screens'], completion: 'The model reached the goal, or its step/time budget ended (recorded)', start: journey.start, why: journey.why, targets: [], capabilities: capabilitiesFor('explore'), priority: journey.priority ?? 2, sideEffects: false, state: 'pending', origin: journey.origin ?? 'reasoner', revision });
 		added.push(id);
 	}
 	if (!added.length) return undefined;

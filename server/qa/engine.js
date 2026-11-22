@@ -222,6 +222,24 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		progressAt = Date.now();
 		try { await runStore.updateActivity(session, currentActivity, { detail: String(detail).slice(0, 160) }); } catch { /* best effort */ }
 	};
+	/**
+	 * Durable activity records for real work: scenarios, plan revisions, discoveries and
+	 * AI tester actions. Lifecycle: running → done | failed | blocked | cancelled.
+	 */
+	const activityLog = {
+		async start(label, extra = {}) {
+			const id = randomUUID();
+			try { await runStore.addActivity(session, { id, type: extra.type ?? 'tool', toolName: extra.toolName ?? 'qa_scenario', status: 'running', label: redact(session.id, String(label).slice(0, 200)), runId: session.id, scenarioId: extra.scenarioId, category: extra.category, ts: Date.now() }); } catch { /* feed is best effort */ }
+			return id;
+		},
+		async end(id, status, summary, extra = {}) {
+			try { await runStore.updateActivity(session, id, { status, summary: redact(session.id, String(summary ?? '').slice(0, 300)), endedAt: Date.now(), ...extra }); } catch { /* best effort */ }
+		},
+		async note(label, summary, extra = {}) {
+			try { await runStore.addActivity(session, { id: randomUUID(), type: extra.type ?? 'note', toolName: extra.toolName ?? 'qa_note', status: extra.status ?? 'done', label: redact(session.id, String(label).slice(0, 200)), summary: redact(session.id, String(summary ?? '').slice(0, 300)), runId: session.id, scenarioId: extra.scenarioId, category: extra.category, ts: Date.now() }); } catch { /* best effort */ }
+		}
+	};
+	const ACTIVITY_STATUS = { passed: 'done', failed: 'done', not_applicable: 'done', inconclusive: 'blocked', blocked: 'blocked', not_executed: 'cancelled', unsupported: 'blocked' };
 	const save = async (bytes, text) => {
 		if (!bytes || artifacts >= options.maxArtifacts) return undefined;
 		try {
@@ -293,7 +311,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			}
 		}
 		currentActivity = undefined;
-		try { await runStore.updateActivity(session, activityId, { status: state.phases[id].status === 'failed' ? 'error' : 'done', summary: state.phases[id].detail ?? state.phases[id].status, detail: '' }); } catch { /* best effort */ }
+		try { await runStore.updateActivity(session, activityId, { status: state.phases[id].status === 'failed' ? 'failed' : state.phases[id].status === 'skipped' ? 'blocked' : 'done', summary: state.phases[id].detail ?? state.phases[id].status, detail: '' }); } catch { /* best effort */ }
 		const added = state.candidates.slice(before);
 		if (state.phases[id].status === 'done' && narrate) {
 			const text = narrate(added, state.phases[id].detail);
@@ -710,7 +728,12 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 				blockedWrites: () => blocked.writes, save, signedIn: Boolean(state.signedIn), pages: pageList().map(pathOf), goal: scenario.goal,
 				exercised, untested: untestedAreas(),
 				focus: session.testCaseSnapshot?.title ?? session.messages?.find(message => message.role === 'user')?.text?.slice(0, 500),
-				onStep: step => { state.coverage.exploration = (state.coverage.exploration ?? 0) + 1; void progress(`AI tester: ${step.name}${step.args?.url ? ` ${pathOf(step.args.url)}` : ''} on ${pathOf(step.url)}`); } });
+				onStep: step => {
+					state.coverage.exploration = (state.coverage.exploration ?? 0) + 1;
+					void progress(`AI tester: ${step.name}${step.args?.url ? ` ${pathOf(step.args.url)}` : ''} on ${pathOf(step.url)}`);
+					const [action, outcome] = String(step.line ?? step.name).replace(/^\d+\.\s*/, '').split(' → ');
+					void activityLog.note(`AI tester · ${action.slice(0, 120)}`, (outcome ?? '').replace(/ @ .*$/, ''), { type: 'agent_step', toolName: `qa_explore_${step.name}`, scenarioId: scenario.id, status: /failed|no longer exists|Refused/.test(outcome ?? '') ? 'failed' : 'done' });
+				} });
 			addCandidates(result.candidates);
 			// Pages the journey reached that the crawl never saw join the graph (and get audited).
 			for (const url of result.summary.visited ?? []) {
@@ -753,6 +776,8 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		scenario.state = 'running';
 		scenario.startedAt = Date.now();
 		currentScenario = scenario.id;
+		const activityId = await activityLog.start(scenario.title, { scenarioId: scenario.id, category: scenario.unit, toolName: `qa_${scenario.unit}` });
+		scenario.activityId = activityId;
 		const before = state.candidates.length;
 		await syncTodos();
 		await persist({ checkpoint: true });
@@ -779,6 +804,10 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		} finally {
 			currentScenario = undefined;
 			scenario.endedAt = Date.now();
+			const crashed = scenario.state === 'inconclusive' && /executor failed/.test(scenario.reason ?? '');
+			await activityLog.end(scenario.activityId, crashed ? 'failed' : ACTIVITY_STATUS[scenario.state] ?? 'done',
+				scenario.state === 'passed' ? `Passed · ${scenario.tested ?? 0} checked` : scenario.state === 'failed' ? `${plural(scenario.candidates ?? 0, 'possible issue')} → verification` : `${scenario.state.replace(/_/g, ' ')}${scenario.reason ? ` · ${scenario.reason}` : ''}`,
+				{ outcome: scenario.state });
 			state.coverage.scenarios = plan.scenarios.filter(item => !['pending', 'running'].includes(item.state)).length;
 		}
 	}
@@ -800,6 +829,24 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		browser.startFrames();
 		session.runtimeFacts = { ...(session.runtimeFacts ?? {}), launchedEngineId: browser.engine, browserVersion: browser.version, executionLevel: session.runtimeFacts?.executionLevel ?? 'SIMULATED', capturedAt: Date.now() };
 		state.coverage.engine = `${browser.engine} ${browser.version}`;
+		// Vision self-check: prove the reasoning model reads images before relying on screenshots.
+		if (baseModels.reasonerAvailable() && baseModels.state.reasoner.visionOk === undefined && settings.reasoner.vision) {
+			const [fixedDigit, fixedColour] = String(env.QASE_QA_VISION_PROBE ?? '').split(':'); // tests only
+			const secret = { digit: fixedDigit || String(2 + Math.floor(Math.random() * 7)), colour: fixedColour || ['red', 'blue', 'green'][Math.floor(Math.random() * 3)] };
+			const probe = await browser.openPage(primary, { isolated: true }).catch(() => undefined);
+			let image;
+			if (probe) {
+				await probe.page.setContent(`<body style="margin:0;background:${secret.colour};display:grid;place-items:center;height:100vh"><div style="font:700 280px/1 sans-serif;color:white">${secret.digit}</div></body>`).catch(() => {});
+				image = await probe.page.screenshot({ type: 'jpeg', quality: 70 }).catch(() => undefined);
+				await probe.page.close().catch(() => {});
+			}
+			const started = Date.now();
+			const answer = image ? await models.chat([{ role: 'user', content: [{ type: 'text', text: 'Vision check. Reply with JSON only: {"digit":"…","background":"…"} for the large digit and the background colour in this image.' }, { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image.toString('base64')}` } }] }], { maxTokens: 60, purpose: 'vision' }) : undefined;
+			const text = String(answer?.text ?? '').toLowerCase();
+			baseModels.state.reasoner.visionOk = Boolean(answer) ? text.includes(secret.digit) && text.includes(secret.colour) : undefined;
+			state.vision = { checked: Boolean(answer), ok: baseModels.state.reasoner.visionOk ?? false, latencyMs: Date.now() - started, model: baseModels.state.reasoner.model };
+			if (answer && !baseModels.state.reasoner.visionOk) limitation('observe', `The reasoning model (${baseModels.state.reasoner.model}) failed the vision self-check (could not read a test image), so screenshots were not used for reasoning; visual review relied on DOM checks only.`, true);
+		}
 		const browserName = browser.engine === 'chromium' ? `Chrome ${String(browser.version).split('.')[0]}` : `${browser.engine} ${browser.version}`;
 		await say(`I'm opening **${host}** in ${browserName} on ${primary.label} to see what the app is before I plan anything.`, { id: `qa-hello-${state.startedAt}` });
 		if (recovered.length) await say(`Resumed after an interruption: ${recovered.map(item => `${item.id} → ${item.state === 'pending' ? 're-queued (read-only)' : 'inconclusive (not replayed)'}`).join('; ')}.`, { id: `qa-recovered-${Date.now()}` });
@@ -879,9 +926,10 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			if (!stopped() && Date.now() < deadline) {
 				const starts = model.ranked(session.targetUrl, state.signedInUrl).filter(url => !model.page(url)?.login && (state.signedIn ? model.page(url)?.auth !== 'public' || url === state.signedInUrl : true)).slice(0, 4);
 				const discovered = await discoverViews({
-					browser, open: url => openPage(url), prepare: page => dismissOverlays(page, { cursor: (target, text) => browser.pointAt(page, target, text) }).catch(() => []), starts: starts.length ? starts : [state.signedInUrl ?? session.targetUrl], inScope: browser.inScope, deadline, maxScreens: options.uiScreens,
+					browser, open: url => openPage(url), prepare: page => dismissOverlays(page, { includeToasts: true, cursor: (target, text) => browser.pointAt(page, target, text) }).catch(() => []), starts: starts.length ? starts : [state.signedInUrl ?? session.targetUrl], inScope: browser.inScope, deadline, maxScreens: options.uiScreens,
 					knownTemplates: new Set(model.pages().map(routeTemplate)), progress, stats: (state.uiWalk ??= {}), knownPopupTexts: state.overlaysDismissed ?? [],
 					onView: async view => {
+						await activityLog.note(`Found ${view.kind} · ${view.label}`, view.appeared?.length ? `shows ${view.appeared.slice(0, 6).join(', ')}` : view.heading, { type: 'discovery', toolName: 'qa_discover' });
 						if (view.kind === 'route') {
 							model.addTransition(view.from, view.url, `click "${view.label}"`);
 							await auditInto(view.url, { discoveredBy: state.signedIn ? 'signed-in' : 'crawl', depth: 1, from: view.from });
@@ -942,6 +990,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 				await runScenario(scenario, Math.min(deadline, Date.now() + slice));
 				ran++;
 				const revision = await replan(`After "${scenario.title}"${state.discoveries?.length ? ` (found ${state.discoveries.slice(-2).join(', ')})` : ''}`);
+				if (revision) await activityLog.note(`Plan revised (r${revision.revision})`, `+${plural(revision.added.length, 'scenario')}: ${revision.added.slice(0, 3).map(id => plan.scenarios.find(item => item.id === id)?.title ?? id).join('; ')}`, { type: 'plan', toolName: 'qa_replan' });
 				if (revision) await say(`I learned something new, so I updated the plan: +${plural(revision.added.length, 'scenario')} (${revision.added.slice(0, 3).map(id => plan.scenarios.find(item => item.id === id)?.title ?? id).join('; ')}).`, { id: `qa-replan-${revision.revision}-${state.startedAt}` });
 				await flushUsage();
 				await syncTodos();

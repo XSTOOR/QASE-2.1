@@ -11,7 +11,7 @@ import { qaModelSettings } from './models.js';
 import { storeSecrets, clearSecrets } from '../secrets.js';
 
 const ENV = {
-	...process.env, NODE_ENV: 'test', QASE_BROWSER_ALLOWED_PRIVATE_HOSTS: '127.0.0.1',
+	...process.env, NODE_ENV: 'test', QASE_QA_VISION_PROBE: '7:red', QASE_BROWSER_ALLOWED_PRIVATE_HOSTS: '127.0.0.1',
 	QASE_QA_MAX_MINUTES: '15', QASE_QA_MAX_PAGES: '5', QASE_QA_VIEWPORT_PAGES: '1', QASE_QA_INTERACTION_PAGES: '1', QASE_QA_EXPLORE_STEPS: '6', QASE_QA_ASK_CREDENTIALS: 'false'
 };
 
@@ -43,6 +43,13 @@ function simulatedModels() {
 			return json({ model: 'jev-1.13', answers, usage: { input_tokens: 100, output_tokens: 20 } });
 		}
 		const usage = { prompt_tokens: 200, completion_tokens: 50 };
+		const firstContent = body.messages?.[0]?.content;
+		if (Array.isArray(firstContent) && JSON.stringify(firstContent).includes('Vision check')) {
+			// Answer only if a real JPEG arrived (base64 JPEG starts with /9j/ and is not tiny).
+			const image = firstContent.find(part => part.type === 'image_url')?.image_url?.url ?? '';
+			const real = /^data:image\/jpeg;base64,\/9j\//.test(image) && image.length > 4000;
+			return json({ choices: [{ message: { content: real ? '{"digit":"7","background":"red"}' : '{"digit":"?","background":"?"}' } }], usage: { prompt_tokens: 900, completion_tokens: 10 } });
+		}
 		if (body.tools?.length) {
 			seen.exploration++;
 			const call = seen.exploration === 1

@@ -15,7 +15,7 @@ const { WORKSPACE_ACCOUNTS } = await import('./fixtureWorkspace.js');
 const { qaModelSettings } = await import('./models.js');
 
 const ENV = {
-	...process.env, NODE_ENV: 'test', QASE_BROWSER_ALLOWED_PRIVATE_HOSTS: '127.0.0.1',
+	...process.env, NODE_ENV: 'test', QASE_QA_VISION_PROBE: '7:red', QASE_BROWSER_ALLOWED_PRIVATE_HOSTS: '127.0.0.1',
 	QASE_QA_MAX_MINUTES: '15', QASE_QA_MAX_PAGES: '10', QASE_QA_VIEWPORT_PAGES: '2', QASE_QA_INTERACTION_PAGES: '1', QASE_QA_EXPLORE_STEPS: '5', QASE_QA_JOURNEYS: '2', QASE_QA_ASK_CREDENTIALS: 'false'
 };
 const json = body => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -43,6 +43,13 @@ function scriptedModels(seen) {
 	return async (url, init) => {
 		const body = JSON.parse(init.body);
 		const usage = { prompt_tokens: 300, completion_tokens: 60 };
+		const firstContent = body.messages?.[0]?.content;
+		if (Array.isArray(firstContent) && JSON.stringify(firstContent).includes('Vision check')) {
+			// Answer only if a real JPEG arrived (base64 JPEG starts with /9j/ and is not tiny).
+			const image = firstContent.find(part => part.type === 'image_url')?.image_url?.url ?? '';
+			const real = /^data:image\/jpeg;base64,\/9j\//.test(image) && image.length > 4000;
+			return json({ choices: [{ message: { content: real ? '{"digit":"7","background":"red"}' : '{"digit":"?","background":"?"}' } }], usage: { prompt_tokens: 900, completion_tokens: 10 } });
+		}
 		if (String(url).includes('/decisions')) {
 			seen.jev++;
 			const answers = {};
@@ -119,13 +126,17 @@ test('adaptive run: observes, signs in (two steps), maps, plans, replans, re-aut
 		for (const expected of ['planning:reasoner', 'exploration:reasoner', 'verification:jev']) assert.ok(tasks.has(expected), `routing ${expected}`);
 		assert.ok(qa.routing.summary.escalations >= 1, 'uncertain JEV verdicts were escalated');
 		assert.ok(qa.tokens.total > 0 && qa.tokens.byTask.verification.jevTokens > 0 && qa.tokens.byTask.planning.reasonerTokens > 0);
+		// Vision was proven with a real image before screenshots were relied on, and images reached the model.
+		assert.equal(state.vision?.ok, true, JSON.stringify(state.vision));
+		assert.ok(qa.routing.decisions.some(item => item.modality === 'image+text'), 'image calls are logged with their modality');
 
 		// Coverage, gate and report.
 		assert.equal(qa.capabilityMatrix.length, 140);
 		assert.ok(!qa.capabilityMatrix.some(row => row.state === 'passed' && row.support === 'unsupported'));
 		assert.equal(qa.capabilityMatrix.find(row => row.id === 'authorization').state, 'failed');
 		assert.equal(qa.capabilityMatrix.find(row => row.id === 'pagination').state, 'failed');
-		assert.equal(qa.capabilityMatrix.find(row => row.id === 'payments').state, 'unsupported');
+		assert.equal(qa.capabilityMatrix.find(row => row.id === 'payments').state, 'not_applicable', 'no checkout was observed');
+		assert.equal(qa.capabilityMatrix.find(row => row.id === 'create_records').state, 'unsupported', 'forms exist but writes are not authorized');
 		assert.equal(qa.sections.length, 25);
 		assert.ok(['complete', 'partial'].includes(qa.completion.status));
 		if (qa.completion.status !== 'complete') assert.notEqual(session.report.verdict, 'pass');
@@ -199,6 +210,8 @@ test('a button-navigated app behind a welcome tour is walked screen by screen, t
 		const views = graph.views.map(view => view.label);
 		assert.ok(views.includes('Archived'), `tab found (views: ${views.join(', ')})`);
 		assert.ok(views.includes('Preferences'), 'dialog found');
+		assert.ok(views.includes('Inbox'), 'a side panel opened from the rail');
+		assert.ok(views.includes('Inbox › Board') && views.includes('Inbox › Threads'), `controls inside the panel were explored (views: ${views.join(', ')})`);
 		assert.ok(!graph.views.some(view => /Welcome to Rail/.test(view.heading)), 'a returning tour is not mistaken for a feature');
 		assert.ok(session.hybrid.overlaysDismissed?.some(item => /Welcome to Rail/.test(item) && /Skip/.test(item)), 'the tour was closed with Skip');
 		assert.ok(session.hybrid.graph.transitions.some(item => /click "Projects"/.test(item.via)));
@@ -245,5 +258,90 @@ test('explorer: sees what each action changed, recovers from stale refs, and get
 		assert.ok(!toolResults.some(text => /\(covered\)/.test(text.split('Visible text:')[0] ?? '')), 'the tour never covers the elements the agent acts on');
 		assert.ok(result.summary.finished);
 		assert.ok(result.summary.trail.length >= 5 && result.summary.trail.some(line => /RESULT: URL changed/.test(line)), result.summary.trail.join('\n'));
+	} finally { await browser.close(); await lab.close(); }
+});
+
+test('vision self-check: a model that cannot read images gets no screenshots, and the report says so', { timeout: 240_000 }, async () => {
+	const lab = await startQaLab();
+	let imagesAfterCheck = 0;
+	let checked = false;
+	const blind = async (url, init) => {
+		const body = JSON.parse(init.body);
+		const usage = { prompt_tokens: 100, completion_tokens: 10 };
+		if (String(url).includes('/decisions')) return json({ model: 'jev-1.13', answers: Object.fromEntries(Object.entries(body.questions).map(([id, q]) => [id, q.type === 'noul' ? { type: 'noul', noul: 0.9 } : { type: 'score', score: 2 }])), usage: { input_tokens: 10, output_tokens: 2 } });
+		const hasImage = JSON.stringify(body.messages).includes('image_url');
+		if (JSON.stringify(body.messages[0]?.content ?? '').includes('Vision check')) { checked = true; return json({ choices: [{ message: { content: '{"digit":"4","background":"purple"}' } }], usage }); }
+		if (hasImage && checked) imagesAfterCheck++;
+		if (body.tools?.length) return json({ choices: [{ message: { content: null, tool_calls: [{ id: 'c', type: 'function', function: { name: 'finish', arguments: '{"summary":"done"}' } }] } }], usage });
+		return json({ choices: [{ message: { content: '{}' } }], usage });
+	};
+	try {
+		const { session, runStore, artifactStore } = harness(`${lab.url}workspace/rail/`);
+		await runQaEngine({ session, runStore, record: {}, env: { ...ENV, QASE_QA_MAX_MINUTES: '3', QASE_QA_MAX_PAGES: '3' }, settings: qaModelSettings({ QASE_API_KEY: 'test-key' }, {}), modelFetch: blind, artifactStore });
+		assert.equal(session.hybrid.vision.ok, false);
+		assert.equal(imagesAfterCheck, 0, 'no screenshot was sent to a model that failed the check');
+		assert.ok(session.report.notCovered.some(line => /vision self-check/i.test(line)));
+	} finally { await lab.close(); }
+});
+
+test('generalization: different apps get different plans, and nothing unobserved is planned', { timeout: 300_000 }, async () => {
+	const lab = await startQaLab();
+	const planFor = async path => {
+		const { session, runStore, artifactStore } = harness(`${lab.url}${path}`);
+		const controller = new AbortController();
+		const timer = setInterval(() => { if (session.hybrid?.phases?.plan?.status === 'done') controller.abort(); }, 100);
+		await runQaEngine({ session, runStore, record: {}, signal: controller.signal, env: { ...ENV, QASE_QA_MAX_MINUTES: '4', QASE_QA_MAX_PAGES: '6' }, settings: qaModelSettings({}, {}), artifactStore });
+		clearInterval(timer);
+		const units = new Set(session.hybrid.plan.scenarios.map(item => item.unit));
+		const matrix = Object.fromEntries(session.report.qaEngine.capabilityMatrix.map(row => [row.id, row.state]));
+		return { units, matrix, scenarios: session.hybrid.plan.scenarios, graph: session.hybrid.graph };
+	};
+	try {
+		const statics = await planFor('workspace/static');
+		const shop = await planFor('workspace/shop');
+		const rail = await planFor('workspace/rail/');
+		// Negative control: a static page has no search, forms, media, sign-in or roles, so none are planned.
+		for (const unit of ['search', 'forms', 'media', 'authz', 'roles', 'websocket', 'pwa', 'explore']) assert.ok(!statics.units.has(unit), `static page: no ${unit} scenario`);
+		for (const id of ['search', 'form_validation', 'media_captions', 'payments', 'login']) assert.equal(statics.matrix[id], 'not_applicable', `static page: ${id} not applicable`);
+		// The shop's filter/sort/checkout were observed, so they are planned (payments stay unsupported, never run).
+		assert.ok(shop.units.has('search') && shop.units.has('forms'), [...shop.units].join(','));
+		assert.equal(shop.matrix.payments, 'unsupported');
+		assert.ok(Object.keys(shop.graph.pages).some(url => url.endsWith('/workspace/shop/checkout')));
+		// The rail app is mapped by clicking; its plan targets the screens found that way.
+		assert.ok(rail.graph.views.length >= 3 && rail.scenarios.some(item => item.targets.some(url => url.includes('/workspace/rail/projects'))));
+		// Materially different plans.
+		const signature = plan => [...plan.units].sort().join(',');
+		assert.notEqual(signature(statics), signature(shop));
+		assert.ok(statics.scenarios.length < shop.scenarios.length);
+		// Every scenario states its contract.
+		for (const item of shop.scenarios) for (const field of ['feature', 'objective', 'expected', 'evidenceRequired', 'completion']) assert.ok(item[field], `${item.id} has ${field}`);
+	} finally { await lab.close(); }
+});
+
+test('explorer: a toast covering a control is cleared, and newly revealed controls are listed first even on busy pages', { timeout: 120_000 }, async () => {
+	const lab = await startQaLab();
+	const { createQaBrowser } = await import('./browser.js');
+	const { explore } = await import('./explorer.js');
+	const browser = await createQaBrowser({ session: { id: 'x', targetUrl: `${lab.url}workspace/busy`, engine: 'chromium', device: 'desktop' }, env: ENV });
+	const results = [];
+	let step = 0;
+	const models = {
+		reasonerAvailable: () => true, visionAvailable: () => false, jevAvailable: () => false, state: { reasoner: {}, jev: {} },
+		async chat(messages) {
+			const last = messages.at(-1);
+			if (last.role === 'tool') results.push(last.content);
+			const observation = last.role === 'tool' ? last.content : messages[1].content;
+			step++;
+			const call = (name, args) => ({ text: '', toolCalls: [{ id: `c${step}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
+			if (step === 1) return call('click', { ref: /(e\d+) button "Workspace"/.exec(observation)?.[1] ?? 'e0' });
+			return call('finish', { summary: 'done' });
+		}
+	};
+	try {
+		await explore({ browser, profile: { name: 'desktop', label: 'Desktop', viewport: { width: 1280, height: 800 } }, startUrl: `${lab.url}workspace/busy`, models, maxSteps: 4, deadline: Date.now() + 60_000, blockedWrites: () => 0, save: async () => undefined });
+		assert.match(results[0], /RESULT: URL unchanged\. Appeared: .*Alpha tab/, results[0].slice(0, 400));
+		const listed = results[0].split('Interactive elements:')[1].split('Visible text:')[0];
+		assert.match(listed.split('\n').slice(0, 6).join('\n'), /NEW e\d+ button\(tab\) "Alpha tab"/, 'revealed tabs are listed first');
+		assert.match(listed, /more controls further down/);
 	} finally { await browser.close(); await lab.close(); }
 });

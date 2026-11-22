@@ -62,11 +62,16 @@ export function createRouter({ models, log: saved }) {
 		async chat(messages, options = {}) {
 			const task = PURPOSE_TASK[options.purpose] ?? 'investigation';
 			const before = snapshot();
+			const started = Date.now();
 			const result = await models.chat(messages, options);
+			const latencyMs = Date.now() - started;
+			const modality = messages.some(message => Array.isArray(message.content) && message.content.some(part => part?.type === 'image_url')) ? 'image+text' : 'text';
 			const cost = account(task, before);
+			tokens[task].latencyMs = (tokens[task].latencyMs ?? 0) + latencyMs;
+			if (modality !== 'text') tokens[task].imageCalls = (tokens[task].imageCalls ?? 0) + 1;
 			// Exploration steps are many; log the first, then every tenth, plus failures.
 			const steps = tokens[task].reasonerCalls;
-			if (task !== 'exploration' || steps <= 1 || steps % 10 === 0 || !result) record({ task, model: result ? 'reasoner' : 'none', reason: ROUTES[task]?.why, outcome: result ? 'answered' : `failed: ${models.state.reasoner.lastError ?? 'unavailable'}`, tokens: cost.tokens, call: steps });
+			if (task !== 'exploration' || steps <= 1 || steps % 10 === 0 || !result) record({ task, model: result ? 'reasoner' : 'none', modelId: models.state.reasoner.model, modality, latencyMs, tools: Boolean(options.tools?.length), reason: ROUTES[task]?.why, outcome: result ? 'answered' : `failed: ${models.state.reasoner.lastError ?? 'unavailable'}`, tokens: cost.tokens, call: steps });
 			return result;
 		},
 		async json(messages, options = {}) {

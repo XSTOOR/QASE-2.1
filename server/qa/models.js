@@ -158,7 +158,8 @@ export function createQaModels({ settings = qaModelSettings(), state = {}, fetch
 		jevModel: settings.jev.model,
 		reasonerAvailable,
 		jevAvailable,
-		visionAvailable: () => reasonerAvailable() && settings.reasoner.vision,
+		// Vision is used only after the run's self-check proved the model reads images (visionOk).
+		visionAvailable: () => reasonerAvailable() && settings.reasoner.vision && state.reasoner.visionOk !== false,
 
 		/** One chat completion: { message, text, toolCalls } or undefined. */
 		async chat(messages, { tools, maxTokens = 4096, temperature = 0.2, signal, purpose = 'chat' } = {}) {

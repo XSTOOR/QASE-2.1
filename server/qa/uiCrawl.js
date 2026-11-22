@@ -67,6 +67,22 @@ function tagNavControls(max) {
 	return out;
 }
 
+/** Tags visible clickable controls whose label is in `labels` (a panel's new controls). Runs in the page. */
+function tagPanelControls(labels) {
+	const wanted = new Set(labels);
+	const visible = el => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 4 && r.height > 4 && r.bottom > 0 && r.top < innerHeight && s.visibility !== 'hidden' && s.display !== 'none'; };
+	for (const el of document.querySelectorAll('[data-qase-sub]')) el.removeAttribute('data-qase-sub');
+	const out = [];
+	for (const el of document.querySelectorAll('a, button, [role=button], [role=tab], [role=menuitem], [role=option], [tabindex="0"]')) {
+		if (!visible(el) || el.closest('form') || el.closest('[data-qase-ignore]')) continue;
+		const text = String(el.getAttribute('aria-label') || el.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+		if (!wanted.has(text) || out.some(item => item.label === text)) continue;
+		el.setAttribute('data-qase-sub', String(out.length));
+		out.push({ index: out.length, label: text });
+	}
+	return out;
+}
+
 /** What the screen shows: url, headings, open dialog, and the visible landmark texts. Runs in the page. */
 export function screenSignature() {
 	const shown = el => { const r = el.getBoundingClientRect(); const st = getComputedStyle(el); return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none' && Number(st.opacity) > 0.05; };
@@ -98,12 +114,16 @@ export function appeared(before, after) {
  * open(url) → { page, log } handles sign-in and pop-ups; prepare(page) clears
  * pop-ups; onView(view) receives { kind, url, from, label, heading, appeared }.
  */
-export async function discoverViews({ browser, open, prepare = async () => [], starts, inScope, deadline, maxScreens = 12, maxControls = 24, knownTemplates = new Set(), knownPopupTexts = [], onView = () => {}, progress = () => {}, stats = {} }) {
+export async function discoverViews({ browser, open, prepare = async () => [], starts, inScope, deadline, maxScreens = 12, maxControls = 24, maxSubControls = 8, knownTemplates = new Set(), knownPopupTexts = [], onView = () => {}, progress = () => {}, stats = {} }) {
 	const queue = starts.map(url => ({ url, depth: 0 }));
 	const templates = new Set(knownTemplates);
 	for (const item of starts) templates.add(routeTemplate(item));
 	const visitedBases = new Set();
 	const recorded = new Set(); // template|label: one view per control per screen
+	// The same control opening the same content (e.g. a sidebar present on every screen) is one feature.
+	const seenContent = new Set();
+	const subLabels = new Set(); // controls already explored inside a panel
+	const novel = (label, items) => { const key = `${label}|${items.slice(0, 5).join('|')}`; if (seenContent.has(key)) return false; seenContent.add(key); return true; };
 	const views = [];
 	stats.clicks = stats.clicks ?? 0; stats.reloads = stats.reloads ?? 0; stats.backs = stats.backs ?? 0;
 	const knownPopups = new Set(knownPopupTexts.map(text => String(text).split(' → ')[0].slice(0, 50)));
@@ -141,7 +161,7 @@ export async function discoverViews({ browser, open, prepare = async () => [], s
 			for (let round = 0; round < maxControls && Date.now() < deadline; round++) {
 				let controls = await page.evaluate(tagNavControls, maxControls).catch(() => []);
 				if (!round) for (const item of controls) initial.add(`${item.label}|${item.region}`);
-				let control = controls.find(item => !done.has(`${item.label}|${item.region}`) && !DESTRUCTIVE.test(item.label));
+				let control = controls.find(item => !done.has(`${item.label}|${item.region}`) && !subLabels.has(item.label) && !DESTRUCTIVE.test(item.label));
 				// Controls from the original screen were hidden by an earlier click (e.g. another tab is
 				// selected): restore the screen once, then continue with what is left.
 				const missing = [...initial].filter(key => !done.has(key) && !controls.some(item => `${item.label}|${item.region}` === key) && !DESTRUCTIVE.test(key));
@@ -150,7 +170,7 @@ export async function discoverViews({ browser, open, prepare = async () => [], s
 					await browser.goto(page, baseUrl, log, { quietMs: 700 }).catch(() => {});
 					await clear(page);
 					controls = await page.evaluate(tagNavControls, maxControls).catch(() => []);
-					control = controls.find(item => !done.has(`${item.label}|${item.region}`) && !DESTRUCTIVE.test(item.label));
+					control = controls.find(item => !done.has(`${item.label}|${item.region}`) && !subLabels.has(item.label) && !DESTRUCTIVE.test(item.label));
 				}
 				if (!control) break;
 				done.add(`${control.label}|${control.region}`);
@@ -184,16 +204,74 @@ export async function discoverViews({ browser, open, prepare = async () => [], s
 				const key = `${baseTemplate}|${control.label}`;
 				// A panel/dialog/menu counts only when something new is on screen.
 				const meaningful = fresh.length >= 2 || Boolean(after.dialog && after.dialog !== before.dialog) || after.marks.some(mark => /^(h\d|\[role=heading\]):/.test(mark) && !before.marks.includes(mark));
-				if (!urlChanged && meaningful && !recorded.has(key)) {
+				if (!urlChanged && meaningful && !recorded.has(key) && novel(control.label, fresh)) {
 					recorded.add(key);
 					const view = { kind: after.dialog ? 'dialog' : 'panel', url: baseUrl, from: baseUrl, label: control.label, heading: after.dialog || fresh.slice(0, 3).join(' · ').slice(0, 120), appeared: fresh.slice(0, 10) };
 					views.push(view);
 					await onView(view);
 				}
-				// Close what the click opened, without reloading: Escape, then a second click on a toggle.
-				if (after.dialog) await page.keyboard.press('Escape').catch(() => {});
-				if (await target.getAttribute('aria-expanded', { timeout: 500 }).catch(() => null) === 'true') await target.click({ timeout: 1500 }).catch(() => {});
-				if (!sameScreen(page.url(), baseUrl)) await restore();
+				// One level deeper: the panel's own controls (tabs, sub-sections, menu items).
+				if (!urlChanged && meaningful && depth < 2 && recorded.has(key)) {
+					const parent = control.label;
+					const subs = (await page.evaluate(tagPanelControls, fresh.slice(0, 30)).catch(() => [])).filter(item => !DESTRUCTIVE.test(item.label)).slice(0, maxSubControls);
+					for (const sub of subs) {
+						if (Date.now() >= deadline) break;
+						const subKey = `${baseTemplate}|${parent} › ${sub.label}`;
+						subLabels.add(sub.label);
+						done.add(`${sub.label}|rail`); done.add(`${sub.label}|nav`); done.add(`${sub.label}|top`); done.add(`${sub.label}|opener`); done.add(`${sub.label}|tabs`);
+						if (recorded.has(subKey)) continue;
+						// Re-tag (the panel may have re-rendered); re-open the parent if it closed.
+						let tagged = await page.evaluate(tagPanelControls, [sub.label]).catch(() => []);
+						if (!tagged.length) {
+							const again = (await page.evaluate(tagNavControls, maxControls).catch(() => [])).find(item => item.label === parent);
+							if (again) { await page.locator(`[data-qase-nav="${again.index}"]`).first().click({ timeout: 3000 }).catch(() => {}); await browser.settle(page, { quietMs: 600 }).catch(() => {}); }
+							tagged = await page.evaluate(tagPanelControls, [sub.label]).catch(() => []);
+						}
+						if (!tagged.length) continue;
+						await progress(`Exploring "${parent} › ${sub.label}"`);
+						const subBefore = await page.evaluate(screenSignature).catch(() => undefined);
+						const subTarget = page.locator('[data-qase-sub="0"]').first();
+						await browser.pointAt?.(page, subTarget, `${parent} › ${sub.label}`);
+						stats.clicks++;
+						if (!await browser.interact(() => subTarget.click({ timeout: 4000 })).then(() => true).catch(() => false)) continue;
+						await browser.settle(page, { quietMs: 900 }).catch(() => {});
+						const subAfter = await page.evaluate(screenSignature).catch(() => undefined);
+						if (!subBefore || !subAfter) continue;
+						recorded.add(subKey);
+						if (!sameScreen(subAfter.url, subBefore.url) && inScope(subAfter.url)) {
+							const template = routeTemplate(subAfter.url);
+							if (!templates.has(template)) {
+								templates.add(template);
+								const view = { kind: 'route', url: subAfter.url, from: baseUrl, label: `${parent} › ${sub.label}`, heading: subAfter.heading, appeared: appeared(subBefore, subAfter).slice(0, 8) };
+								views.push(view); await onView(view);
+								if (depth < 1) queue.push({ url: subAfter.url, depth: depth + 1 });
+							}
+							await restore();
+							continue;
+						}
+						const subFresh = appeared(subBefore, subAfter);
+						if ((subFresh.length || (subAfter.dialog && subAfter.dialog !== subBefore.dialog)) && novel(`${parent} › ${sub.label}`, subFresh)) {
+							const view = { kind: subAfter.dialog && subAfter.dialog !== subBefore.dialog ? 'dialog' : 'panel', url: baseUrl, from: baseUrl, label: `${parent} › ${sub.label}`, heading: subAfter.dialog || subFresh.slice(0, 3).join(' · ').slice(0, 120), appeared: subFresh.slice(0, 10) };
+							views.push(view); await onView(view);
+							if (subAfter.dialog && subAfter.dialog !== subBefore.dialog) await page.keyboard.press('Escape').catch(() => {});
+						}
+					}
+				}
+				// Close what the click opened, without reloading, so it cannot cover the next controls:
+				// Escape, then the same control again (toggles), checked against what had appeared.
+				if (!sameScreen(page.url(), baseUrl)) { await restore(); continue; }
+				const stillOpen = async () => {
+					const now = await page.evaluate(screenSignature).catch(() => undefined);
+					return Boolean(now && fresh.slice(0, 4).some(text => now.marks.some(mark => mark.endsWith(`:${text}`))));
+				};
+				if (meaningful && await stillOpen()) {
+					await page.keyboard.press('Escape').catch(() => {});
+					await page.waitForTimeout(250);
+					if (await stillOpen()) {
+						const again = (await page.evaluate(tagNavControls, maxControls).catch(() => [])).find(item => item.label === control.label);
+						if (again) { await page.locator(`[data-qase-nav="${again.index}"]`).first().click({ timeout: 1500 }).catch(() => {}); await page.waitForTimeout(300); }
+					}
+				}
 			}
 		} finally { await page.close().catch(() => {}); }
 	}

@@ -93,9 +93,15 @@ const RAIL_TOUR = `<div role="dialog" aria-modal="true" aria-label="Welcome to R
 <button id="tour-go" type="button">Take a quick tour</button> <button id="tour-skip" type="button">Skip</button></div></div>
 <script>document.getElementById('tour-skip').onclick = () => document.getElementById('tour').remove();</script>`;
 function railPage(title, body) {
-	const rail = ['Projects', 'Meeting', 'Chat', 'About'].map(name => `<button type="button" aria-label="${name}" data-go="/workspace/rail/${name.toLowerCase()}" style="display:block;width:56px;height:56px;border:0;background:none;font-size:10px">◻<br>${name}</button>`).join('');
+	const rail = ['Projects', 'Meeting', 'Chat', 'About'].map(name => `<button type="button" aria-label="${name}" data-go="/workspace/rail/${name.toLowerCase()}" style="display:block;width:56px;height:56px;border:0;background:none;font-size:10px">◻<br>${name}</button>`).join('')
+		+ `<button type="button" aria-label="Inbox" id="inbox-btn" style="display:block;width:56px;height:56px;border:0;background:none;font-size:10px">◻<br>Inbox</button>`;
+	const inbox = `<div id="inbox" hidden style="position:fixed;left:60px;top:0;bottom:0;width:260px;background:#fff;border-right:1px solid #ddd;padding:12px;z-index:5"><h3>Inbox</h3>
+<button type="button" id="ib-threads">Threads</button> <button type="button" id="ib-board">Board</button><div id="ib-body"><p>3 unread threads</p></div></div>
+<script>document.getElementById('inbox-btn').onclick = () => { inbox.hidden = !inbox.hidden; };
+document.getElementById('ib-threads').onclick = () => { document.getElementById('ib-body').innerHTML = '<h4>Threads</h4><p>Release planning</p>'; };
+document.getElementById('ib-board').onclick = () => { document.getElementById('ib-body').innerHTML = '<h4>Board</h4><p>To do · Doing · Done</p>'; };</script>`;
 	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} — Rail</title><style>body{margin:0;font-family:system-ui}#rail{position:fixed;left:0;top:0;bottom:0;width:60px;background:#f4f4f5}main{margin-left:72px;padding:20px}</style></head>
-<body><div id="rail">${rail}</div><main>${body}</main>${RAIL_TOUR}
+<body><div id="rail">${rail}</div>${inbox}<main>${body}</main>${RAIL_TOUR}
 <script>for (const b of document.querySelectorAll('[data-go]')) b.onclick = () => { location.href = b.dataset.go; };</script></body></html>`;
 }
 
@@ -133,6 +139,32 @@ export async function workspaceHandler(request, response, path, url) {
 			html(railPage('About', `<h1>About Rail</h1><p>Version 3.2</p><button type="button" id="prefs">Preferences</button>
 <div role="dialog" aria-label="Preferences" id="dlg" hidden style="position:fixed;top:80px;left:120px;background:#fff;border:1px solid #ccc;padding:16px;z-index:40"><h2>Preferences</h2><label><input type="checkbox"> Compact mode</label> <button type="button" id="close">Close</button></div>
 <script>prefs.onclick = () => { dlg.hidden = false; }; close.onclick = () => { dlg.hidden = true; };</script>`));
+			return true;
+		case '/workspace/busy':
+			html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Busy</title></head><body><main><h1>Directory</h1>
+<button type="button" id="ws" style="position:fixed;right:24px;bottom:24px">Workspace</button>
+<ul>${Array.from({ length: 200 }, (_, i) => `<li><a href="#item-${i}">Item ${i}</a></li>`).join('')}</ul></main>
+<div id="toast" style="position:fixed;right:10px;bottom:10px;width:240px;padding:14px;background:#222;color:#fff;z-index:30">Notifications are blocked. <button type="button" id="dismiss">Dismiss</button></div>
+<script>dismiss.onclick = () => toast.remove(); ws.onclick = () => { const d = document.createElement('div'); d.innerHTML = '<div role="tablist"><button role="tab">Alpha tab</button><button role="tab">Beta tab</button></div>'; document.body.append(d); };</script></body></html>`);
+			return true;
+		case '/workspace/static':
+			html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Our story</title><meta name="description" content="About a small bakery."></head><body><main><h1>Our story</h1><p>We have baked bread in the same oven since 1962.</p><p>Visit us any morning.</p></main></body></html>`);
+			return true;
+		case '/workspace/shop': {
+			const category = url.searchParams.get('category') ?? '';
+			const sort = url.searchParams.get('sort') ?? '';
+			const items = [['Linen shirt', 'clothing', 49], ['Clay mug', 'home', 18], ['Wool scarf', 'clothing', 35], ['Oak tray', 'home', 42]].filter(item => !category || item[1] === category).sort((a, b) => sort === 'price' ? a[2] - b[2] : 0);
+			html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Shop</title></head><body><header><nav><a href="/workspace/shop">Shop</a> <a href="/workspace/shop/cart">Cart (<span id="count">0</span>)</a></nav></header>
+<main><h1>Shop</h1><form method="get"><label>Category <select name="category"><option value="">All</option><option value="clothing">Clothing</option><option value="home">Home</option></select></label> <button>Filter</button></form>
+<p><a href="?sort=price">Sort by price</a></p><ul>${items.map(item => `<li><h2>${item[0]}</h2><p>$${item[2]}</p><button type="button" class="add">Add to cart</button></li>`).join('')}</ul></main>
+<script>for (const b of document.querySelectorAll('.add')) b.onclick = () => { count.textContent = String(Number(count.textContent) + 1); };</script></body></html>`);
+			return true;
+		}
+		case '/workspace/shop/cart':
+			html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Cart</title></head><body><main><h1>Your cart</h1><p>Your cart is empty.</p><a href="/workspace/shop/checkout">Proceed to checkout</a></main></body></html>`);
+			return true;
+		case '/workspace/shop/checkout':
+			html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Checkout</title></head><body><main><h1>Checkout</h1><form method="post" action="/workspace/shop/pay"><label>Card number <input name="card" autocomplete="cc-number"></label><button>Place order</button></form></main></body></html>`);
 			return true;
 		case '/workspace/spa/login':
 			html(shell('Sign in', `<h1>Welcome back</h1><form id="f"><label>Email <input type="email" name="email" autocomplete="username" required></label><label>Password <input type="password" name="password" required></label><button class="btn" type="submit">Sign in</button></form><p role="alert" id="err"></p>

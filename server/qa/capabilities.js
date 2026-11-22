@@ -249,9 +249,10 @@ export function capabilityCoverage({ graph, units, findings = [], dismissed = []
 	return CAPABILITIES.map(capability => {
 		const row = { number: capability.number, id: capability.id, name: capability.name, group: capability.group, support: capability.support, safety: capability.safety };
 		const fail = findings.filter(item => matches(item.detector, capability.detectors) && unitMatchesViewport(capability, item, viewportsTested));
-		if (capability.support === 'unsupported') return { ...row, state: 'unsupported', reason: capability.prerequisite };
+		// Applicability first: "unsupported" means the app has it and QASE cannot run it here.
 		const applies = applicability(capability, graph);
 		if (!applies.applicable) return { ...row, state: 'not_applicable', reason: applies.reason };
+		if (capability.support === 'unsupported') return { ...row, state: 'unsupported', reason: capability.prerequisite };
 		if (capability.access === 'signed_in' && !signedIn) return { ...row, state: 'blocked', reason: graph?.auth?.blockedReason ?? 'Needs a signed-in session; no verified session was available.' };
 		const outcomes = capability.units.map(kind => units.get(kind)).filter(Boolean);
 		const executed = outcomes.some(item => item.executed > 0);
