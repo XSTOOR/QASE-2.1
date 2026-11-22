@@ -691,13 +691,22 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			return { tested: result.checked, evidence: [`${result.checked} distinct links requested.`] };
 		},
 		async explore(scenario, deadline) {
+			// Keep enough reasoning calls for visual review, verification and the report.
+			const reserve = 25;
+			const left = settings.reasoner.maxCalls - baseModels.state.reasoner.calls;
+			if (baseModels.state.reasoner.enabled && left <= reserve) {
+				limitation('execute', `AI journey "${scenario.goal}" was not run: the reasoning-model call budget is nearly used (${baseModels.state.reasoner.calls}/${settings.reasoner.maxCalls}; raise QASE_QA_REASONER_CALLS for deeper runs).`, true);
+				return { tested: 0, inconclusive: `Reasoning-model call budget reached (${baseModels.state.reasoner.calls}/${settings.reasoner.maxCalls}).` };
+			}
 			const choice = router.decide('exploration');
 			if (choice.model !== 'reasoner') {
 				limitation('execute', baseModels.state.reasoner.enabled ? `AI journey "${scenario.goal}" was not run (reasoning model error: ${baseModels.state.reasoner.lastError ?? 'unknown'}).` : 'AI journeys were skipped: no reasoning model is configured.');
 				return { tested: 0, inconclusive: 'The reasoning model was unavailable for this journey.' };
 			}
 			const startUrl = scenario.start ? new URL(scenario.start, state.signedInUrl ?? session.targetUrl).href : state.signedInUrl ?? session.targetUrl;
-			const result = await explore({ browser, profile: primary, startUrl: browser.inScope(startUrl) ? startUrl : session.targetUrl, models, knownIssues: state.candidates.map(item => item.title).slice(0, 40), maxSteps: options.exploreSteps, deadline, signal,
+			const pendingJourneys = plan.scenarios.filter(item => item.unit === 'explore' && item.state === 'pending').length + 1;
+			const stepBudget = Math.max(8, Math.min(options.exploreSteps, Math.floor((left - reserve) / pendingJourneys)));
+			const result = await explore({ browser, profile: primary, startUrl: browser.inScope(startUrl) ? startUrl : session.targetUrl, models, knownIssues: state.candidates.map(item => item.title).slice(0, 40), maxSteps: stepBudget, deadline, signal,
 				blockedWrites: () => blocked.writes, save, signedIn: Boolean(state.signedIn), pages: pageList().map(pathOf), goal: scenario.goal,
 				exercised, untested: untestedAreas(),
 				focus: session.testCaseSnapshot?.title ?? session.messages?.find(message => message.role === 'user')?.text?.slice(0, 500),
@@ -715,7 +724,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			state.coverage.explorationSummary = exploreSummaries.filter(Boolean).join(' ').slice(0, 1500);
 			const evidence = [`${result.summary.steps} step(s); ${result.summary.finished ? 'the model finished the journey' : 'stopped by its step/time limit'}${result.summary.loopWarnings ? `; ${result.summary.loopWarnings} loop warning(s)${result.summary.loopStopped ? ', ended for looping' : ''}` : ''}.`];
 			if (result.summary.summary) evidence.push(`Model summary (not used as completion evidence): ${result.summary.summary.slice(0, 300)}`);
-			if (!result.summary.steps) return { tested: 0, evidence, inconclusive: `The reasoning model did not respond (${baseModels.state.reasoner.lastError ?? 'no response'}).` };
+			if (!result.summary.steps) return { tested: 0, evidence, inconclusive: baseModels.reasonerAvailable() ? 'The journey ran out of time before its first step.' : `The reasoning model was unavailable (${baseModels.state.reasoner.lastError ?? `call budget ${baseModels.state.reasoner.calls}/${settings.reasoner.maxCalls} reached`}).` };
 			return { tested: result.summary.steps, evidence };
 		},
 		async visual(scenario, deadline) {

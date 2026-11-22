@@ -37,8 +37,8 @@ export function qaModelSettings(env = process.env, config = safeConfig()) {
 			baseUrl: String(env.QASE_REASONER_BASE_URL || DEFAULT_REASONER_BASE_URL).replace(/\/+$/, ''),
 			apiKey: reasonerKey,
 			timeoutMs: positive(env.QASE_REASONER_TIMEOUT_MS, 120000, 300000),
-			maxCalls: positive(env.QASE_QA_REASONER_CALLS, 80, 400),
-			maxTokens: positive(env.QASE_QA_REASONER_TOKENS, 600000, 4000000),
+			maxCalls: positive(env.QASE_QA_REASONER_CALLS, 300, 1000),
+			maxTokens: positive(env.QASE_QA_REASONER_TOKENS, 3000000, 12000000),
 			vision: env.QASE_REASONER_VISION !== 'false'
 		},
 		jev: {

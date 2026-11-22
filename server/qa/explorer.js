@@ -80,6 +80,8 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 	const out = [];
 	const summary = { steps: 0, finished: false, summary: '', visited: new Set(), loopWarnings: 0, loopStopped: false, trail: [] };
 	let consecutiveLooks = 0;
+	let actionsSinceLook = 99;
+	let urlAtLook = '';
 	// Loop detection: the same action on the same element and page, repeated, means the
 	// model is stuck. It is told so (with what it repeated); a third warning ends the journey.
 	const signatures = new Map();
@@ -127,6 +129,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 				}
 				if (result?.image) { screenshot = result.image; result = 'Screenshot attached below.'; }
 				consecutiveLooks = name === 'look' ? consecutiveLooks + 1 : 0;
+				if (name !== 'look') actionsSinceLook++;
 				// Reviewable trail: what the agent did and the first line of what it saw.
 				summary.trail.push(`${summary.steps}. ${name}${args.ref ? ` ${args.ref}` : ''}${args.url ? ` ${args.url}` : ''}${args.text ? ` "${String(args.text).slice(0, 40)}"` : ''}${args.key ? ` ${args.key}` : ''}${name === 'report_issue' ? ` "${String(args.title ?? '').slice(0, 80)}"` : ''}${name === 'finish' ? ` "${String(args.summary ?? '').slice(0, 160)}"` : ''} → ${(String(result).split('\n').find(line => line.startsWith('RESULT:')) ?? String(result).split('\n').find(line => line && !line.startsWith('('))) ?.slice(0, 160) ?? ''} @ ${page.url().replace(/^https?:\/\/[^/]+/, '')}`);
 				messages.push({ role: 'tool', tool_call_id: call.id, content: String(result).slice(0, 6000) });
@@ -255,7 +258,9 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 				return after();
 			case 'look':
 				if (!models.visionAvailable()) return 'Screenshots are not available for this model; rely on the observation text.';
-				if (consecutiveLooks >= 1) return `You just looked at this screen. Act now: pick an element ref from this observation.\n${await observe(page, log)}`;
+				// One screenshot per screen state: after 2+ actions or a URL change. Otherwise act.
+				if (consecutiveLooks >= 1 || (actionsSinceLook < 2 && urlAtLook === page.url())) return `You looked at this screen ${consecutiveLooks ? 'just now' : `${actionsSinceLook} action(s) ago`}; nothing major changed since. Act on the observation instead (use the RESULT lines to judge each action):\n${await observe(page, log)}`;
+				actionsSinceLook = 0; urlAtLook = page.url();
 				await browser.hideCursor?.(page);
 				return { image: await page.screenshot({ type: 'jpeg', quality: 60 }) };
 			case 'report_issue': {
