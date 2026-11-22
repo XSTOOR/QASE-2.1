@@ -203,5 +203,47 @@ test('a button-navigated app behind a welcome tour is walked screen by screen, t
 		assert.ok(session.hybrid.overlaysDismissed?.some(item => /Welcome to Rail/.test(item) && /Skip/.test(item)), 'the tour was closed with Skip');
 		assert.ok(session.hybrid.graph.transitions.some(item => /click "Projects"/.test(item.via)));
 		assert.ok(session.hybrid.candidates.some(item => item.detector === 'page.failed_request' && item.url.includes('/workspace/rail/meeting')), 'the failing API on a click-only screen was found');
+		// In place: Back restores the screen; page loads are rare.
+		assert.ok(session.hybrid.uiWalk.backs >= 3, `went back with history (${JSON.stringify(session.hybrid.uiWalk)})`);
+		assert.ok(session.hybrid.uiWalk.reloads <= 2, `reloads stay rare (${JSON.stringify(session.hybrid.uiWalk)})`);
+		assert.ok(graph.views.find(view => view.label === 'Archived').appeared.some(text => /Archived projects/.test(text)), 'a panel records what appeared');
 	} finally { await lab.close(); }
+});
+
+test('explorer: sees what each action changed, recovers from stale refs, and gets the untested checklist', { timeout: 180_000 }, async () => {
+	const lab = await startQaLab();
+	const { createQaBrowser } = await import('./browser.js');
+	const { explore } = await import('./explorer.js');
+	const browser = await createQaBrowser({ session: { id: 'x', targetUrl: `${lab.url}workspace/rail/`, engine: 'chromium', device: 'desktop' }, env: ENV });
+	const prompts = [];
+	const toolResults = [];
+	let step = 0;
+	const models = {
+		reasonerAvailable: () => true, visionAvailable: () => false, jevAvailable: () => false, state: { reasoner: {}, jev: {} },
+		async chat(messages) {
+			prompts.push(messages[1].content);
+			const last = messages.at(-1);
+			if (last.role === 'tool') toolResults.push(last.content);
+			const observation = [...messages].reverse().find(item => item.role === 'tool' || (item.role === 'user' && typeof item.content === 'string' && item.content.includes('Interactive elements')))?.content ?? messages[1].content;
+			const ref = label => new RegExp(`(e\\d+) [^\\n]*"${label}"`).exec(observation)?.[1];
+			step++;
+			const call = (name, args) => ({ text: '', toolCalls: [{ id: `c${step}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
+			if (step === 1) return call('click', { ref: ref('Projects') ?? 'e0' });
+			if (step === 2) return call('click', { ref: ref('Archived') ?? 'e0' });
+			if (step === 3) return call('click', { ref: 'e999' });
+			if (step === 4) return call('click', { ref: ref('Active') ?? 'e0' });
+			return call('finish', { summary: 'Opened Projects and both tabs.' });
+		}
+	};
+	try {
+		const result = await explore({ browser, profile: { name: 'desktop', label: 'Desktop', viewport: { width: 1280, height: 800 } }, startUrl: `${lab.url}workspace/rail/about`, models, maxSteps: 8, deadline: Date.now() + 120_000, blockedWrites: () => 0, save: async () => undefined, goal: 'Open Projects and check its tabs', untested: ['panel "Archived" on /workspace/rail/projects'] });
+		assert.match(prompts[0], /not yet exercised[\s\S]*Archived/, 'the checklist is in the prompt');
+		assert.match(prompts[0], /Journey to test now/);
+		assert.match(toolResults[0], /RESULT: URL changed to .*\/workspace\/rail\/projects/, toolResults[0].slice(0, 300));
+		assert.match(toolResults[1], /RESULT: URL unchanged\. .*Appeared: .*Archived projects/, toolResults[1].slice(0, 300));
+		assert.match(toolResults[2], /no longer exists/);
+		assert.ok(!toolResults.some(text => /\(covered\)/.test(text.split('Visible text:')[0] ?? '')), 'the tour never covers the elements the agent acts on');
+		assert.ok(result.summary.finished);
+		assert.ok(result.summary.trail.length >= 5 && result.summary.trail.some(line => /RESULT: URL changed/.test(line)), result.summary.trail.join('\n'));
+	} finally { await browser.close(); await lab.close(); }
 });

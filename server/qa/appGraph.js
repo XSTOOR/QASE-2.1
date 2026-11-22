@@ -91,8 +91,8 @@ export function createAppGraph(saved) {
 		},
 		/** A panel, tab or dialog reached by clicking on a screen (same URL). */
 		addView(view) {
-			if (graph.views.length >= 200 || graph.views.some(item => item.url === view.url && item.label === view.label)) return false;
-			graph.views.push({ url: view.url, label: String(view.label).slice(0, 60), heading: String(view.heading ?? '').slice(0, 120), kind: view.kind, ts: Date.now() });
+			if (graph.views.length >= 200 || graph.views.some(item => routeTemplate(item.url) === routeTemplate(view.url) && item.label === view.label)) return false;
+			graph.views.push({ url: view.url, label: String(view.label).slice(0, 60), heading: String(view.heading ?? '').slice(0, 120), kind: view.kind, appeared: (view.appeared ?? []).slice(0, 10).map(text => String(text).slice(0, 50)), ts: Date.now() });
 			note('view', `${view.label} on ${view.url}`);
 			return true;
 		},
@@ -151,7 +151,7 @@ export function createAppGraph(saved) {
 			const auth = graph.auth.detected ? `Authentication: ${graph.auth.signedIn ? 'signed in with the owner\'s test account' : 'detected, not signed in'}${graph.auth.identifierStep ? ' (two-step sign-in)' : ''}.` : 'Authentication: none detected.';
 			const templates = new Set();
 			const unique = rows.filter((row, index) => { const key = routeTemplate(Object.keys(graph.pages)[index]); if (templates.has(key)) return false; templates.add(key); return true; });
-			const views = graph.views.slice(0, 40).map(view => { let path = view.url; try { path = new URL(view.url).pathname; } catch { /* keep */ } return `"${view.label}" on ${path} → ${view.kind}${view.heading ? ` "${view.heading}"` : ''}`; });
+			const views = graph.views.slice(0, 40).map(view => { let path = view.url; try { path = new URL(view.url).pathname; } catch { /* keep */ } return `click "${view.label}" on ${path} → ${view.kind}${view.appeared?.length ? ` showing: ${view.appeared.slice(0, 8).join(', ')}` : view.heading ? ` "${view.heading}"` : ''}`; });
 			return `${auth}\nRoles seen: ${graph.roles.join(', ')}\nScreens:\n${unique.join('\n')}${views.length ? `\nPanels, tabs and dialogs reached by clicking:\n${views.join('\n')}` : ''}`;
 		},
 		stats: () => ({ pages: Object.keys(graph.pages).length, screens: new Set(Object.keys(graph.pages).map(routeTemplate)).size, views: graph.views.length, protected: Object.values(graph.pages).filter(page => page.auth === 'protected').length, transitions: graph.transitions.length, features: Object.fromEntries(Object.entries(graph.features).filter(([, n]) => n > 0)), roles: graph.roles })

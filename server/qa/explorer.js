@@ -11,6 +11,7 @@
  */
 import { candidate } from './findings.js';
 import { dismissOverlays, openOverlays } from './overlays.js';
+import { screenSignature, appeared } from './uiCrawl.js';
 
 const DESTRUCTIVE = /\b(delete|remove|destroy|erase|log ?out|sign ?out|unsubscribe|deactivate|pay|purchase|buy now|checkout|place order|transfer|close account)\b/i;
 
@@ -75,7 +76,7 @@ export async function observe(page, log) {
 	return `URL: ${snapshot.url}\nTitle: ${snapshot.title}\nScroll: ${snapshot.scroll}\n${overlays.length ? `Open pop-up(s): ${overlays.map(item => `"${item.text.slice(0, 80)}"${item.close ? ` (close with "${item.close}")` : ''}`).join('; ')}\n` : ''}${errors.length ? `Recent errors:\n${errors.join('\n')}\n` : ''}Interactive elements:\n${snapshot.items.join('\n')}\n\nVisible text:\n${snapshot.text}`;
 }
 
-export async function explore({ browser, profile, startUrl, models, knownIssues = [], maxSteps = 30, deadline, signal, blockedWrites, save, onStep = () => {}, focus, goal, signedIn = false, pages = [] }) {
+export async function explore({ browser, profile, startUrl, models, knownIssues = [], maxSteps = 30, deadline, signal, blockedWrites, save, onStep = () => {}, focus, goal, signedIn = false, pages = [], untested = [], exercised = new Set() }) {
 	const out = [];
 	const summary = { steps: 0, finished: false, summary: '', visited: new Set(), loopWarnings: 0, loopStopped: false, trail: [] };
 	let consecutiveLooks = 0;
@@ -95,7 +96,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 		await browser.goto(page, startUrl, log).catch(() => {});
 		const messages = [
 			{ role: 'system', content: SYSTEM },
-			{ role: 'user', content: `Site under test: ${startUrl}\nViewport: ${profile.label}\nSession: ${signedIn ? 'signed in with the owner\'s test account (read-only: writes are still blocked)' : 'not signed in'}\n${goal ? `Journey to test now (from the test plan): ${goal}\n` : ''}${focus ? `Owner's focus: ${focus}\n` : ''}${pages.length ? `Pages already found by the crawler: ${pages.slice(0, 25).join(', ')}\n` : ''}Already reported by automated checks (do not repeat): ${knownIssues.slice(0, 40).join('; ') || 'none'}\n\nCurrent page:\n${await observe(page, log)}` }
+			{ role: 'user', content: `Site under test: ${startUrl}\nViewport: ${profile.label}\nSession: ${signedIn ? 'signed in with the owner\'s test account (read-only: writes are still blocked)' : 'not signed in'}\n${goal ? `Journey to test now (from the test plan): ${goal}\n` : ''}${untested.length ? `Feature areas mapped but not yet exercised in this run (cover the ones that belong to this journey):\n${untested.slice(0, 25).map(item => `- ${item}`).join('\n')}\n` : ''}${focus ? `Owner's focus: ${focus}\n` : ''}${pages.length ? `Pages already found by the crawler: ${pages.slice(0, 25).join(', ')}\n` : ''}Already reported by automated checks (do not repeat): ${knownIssues.slice(0, 40).join('; ') || 'none'}\n\nCurrent page:\n${await observe(page, log)}` }
 		];
 		while (summary.steps < maxSteps && Date.now() < deadline && models.reasonerAvailable()) {
 			signal?.throwIfAborted();
@@ -127,7 +128,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 				if (result?.image) { screenshot = result.image; result = 'Screenshot attached below.'; }
 				consecutiveLooks = name === 'look' ? consecutiveLooks + 1 : 0;
 				// Reviewable trail: what the agent did and the first line of what it saw.
-				summary.trail.push(`${summary.steps}. ${name}${args.ref ? ` ${args.ref}` : ''}${args.url ? ` ${args.url}` : ''}${args.text ? ` "${String(args.text).slice(0, 40)}"` : ''}${args.key ? ` ${args.key}` : ''}${name === 'report_issue' ? ` "${String(args.title ?? '').slice(0, 80)}"` : ''}${name === 'finish' ? ` "${String(args.summary ?? '').slice(0, 160)}"` : ''} → ${String(result).split('\n').find(line => line && !line.startsWith('(')) ?.slice(0, 140) ?? ''} @ ${page.url().replace(/^https?:\/\/[^/]+/, '')}`);
+				summary.trail.push(`${summary.steps}. ${name}${args.ref ? ` ${args.ref}` : ''}${args.url ? ` ${args.url}` : ''}${args.text ? ` "${String(args.text).slice(0, 40)}"` : ''}${args.key ? ` ${args.key}` : ''}${name === 'report_issue' ? ` "${String(args.title ?? '').slice(0, 80)}"` : ''}${name === 'finish' ? ` "${String(args.summary ?? '').slice(0, 160)}"` : ''} → ${(String(result).split('\n').find(line => line.startsWith('RESULT:')) ?? String(result).split('\n').find(line => line && !line.startsWith('('))) ?.slice(0, 160) ?? ''} @ ${page.url().replace(/^https?:\/\/[^/]+/, '')}`);
 				messages.push({ role: 'tool', tool_call_id: call.id, content: String(result).slice(0, 6000) });
 				onStep({ name, args, url: page.url() });
 				if (name === 'finish') { summary.finished = true; summary.summary = String(args.summary ?? '').slice(0, 2000); break; }
@@ -160,9 +161,11 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 
 	async function runTool(name, args) {
 		const locate = ref => page.locator(`[data-qase-ref="${String(ref).replace(/"/g, '')}"]`).first();
-		const describeRef = async ref => (await locate(ref).evaluate(element => (element.getAttribute('aria-label') || element.innerText || element.value || element.placeholder || '').trim().slice(0, 60)).catch(() => '')) || ref;
+		const describeRef = async ref => (await locate(ref).evaluate(element => (element.getAttribute('aria-label') || element.innerText || element.value || element.placeholder || '').trim().slice(0, 60), undefined, { timeout: 1500 }).catch(() => '')) || ref;
 		const blockedBefore = blockedWrites();
 		const offsiteBefore = offsiteBlocked();
+		const acting = ['click', 'type', 'select', 'press', 'back', 'navigate'].includes(name);
+		const beforeScreen = acting ? await page.evaluate(screenSignature).catch(() => undefined) : undefined;
 		const after = async () => {
 			await browser.settle(page, { quietMs: 1200 });
 			const cleared = await dismissOverlays(page, { cursor: (target, text) => browser.pointAt?.(page, target, text) }).catch(() => []);
@@ -175,13 +178,31 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 				blocked ? `(The page sent ${blocked} write request${blocked > 1 ? 's' : ''}; QASE blocked ${blocked > 1 ? 'them' : 'it'}. Any error or loading state that follows is caused by the block.)` : '',
 				offsite ? '(The page tried to leave the site, e.g. a sign-in-with or payment hand-off; QASE blocked it. A spinner or unchanged page that follows is caused by the block.)' : ''
 			].filter(Boolean).join('\n');
-			return `${notes ? `${notes}\n` : ''}${await observe(page, log)}`;
+			// What this action changed: the most useful signal for deciding the next step.
+			let change = '';
+			if (beforeScreen) {
+				const afterScreen = await page.evaluate(screenSignature).catch(() => undefined);
+				if (afterScreen) {
+					const fresh = appeared(beforeScreen, afterScreen);
+					const gone = appeared(afterScreen, beforeScreen);
+					const moved = afterScreen.url !== beforeScreen.url;
+					change = !moved && !fresh.length && !gone.length
+						? 'RESULT: nothing visible changed. If you expected a change, this may be a defect (dead control) or the wrong element; do not repeat it blindly.'
+						: `RESULT: ${moved ? `URL changed to ${afterScreen.url}. ` : 'URL unchanged. '}${afterScreen.dialog && afterScreen.dialog !== beforeScreen.dialog ? `Dialog opened: "${afterScreen.dialog}". ` : ''}${fresh.length ? `Appeared: ${fresh.slice(0, 12).join(' | ')}. ` : ''}${gone.length ? `Disappeared: ${gone.slice(0, 8).join(' | ')}.` : ''}`;
+				}
+			}
+			return `${change ? `${change}\n` : ''}${notes ? `${notes}\n` : ''}${await observe(page, log)}`;
 		};
+		// Refs come from the latest observation; an app re-render can remove them.
+		if (args.ref && ['click', 'type', 'select'].includes(name) && !await locate(args.ref).count().catch(() => 0)) {
+			return `Element ${args.ref} no longer exists (the page re-rendered). Use refs from this fresh observation:\n${await observe(page, log)}`;
+		}
 		switch (name) {
 			case 'click': {
 				const label = await describeRef(args.ref);
 				if (DESTRUCTIVE.test(label)) return `Refused: "${label}" looks destructive. Choose another action.`;
 				trail.push(`Click "${label}"`);
+				exercised.add(String(label).slice(0, 60));
 				await locate(args.ref).scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
 				await browser.pointAt?.(page, locate(args.ref), `Click "${label}"`);
 				try {

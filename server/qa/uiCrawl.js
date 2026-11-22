@@ -67,90 +67,133 @@ function tagNavControls(max) {
 	return out;
 }
 
-/** A compact fingerprint of what the screen shows. Runs in the page. */
-function screenSignature() {
-	const heading = [...document.querySelectorAll('h1, h2, [role=heading]')].filter(h => h.getBoundingClientRect().height > 0).map(h => h.innerText.trim()).filter(Boolean).slice(0, 3).join(' · ').slice(0, 160);
-	const dialog = [...document.querySelectorAll('[role=dialog], [aria-modal=true], dialog[open]')].find(d => d.getBoundingClientRect().height > 0);
-	const main = (document.querySelector('main, [role=main]') ?? document.body);
-	const text = (main.innerText || '').replace(/\s+/g, ' ').slice(0, 300);
-	const controls = document.querySelectorAll('button, a, input, select, textarea').length;
-	return { url: location.href, heading, dialog: dialog ? (dialog.getAttribute('aria-label') || dialog.innerText || '').trim().slice(0, 80) : '', text, controls };
+/** What the screen shows: url, headings, open dialog, and the visible landmark texts. Runs in the page. */
+export function screenSignature() {
+	const shown = el => { const r = el.getBoundingClientRect(); const st = getComputedStyle(el); return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none' && Number(st.opacity) > 0.05; };
+	const clean = text => String(text || '').replace(/\s+/g, ' ').trim();
+	const heading = [...document.querySelectorAll('h1, h2, [role=heading]')].filter(shown).map(h => clean(h.innerText)).filter(Boolean).slice(0, 3).join(' · ').slice(0, 160);
+	const dialog = [...document.querySelectorAll('[role=dialog], [aria-modal=true], dialog[open], [role=menu], [role=listbox]')].find(shown);
+	// "Landmarks": headings, labelled regions and controls. A click that reveals a feature adds some.
+	const marks = new Set();
+	for (const el of document.querySelectorAll('h1, h2, h3, h4, [role=heading], [role=dialog] *, [role=menu] [role=menuitem], [role=tab], label, legend, button, [role=button], a, input, select, textarea, th')) {
+		if (marks.size > 400 || !shown(el) || el.closest('[data-qase-ignore]')) continue;
+		const text = clean(el.getAttribute('aria-label') || el.innerText || el.placeholder || el.value).slice(0, 60);
+		if (text && text.length > 1) marks.add(`${el.tagName.toLowerCase()}:${text}`);
+	}
+	return { url: location.href, heading, dialog: dialog ? clean(dialog.getAttribute('aria-label') || dialog.innerText).slice(0, 80) : '', marks: [...marks], controls: document.querySelectorAll('button, a, input, select, textarea').length };
 }
 
-const different = (a, b) => a.url.split('#')[0] !== b.url.split('#')[0] || a.heading !== b.heading || a.dialog !== b.dialog || Math.abs(a.controls - b.controls) > 6 || similarity(a.text, b.text) < 0.6;
-function similarity(a, b) {
-	const wa = new Set(a.toLowerCase().split(' ')); const wb = new Set(b.toLowerCase().split(' '));
-	const inter = [...wa].filter(word => wb.has(word)).length;
-	return inter / Math.max(1, Math.max(wa.size, wb.size));
+/** What appeared on screen between two signatures (new headings first). */
+export function appeared(before, after) {
+	const old = new Set(before.marks);
+	const fresh = after.marks.filter(mark => !old.has(mark));
+	const rank = mark => /^(h\d|\[role=heading\]|label|legend|th):/.test(mark) ? 0 : /^(button|a|input|select|textarea):/.test(mark) ? 1 : 2;
+	return fresh.sort((a, b) => rank(a) - rank(b)).map(mark => mark.replace(/^[a-z0-9]+:/, ''));
 }
 
 /**
- * Walks the UI from `starts`. open(url) → { page, log } must handle sign-in and
- * overlays. onView(view) receives { kind, url, from, label, heading, dialog }.
+ * Walks the UI from `starts`, in place: click a control, look at what appeared,
+ * then return with Back or Escape (a page load is only the last resort, because
+ * reloading an app can have side effects such as creating a new record).
+ * open(url) → { page, log } handles sign-in and pop-ups; prepare(page) clears
+ * pop-ups; onView(view) receives { kind, url, from, label, heading, appeared }.
  */
-export async function discoverViews({ browser, open, prepare = async () => {}, starts, inScope, deadline, maxScreens = 12, maxControls = 24, knownTemplates = new Set(), onView = () => {}, progress = () => {} }) {
+export async function discoverViews({ browser, open, prepare = async () => [], starts, inScope, deadline, maxScreens = 12, maxControls = 24, knownTemplates = new Set(), knownPopupTexts = [], onView = () => {}, progress = () => {}, stats = {} }) {
 	const queue = starts.map(url => ({ url, depth: 0 }));
 	const templates = new Set(knownTemplates);
 	for (const item of starts) templates.add(routeTemplate(item));
 	const visitedBases = new Set();
+	const recorded = new Set(); // template|label: one view per control per screen
 	const views = [];
-	// Pop-ups already dismissed once (tours, banners) are cleared again whenever they return;
-	// anything else that appears after a click is a real dialog and is recorded.
-	const knownPopups = new Set();
+	stats.clicks = stats.clicks ?? 0; stats.reloads = stats.reloads ?? 0; stats.backs = stats.backs ?? 0;
+	const knownPopups = new Set(knownPopupTexts.map(text => String(text).split(' → ')[0].slice(0, 50)));
 	const clear = async page => {
 		const done = await prepare(page);
 		for (const item of done ?? []) knownPopups.add(String(item).split(' → ')[0].slice(0, 50));
 	};
+	const sameScreen = (a, b) => routeTemplate(a) === routeTemplate(b);
+
 	while (queue.length && Date.now() < deadline && visitedBases.size < maxScreens) {
 		const { url: base, depth } = queue.shift();
-		if (visitedBases.has(routeTemplate(base))) continue;
-		visitedBases.add(routeTemplate(base));
+		const baseTemplate = routeTemplate(base);
+		if (visitedBases.has(baseTemplate)) continue;
+		visitedBases.add(baseTemplate);
 		let page, log;
 		try { ({ page, log } = await open(base)); } catch { continue; }
-		await clear(page);
 		try {
-			const controls = await page.evaluate(tagNavControls, maxControls).catch(() => []);
+			await clear(page);
 			const baseUrl = page.url();
-			const panels = new Set();
-			for (const control of controls) {
-				if (Date.now() >= deadline) break;
-				if (DESTRUCTIVE.test(control.label)) continue;
-				await progress(`Exploring "${control.label}" on ${new URL(baseUrl).pathname}`);
-				// Fresh state for each control: return to the base screen and re-tag.
-				if (page.url() !== baseUrl || control.index > 0) {
+			const done = new Set();
+			// Return to the base screen without reloading when possible.
+			const restore = async () => {
+				if (sameScreen(page.url(), baseUrl)) return true;
+				stats.backs++;
+				await page.goBack({ waitUntil: 'commit', timeout: 8000 }).catch(() => {});
+				await browser.settle(page, { quietMs: 600 }).catch(() => {});
+				if (sameScreen(page.url(), baseUrl)) { await clear(page); return true; }
+				stats.reloads++;
+				await browser.goto(page, baseUrl, log, { quietMs: 700 }).catch(() => {});
+				await clear(page);
+				return sameScreen(page.url(), baseUrl);
+			};
+			const initial = new Set();
+			let resets = 0;
+			for (let round = 0; round < maxControls && Date.now() < deadline; round++) {
+				let controls = await page.evaluate(tagNavControls, maxControls).catch(() => []);
+				if (!round) for (const item of controls) initial.add(`${item.label}|${item.region}`);
+				let control = controls.find(item => !done.has(`${item.label}|${item.region}`) && !DESTRUCTIVE.test(item.label));
+				// Controls from the original screen were hidden by an earlier click (e.g. another tab is
+				// selected): restore the screen once, then continue with what is left.
+				const missing = [...initial].filter(key => !done.has(key) && !controls.some(item => `${item.label}|${item.region}` === key) && !DESTRUCTIVE.test(key));
+				if ((!control || missing.length) && missing.length && resets < 2) {
+					resets++; stats.reloads++;
 					await browser.goto(page, baseUrl, log, { quietMs: 700 }).catch(() => {});
 					await clear(page);
-					await page.evaluate(tagNavControls, maxControls).catch(() => []);
+					controls = await page.evaluate(tagNavControls, maxControls).catch(() => []);
+					control = controls.find(item => !done.has(`${item.label}|${item.region}`) && !DESTRUCTIVE.test(item.label));
 				}
+				if (!control) break;
+				done.add(`${control.label}|${control.region}`);
+				await progress(`Exploring "${control.label}" on ${new URL(baseUrl).pathname}`);
 				const before = await page.evaluate(screenSignature).catch(() => undefined);
 				const target = page.locator(`[data-qase-nav="${control.index}"]`).first();
 				if (!before || !await target.count().catch(() => 0)) continue;
 				await browser.pointAt?.(page, target, control.label);
+				stats.clicks++;
 				const clicked = await browser.interact(() => target.click({ timeout: 4000 })).then(() => true).catch(() => false);
 				if (!clicked) continue;
 				await browser.settle(page, { quietMs: 900 }).catch(() => {});
-				// A new screen can open with its own tour; the signature must describe the screen, not the pop-up.
-				if (page.url().split('#')[0] !== before.url.split('#')[0]) await clear(page);
-				else if ((await openOverlays(page)).some(item => knownPopups.has(item.text.slice(0, 50)))) await clear(page);
+				// After a navigation the new screen may open with a tour; known pop-ups are cleared anywhere.
+				if (!sameScreen(page.url(), before.url) || (await openOverlays(page)).some(item => knownPopups.has(item.text.slice(0, 50)))) await clear(page);
 				const after = await page.evaluate(screenSignature).catch(() => undefined);
-				if (!after || !different(before, after)) continue;
-				const urlChanged = after.url.split('#')[0] !== before.url.split('#')[0];
+				if (!after) { await restore(); continue; }
+				const urlChanged = !sameScreen(after.url, before.url);
 				if (urlChanged && inScope(after.url)) {
 					const template = routeTemplate(after.url);
-					if (templates.has(template)) continue;
-					templates.add(template);
-					const view = { kind: 'route', url: after.url, from: baseUrl, label: control.label, heading: after.heading };
-					views.push(view);
-					await onView(view);
-					if (depth < 2) queue.push({ url: after.url, depth: depth + 1 });
-				} else if (!urlChanged) {
-					const key = `${after.heading}|${after.dialog}|${control.label}`;
-					if (panels.has(key)) continue;
-					panels.add(key);
-					const view = { kind: after.dialog ? 'dialog' : 'panel', url: baseUrl, from: baseUrl, label: control.label, heading: after.dialog || after.heading };
+					if (!templates.has(template)) {
+						templates.add(template);
+						const view = { kind: 'route', url: after.url, from: baseUrl, label: control.label, heading: after.heading, appeared: appeared(before, after).slice(0, 8) };
+						views.push(view);
+						await onView(view);
+						if (depth < 2) queue.push({ url: after.url, depth: depth + 1 });
+					}
+					if (!await restore()) break;
+					continue;
+				}
+				const fresh = appeared(before, after);
+				const key = `${baseTemplate}|${control.label}`;
+				// A panel/dialog/menu counts only when something new is on screen.
+				const meaningful = fresh.length >= 2 || Boolean(after.dialog && after.dialog !== before.dialog) || after.marks.some(mark => /^(h\d|\[role=heading\]):/.test(mark) && !before.marks.includes(mark));
+				if (!urlChanged && meaningful && !recorded.has(key)) {
+					recorded.add(key);
+					const view = { kind: after.dialog ? 'dialog' : 'panel', url: baseUrl, from: baseUrl, label: control.label, heading: after.dialog || fresh.slice(0, 3).join(' · ').slice(0, 120), appeared: fresh.slice(0, 10) };
 					views.push(view);
 					await onView(view);
 				}
+				// Close what the click opened, without reloading: Escape, then a second click on a toggle.
+				if (after.dialog) await page.keyboard.press('Escape').catch(() => {});
+				if (await target.getAttribute('aria-expanded', { timeout: 500 }).catch(() => null) === 'true') await target.click({ timeout: 1500 }).catch(() => {});
+				if (!sameScreen(page.url(), baseUrl)) await restore();
 			}
 		} finally { await page.close().catch(() => {}); }
 	}

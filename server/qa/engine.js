@@ -552,6 +552,18 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 
 	// ---- Scenario units -------------------------------------------------------------------
 	let exploreSummaries = [];
+	// Labels the journeys have clicked or filled, shared across journeys, so each continues where the last stopped.
+	const exercised = new Set(state.exercised ?? []);
+	const untestedAreas = () => {
+		const done = [...exercised].map(text => text.toLowerCase());
+		const hit = label => done.some(text => text && (text.includes(label.toLowerCase()) || label.toLowerCase().includes(text)));
+		const screens = Object.entries(model.graph.pages).filter(([, page]) => !page.login && (page.status ?? 200) < 400 && (!state.signedIn || page.auth !== 'public')).map(([url, page]) => ({ url, page }))
+			.filter((item, index, list) => list.findIndex(other => other.page.template === item.page.template) === index)
+			.filter(item => !item.page.via || !hit(item.page.via.label))
+			.map(item => `screen ${pathOf(item.url)} "${item.page.heading || item.page.title || ''}"${item.page.via ? ` (click "${item.page.via.label}")` : ''}`);
+		const views = model.graph.views.filter(view => !hit(view.label)).map(view => `${view.kind} "${view.label}" on ${pathOf(view.url)}${view.appeared?.length ? ` — ${view.appeared.slice(0, 5).join(', ')}` : ''}`);
+		return [...views, ...screens].slice(0, 30);
+	};
 	const executorContext = deadline => ({
 		browser, profile: primary, open: (url, opts) => openPage(url, opts), fetchImpl, deadline, save, model, signedIn: Boolean(state.signedIn),
 		isSignInPage, isLoginUrl, origin, start: session.targetUrl, signedInUrl: state.signedInUrl,
@@ -687,6 +699,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			const startUrl = scenario.start ? new URL(scenario.start, state.signedInUrl ?? session.targetUrl).href : state.signedInUrl ?? session.targetUrl;
 			const result = await explore({ browser, profile: primary, startUrl: browser.inScope(startUrl) ? startUrl : session.targetUrl, models, knownIssues: state.candidates.map(item => item.title).slice(0, 40), maxSteps: options.exploreSteps, deadline, signal,
 				blockedWrites: () => blocked.writes, save, signedIn: Boolean(state.signedIn), pages: pageList().map(pathOf), goal: scenario.goal,
+				exercised, untested: untestedAreas(),
 				focus: session.testCaseSnapshot?.title ?? session.messages?.find(message => message.role === 'user')?.text?.slice(0, 500),
 				onStep: step => { state.coverage.exploration = (state.coverage.exploration ?? 0) + 1; void progress(`AI tester: ${step.name}${step.args?.url ? ` ${pathOf(step.args.url)}` : ''} on ${pathOf(step.url)}`); } });
 			addCandidates(result.candidates);
@@ -698,6 +711,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			exploreSummaries.push(result.summary.summary);
 			// The step-by-step trail is kept so a run can be reviewed (and the agent improved) afterwards.
 			scenario.trail = (result.summary.trail ?? []).slice(-60).map(step => redact(session.id, step));
+			state.exercised = [...exercised].filter(Boolean).slice(-300);
 			state.coverage.explorationSummary = exploreSummaries.filter(Boolean).join(' ').slice(0, 1500);
 			const evidence = [`${result.summary.steps} step(s); ${result.summary.finished ? 'the model finished the journey' : 'stopped by its step/time limit'}${result.summary.loopWarnings ? `; ${result.summary.loopWarnings} loop warning(s)${result.summary.loopStopped ? ', ended for looping' : ''}` : ''}.`];
 			if (result.summary.summary) evidence.push(`Model summary (not used as completion evidence): ${result.summary.summary.slice(0, 300)}`);
@@ -857,7 +871,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 				const starts = model.ranked(session.targetUrl, state.signedInUrl).filter(url => !model.page(url)?.login && (state.signedIn ? model.page(url)?.auth !== 'public' || url === state.signedInUrl : true)).slice(0, 4);
 				const discovered = await discoverViews({
 					browser, open: url => openPage(url), prepare: page => dismissOverlays(page, { cursor: (target, text) => browser.pointAt(page, target, text) }).catch(() => []), starts: starts.length ? starts : [state.signedInUrl ?? session.targetUrl], inScope: browser.inScope, deadline, maxScreens: options.uiScreens,
-					knownTemplates: new Set(model.pages().map(routeTemplate)), progress,
+					knownTemplates: new Set(model.pages().map(routeTemplate)), progress, stats: (state.uiWalk ??= {}), knownPopupTexts: state.overlaysDismissed ?? [],
 					onView: async view => {
 						if (view.kind === 'route') {
 							model.addTransition(view.from, view.url, `click "${view.label}"`);
