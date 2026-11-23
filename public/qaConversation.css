@@ -67,7 +67,7 @@ body.studio-workspace .msg.qa-msg .msg-body.qa-card-wrap,
 }
 .qa-verdict-fail { color: var(--danger, #ef797f); background: var(--danger-soft, rgba(239, 121, 127, 0.12)); }
 .qa-verdict-gap { color: var(--warning, #e8b55f); background: var(--warning-soft, rgba(232, 181, 95, 0.12)); }
-.qa-verdict-pass { color: var(--success, #5bd096); background: var(--success-soft, rgba(91, 208, 150, 0.12)); }
+.qa-verdict-pass { color: var(--success, #5b7ed0); background: var(--success-soft, rgba(91, 126, 208, 0.12)); }
 .qa-counts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin: 12px 0; }
 .qa-count { display: grid; gap: 1px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2, transparent); }
 .qa-count strong { color: var(--text); font-size: 17px; line-height: 1.2; font-variant-numeric: tabular-nums; }

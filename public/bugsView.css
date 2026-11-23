@@ -188,9 +188,9 @@
 }
 
 .bugs-summary-chip[data-status="fixed"] {
-  border-color: rgba(91, 208, 150, 0.25);
+  border-color: rgba(91, 126, 208, 0.25);
   background: var(--success-soft);
-  color: #93e2ba;
+  color: #93abe2;
 }
 
 .bugs-summary-chip[data-status="wont_fix"] {
@@ -304,8 +304,8 @@
 }
 
 .bugs-status-select[data-status="fixed"] {
-  border-color: rgba(91, 208, 150, 0.25);
-  color: #93e2ba;
+  border-color: rgba(91, 126, 208, 0.25);
+  color: #93abe2;
 }
 
 .bugs-status-select[data-status="wont_fix"] {

@@ -357,7 +357,7 @@ html[data-theme="dark"] body.studio-workspace[data-page="results"] .results-page
    navigation, badge text, and surfaces neutral. Labels still convey status
    independently of color, including when reduced motion is enabled. */
 html[data-theme="dark"] body.studio-workspace {
-  --signal-success: #4ade80;
+  --signal-success: #4a76de;
   --signal-running: #60a5fa;
   --signal-warning: #fbbf24;
   --signal-error: #f87171;
@@ -401,7 +401,7 @@ html[data-theme="dark"] body.studio-workspace .btn-primary:disabled {
    chrome. Labels stay neutral for contrast; icons and borders identify brands. */
 html[data-theme="dark"] body.studio-workspace :is(.mx-brand-icon, .mp-browser-icon, .browser-icon) { filter: none; }
 html[data-theme="dark"] body.studio-workspace [data-family="chrome"] { --browser-brand: #8ab4f8; }
-html[data-theme="dark"] body.studio-workspace [data-family="edge"] { --browser-brand: #56d6b5; }
+html[data-theme="dark"] body.studio-workspace [data-family="edge"] { --browser-brand: #567cd6; }
 html[data-theme="dark"] body.studio-workspace [data-family="firefox"] { --browser-brand: #ffab70; }
 html[data-theme="dark"] body.studio-workspace [data-family="safari"] { --browser-brand: #75baff; }
 html[data-theme="dark"] body.studio-workspace [data-family="brave"] { --browser-brand: #ff926b; }
@@ -444,7 +444,7 @@ body.studio-workspace #qa-start .qa-agent-status {
   display: grid; gap: 8px; padding: 18px 20px; border: 1px solid var(--border);
   border-left: 3px solid #6791d8; border-radius: 12px; background: var(--surface-1);
 }
-body.studio-workspace #qa-start .qa-agent-status[data-state="ready"] { border-left-color: #429879; }
+body.studio-workspace #qa-start .qa-agent-status[data-state="ready"] { border-left-color: #425c98; }
 body.studio-workspace #qa-start .qa-agent-status[data-state="attention"] { border-left-color: #c58a2d; }
 body.studio-workspace #qa-start .qa-agent-status-label { font-size: 10px; letter-spacing: .08em; color: var(--text-muted); }
 body.studio-workspace #qa-start .qa-agent-status strong { font-size: 14px; line-height: 1.5; }
@@ -463,7 +463,7 @@ body.studio-workspace .journey-run-guide[data-tone="attention"] #journey-run-act
   background: #fff0d6; border-color: #dfbf83; color: #694614;
 }
 body.studio-workspace .journey-run-guide[data-tone="complete"] #journey-run-action:not(:disabled) {
-  background: #dcf3e9; border-color: #a7d6c1; color: #205c46;
+  background: #dce3f3; border-color: #a7b5d6; color: #20325c;
 }
 /* Founder reports share the workspace palette in both tabs and exports.
    Preserve the existing sections and cards while keeping light-mode text

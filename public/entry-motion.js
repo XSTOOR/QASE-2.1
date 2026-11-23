@@ -65,7 +65,7 @@ if (gate && canvas && context && toggle) {
     for (let i = 0; i < meridians; i++) {
       const u = i / meridians * Math.PI * 2;
       const center = corePoint(u, 0);
-      context.strokeStyle = `rgba(105,218,147,${.08 + (center.z + radius) / (radius * 2) * .13})`;
+      context.strokeStyle = `rgba(105,139,218,${.08 + (center.z + radius) / (radius * 2) * .13})`;
       context.beginPath();
       for (let j = 0; j <= detail; j++) {
         const point = corePoint(u, j / detail * Math.PI * 2);
@@ -76,7 +76,7 @@ if (gate && canvas && context && toggle) {
     }
     for (let j = 0; j < 10; j++) {
       const v = j / 10 * Math.PI * 2;
-      context.strokeStyle = j % 3 === 0 ? '#81e5ab3d' : '#61c68c20';
+      context.strokeStyle = j % 3 === 0 ? '#819fe53d' : '#617fc620';
       context.beginPath();
       for (let i = 0; i <= 100; i++) {
         const point = corePoint(i / 100 * Math.PI * 2, v);
@@ -89,12 +89,12 @@ if (gate && canvas && context && toggle) {
     for (let i = 0; i < 5; i++) {
       const point = corePoint(i * Math.PI * .4 + time * .0001, i * 1.3);
       const glow = context.createRadialGradient(point.x, point.y, 0, point.x, point.y, 19);
-      glow.addColorStop(0, '#b4f7be80');
-      glow.addColorStop(.15, '#81efb128');
-      glow.addColorStop(1, '#81efb100');
+      glow.addColorStop(0, '#b4c8f780');
+      glow.addColorStop(.15, '#81a2ef28');
+      glow.addColorStop(1, '#81a2ef00');
       context.fillStyle = glow;
       context.fillRect(point.x - 19, point.y - 19, 38, 38);
-      context.fillStyle = '#b7f5c4a0';
+      context.fillStyle = '#b7caf5a0';
       context.fillRect(point.x - 1, point.y - 1, 2, 2);
     }
   }
@@ -104,8 +104,8 @@ if (gate && canvas && context && toggle) {
     const centerX = width * .35 + smoothX * 15;
     const horizon = height * .62;
     const floor = context.createLinearGradient(0, horizon, 0, height);
-    floor.addColorStop(0, '#47846200');
-    floor.addColorStop(1, '#47846225');
+    floor.addColorStop(0, '#47598400');
+    floor.addColorStop(1, '#47598425');
     context.strokeStyle = floor;
     context.lineWidth = .6;
     context.beginPath();
@@ -125,11 +125,11 @@ if (gate && canvas && context && toggle) {
       const x = width * .5 + star.x * width * .65 * depth + smoothX * depth * 18;
       const y = height * .5 + star.y * height * .7 * depth + smoothY * depth * 14;
       const alpha = .13 + depth * .3;
-      context.fillStyle = `rgba(156,231,177,${alpha})`;
+      context.fillStyle = `rgba(156,178,231,${alpha})`;
       const size = star.size * depth;
       context.fillRect(x, y, size, size);
       if (star.size > 1.45) {
-        context.fillStyle = `rgba(156,231,177,${alpha * .35})`;
+        context.fillStyle = `rgba(156,178,231,${alpha * .35})`;
         context.fillRect(x - 3, y, 7, .5);
         context.fillRect(x, y - 3, .5, 7);
       }

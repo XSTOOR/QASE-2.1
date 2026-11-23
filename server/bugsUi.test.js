@@ -60,7 +60,7 @@ test('status changes are optimistic with rollback, and statuses use the tracked 
 
 test('bugs styles use only the established token palette', () => {
 	const colorLiterals = [...bugsStyles.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map(match => match[0]);
-	const allowed = new Set(['#a4d4f3', '#f0c98a', '#93e2ba', '#f5a0be', '#f5a1a5']);
+	const allowed = new Set(['#a4d4f3', '#f0c98a', '#93abe2', '#f5a0be', '#f5a1a5']);
 	for (const literal of colorLiterals) {
 		assert.ok(allowed.has(literal), `unexpected raw color ${literal} — use a design token`);
 	}

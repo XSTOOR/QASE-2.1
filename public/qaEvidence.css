@@ -64,7 +64,7 @@ body.studio-workspace #qa-start[data-journey-step="0"] #journey-next:not(:disabl
 }
 
 .qe-workspace {
-  --qe-pass: #167253;
+  --qe-pass: #163272;
   --qe-fail: #a43634;
   --qe-gap: #845310;
   --qe-active: var(--accent);
@@ -75,7 +75,7 @@ body.studio-workspace #qa-start[data-journey-step="0"] #journey-next:not(:disabl
   font: 13px/1.55 var(--font-ui);
 }
 html[data-theme="dark"] .qe-workspace {
-  --qe-pass: #9ce3c0;
+  --qe-pass: #9cb1e3;
   --qe-fail: #f5aaa7;
   --qe-gap: #f1cb86;
   --qe-active: #a9bdfd;

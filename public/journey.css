@@ -10,7 +10,7 @@ body.studio-workspace .jev-execution-evidence summary { cursor: pointer; font-we
 body.studio-workspace .journey-run-guide strong { font-size: 12px; color: var(--text); }
 body.studio-workspace .journey-run-guide p { font-size: 11px; line-height: 1.6; margin: 4px 0 0; color: var(--text-muted); }
 body.studio-workspace .journey-run-guide[data-tone="attention"] { border-left: 3px solid #d99b36; }
-body.studio-workspace .journey-run-guide[data-tone="complete"] { border-left: 3px solid #29a376; }
+body.studio-workspace .journey-run-guide[data-tone="complete"] { border-left: 3px solid #294ea3; }
 body.studio-workspace .journey-settings-copy { font-size: 12px; color: var(--text-muted); margin: 6px 0 0; line-height: 1.6; }
 body.studio-workspace .journey-run-search { display: block; flex: 0 0 auto; padding: 10px 12px 0; }
 body.studio-workspace .journey-run-search input { box-sizing: border-box; width: 100%; min-height: 36px; padding: 8px 10px; color: var(--text); background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; font: 400 12px var(--font-ui); }
@@ -54,7 +54,7 @@ body.studio-workspace #qa-start .journey-connection > div { flex: 1; min-width: 
 body.studio-workspace #qa-start .journey-connection strong { font-size: 12px; color: var(--text); }
 body.studio-workspace #qa-start .journey-connection p { font-size: 11px; line-height: 1.6; margin: 4px 0 0; color: var(--text-muted); }
 body.studio-workspace #qa-start .journey-status-dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: #d99b36; }
-body.studio-workspace #qa-start .journey-connection[data-ready="true"] .journey-status-dot { background: #29a376; }
+body.studio-workspace #qa-start .journey-connection[data-ready="true"] .journey-status-dot { background: #294ea3; }
 body.studio-workspace #qa-start .qa-recommended { border: 1px solid var(--border); padding: 20px; border-radius: 12px; background: var(--journey-soft); }
 body.studio-workspace #qa-start .qa-recommended h3 { font-size: 15px; }
 body.studio-workspace #qa-start .qa-recommended p { font-size: 12px; line-height: 1.75; }
@@ -69,7 +69,7 @@ body.studio-workspace #qa-start .qa-browser-status { display: flex; flex-wrap: w
 body.studio-workspace #qa-start .qa-browser-status-copy { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
 body.studio-workspace #qa-start .qa-browser-status .qa-browser-status-label { margin: 0 0 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--text-muted); font-size: 10px; letter-spacing: .06em; }
 body.studio-workspace #qa-start #qa-browser-status-badge { padding: 3px 8px; border-radius: 20px; background: var(--surface-2); color: var(--text); font-size: 10px; letter-spacing: normal; }
-body.studio-workspace #qa-start .qa-browser-status[data-state="ready"] { border-left-color: #29a376; }
+body.studio-workspace #qa-start .qa-browser-status[data-state="ready"] { border-left-color: #294ea3; }
 body.studio-workspace #qa-start .qa-browser-status[data-state="blocked"] { border-left-color: #d99b36; }
 body.studio-workspace #qa-start .qa-browser-status h3 { margin: 0 0 6px; color: var(--text); font-size: 15px; line-height: 1.5; }
 body.studio-workspace #qa-start .qa-browser-status #qa-browser-status-detail { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.7; }

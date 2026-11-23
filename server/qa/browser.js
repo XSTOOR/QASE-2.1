@@ -40,11 +40,11 @@ const CURSOR_SCRIPT = `(() => {
 		root.innerHTML = '<style>' +
 			'.c{position:fixed;left:0;top:0;transition:transform .42s cubic-bezier(.2,.8,.2,1),opacity .3s;opacity:0;will-change:transform}' +
 			'.c svg{display:block;filter:drop-shadow(0 2px 4px rgba(0,0,0,.35))}' +
-			'.t{position:absolute;left:20px;top:20px;white-space:nowrap;font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.02em;color:#0b0d0a;background:#C8F560;padding:5px 7px;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.25);max-width:280px;overflow:hidden;text-overflow:ellipsis}' +
-			'.r{position:fixed;left:0;top:0;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;border:2px solid #C8F560;opacity:0;pointer-events:none}' +
+			'.t{position:absolute;left:20px;top:20px;white-space:nowrap;font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.02em;color:#ffffff;background:#1E40AF;padding:5px 7px;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.25);max-width:280px;overflow:hidden;text-overflow:ellipsis}' +
+			'.r{position:fixed;left:0;top:0;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;border:2px solid #1E40AF;opacity:0;pointer-events:none}' +
 			'.r.go{animation:p .55s ease-out}' +
 			'@keyframes p{0%{opacity:.9;transform:var(--at) scale(.3)}100%{opacity:0;transform:var(--at) scale(1.5)}}' +
-			'</style><div class="r"></div><div class="c"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M4 2.5l15 8.6-6.6 1.6 3.9 7-2.6 1.4-3.9-7-4.8 4.6z" fill="#C8F560" stroke="#0b0d0a" stroke-width="1.4" stroke-linejoin="round"/></svg><div class="t">QASE</div></div>';
+			'</style><div class="r"></div><div class="c"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M4 2.5l15 8.6-6.6 1.6 3.9 7-2.6 1.4-3.9-7-4.8 4.6z" fill="#1E40AF" stroke="#ffffff" stroke-width="1.4" stroke-linejoin="round"/></svg><div class="t">QASE</div></div>';
 		dot = root.querySelector('.c'); tag = root.querySelector('.t'); ring = root.querySelector('.r');
 		document.documentElement.appendChild(host);
 		return true;

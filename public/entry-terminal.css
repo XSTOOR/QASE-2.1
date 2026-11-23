@@ -38,7 +38,7 @@
 #auth-gate .terminal-lights { display: inline-flex; gap: 7px; }
 #auth-gate .terminal-lights i { width: 7px; height: 7px; border-radius: 50%; background: #e48676; }
 #auth-gate .terminal-lights i:nth-child(2) { background: #e0bf77; }
-#auth-gate .terminal-lights i:nth-child(3) { background: #78c995; }
+#auth-gate .terminal-lights i:nth-child(3) { background: #7890c9; }
 #auth-gate .terminal-windowtype { margin-left: auto; color: var(--text-faint); }
 #auth-gate .terminal-story-content { padding: clamp(28px, 3.8vw, 58px); position: relative; }
 #auth-gate .terminal-command { margin: 0 0 35px; color: var(--text-secondary); font-size: 12px; letter-spacing: .02em; }
