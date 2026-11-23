@@ -18,3 +18,14 @@ test('launch options need exactly one available configuration', () => {
 	assert.throws(() => hybridLaunchOptions({ mode: 'hybrid', envIds: [], configurations }), /one browser configuration/);
 	assert.throws(() => hybridLaunchOptions({ mode: 'hybrid', envIds: ['missing'], configurations }), /no longer available/);
 });
+
+test('QA progress advances with finished scenarios while the plan runs', () => {
+	const phases = ['observe', 'signin', 'discover', 'plan', 'execute', 'triage', 'publish'].map((id, index) => ({ id, status: index < 4 ? 'done' : index === 4 ? 'running' : 'pending' }));
+	const session = { mode: 'qa', hybrid: { version: 2, phases, plan: { summary: { total: 20, pending: 10, running: 1 } } } };
+	const progress = hybridScenarioProgress(session);
+	assert.equal(progress.done, 4);
+	assert.deepEqual(progress.scenarios, { done: 9, total: 20 });
+	assert.equal(progress.percent, Math.round((4 + 9 / 20) / 7 * 100));
+	session.hybrid.plan.summary = { total: 20, pending: 0, running: 0 };
+	assert.equal(hybridScenarioProgress(session).percent, Math.round(5 / 7 * 100), 'never more than the work done');
+});

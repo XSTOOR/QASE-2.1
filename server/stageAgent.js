@@ -16,6 +16,7 @@
  * - strict OpenAI-compatible gateways: no mid-conversation system messages;
  * - usage capture with estimates when the provider reports none.
  */
+import { UNTRUSTED_CONTENT_RULE } from './untrustedContent.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { CleanSlateNodeAgentRuntime, createNodeProviderConfiguration, getToolByName } from '@cleanslate/sdk';
@@ -119,7 +120,7 @@ export function createStageAgent({ session, model, tools, onPart = () => {}, onU
 				const stop = () => controller.abort(signal.reason);
 				signal?.addEventListener('abort', stop, { once: true });
 				const followUp = typeof nudge === 'function' ? nudge() : nudge;
-				const prompt = attempt === 0 ? task : followUp || `You have not called ${finish} yet. Call ${finish} now with the best answer the evidence supports. Do not call other tools unless one is essential.`;
+				const prompt = attempt === 0 ? `${task}\n\n${UNTRUSTED_CONTENT_RULE}` : followUp || `You have not called ${finish} yet. Call ${finish} now with the best answer the evidence supports. Do not call other tools unless one is essential.`;
 				try {
 					for await (const part of runtime.run(prompt, controller.signal)) {
 						if (part.type === 'assistant_turn_start') turns++;

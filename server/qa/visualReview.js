@@ -5,6 +5,7 @@
  * broken images, unreadable areas, inconsistent spacing, elements that jump
  * or end in a wrong state during an animation.
  */
+import { UNTRUSTED_CONTENT_RULE } from '../untrustedContent.js';
 import { candidate } from './findings.js';
 
 const PROMPT = `You are reviewing screenshots of a website for VISUAL DEFECTS that a user would notice.
@@ -31,7 +32,7 @@ export async function reviewVisuals({ models, shots, filmstrips, save, signal, d
 		if (calls >= maxCalls || Date.now() >= deadline || !models.visionAvailable()) return;
 		calls++;
 		const result = await models.json([
-			{ role: 'system', content: PROMPT },
+			{ role: 'system', content: `${PROMPT}\n${UNTRUSTED_CONTENT_RULE}` },
 			{ role: 'user', content: [{ type: 'text', text: `${context}\nAlready known from automated checks (do not repeat): ${known.slice(0, 25).join('; ') || 'none'}` }, ...content] }
 		], { maxTokens: 1500, signal, purpose: 'visual review' });
 		return Array.isArray(result?.issues) ? result.issues.slice(0, 6) : [];

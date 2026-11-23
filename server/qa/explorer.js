@@ -9,9 +9,10 @@
  * are refused here. Bounded by steps and time; a model failure ends only this
  * phase, never the run.
  */
+import { UNTRUSTED_CONTENT_RULE } from '../untrustedContent.js';
 import { candidate } from './findings.js';
 import { dismissOverlays, openOverlays } from './overlays.js';
-import { screenSignature, appeared } from './uiCrawl.js';
+import { screenSignature, appeared, toggled } from './uiCrawl.js';
 
 const DESTRUCTIVE = /\b(delete|remove|destroy|erase|log ?out|sign ?out|unsubscribe|deactivate|pay|purchase|buy now|checkout|place order|transfer|close account)\b/i;
 
@@ -107,7 +108,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 	try {
 		await browser.goto(page, startUrl, log).catch(() => {});
 		const messages = [
-			{ role: 'system', content: SYSTEM },
+			{ role: 'system', content: `${SYSTEM}\n${UNTRUSTED_CONTENT_RULE}` },
 			{ role: 'user', content: `Site under test: ${startUrl}\nViewport: ${profile.label}\nSession: ${signedIn ? 'signed in with the owner\'s test account (read-only: writes are still blocked)' : 'not signed in'}\n${goal ? `Journey to test now (from the test plan): ${goal}\n` : ''}${untested.length ? `Feature areas mapped but not yet exercised in this run (cover the ones that belong to this journey):\n${untested.slice(0, 25).map(item => `- ${item}`).join('\n')}\n` : ''}${focus ? `Owner's focus: ${focus}\n` : ''}${pages.length ? `Pages already found by the crawler: ${pages.slice(0, 25).join(', ')}\n` : ''}Already reported by automated checks (do not repeat): ${knownIssues.slice(0, 40).join('; ') || 'none'}\n\nCurrent page:\n${await observe(page, log)}` }
 		];
 		while (summary.steps < maxSteps && Date.now() < deadline && models.reasonerAvailable()) {
@@ -204,10 +205,11 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 				if (afterScreen) {
 					const fresh = appeared(beforeScreen, afterScreen);
 					const gone = appeared(afterScreen, beforeScreen);
+					const flips = toggled(beforeScreen, afterScreen);
 					const moved = afterScreen.url !== beforeScreen.url;
-					change = !moved && !fresh.length && !gone.length
+					change = !moved && !fresh.length && !gone.length && !flips.length
 						? 'RESULT: nothing visible changed. If you expected a change, this may be a defect (dead control) or the wrong element; do not repeat it blindly.'
-						: `RESULT: ${moved ? `URL changed to ${afterScreen.url}. ` : 'URL unchanged. '}${afterScreen.dialog && afterScreen.dialog !== beforeScreen.dialog ? `Dialog opened: "${afterScreen.dialog}". ` : ''}${fresh.length ? `Appeared: ${fresh.slice(0, 12).join(' | ')}. ` : ''}${gone.length ? `Disappeared: ${gone.slice(0, 8).join(' | ')}.` : ''}`;
+						: `RESULT: ${moved ? `URL changed to ${afterScreen.url}. ` : 'URL unchanged. '}${afterScreen.dialog && afterScreen.dialog !== beforeScreen.dialog ? `Dialog opened: "${afterScreen.dialog}". ` : ''}${flips.length ? `Expanded: ${flips.join(' | ')}. ` : ''}${fresh.length ? `Appeared: ${fresh.slice(0, 12).join(' | ')}. ` : ''}${gone.length ? `Disappeared: ${gone.slice(0, 8).join(' | ')}.` : ''}`;
 				}
 			}
 			return `${change ? `${change}\n` : ''}${notes ? `${notes}\n` : ''}${await observe(page, log)}`;

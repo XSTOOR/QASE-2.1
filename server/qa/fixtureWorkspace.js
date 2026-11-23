@@ -140,6 +140,13 @@ export async function workspaceHandler(request, response, path, url) {
 <div role="dialog" aria-label="Preferences" id="dlg" hidden style="position:fixed;top:80px;left:120px;background:#fff;border:1px solid #ccc;padding:16px;z-index:40"><h2>Preferences</h2><label><input type="checkbox"> Compact mode</label> <button type="button" id="close">Close</button></div>
 <script>prefs.onclick = () => { dlg.hidden = false; }; close.onclick = () => { dlg.hidden = true; };</script>`));
 			return true;
+		case '/workspace/faq':
+			html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>FAQ</title></head><body><main><h1>Pricing questions</h1>
+<div class="faq"><button type="button" aria-expanded="false" aria-controls="a1" id="q1">Can I cancel anytime?</button><div id="a1" hidden><p>Yes. Cancel from Settings and you keep access until the end of the billing period.</p></div></div>
+<div class="faq"><button type="button" id="q2">Do you offer refunds?</button><div id="a2" style="display:none"><p>Refunds are available within 14 days of purchase for annual plans.</p></div></div>
+<button type="button" id="dead">Live chat</button></main>
+<script>q1.onclick = () => { const open = a1.hidden; a1.hidden = !open; q1.setAttribute('aria-expanded', String(open)); }; q2.onclick = () => { a2.style.display = a2.style.display === 'none' ? 'block' : 'none'; };</script></body></html>`);
+			return true;
 		case '/workspace/busy':
 			html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Busy</title></head><body><main><h1>Directory</h1>
 <button type="button" id="ws" style="position:fixed;right:24px;bottom:24px">Workspace</button>

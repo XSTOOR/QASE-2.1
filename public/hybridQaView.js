@@ -27,7 +27,13 @@ export function hybridScenarioProgress(session) {
 	if (session?.mode !== 'qa' || session.hybrid?.version !== 2) return null;
 	const phases = session.hybrid.phases ?? [];
 	const done = phases.filter(phase => ['done', 'skipped', 'failed'].includes(phase.status)).length;
-	return { total: phases.length, done, percent: phases.length ? Math.round(done / phases.length * 100) : 0 };
+	// While the plan runs, the running stage counts the share of scenarios that reached an outcome,
+	// so progress moves with real work instead of sitting on one stage for most of the run.
+	const plan = session.hybrid.plan?.summary;
+	const running = phases.some(phase => phase.id === 'execute' && phase.status === 'running');
+	const partial = running && plan?.total ? (plan.total - (plan.pending ?? 0) - (plan.running ?? 0)) / plan.total : 0;
+	const progress = done + Math.max(0, Math.min(1, partial));
+	return { total: phases.length, done, percent: phases.length ? Math.round(progress / phases.length * 100) : 0, ...(running && plan?.total ? { scenarios: { done: plan.total - (plan.pending ?? 0) - (plan.running ?? 0), total: plan.total } } : {}) };
 }
 
 /** Engine runs render their results in the QA evidence workspace instead. */

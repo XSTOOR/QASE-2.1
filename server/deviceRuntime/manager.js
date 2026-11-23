@@ -105,7 +105,7 @@ export function createDeviceRuntimeManager({ providers = [], now = () => Date.no
 	 * level returns { status: 'not_available', choices } describing the honest
 	 * options the caller may offer the user.
 	 */
-	async function requestSession({ environment, requestedLevel, linkedRunId, linkedTestCaseId, allowQueue = true } = {}) {
+	async function requestSession({ environment, requestedLevel, linkedRunId, linkedTestCaseId, allowQueue = true, ownerUserId } = {}) {
 		const level = requestedLevel ?? EXECUTION_LEVELS.SIMULATED;
 		const provider = providerForLevel(level);
 
@@ -138,6 +138,7 @@ export function createDeviceRuntimeManager({ providers = [], now = () => Date.no
 					status: 'queued',
 					queue: queueFor(deviceKey(environment)).length + 1,
 					linkedRunId: linkedRunId ?? null,
+					ownerUserId: ownerUserId ?? null,
 					linkedTestCaseId: linkedTestCaseId ?? null,
 					createdAt: new Date(now()).toISOString()
 				};
@@ -167,6 +168,7 @@ export function createDeviceRuntimeManager({ providers = [], now = () => Date.no
 			providerId: provider.id,
 			status: 'created',
 			linkedRunId: linkedRunId ?? null,
+					ownerUserId: ownerUserId ?? null,
 			linkedTestCaseId: linkedTestCaseId ?? null,
 			createdAt: new Date(now()).toISOString(),
 			...('attestation' in created ? { attestation: created.attestation } : {})

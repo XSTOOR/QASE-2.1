@@ -57,7 +57,8 @@ describe('probeTargetReachability', () => {
 			{ name: 'www.drytis.com', cname: 'drytis-website-bpdgc6.prod.drytis.dev', ips: ['10.3.87.24'] }
 		]);
 		try {
-			const result = await probeTargetReachability('https://www.drytis.com/');
+			// The apex resolves publicly (injected, so no real DNS is used); a hop in its chain is private.
+			const result = await probeTargetReachability('https://www.drytis.com/', { resolveHost: async () => [{ address: '104.21.58.253', family: 4 }] });
 			assert.equal(result.ok, true);
 			assert.equal(result.note, 'split-horizon-dns');
 			assert.match(result.detail, /run environment/);
@@ -67,7 +68,33 @@ describe('probeTargetReachability', () => {
 		}
 	}, 30_000);
 
-	it('verifies a healthy public HTTPS target end to end', async () => {
+	it('verifies a healthy public HTTPS target (hermetic: resolver and TLS check injected)', async () => {
+		const original = __internals.chaseOverride;
+		__internals.chaseOverride = async () => ([{ name: 'example.com', cname: undefined, ips: ['93.184.215.14'] }]);
+		const tlsCalls = [];
+		try {
+			const result = await probeTargetReachability('https://example.com/', {
+				resolveHost: async () => [{ address: '93.184.215.14', family: 4 }],
+				tlsVerify: async (ip, port, servername) => { tlsCalls.push({ ip, port, servername }); return true; }
+			});
+			assert.equal(result.ok, true);
+			assert.deepEqual(result.resolvedIps, ['93.184.215.14']);
+			assert.ok(result.resolvedIps.every(ip => !isPrivateOrReserved(ip)));
+			// The handshake goes to the validated address with the right SNI, with no second lookup.
+			assert.deepEqual(tlsCalls, [{ ip: '93.184.215.14', port: 443, servername: 'example.com' }]);
+			// A certificate that does not verify is a site defect.
+			const bad = await probeTargetReachability('https://example.com/', { resolveHost: async () => [{ address: '93.184.215.14', family: 4 }], tlsVerify: async () => false });
+			assert.equal(bad.ok, false);
+			assert.equal(bad.reason, 'tls-certificate-invalid');
+		} finally {
+			__internals.chaseOverride = original;
+		}
+	});
+
+	// The same check against the real internet. It needs public DNS; where the run
+	// environment has none (sandboxed CI behind an egress proxy) it is skipped with that reason.
+	const publicDns = spawnSync('getent', ['hosts', 'example.com'], { encoding: 'utf8' }).status === 0;
+	it('verifies a healthy public HTTPS target over the live network', { skip: publicDns ? false : 'no public DNS in this environment (egress proxy only); the hermetic test above covers the logic' }, async () => {
 		const result = await probeTargetReachability('https://example.com/');
 		assert.equal(result.ok, true);
 		assert.ok(Array.isArray(result.resolvedIps) && result.resolvedIps.length > 0);

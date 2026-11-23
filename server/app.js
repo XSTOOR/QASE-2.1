@@ -972,9 +972,15 @@ export function createApplication(options = {}) {
 				if (!environment && typeof body.environmentId === 'string') {
 					environment = await services.environments.get(body.environmentId).catch(() => null);
 				}
+				// A device session may only be linked to a run the caller owns (the run store is owner-scoped).
+				if (body.linkedRunId && !await services.runs.get(String(body.linkedRunId))) {
+					response.status(404).json({ error: 'No such session.' });
+					return;
+				}
 				const result = await runtime.requestSession({
 					environment,
 					requestedLevel: body.requestedLevel,
+					ownerUserId: request.auth?.userId ?? null,
 					linkedRunId: body.linkedRunId,
 					linkedTestCaseId: body.linkedTestCaseId,
 					allowQueue: body.allowQueue !== false
@@ -985,18 +991,25 @@ export function createApplication(options = {}) {
 				safeErrorResponse(request, response, error);
 			}
 		});
+		// Device sessions belong to the user who requested them: other users get "unknown", exactly
+		// as for an id that does not exist.
+		const ownsDeviceSession = (request, session) => Boolean(session) && (!request.auth?.userId || session.ownerUserId === request.auth.userId);
 		app.get('/api/device-runtime/sessions', (request, response) => {
-			response.json({ sessions: services.deviceRuntime.listSessions({ status: request.query?.status }) });
+			response.json({ sessions: services.deviceRuntime.listSessions({ status: request.query?.status }).filter(session => ownsDeviceSession(request, session)) });
 		});
 		app.get('/api/device-runtime/sessions/:id', (request, response) => {
 			const session = runtime.getSession(request.params.id);
-			if (!session) {
+			if (!ownsDeviceSession(request, session)) {
 				response.status(404).json({ error: 'Unknown device session.' });
 				return;
 			}
 			response.json(session);
 		});
 		app.post('/api/device-runtime/sessions/:id/cancel', async (request, response) => {
+			if (!ownsDeviceSession(request, runtime.getSession(request.params.id))) {
+				response.status(404).json({ error: 'Unknown device session.' });
+				return;
+			}
 			const result = await runtime.cancelSession(request.params.id);
 			if (!result.cancelled) {
 				response.status(409).json(result);

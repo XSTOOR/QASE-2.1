@@ -134,9 +134,10 @@ export function buildReportMarkdown(session) {
 		lines.push('## Summary', '', report.summary, '');
 	}
 
-	if (session.todos.length > 0) {
+	const todos = Array.isArray(session.todos) ? session.todos : [];
+	if (todos.length > 0) {
 		lines.push('## Test plan', '');
-		for (const todo of session.todos) {
+		for (const todo of todos) {
 			const mark = todo.status === 'completed' ? 'x' : todo.status === 'in_progress' ? '/' : ' ';
 			lines.push(`- [${mark}] ${todo.text}`);
 		}

@@ -178,3 +178,22 @@ test('triage escalates uncertain JEV verdicts to the reasoner, which decides', a
 	assert.equal(confident.stats.escalated, 0, 'confident JEV verdicts are not escalated');
 	assert.equal(confident.findings.length, 1);
 });
+
+test('prompt-injection rule: every agent prompt that reads website content treats it as untrusted data', async () => {
+	const { UNTRUSTED_CONTENT_RULE } = await import('../untrustedContent.js');
+	const { proposeJourneys } = await import('./planner.js');
+	const fs = await import('node:fs');
+	let plannerSystem;
+	await proposeJourneys({ models: { reasonerAvailable: () => true, json: async messages => { plannerSystem = messages[0].content; return { journeys: [] }; } }, model: { summary: () => 'Pages: /' } });
+	assert.ok(plannerSystem.includes(UNTRUSTED_CONTENT_RULE), 'planner');
+	const triageSystems = [];
+	const stub = stubModels();
+	stub.jevAvailable = () => false;
+	stub.chat = async messages => { triageSystems.push(messages[0].content); return { text: '{"results":[]}', toolCalls: [] }; };
+	await triage({ candidates: [candidate({ detector: 'page.low_contrast', category: 'accessibility', severity: 'low', confidence: 0.6, title: 't', url: 'https://a.test/', actual: 'a', expected: 'b', steps: ['s'], data: { key: 'k' } })], models: stub, context: { target: 'https://a.test/' } });
+	assert.ok(triageSystems.some(text => text.includes(UNTRUSTED_CONTENT_RULE)), 'triage');
+	// The explorer, visual review and the SQA/Founder stage agent append the rule to what they send.
+	for (const [file, pattern] of [['explorer.js', /content: `\$\{SYSTEM\}\\n\$\{UNTRUSTED_CONTENT_RULE\}`/], ['visualReview.js', /content: `\$\{PROMPT\}\\n\$\{UNTRUSTED_CONTENT_RULE\}`/], ['../stageAgent.js', /\$\{task\}\\n\\n\$\{UNTRUSTED_CONTENT_RULE\}/]]) {
+		assert.match(fs.readFileSync(new URL(file, import.meta.url), 'utf8'), pattern, file);
+	}
+});

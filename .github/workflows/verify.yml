@@ -73,6 +73,12 @@ jobs:
           retention-days: 7
       - name: Verify the QA engine end to end against the seeded-defect QA Lab
         run: node --test server/qa/engine.integration.test.js
+      - name: Verify the adaptive QA engine (sign-in, UI walk, vision check, generalization)
+        run: node --test --test-concurrency=1 server/qa/adaptive.integration.test.js
+      - name: Verify cross-user isolation of runs and device sessions
+        run: node scripts/test-run-isolation.mjs
+      - name: Verify runs saved by earlier versions still open (API, reports, dashboard)
+        run: node scripts/test-legacy-runs.mjs
       - name: Verify account access and one-use recovery without external services
         run: |
           node scripts/test-auth-browser.mjs

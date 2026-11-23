@@ -345,3 +345,33 @@ test('explorer: a toast covering a control is cleared, and newly revealed contro
 		assert.match(listed, /more controls further down/);
 	} finally { await browser.close(); await lab.close(); }
 });
+
+test('explorer: revealed answer text and expanded state count as a change (no false "dead control")', { timeout: 120_000 }, async () => {
+	const lab = await startQaLab();
+	const { createQaBrowser } = await import('./browser.js');
+	const { explore } = await import('./explorer.js');
+	const browser = await createQaBrowser({ session: { id: 'x', targetUrl: `${lab.url}workspace/faq`, engine: 'chromium', device: 'desktop' }, env: ENV });
+	const results = [];
+	let step = 0;
+	const models = {
+		reasonerAvailable: () => true, visionAvailable: () => false, jevAvailable: () => false, state: { reasoner: {}, jev: {} },
+		async chat(messages) {
+			const last = messages.at(-1);
+			if (last.role === 'tool') results.push(last.content);
+			const observation = last.role === 'tool' ? last.content : messages[1].content;
+			const ref = label => new RegExp(`(e\\d+) button "${label}`).exec(observation)?.[1] ?? 'e0';
+			step++;
+			const call = (name, args) => ({ text: '', toolCalls: [{ id: `c${step}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
+			if (step === 1) return call('click', { ref: ref('Can I cancel anytime') });
+			if (step === 2) return call('click', { ref: ref('Do you offer refunds') });
+			if (step === 3) return call('click', { ref: ref('Live chat') });
+			return call('finish', { summary: 'done' });
+		}
+	};
+	try {
+		await explore({ browser, profile: { name: 'desktop', label: 'Desktop', viewport: { width: 1280, height: 800 } }, startUrl: `${lab.url}workspace/faq`, models, maxSteps: 5, deadline: Date.now() + 60_000, blockedWrites: () => 0, save: async () => undefined });
+		assert.match(results[0], /RESULT: URL unchanged\. .*(Expanded: Can I cancel anytime|Appeared: .*Cancel from Settings)/, results[0].slice(0, 300));
+		assert.match(results[1], /Appeared: .*Refunds are available within 14 days/, results[1].slice(0, 300));
+		assert.match(results[2], /RESULT: nothing visible changed/, 'a control that really does nothing is still reported as such');
+	} finally { await browser.close(); await lab.close(); }
+});

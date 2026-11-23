@@ -16,7 +16,7 @@
     },
     {
       "path": ".github/workflows/verify.yml",
-      "sha256": "ff99ea0ae5442d0a120b9061fcacaeed336049f818e870aa19fd6c78679b4c98"
+      "sha256": "8e25a6b96b61d5012a5ffd209e14e5f527c5d4f083bf06e77e3c0bad6d2937ee"
     },
     {
       "path": ".gitignore",
@@ -456,11 +456,11 @@
     },
     {
       "path": "public/hybridQaView.js",
-      "sha256": "fede35652e8bd873b6bf4dac3c54e6b4d4640c590b452a3ae2c8158458935212"
+      "sha256": "7ef20fa6ee69f081c68c6575f02e65c0f4e2ffd66471b8c28df51c892a144753"
     },
     {
       "path": "public/hybridQaView.test.js",
-      "sha256": "03d9167b134e2a5ada149e7df623addaaea92ce81c9a750f03144a9e9d21c639"
+      "sha256": "50ed1f3af59e090d20aeb04073fc21ef18ed9d6b0bfbaa3f1bef15274df9b4fa"
     },
     {
       "path": "public/index.html",
@@ -1023,8 +1023,16 @@
       "sha256": "be23bfc48a5ac0940ea673c02f97e4323fc125b5d705d9b189c5d79a19b61a86"
     },
     {
+      "path": "scripts/test-legacy-runs.mjs",
+      "sha256": "aac0a46ab7a784461db3cabd80a42f63e61ad3089f7183a0173fdb5d59ac8a51"
+    },
+    {
       "path": "scripts/test-reset-browser.mjs",
       "sha256": "3f2a7a1e576d03e92b706baabfd82cdb8fbf55f39200294e30d2225cfd0d7aca"
+    },
+    {
+      "path": "scripts/test-run-isolation.mjs",
+      "sha256": "30afe6f0074e2b376aa3017e79d5ba34a3e8466270d805f98c2b33c40ef3c12e"
     },
     {
       "path": "scripts/test-sqa-browser.mjs",
@@ -1068,7 +1076,7 @@
     },
     {
       "path": "server/app.js",
-      "sha256": "e9a780e25a7e6bd498d49c71f2479280bd4bd66ec89b3a550dc9219c7e4f2b0b"
+      "sha256": "ce416867bfa7ef931d853d5717fba48c4141aae3e2a1c5463916389fb15f984b"
     },
     {
       "path": "server/app.test.js",
@@ -1360,7 +1368,7 @@
     },
     {
       "path": "server/deviceRuntime/manager.js",
-      "sha256": "4591ce92c04dad32afebe3d9890f53909de26c29a0bc195c46af2228d3e32ab1"
+      "sha256": "b32705083e2deb184ff3af643ca2a9ac28772092d187c7df01bfdbca621ae45f"
     },
     {
       "path": "server/deviceRuntime/nullRealDeviceProvider.js",
@@ -2144,11 +2152,11 @@
     },
     {
       "path": "server/qa/adaptive.integration.test.js",
-      "sha256": "ebfdc959b5a590d5061508ebc15e1f653d3fcf84466d8413ba100b370105940c"
+      "sha256": "ee7709b0c06583663ec6b90a828b5eaf6570881982a6b77409341de436cb5eb1"
     },
     {
       "path": "server/qa/adaptive.test.js",
-      "sha256": "6c04ebf17e600f4016ad8130faaa333076af55d5038f1c007ee6fd8168366518"
+      "sha256": "76165d67dc1518a5af09c6a19d0029eaea1e32827a54a658a1047551b8ce8851"
     },
     {
       "path": "server/qa/appGraph.js",
@@ -2208,7 +2216,7 @@
     },
     {
       "path": "server/qa/explorer.js",
-      "sha256": "7e272ccce44f9bcd4c8b492a6c1270ffbe55334899bfdcec1814d0bf69de6e1b"
+      "sha256": "52bdf8a7b83f84ef74a696ba666f4c1ad948250233cd27a4fef497d63793cb99"
     },
     {
       "path": "server/qa/findings.js",
@@ -2220,7 +2228,7 @@
     },
     {
       "path": "server/qa/fixtureWorkspace.js",
-      "sha256": "bd6ee50132f25416903a28e4cc8b2b0e52b4395928e904b8554d4479ca78f067"
+      "sha256": "edc710e22c117ab549c96f498ede00ab4d3be97340c92497e79458a50d7fdcb5"
     },
     {
       "path": "server/qa/index.js",
@@ -2236,7 +2244,7 @@
     },
     {
       "path": "server/qa/planner.js",
-      "sha256": "b394bb1ee95b3c7d74ce16b8febb3226647c5ce714a5703d8f013ee83f66ba84"
+      "sha256": "171052ac7b1ebfae92692062b7087964f57928c0c738af659895a4d7aa2374e7"
     },
     {
       "path": "server/qa/qa.test.js",
@@ -2256,15 +2264,15 @@
     },
     {
       "path": "server/qa/triage.js",
-      "sha256": "2aeac1baa2f8826b97c7f32dc390b777217129973a29dd9069da6de94d855bed"
+      "sha256": "9c37ecab6da265079a9c6a2c15ca755e3b488049398a4fa13aae6376d32cb08f"
     },
     {
       "path": "server/qa/uiCrawl.js",
-      "sha256": "ed79b007a47f7456030a3bb48c6967e3f405c04835f88e63f83b5c1fae860004"
+      "sha256": "58157ac40362dc11ddd83005091376b40857b6c087a75e44c162c0a7de061c2f"
     },
     {
       "path": "server/qa/visualReview.js",
-      "sha256": "00f77a97d9825c45a4ffd2fbabc2d788761b4ef1b53609355ab78972b88bb2fa"
+      "sha256": "7a3a61488fe6e8faa710f7419dfa6a1c99ed5a2d5fcccbdba939fc0d6075f3ea"
     },
     {
       "path": "server/qaChatReport.test.js",
@@ -2332,7 +2340,7 @@
     },
     {
       "path": "server/report.js",
-      "sha256": "e1c87e50ecbe43e29ff1c89f21cbacaf7632a90c34655cc5473a340c1d5e25d7"
+      "sha256": "8691a6836e43510c3debc7b3e76b445775f5d5c2b7158159dd328ee8fc63e452"
     },
     {
       "path": "server/reportMatrixSection.test.js",
@@ -2472,7 +2480,7 @@
     },
     {
       "path": "server/stageAgent.js",
-      "sha256": "f8a9ce5e69d000ddc6fd730f31267a7be12f9b6387b6a41e1ed12af07ff59fb3"
+      "sha256": "c07272260153e191e3d9c708bef95fe7650b58ef883806841d7a32fc5ee47b12"
     },
     {
       "path": "server/stageCollapseUi.test.js",
@@ -2520,7 +2528,7 @@
     },
     {
       "path": "server/targetReachability.test.js",
-      "sha256": "3f1ebabab7fe1c96678bde098ef23fb7d9e68730e673b2c3408810fb75128f61"
+      "sha256": "00683e600295b5ac8641631797212e3ccf9ad4b2dee0c1e62f04c8ad10b901eb"
     },
     {
       "path": "server/telegramNotificationApi.test.js",
@@ -2589,6 +2597,10 @@
     {
       "path": "server/uiVersion.test.js",
       "sha256": "1d9833bb45ea227b6b381899e86dbd1cb746f03cf51e2e60ca7e0bdb8bc8eaa9"
+    },
+    {
+      "path": "server/untrustedContent.js",
+      "sha256": "b52e3ed2f72c24717cdae4c962bcabb7a006d3beed131954625cf6189a82f2f4"
     },
     {
       "path": "server/usageCapture.js",

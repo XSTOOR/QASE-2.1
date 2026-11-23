@@ -95,6 +95,19 @@ export function screenSignature() {
 		if (marks.size > 400 || !shown(el) || el.closest('[data-qase-ignore]')) continue;
 		const text = clean(el.getAttribute('aria-label') || el.innerText || el.placeholder || el.value).slice(0, 60);
 		if (text && text.length > 1) marks.add(`${el.tagName.toLowerCase()}:${text}`);
+		// Disclosure state: an accordion/menu toggle reports open/closed even when its content is plain text.
+		if (el.hasAttribute('aria-expanded') && text) marks.add(`expanded:${text}=${el.getAttribute('aria-expanded')}`);
+	}
+	// Revealed text: paragraphs, list items, cells and text-bearing blocks (accordion answers,
+	// tab panels, toasts) — the content a click often reveals without any new heading or control.
+	let blocks = 0;
+	for (const el of document.querySelectorAll('p, li, dd, dt, td, blockquote, figcaption, summary, [role=tabpanel], [role=region], [role=alert], [role=status], div, span')) {
+		if (blocks > 500 || marks.size > 900) break;
+		if (el.closest('[data-qase-ignore]') || el.closest('button, a, label')) continue;
+		const own = [...el.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent).join(' ').replace(/\s+/g, ' ').trim();
+		if (own.length < 12 || !shown(el)) continue;
+		blocks++;
+		marks.add(`text:${own.slice(0, 60)}`);
 	}
 	return { url: location.href, heading, dialog: dialog ? clean(dialog.getAttribute('aria-label') || dialog.innerText).slice(0, 80) : '', marks: [...marks], controls: document.querySelectorAll('button, a, input, select, textarea').length };
 }
@@ -102,9 +115,16 @@ export function screenSignature() {
 /** What appeared on screen between two signatures (new headings first). */
 export function appeared(before, after) {
 	const old = new Set(before.marks);
-	const fresh = after.marks.filter(mark => !old.has(mark));
-	const rank = mark => /^(h\d|\[role=heading\]|label|legend|th):/.test(mark) ? 0 : /^(button|a|input|select|textarea):/.test(mark) ? 1 : 2;
+	const fresh = after.marks.filter(mark => !old.has(mark) && !mark.startsWith('expanded:'));
+	const rank = mark => /^(h\d|\[role=heading\]|label|legend|th):/.test(mark) ? 0 : /^(button|a|input|select|textarea):/.test(mark) ? 1 : /^text:/.test(mark) ? 2 : 3;
 	return fresh.sort((a, b) => rank(a) - rank(b)).map(mark => mark.replace(/^[a-z0-9]+:/, ''));
+}
+
+/** Disclosure toggles whose aria-expanded changed between two signatures ("Label" → open/closed). */
+export function toggled(before, after) {
+	const state = marks => new Map(marks.filter(mark => mark.startsWith('expanded:')).map(mark => { const body = mark.slice(9); const at = body.lastIndexOf('='); return [body.slice(0, at), body.slice(at + 1)]; }));
+	const was = state(before.marks);
+	return [...state(after.marks)].filter(([label, value]) => was.has(label) && was.get(label) !== value).map(([label, value]) => `${label} (${value === 'true' ? 'opened' : 'closed'})`);
 }
 
 /**

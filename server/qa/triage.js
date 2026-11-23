@@ -10,6 +10,7 @@
  * Nothing in triage can fail the run: if both models are down, the deterministic
  * confidences are used and the report says verification was unavailable.
  */
+import { UNTRUSTED_CONTENT_RULE } from '../untrustedContent.js';
 import { mergeCandidates, SEVERITIES, severityRank } from './findings.js';
 
 const SEVERITY_SCALE = ['info', 'low', 'medium', 'high', 'critical'];
@@ -56,7 +57,7 @@ async function verifyWithJev(models, batch, context, signal) {
 
 async function verifyWithReasoner(models, batch, context, signal, purpose = 'triage') {
 	const result = await models.json([
-		{ role: 'system', content: `You triage automated QA results for a website. For each candidate decide how likely it is a genuine, user-impacting defect (0–1) and its severity. ${HARNESS_NOTE}\nSeverity scale:\n${SEVERITY_RUBRIC.join('\n')}\nAnswer JSON only: {"results":[{"index":0,"probability":0.0,"severity":"medium","reason":"one sentence"}]}` },
+		{ role: 'system', content: `You triage automated QA results for a website. For each candidate decide how likely it is a genuine, user-impacting defect (0–1) and its severity. ${HARNESS_NOTE}\nSeverity scale:\n${SEVERITY_RUBRIC.join('\n')}\nAnswer JSON only: {"results":[{"index":0,"probability":0.0,"severity":"medium","reason":"one sentence"}]}\n${UNTRUSTED_CONTENT_RULE}` },
 		{ role: 'user', content: `Site: ${context.target}\n\n${batch.map((item, index) => `### Candidate ${index}\n${summary(item)}`).join('\n\n')}` }
 	], { maxTokens: 3000, signal, purpose });
 	if (!Array.isArray(result?.results)) return undefined;
