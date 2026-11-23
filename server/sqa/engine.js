@@ -22,6 +22,7 @@
  * decisions from measured evidence), so a run always ends with a report even
  * when the model or the internet is unavailable.
  */
+import { checkRuntimeIdentity, runtimeName } from '../runRuntime.js';
 import { randomUUID } from 'node:crypto';
 import { createArtifactStore } from '../artifactStore.js';
 import { redact } from '../secrets.js';
@@ -201,7 +202,11 @@ export async function runSqaEngine({ session, runStore, record, signal, env = pr
 		fetchImpl = browser.guardedFetch(probeFetch);
 		if (!await browser.policyAllows(session.targetUrl, true)) throw Object.assign(new Error('The target is blocked by the browser safety policy (private or reserved network address).'), { policyBlocked: true });
 		browser.startFrames();
-		session.runtimeFacts = { ...(session.runtimeFacts ?? {}), launchedEngineId: browser.engine, browserVersion: browser.version, executionLevel: session.runtimeFacts?.executionLevel ?? 'SIMULATED', capturedAt: Date.now() };
+		session.runtimeFacts = { ...(session.runtimeFacts ?? {}), ...await browser.observeRuntime(primary) };
+		// The browser that ran must be the one selected; any gap is reported, never hidden.
+		const runtimeIdentity = checkRuntimeIdentity(session.environmentSnapshot, session.runtimeFacts);
+		if (!runtimeIdentity.ok) limitation('open', runtimeIdentity.note);
+		if (session.runtimeFacts.brandedBinary?.fallbackUsed) limitation('open', `The installed ${session.environmentSnapshot?.browser ?? 'browser'} failed to start (${session.runtimeFacts.brandedBinary.error}); the run used the bundled ${browser.engine} engine instead.`);
 		browse = browsingTools({ browser, profile: primary, state: { ...state, targetUrl: session.targetUrl, visited: state.visited } });
 		if (model.enabled) {
 			agent = createComplianceAgent({
@@ -232,7 +237,7 @@ export async function runSqaEngine({ session, runStore, record, signal, env = pr
 		} else {
 			limitation('identify', 'No reasoning-model key is configured (QASE_API_KEY / QASE_REASONER_API_KEY), so the product was identified heuristically, a labelled baseline of standards was used instead of online research, and only measured evidence was assessed.');
 		}
-		const browserName = browser.engine === 'chromium' ? `Chrome ${String(browser.version).split('.')[0]}` : `${browser.engine} ${browser.version}`;
+		const browserName = runtimeName(session.environmentSnapshot, browser);
 		await say(`I'm assessing **${host}** for compliance in ${browserName}. First I'll work out what kind of product it is, then research which standards and laws apply to it, turn them into testable requirements, measure what can be measured, test the rest in the browser, and report the result per standard.`, { id: `sqa-intro-${state.startedAt}` });
 
 		// 1. Open and read the key pages.

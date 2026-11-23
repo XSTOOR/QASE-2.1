@@ -56,6 +56,14 @@ function env(overrides = {}) {
 	};
 }
 
+const ANDROID = { envId: 'ENV-AND-PX9-15-CHR-151', platform: 'android', device: 'Pixel 9', os: 'Android', osVersion: '15' };
+
+test('every iPhone/iPad browser is probed on WebKit, the engine it really runs on', async () => {
+	const seen = [];
+	await checkEnvironmentHealth(env(), { engineLaunchProbe: async (engine, executablePath) => { seen.push({ engine, executablePath }); return { ok: true }; }, force: true });
+	assert.deepEqual(seen, [{ engine: 'webkit', executablePath: null }]);
+});
+
 test.beforeEach(() => { invalidateHealthCache(); setLocalRegistrySnapshot(null); networkRequests.length = 0; });
 test.afterEach(() => { invalidateHealthCache(); setLocalRegistrySnapshot(null); });
 
@@ -81,7 +89,7 @@ test('healthy environment → READY, all checks report real outcomes', async () 
 });
 
 test('engine that cannot launch → BLOCKED with the exact failing check named', async () => {
-	const report = await checkEnvironmentHealth(env(), {
+	const report = await checkEnvironmentHealth(env(ANDROID), {
 		engineLaunchProbe: async () => ({ ok: false, reason: 'Executable doesn\'t exist at /usr/bin/google-chrome-stable' }),
 		targetUrl: healthyTarget,
 		force: true
@@ -165,7 +173,7 @@ test('branded binary environments probe the cited executable path', async () => 
 		}]
 	});
 	const seen = [];
-	const report = await checkEnvironmentHealth(env({ browserCode: 'brave', browser: 'Brave' }), {
+	const report = await checkEnvironmentHealth(env({ ...ANDROID, browserCode: 'brave', browser: 'Brave' }), {
 		engineLaunchProbe: async (engine, executablePath) => {
 			seen.push({ engine, executablePath });
 			return { ok: true, version: '154.1.96.61' };

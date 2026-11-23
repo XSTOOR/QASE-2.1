@@ -145,7 +145,8 @@ export async function resolveExecution(environment, credentials = browserstackCr
 	}
 	const device = getDevice(environment.device);
 	const hints = device?.emulation;
-	const engineId = engineForBrowser(environment.browserCode);
+	// The support resolution knows the platform (every iPhone/iPad browser is WebKit).
+	const engineId = support.engine ?? engineForBrowser(environment.browserCode);
 	// RT1 (#14680): REAL branded binary when the local registry has one —
 	// Chrome/Brave/Opera launch their genuine binaries with the device
 	// profile emulated around them. The support resolution above already

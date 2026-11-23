@@ -84,6 +84,27 @@ function brandedResolution(entry) {
 	};
 }
 
+
+const APPLE_MOBILE_PLATFORMS = new Set(['ios', 'ipados']);
+const BRAND_NAMES = { chrome: 'Chrome', edge: 'Edge', firefox: 'Firefox', opera: 'Opera', brave: 'Brave' };
+
+/**
+ * On iPhone and iPad every browser is built on WebKit (an App Store rule), so
+ * Chrome, Edge, Firefox, Opera and Brave there run on the WebKit engine with
+ * their own user agent, never on desktop Chromium or Gecko.
+ */
+function appleMobileResolution(platformId, code) {
+	if (!APPLE_MOBILE_PLATFORMS.has(String(platformId ?? '').toLowerCase()) || !BRAND_NAMES[code]) return null;
+	const device = String(platformId).toLowerCase() === 'ios' ? 'iPhone' : 'iPad';
+	return {
+		status: BROWSER_SUPPORT_STATUS.ENGINE_EQUIVALENT,
+		engine: 'webkit',
+		reason: `${BRAND_NAMES[code]} on ${device} is built on WebKit; it runs on the Playwright WebKit engine with ${BRAND_NAMES[code]}'s ${device} user agent — engine-equivalent (SIMULATED).`,
+		provider: 'local-playwright',
+		engineEquivalent: true
+	};
+}
+
 /** Registry snapshot injected by the resolver caller (avoids async probes in hot paths). */
 let registrySnapshot = null;
 
@@ -136,6 +157,8 @@ export async function resolveBrowserSupport(platformId, browserCode, providers =
 		};
 	}
 	// Real branded binary path (chrome/brave/opera today; edge when installed).
+	const appleMobile = appleMobileResolution(platformId, String(browserCode ?? '').toLowerCase());
+	if (appleMobile) return appleMobile;
 	const entry = await entryFor(String(browserCode ?? '').toLowerCase());
 	if (entry && isExecutableLocalBrand(entry)) {
 		return {
@@ -190,6 +213,8 @@ export function resolveBrowserSupportSync(platformId, browserCode, providers = {
 	if (browser.fallback.status === BROWSER_SUPPORT_STATUS.NOT_SUPPORTED) {
 		return { ...browser.fallback, provider: 'local-playwright', engineEquivalent: false };
 	}
+	const appleMobile = appleMobileResolution(platformId, String(browserCode ?? '').toLowerCase());
+	if (appleMobile) return appleMobile;
 	const entry = registrySnapshot?.brands?.find((brand) => brand.code === String(browserCode ?? '').toLowerCase())
 		?? lastSnapshotEntry(String(browserCode ?? '').toLowerCase());
 	if (entry && isExecutableLocalBrand(entry)) {

@@ -35,7 +35,8 @@ import { buildFeedbackSectionMarkdown } from './report.js';
 import { normalizeQaScopeSelection } from '../public/qaScopeCatalog.js';
 import { createConfiguredTelegramNotifier } from './telegramNotifier.js';
 import { resolveDisplayTimeZone, formatFeedbackTimestamp } from './displayTime.js';
-import { preflightFounderRuntime, preflightSqaRuntime } from './reviewRuntime.js';
+import { preflightFounderRuntime, preflightQaRuntime, preflightSqaRuntime } from './reviewRuntime.js';
+import { engineForEnvironment } from './runRuntime.js';
 import { createSqaRunState, isSqaEngineSession } from './sqa/engine.js';
 import { buildSqaMarkdown } from './sqa/report.js';
 import { publicQaTestCatalog } from './qaTestCatalog.js';
@@ -883,6 +884,8 @@ export function createApplication(options = {}) {
 				const board = services.deviceRuntime && typeof services.deviceRuntime.deviceBoard === 'function'
 					? services.deviceRuntime.deviceBoard()
 					: [];
+				// Rows whose engine is not installed here are shown unavailable, with the fix.
+				const engines = Object.fromEntries((await engineRegistryResolved().catch(() => [])).map(entry => [entry.id, entry.available]));
 				// #15439 Issue 2: device-grouped windows — one window returns ALL
 				// rows of `limit` DEVICE groups in canonical platform order, so
 				// the tree shows iPhone/iPad/Android/desktops from the first
@@ -893,6 +896,7 @@ export function createApplication(options = {}) {
 							environmentsService: services.environments,
 							providers,
 							board,
+							engines,
 							limit,
 							offset: offset ?? 0
 						},
@@ -917,6 +921,7 @@ export function createApplication(options = {}) {
 						environmentsService: services.environments,
 						providers,
 						board,
+						engines,
 						limit,
 						offset,
 						index: query.index === '1' || query.index === 'true'
@@ -1045,11 +1050,9 @@ export function createApplication(options = {}) {
 		// Engine follows the browser: firefox → Firefox engine, safari → WebKit,
 		// everything else Chromium (the same mapping resolveExecution applies at
 		// launch — this is just the session-level default tag).
-		const engineForMatrixItem = (item) => {
-			if (item.browserCode === 'firefox') return 'firefox';
-			if (item.browserCode === 'safari') return 'webkit';
-			return 'chromium';
-		};
+		// The engine follows the item's browser and platform (server/runRuntime.js):
+		// Firefox → Gecko, Safari → WebKit, every iPhone/iPad browser → WebKit.
+		const engineForMatrixItem = (item) => engineForEnvironment(item) ?? 'chromium';
 		const orchestrator = createMatrixOrchestrator(
 			{ runs: services.runs, agent: services.agent, matrix: services.matrix, environments: services.environments },
 			{
@@ -1883,7 +1886,10 @@ export function createApplication(options = {}) {
 		try {
 			const device = isDeviceId(request.body?.device) ? request.body.device : DEFAULT_DEVICE_ID;
 			const deviceLandscape = request.body?.deviceLandscape === true;
-			const engine = isEngineId(request.body?.engine) ? request.body.engine : 'chromium';
+			if (request.body?.engine !== undefined && !isEngineId(request.body.engine)) {
+				response.status(400).json({ error: `Unsupported browser engine "${String(request.body.engine)}". Choose chromium, firefox, or webkit.` });
+				return;
+			}
 			let selectedTests;
 			let securityAuthorization;
 			let testAccount;
@@ -1899,7 +1905,10 @@ export function createApplication(options = {}) {
 				return;
 			}
 			const environment = await resolveEnvironmentForRun(services, request.body?.environmentId);
+			// The engine follows the selected browser (Safari → WebKit, Firefox →
+			// Gecko); an unrunnable selection fails here, before a run exists.
 			const testCase = await resolveTestCaseForRun(services, request.body?.testCaseId, environment?.envId);
+			const engine = await preflightQaRuntime({ environment, engine: request.body?.engine ?? 'chromium' });
 			const cohort = cohortFor(request.auth?.role).cohort;
 			const scopeSelection = normalizeQaScopeSelection(request.body?.scopeSelection);
 			const session = await services.runs.create(

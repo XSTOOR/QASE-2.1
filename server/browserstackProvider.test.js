@@ -91,7 +91,8 @@ test('R3: a REAL_DEVICE request without a configured runtime BLOCKS — no silen
 	// An explicit SIMULATED choice still runs locally, honestly labeled.
 	const simulated = await resolveExecution({ ...env, executionLevelRequested: 'SIMULATED' }, null);
 	assert.equal(simulated.mode, 'emulated');
-	assert.equal(simulated.executionEngine, 'chromium');
+	assert.equal(simulated.executionEngine, 'webkit', 'Chrome on iPhone is WebKit');
+	assert.equal(simulated.brandedExecutablePath, null);
 });
 
 test('R3: emulated resolution carries the selected browser\u2019s actual engine', async () => {

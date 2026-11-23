@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-11-24-dark-blue-r8",
+  "releaseId": "qase-2026-11-24-device-matrix-r9",
   "uiVersion": "20261124-1",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Push-SQA: complete UI makeover in a restrained \"field manual\" style (warm charcoal / warm paper, lime signal, Geist + Geist Mono, hairlines, mechanical motion) across sign-in, workspace, launchers, reports and a Bug tracker that now covers QA, compliance and Founder findings."
+  "source": "Push-SQA: every device and browser combination runs as selected in QA, SQA and Founder: the engine follows the browser (all iPhone/iPad browsers on WebKit), the device user agent, viewport, touch and landscape are applied, unrunnable combinations are refused before a run, the picker marks engines not installed, and observed runtime identity is checked and reported."
 }

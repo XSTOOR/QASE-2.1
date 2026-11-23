@@ -227,11 +227,11 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 				await locate(args.ref).scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
 				await browser.pointAt?.(page, locate(args.ref), `Click "${label}"`);
 				try {
-					await browser.interact(() => locate(args.ref).click({ timeout: 5000 }));
+					await browser.interact(() => (browser.activate ? browser.activate(locate(args.ref), { timeout: 5000 }) : locate(args.ref).click({ timeout: 5000 })));
 				} catch (error) {
 					// Usually a pop-up or another element is in the way: clear it and retry once.
 					const cleared = await dismissOverlays(page, { includeToasts: true }).catch(() => []);
-					try { await browser.interact(() => locate(args.ref).click({ timeout: 4000, ...(cleared.length ? {} : { force: false }) })); }
+					try { await browser.interact(() => (browser.activate ? browser.activate(locate(args.ref), { timeout: 4000 }) : locate(args.ref).click({ timeout: 4000 }))); }
 					catch { return `Click on "${label}" failed (${/intercepts pointer|not visible|outside of the viewport/.test(error.message) ? 'another element covers it or it is off-screen' : String(error.message).split('\n')[0].slice(0, 120)}). Try a different element, scroll, or close what covers it.\n${await observe(page, log)}`; }
 				}
 				return after();

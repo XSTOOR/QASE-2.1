@@ -27,6 +27,7 @@
  * run always ends with a report even when the model or the internet is
  * unavailable.
  */
+import { checkRuntimeIdentity, runtimeName } from '../runRuntime.js';
 import { randomUUID } from 'node:crypto';
 import { createArtifactStore } from '../artifactStore.js';
 import { redact } from '../secrets.js';
@@ -233,7 +234,11 @@ export async function runFounderEngine({ session, runStore, record, signal, env 
 		fetchImpl = browser.guardedFetch(probeFetch);
 		if (!await browser.policyAllows(session.targetUrl, true)) throw Object.assign(new Error('The target is blocked by the browser safety policy (private or reserved network address).'), { policyBlocked: true });
 		browser.startFrames();
-		session.runtimeFacts = { ...(session.runtimeFacts ?? {}), launchedEngineId: browser.engine, browserVersion: browser.version, executionLevel: session.runtimeFacts?.executionLevel ?? 'SIMULATED', capturedAt: Date.now() };
+		session.runtimeFacts = { ...(session.runtimeFacts ?? {}), ...await browser.observeRuntime(primary) };
+		// The browser that ran must be the one selected; any gap is reported, never hidden.
+		const runtimeIdentity = checkRuntimeIdentity(session.environmentSnapshot, session.runtimeFacts);
+		if (!runtimeIdentity.ok) limitation('open', runtimeIdentity.note);
+		if (session.runtimeFacts.brandedBinary?.fallbackUsed) limitation('open', `The installed ${session.environmentSnapshot?.browser ?? 'browser'} failed to start (${session.runtimeFacts.brandedBinary.error}); the run used the bundled ${browser.engine} engine instead.`);
 		browse = browsingTools({ browser, profile: primary, prefix: 'founder', state: { targetUrl: session.targetUrl, visited: state.visited } });
 		if (model.enabled) {
 			agent = createStageAgent({
@@ -265,7 +270,7 @@ export async function runFounderEngine({ session, runStore, record, signal, env 
 		} else {
 			limitation('understand', 'No reasoning-model key is configured (QASE_API_KEY / QASE_REASONER_API_KEY), so the product was understood from keywords, no competitor research or journeys were done, and scores and advice come from the measured signals only.');
 		}
-		const browserName = browser.engine === 'chromium' ? `Chrome ${String(browser.version).split('.')[0]}` : `${browser.engine} ${browser.version}`;
+		const browserName = runtimeName(session.environmentSnapshot, browser);
 		await say(`I'm reviewing **${host}** the way a founder, an investor and a first-time customer would, in ${browserName}. I'll work out what the product promises and to whom, look at the competition, measure the first impression, trust, conversion and speed, walk the key journeys as a new customer, score ten business areas, and finish with what to do, what to avoid and what to keep.`, { id: `founder-intro-${state.startedAt}` });
 
 		// 1. Open and read the key pages.

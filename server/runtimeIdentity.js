@@ -114,7 +114,11 @@ export function verifyRuntimeIdentity({ runtimeFacts, environment } = {}) {
 	const selectedPlatform = String(environment?.platform ?? '').toLowerCase();
 
 	// Browser brand: the browser actually executing must BE the selected one.
-	if (selectedCode && identity.browserCode && identity.browserCode !== selectedCode) {
+	// Brave deliberately sends Chrome's user agent (no brand token on Android),
+	// so a Chrome UA cannot disprove a Brave selection; a branded-binary fact
+	// above is what proves Brave.
+	const braveAsChrome = selectedCode === 'brave' && identity.browserCode === 'chrome';
+	if (selectedCode && identity.browserCode && identity.browserCode !== selectedCode && !braveAsChrome) {
 		mismatches.push(`browser mismatch: selected ${selectedCode}, runtime reports ${identity.browserCode}`);
 	}
 	// Browser version: runtime-authoritative — compare MAJOR only (runtimes

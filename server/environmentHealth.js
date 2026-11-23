@@ -194,8 +194,8 @@ export async function checkEnvironmentHealth(environment, options = {}) {
 	// it never launches, never silently skips, never passes.
 	const mediaDeclared = Array.isArray(environment?.mediaCapabilities) && environment.mediaCapabilities.length > 0;
 	if (mediaDeclared) {
-		const engineForBrowser = { chrome: 'chromium', edge: 'chromium', opera: 'chromium', brave: 'chromium', duckduckgo: 'chromium', firefox: 'firefox', safari: 'webkit' };
-		const engineId = engineForBrowser[environment?.browserCode] ?? 'chromium';
+		// Same engine the run will launch (every iPhone/iPad browser is WebKit).
+		const engineId = support.engine ?? 'chromium';
 		const chromiumOnly = engineId === 'chromium';
 		checks.push({
 			name: 'media_capability',

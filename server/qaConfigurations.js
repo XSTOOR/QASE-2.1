@@ -73,9 +73,18 @@ export function executionTypeFor(env) {
  *  - UNAVAILABLE — present in the catalog but the runtime board says it cannot run now
  *  - AVAILABLE — selectable
  */
-export function availabilityFor(env, boardByEnvId, providers) {
+const ENGINE_NAMES = { chromium: 'Chromium', firefox: 'Firefox', webkit: 'WebKit (Safari engine)' };
+
+export function availabilityFor(env, boardByEnvId, providers, engines) {
 	if (env.browserSupport?.status === 'not_supported') {
 		return { availability: 'NOT_SUPPORTED', reason: env.browserSupport.reason ?? 'Browser family not supported.' };
+	}
+	// A locally emulated row needs its engine installed on this server; a run
+	// would otherwise be refused at start. Branded binaries and device farms
+	// do not depend on the bundled engine.
+	const engine = env.browserSupport?.engine;
+	if (engines && engine && engines[engine] === false && !env.browserSupport?.branded && env.executionLevelRequested !== 'REAL_DEVICE' && env.executionLevelRequested !== 'VIRTUAL_DEVICE') {
+		return { availability: 'UNAVAILABLE', reason: `Needs the ${ENGINE_NAMES[engine] ?? engine} browser on the QASE server (run: npm run install-browser).` };
 	}
 	// Provider rows (PROV- namespace) attest to a remote provider; without a
 	// connected provider they are honestly Not configured — never silently
@@ -143,13 +152,13 @@ export function availabilityFor(env, boardByEnvId, providers) {
  * `env` comes from `services.environments.list()` — already enriched with
  * execution metadata (executionLevel, browserSupport, deviceManufacturer…).
  */
-export function toConfiguration(env, { boardByEnvId = new Map(), providers = [] } = {}) {
+export function toConfiguration(env, { boardByEnvId = new Map(), providers = [], engines } = {}) {
 	const support = env.browserSupport ?? resolveBrowserSupportSync(env.platform, env.browserCode);
 	const manufacturer = env.deviceManufacturer
 		?? env.manufacturer
 		?? (String(env.platform ?? '').match(/^(ios|ipados|macos)$/) ? 'Apple'
 			: env.platform === 'windows' ? 'Microsoft' : null);
-	const availability = availabilityFor({ ...env, browserSupport: support }, boardByEnvId, providers);
+	const availability = availabilityFor({ ...env, browserSupport: support }, boardByEnvId, providers, engines);
 	return {
 		envId: env.envId,
 		device: env.device,
@@ -262,10 +271,11 @@ export function assembleQaConfigurations(options = {}) {
 		board = [],
 		filters = {},
 		limit = 80000,
-		offset = 0
+		offset = 0,
+		engines
 	} = options;
 	const boardByEnvId = new Map(board.map((row) => [row.envId, row]));
-	const all = environments.map((env) => toConfiguration(env, { boardByEnvId, providers }));
+	const all = environments.map((env) => toConfiguration(env, { boardByEnvId, providers, engines }));
 	const filtered = filterConfigurations(all, filters);
 	const total = filtered.length;
 	const configurations = filtered.slice(offset, offset + limit);
@@ -306,15 +316,15 @@ export function assembleQaConfigurations(options = {}) {
  * happens post-join, so provider/board rows participate).
  */
 export async function buildQaConfigurations(
-	{ environmentsService, providers = [], board = [], limit = 200, offset = 0, index = false } = {},
+	{ environmentsService, providers = [], board = [], limit = 200, offset = 0, index = false, engines } = {},
 	filters = {}
 ) {
 	const rows = await environmentsService.list({ active: 'true', limit: 80000 });
-	const assembled = assembleQaConfigurations({ environments: rows, providers, board, filters, limit, offset });
+	const assembled = assembleQaConfigurations({ environments: rows, providers, board, filters, limit, offset, engines });
 	if (!index) return assembled;
 	// Compact full-catalog index: the launcher uses it for selection math,
 	// family counts and facets while the tree renders windowed slices only.
-	const full = assembleQaConfigurations({ environments: rows, providers, board, filters, limit: 80000, offset: 0 });
+	const full = assembleQaConfigurations({ environments: rows, providers, board, filters, limit: 80000, offset: 0, engines });
 	const indexRows = full.configurations.map((configuration) => ({
 		envId: configuration.envId,
 		platform: configuration.platform,
@@ -366,11 +376,11 @@ const DEVICE_TREE_PLATFORM_ORDER = ['ios', 'ipados', 'macos', 'android', 'window
  * still counts rows (summary honesty).
  */
 export async function buildQaConfigurationsByDevice(
-	{ environmentsService, providers = [], board = [], limit = 12, offset = 0 } = {},
+	{ environmentsService, providers = [], board = [], limit = 12, offset = 0, engines } = {},
 	filters = {}
 ) {
 	const rows = await environmentsService.list({ active: 'true', limit: 80000 });
-	const full = assembleQaConfigurations({ environments: rows, providers, board, filters, limit: 80000, offset: 0 });
+	const full = assembleQaConfigurations({ environments: rows, providers, board, filters, limit: 80000, offset: 0, engines });
 	const filtered = full.configurations;
 
 	const groups = new Map();

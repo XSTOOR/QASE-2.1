@@ -25,6 +25,7 @@
  * A user stop, budget end or unexpected error still publishes a partial
  * report with every unexecuted scenario marked "not executed" and why.
  */
+import { checkRuntimeIdentity, runtimeName } from '../runRuntime.js';
 import { randomUUID } from 'node:crypto';
 import { createArtifactStore } from '../artifactStore.js';
 import { redact } from '../secrets.js';
@@ -827,7 +828,11 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		fetchImpl = browser.guardedFetch(fetchImpl);
 		if (!await browser.policyAllows(session.targetUrl, true)) throw Object.assign(new Error('The target is blocked by the browser safety policy (private or reserved network address). Allow it with QASE_BROWSER_ALLOWED_PRIVATE_HOSTS for an authorized internal target.'), { policyBlocked: true });
 		browser.startFrames();
-		session.runtimeFacts = { ...(session.runtimeFacts ?? {}), launchedEngineId: browser.engine, browserVersion: browser.version, executionLevel: session.runtimeFacts?.executionLevel ?? 'SIMULATED', capturedAt: Date.now() };
+		session.runtimeFacts = { ...(session.runtimeFacts ?? {}), ...await browser.observeRuntime(primary) };
+		// The browser that ran must be the one selected; any gap is reported, never hidden.
+		const runtimeIdentity = checkRuntimeIdentity(session.environmentSnapshot, session.runtimeFacts);
+		if (!runtimeIdentity.ok) limitation('observe', runtimeIdentity.note);
+		if (session.runtimeFacts.brandedBinary?.fallbackUsed) limitation('observe', `The installed ${session.environmentSnapshot?.browser ?? 'browser'} failed to start (${session.runtimeFacts.brandedBinary.error}); the run used the bundled ${browser.engine} engine instead.`);
 		state.coverage.engine = `${browser.engine} ${browser.version}`;
 		// Vision self-check: prove the reasoning model reads images before relying on screenshots.
 		if (baseModels.reasonerAvailable() && baseModels.state.reasoner.visionOk === undefined && settings.reasoner.vision) {
@@ -847,7 +852,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			state.vision = { checked: Boolean(answer), ok: baseModels.state.reasoner.visionOk ?? false, latencyMs: Date.now() - started, model: baseModels.state.reasoner.model };
 			if (answer && !baseModels.state.reasoner.visionOk) limitation('observe', `The reasoning model (${baseModels.state.reasoner.model}) failed the vision self-check (could not read a test image), so screenshots were not used for reasoning; visual review relied on DOM checks only.`, true);
 		}
-		const browserName = browser.engine === 'chromium' ? `Chrome ${String(browser.version).split('.')[0]}` : `${browser.engine} ${browser.version}`;
+		const browserName = runtimeName(session.environmentSnapshot, browser);
 		await say(`I'm opening **${host}** in ${browserName} on ${primary.label} to see what the app is before I plan anything.`, { id: `qa-hello-${state.startedAt}` });
 		if (recovered.length) await say(`Resumed after an interruption: ${recovered.map(item => `${item.id} → ${item.state === 'pending' ? 're-queued (read-only)' : 'inconclusive (not replayed)'}`).join('; ')}.`, { id: `qa-recovered-${Date.now()}` });
 

@@ -45,7 +45,7 @@ export function browsingTools({ browser, profile, state, onVisit = () => {}, pre
 				await ensure();
 				const label = await locate(ref).evaluate(element => (element.getAttribute('aria-label') || element.innerText || element.value || '').trim().slice(0, 60)).catch(() => '');
 				if (DESTRUCTIVE.test(label)) return { success: false, error: `Refused: "${label}" looks destructive.` };
-				await browser.interact(() => locate(ref).click({ timeout: 5000 }));
+				await browser.interact(() => (browser.activate ? browser.activate(locate(ref), { timeout: 5000 }) : locate(ref).click({ timeout: 5000 })));
 				return after();
 			}),
 		tool(`${prefix}_type`, 'Type text into a field by ref (replaces its value). Set submit=true to press Enter. Submissions are blocked from reaching the server; you see how the page reacts.',

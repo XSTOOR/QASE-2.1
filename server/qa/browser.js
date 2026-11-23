@@ -14,9 +14,12 @@
  *
  * It also streams JPEG frames to the dashboard's live view.
  */
+import { chromium } from 'playwright';
 import { resolveEngine } from '../browserEngines.js';
 import { contextOptionsFor } from '../deviceProfiles.js';
-import { environmentEmulationOptions } from '../browserstackProvider.js';
+import { environmentEmulationOptions, connectBrowserstack } from '../browserstackProvider.js';
+import { userAgentFor } from '../deviceRuntimeProfiles.js';
+import { resolveRunRuntime } from '../runRuntime.js';
 import { OBSERVER_SCRIPT } from './detectors/pageAudit.js';
 import { createBrowserPolicy } from '../browserPolicy.js';
 
@@ -115,21 +118,51 @@ export function primaryProfile(session) {
 	const environment = session.environmentSnapshot;
 	const emulation = environment ? environmentEmulationOptions(environment) : contextOptionsFor(session.device ?? 'desktop', { landscape: session.deviceLandscape === true });
 	if (!emulation?.viewport) return { ...VIEWPORTS.desktop };
+	let viewport = { ...emulation.viewport };
+	// Landscape applies to an environment's device as it does to a legacy device profile.
+	if (environment && session.deviceLandscape === true && (emulation.isMobile || emulation.hasTouch) && viewport.height > viewport.width) {
+		viewport = { width: viewport.height, height: viewport.width };
+	}
+	// A selected environment sends its own device's user agent (iPhone Safari,
+	// Android Firefox, Windows Edge…), never desktop Chrome's.
+	const userAgent = environment
+		? userAgentFor(environment.platform, environment.osVersion, environment.browserCode, environment.browserVersion) ?? undefined
+		: emulation.userAgent;
 	return {
-		name: emulation.isMobile ? 'device' : 'desktop',
-		label: `${environment?.device ?? session.device ?? 'Device'} ${emulation.viewport.width}×${emulation.viewport.height}`,
-		viewport: emulation.viewport,
+		name: emulation.isMobile || emulation.hasTouch ? 'device' : 'desktop',
+		label: `${environment?.device ?? session.device ?? 'Device'} ${viewport.width}×${viewport.height}`,
+		viewport,
 		deviceScaleFactor: emulation.deviceScaleFactor ?? 1,
 		isMobile: Boolean(emulation.isMobile),
 		hasTouch: Boolean(emulation.hasTouch),
-		userAgent: emulation.userAgent
+		userAgent
 	};
 }
 
+/** The run's runtime plan; old runs without an environment keep their stored engine. */
+export function runtimePlan(session, dependencies) {
+	return resolveRunRuntime({ environment: session.environmentSnapshot, engine: session.engine ?? 'chromium', permissionScenario: session.permissionScenario }, dependencies);
+}
+
 export async function createQaBrowser({ session, allowWrites = false, publishFrame, onBlocked, env = process.env, headless = env.QASE_HEADLESS !== 'false' } = {}) {
-	const engine = await resolveEngine(session.engine ?? 'chromium');
-	if (!engine.available) throw Object.assign(new Error(engine.reason ?? `The ${engine.id} browser is not available.`), { code: 'ENGINE_UNAVAILABLE' });
-	const browser = await engine.type.launch({ headless, ...engine.launch });
+	// One plan for every mode: the engine follows the selected browser, an
+	// unrunnable selection is refused, a branded binary or device farm is used
+	// when available (server/runRuntime.js).
+	const plan = await runtimePlan(session);
+	const engine = plan.remote ? { id: plan.engineId, launch: {} } : await resolveEngine(plan.engineId);
+	if (!plan.remote && !plan.brandedExecutablePath && !engine.available) throw Object.assign(new Error(engine.reason ?? `The ${engine.id} browser is not available.`), { code: 'ENGINE_UNAVAILABLE' });
+	let brandedLaunchError;
+	let browser;
+	if (plan.remote) browser = await connectBrowserstack(chromium, plan.connectOptions);
+	else if (plan.brandedExecutablePath) {
+		try { browser = await engine.type.launch({ headless, ...engine.launch, executablePath: plan.brandedExecutablePath }); }
+		catch (error) {
+			// The genuine binary failed to start: use the bundled engine and say so.
+			brandedLaunchError = String(error?.message ?? error).split('\n')[0].slice(0, 300);
+			if (!engine.available) throw Object.assign(new Error(`The installed browser failed to start (${brandedLaunchError}) and no bundled ${engine.id} is available.`), { code: 'ENGINE_UNAVAILABLE' });
+			browser = await engine.type.launch({ headless, ...engine.launch });
+		}
+	} else browser = await engine.type.launch({ headless, ...engine.launch });
 	const origins = allowedOrigins(session.targetUrl, env);
 	const showCursor = env.QASE_AGENT_CURSOR !== 'false';
 	// The existing browser policy keeps private-network (SSRF) protection and
@@ -150,6 +183,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	let storageState;
 	let sessionSnapshot; // { origin, items } — sessionStorage is per tab and never part of storageState
 	const contextKeys = new WeakMap();
+	const touchContexts = new WeakSet(); // contexts emulating a touch screen
 	let activePage;
 	let frameTimer;
 	let lastFrameKey;
@@ -170,7 +204,13 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	async function context(profile, { reducedMotion, colorScheme, anonymous = false, isolated = false } = {}) {
 		const key = `${profile.name}:${reducedMotion ?? 'no-preference'}:${colorScheme ?? 'light'}:${anonymous ? 'anon' : 'user'}`;
 		if (!isolated && contexts.has(key)) return contexts.get(key);
-		const created = await browser.newContext({
+		// A device-farm browser is the real device: no emulation on top of it.
+		const created = plan.remote ? await browser.newContext({
+			...(storageState && !anonymous ? { storageState } : {}),
+			reducedMotion: reducedMotion ?? 'no-preference',
+			colorScheme: colorScheme ?? 'light',
+			acceptDownloads: false
+		}) : await browser.newContext({
 			viewport: profile.viewport,
 			deviceScaleFactor: profile.deviceScaleFactor,
 			isMobile: engine.id === 'firefox' ? undefined : profile.isMobile,
@@ -185,6 +225,8 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 			acceptDownloads: false,
 			ignoreHTTPSErrors: false
 		});
+		if (plan.permissions.length) await created.grantPermissions(plan.permissions).catch(() => {});
+		if (profile.hasTouch && !plan.remote) touchContexts.add(created);
 		contextKeys.set(created, key);
 		await created.addInitScript(OBSERVER_SCRIPT);
 		if (showCursor) await created.addInitScript(CURSOR_SCRIPT);
@@ -308,6 +350,18 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 		if (showCursor && page && !page.isClosed()) await page.evaluate(() => window.__qaseCursorHide?.()).catch(() => {});
 	}
 
+	/**
+	 * Presses a control the way the device's user would: a tap (touch events,
+	 * then the click) on a touch screen, a mouse click elsewhere.
+	 */
+	async function activate(locator, options = {}) {
+		let touch = false;
+		try { touch = touchContexts.has(locator.page().context()); } catch { /* detached locator */ }
+		if (!touch) return locator.click(options);
+		const { button, clickCount, delay, ...tapOptions } = options;
+		return locator.tap(tapOptions);
+	}
+
 	async function interact(work) {
 		interacting++;
 		try { return await work(); }
@@ -371,9 +425,46 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 		await browser.close().catch(() => {});
 	}
 
+	/**
+	 * What the browser really is, read from a page: user agent, viewport,
+	 * pixel ratio and touch points, plus how it ran. Stored as runtime facts and
+	 * compared with the selection.
+	 */
+	async function observeRuntime(profile) {
+		let facts = {};
+		try {
+			const { page } = await openPage(profile, { isolated: true });
+			try {
+				// A device-width page, so a phone reports its screen width rather than
+				// the 980px layout viewport it gives pages without a viewport tag.
+				await page.setContent('<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><title>runtime</title>').catch(() => {});
+				facts = await page.evaluate(() => ({
+					userAgent: navigator.userAgent,
+					viewport: { width: window.innerWidth, height: window.innerHeight },
+					devicePixelRatio: window.devicePixelRatio,
+					maxTouchPoints: navigator.maxTouchPoints,
+					platform: navigator.platform,
+					orientation: matchMedia('(orientation: landscape)').matches ? 'landscape' : 'portrait'
+				}));
+			} finally { await page.close().catch(() => {}); }
+		} catch { /* facts stay empty; identity is then reported as not observable */ }
+		return {
+			...facts,
+			launchedEngineId: engine.id,
+			browserVersion: browser.version(),
+			executionLevel: plan.executionLevel,
+			provider: plan.remote ? 'environment' : 'local',
+			engineEquivalent: plan.engineEquivalent,
+			brandedBinary: plan.brandedExecutablePath ? { path: plan.brandedExecutablePath, fallbackUsed: Boolean(brandedLaunchError), ...(brandedLaunchError ? { error: brandedLaunchError } : {}) } : null,
+			capturedAt: Date.now()
+		};
+	}
+
 	return {
 		pointAt,
 		hideCursor,
+		observeRuntime,
+		plan,
 		engine: engine.id,
 		version: browser.version(),
 		origins,
@@ -384,7 +475,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 			if (!await policyAllows(String(url), false)) throw new Error(`Blocked by browser safety policy: ${new URL(String(url)).origin}`);
 			return fetchImpl(url, init);
 		},
-		context, openPage, goto, settle, interact, permitWritesFor, useSignedInState,
+		context, openPage, goto, settle, interact, activate, permitWritesFor, useSignedInState,
 		signedIn: () => Boolean(storageState),
 		startFrames, stopFrames,
 		getLastFrame: () => lastFrame,

@@ -20,8 +20,22 @@ test.afterEach(() => setLocalRegistrySnapshot(null));
 
 // --- #14632 (NI01 Phase 2) + RT1 (#14680): capability truth, no external provider ---
 
-test('resolveBrowserSupport: chrome is supported on every platform', async () => {
-	for (const platform of ['ios', 'ipados', 'macos', 'android', 'windows']) {
+test('resolveBrowserSupport: every iPhone/iPad browser runs on WebKit, never desktop Chromium or Gecko', async () => {
+	for (const platform of ['ios', 'ipados']) {
+		for (const code of ['chrome', 'edge', 'firefox', 'opera', 'brave']) {
+			for (const r of [await resolveBrowserSupport(platform, code), resolveBrowserSupportSync(platform, code)]) {
+				assert.equal(r.engine, 'webkit', `${code} on ${platform}`);
+				assert.equal(r.status, BROWSER_SUPPORT_STATUS.ENGINE_EQUIVALENT);
+				assert.equal(r.engineEquivalent, true);
+				assert.equal(r.executablePath, undefined, 'no desktop branded binary stands in for a phone browser');
+			}
+		}
+		assert.equal((await resolveBrowserSupport(platform, 'duckduckgo')).status, BROWSER_SUPPORT_STATUS.NOT_SUPPORTED);
+	}
+});
+
+test('resolveBrowserSupport: chrome is supported on every desktop and Android platform', async () => {
+	for (const platform of ['macos', 'android', 'windows']) {
 		const r = await resolveBrowserSupport(platform, 'chrome');
 		assert.equal(r.status, BROWSER_SUPPORT_STATUS.SUPPORTED, `chrome on ${platform}`);
 		assert.equal(r.provider, 'local-playwright');

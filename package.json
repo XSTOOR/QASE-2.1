@@ -42,7 +42,8 @@
     "test:welcome": "node scripts/qualify-welcome.mjs",
     "test:acceptance": "node scripts/test-acceptance.mjs",
     "test:sqa": "node scripts/test-sqa-browser.mjs",
-    "test:founder": "node scripts/test-founder-browser.mjs"
+    "test:founder": "node scripts/test-founder-browser.mjs",
+    "test:devices": "node scripts/test-device-matrix.mjs"
   },
   "engines": {
     "node": ">=22 <25"

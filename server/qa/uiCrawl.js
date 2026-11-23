@@ -200,7 +200,7 @@ export async function discoverViews({ browser, open, prepare = async () => [], s
 				if (!before || !await target.count().catch(() => 0)) continue;
 				await browser.pointAt?.(page, target, control.label);
 				stats.clicks++;
-				const clicked = await browser.interact(() => target.click({ timeout: 4000 })).then(() => true).catch(() => false);
+				const clicked = await browser.interact(() => (browser.activate ? browser.activate(target, { timeout: 4000 }) : target.click({ timeout: 4000 }))).then(() => true).catch(() => false);
 				if (!clicked) continue;
 				await browser.settle(page, { quietMs: 900 }).catch(() => {});
 				// After a navigation the new screen may open with a tour; known pop-ups are cleared anywhere.
@@ -253,7 +253,7 @@ export async function discoverViews({ browser, open, prepare = async () => [], s
 						const subTarget = page.locator('[data-qase-sub="0"]').first();
 						await browser.pointAt?.(page, subTarget, `${parent} › ${sub.label}`);
 						stats.clicks++;
-						if (!await browser.interact(() => subTarget.click({ timeout: 4000 })).then(() => true).catch(() => false)) continue;
+						if (!await browser.interact(() => (browser.activate ? browser.activate(subTarget, { timeout: 4000 }) : subTarget.click({ timeout: 4000 }))).then(() => true).catch(() => false)) continue;
 						await browser.settle(page, { quietMs: 900 }).catch(() => {});
 						const subAfter = await page.evaluate(screenSignature).catch(() => undefined);
 						if (!subBefore || !subAfter) continue;
