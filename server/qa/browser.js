@@ -335,14 +335,53 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	async function pointAt(page, target, label, { click = true } = {}) {
 		if (!showCursor || !page || page.isClosed()) return;
 		try {
-			let box = target && typeof target.boundingBox === 'function' ? await target.boundingBox({ timeout: 1500 }) : target;
+			// The cursor shows the exact point the press will use (aimPoint), not a guess.
+			const aim = target && typeof target.boundingBox === 'function' ? await aimPoint(target) : undefined;
+			let box = aim ? { x: aim.x, y: aim.y, width: 0, height: 0 } : target && typeof target.boundingBox === 'function' ? await target.boundingBox({ timeout: 1500 }) : target;
 			if (!box) return;
 			const x = Math.round(box.x + (box.width ?? 0) / 2);
-			const y = Math.round(box.y + Math.min((box.height ?? 0) / 2, 24));
+			const y = Math.round(box.y + (aim ? 0 : Math.min((box.height ?? 0) / 2, 24)));
 			await page.evaluate(([px, py, text]) => window.__qaseCursor?.(px, py, text, false), [x, y, String(label ?? '').slice(0, 60)]);
 			await page.waitForTimeout(420);
 			if (click) await page.evaluate(([px, py, text]) => window.__qaseCursor?.(px, py, text, true), [x, y, String(label ?? '').slice(0, 60)]);
 		} catch { /* the cursor is cosmetic */ }
+	}
+
+	/**
+	 * A screenshot for the model with each listed control's ref drawn on it
+	 * (set-of-marks), so what the model sees maps to what it can press. The
+	 * marks exist only for the capture; evidence screenshots never carry them.
+	 */
+	let marking = false; // live-view frames skip the instant the marks are drawn
+	async function markedScreenshot(page, { quality = 55 } = {}) {
+		await hideCursor(page);
+		marking = true;
+		await page.evaluate(() => {
+			document.getElementById('__qase_marks')?.remove();
+			const layer = document.createElement('div');
+			layer.id = '__qase_marks'; layer.setAttribute('aria-hidden', 'true');
+			layer.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647;contain:strict';
+			const placed = [];
+			for (const element of document.querySelectorAll('[data-qase-ref]')) {
+				const r = element.getBoundingClientRect();
+				if (r.width < 2 || r.height < 2 || r.bottom <= 0 || r.right <= 0 || r.top >= innerHeight || r.left >= innerWidth) continue;
+				const style = getComputedStyle(element);
+				if (style.visibility === 'hidden' || style.display === 'none') continue;
+				const box = document.createElement('div');
+				box.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;outline:1px solid rgba(220,30,30,.55)`;
+				const tag = document.createElement('div');
+				tag.textContent = element.getAttribute('data-qase-ref');
+				let x = Math.max(0, Math.min(r.left, innerWidth - 30)); let y = Math.max(0, r.top - 11 < 0 ? r.top : r.top - 11);
+				// Keep tags readable when controls are packed together.
+				while (placed.some(([px, py]) => Math.abs(px - x) < 26 && Math.abs(py - y) < 11)) y += 11;
+				placed.push([x, y]);
+				tag.style.cssText = `position:fixed;left:${x}px;top:${y}px;font:600 9px/11px ui-monospace,Menlo,monospace;background:#d01e1e;color:#fff;padding:0 2px;border-radius:2px`;
+				layer.append(box, tag);
+			}
+			document.documentElement.appendChild(layer);
+		}).catch(() => {});
+		try { return await page.screenshot({ type: 'jpeg', quality }); }
+		finally { await page.evaluate(() => document.getElementById('__qase_marks')?.remove()).catch(() => {}); marking = false; }
 	}
 
 	/** Hides the cursor before evidence screenshots, so reviewers never see it. */
@@ -357,9 +396,52 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	async function activate(locator, options = {}) {
 		let touch = false;
 		try { touch = touchContexts.has(locator.page().context()); } catch { /* detached locator */ }
-		if (!touch) return locator.click(options);
-		const { button, clickCount, delay, ...tapOptions } = options;
+		// Press where the element itself is hit, not its geometric centre: the centre of a
+		// list row or card is often a nested control (Reply, Delete, a menu) — a wrong click.
+		const aim = options.position ? undefined : await aimPoint(locator);
+		const pressOptions = aim ? { ...options, position: aim.position } : options;
+		if (!touch) return locator.click(pressOptions);
+		const { button, clickCount, delay, ...tapOptions } = pressOptions;
 		return locator.tap(tapOptions);
+	}
+
+	/**
+	 * A point inside the element that the browser really routes to it: the hit
+	 * element is the element or a non-interactive descendant, never another
+	 * control nested inside or laid over it. Returns viewport coordinates and the
+	 * element-relative position, or undefined when no such point is visible
+	 * (Playwright's own checks then decide).
+	 */
+	async function aimPoint(locator) {
+		try {
+			await locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+			return await locator.evaluate(element => {
+				const interactive = 'a[href],button,input,select,textarea,summary,label,[role=button],[role=link],[role=tab],[role=menuitem],[role=option],[role=checkbox],[role=switch],[contenteditable=true],[onclick]';
+				const r = element.getBoundingClientRect();
+				if (r.width < 1 || r.height < 1) return undefined;
+				const owns = hit => {
+					if (!hit || !(hit === element || element.contains(hit))) return false;
+					const control = hit.closest(interactive);
+					return !control || control === element || !element.contains(control);
+				};
+				const xs = [0.5, 0.25, 0.75, 0.1, 0.9]; const ys = [0.5, 0.3, 0.7, 0.15, 0.85];
+				// Text first: the label of a row or button is the safest place to press.
+				const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+				for (let node = walker.nextNode(), n = 0; node && n < 40; node = walker.nextNode(), n++) {
+					if (!node.textContent.trim()) continue;
+					const range = document.createRange(); range.selectNodeContents(node);
+					const box = range.getBoundingClientRect();
+					const px = Math.min(box.left + Math.min(box.width / 2, 12), r.right - 1); const py = box.top + box.height / 2;
+					if (box.width > 0 && px >= 0 && py >= 0 && px < innerWidth && py < innerHeight && owns(document.elementFromPoint(px, py))) return { x: px, y: py, position: { x: px - r.left, y: py - r.top } };
+				}
+				for (const fy of ys) for (const fx of xs) {
+					const px = r.left + r.width * fx; const py = r.top + r.height * fy;
+					if (px < 0 || py < 0 || px >= innerWidth || py >= innerHeight) continue;
+					if (owns(document.elementFromPoint(px, py))) return { x: px, y: py, position: { x: px - r.left, y: py - r.top } };
+				}
+				return undefined;
+			}, undefined, { timeout: 2000 });
+		} catch { return undefined; }
 	}
 
 	async function interact(work) {
@@ -399,7 +481,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 		stopFrames();
 		frameTimer = setInterval(async () => {
 			const page = activePage;
-			if (!page || page.isClosed()) return;
+			if (!page || page.isClosed() || marking) return;
 			try {
 				const bytes = await page.screenshot({ type: 'jpeg', quality: Number(env.QASE_FRAME_QUALITY) || 55, timeout: 1500, animations: 'allow' });
 				const base64 = bytes.toString('base64');
@@ -475,7 +557,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 			if (!await policyAllows(String(url), false)) throw new Error(`Blocked by browser safety policy: ${new URL(String(url)).origin}`);
 			return fetchImpl(url, init);
 		},
-		context, openPage, goto, settle, interact, activate, permitWritesFor, useSignedInState,
+		context, openPage, goto, settle, interact, activate, aimPoint, markedScreenshot, permitWritesFor, useSignedInState,
 		signedIn: () => Boolean(storageState),
 		startFrames, stopFrames,
 		getLastFrame: () => lastFrame,

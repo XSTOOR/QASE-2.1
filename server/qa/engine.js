@@ -733,7 +733,9 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 					state.coverage.exploration = (state.coverage.exploration ?? 0) + 1;
 					void progress(`AI tester: ${step.name}${step.args?.url ? ` ${pathOf(step.args.url)}` : ''} on ${pathOf(step.url)}`);
 					const [action, outcome] = String(step.line ?? step.name).replace(/^\d+\.\s*/, '').split(' → ');
-					void activityLog.note(`AI tester · ${action.slice(0, 120)}`, (outcome ?? '').replace(/ @ .*$/, ''), { type: 'agent_step', toolName: `qa_explore_${step.name}`, scenarioId: scenario.id, status: /failed|no longer exists|Refused/.test(outcome ?? '') ? 'failed' : 'done' });
+					// The step shows what it pressed, what it expected, what happened, and its reasoning.
+					const detail = [(outcome ?? '').replace(/ @ .*$/, ''), step.thought ? `Reasoning: ${step.thought}` : ''].filter(Boolean).join('\n');
+					void activityLog.note(`AI tester · ${action.slice(0, 180)}`, redact(session.id, detail), { type: 'agent_step', toolName: `qa_explore_${step.name}`, scenarioId: scenario.id, status: /failed|no longer exists|Refused/.test(outcome ?? '') ? 'failed' : 'done' });
 				} });
 			addCandidates(result.candidates);
 			// Pages the journey reached that the crawl never saw join the graph (and get audited).

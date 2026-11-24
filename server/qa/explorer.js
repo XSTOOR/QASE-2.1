@@ -14,17 +14,18 @@ import { candidate } from './findings.js';
 import { dismissOverlays, openOverlays } from './overlays.js';
 import { screenSignature, appeared, toggled } from './uiCrawl.js';
 
+const ACTIONS = new Set(['click', 'type', 'select', 'press', 'navigate', 'back', 'scroll']);
 const DESTRUCTIVE = /\b(delete|remove|destroy|erase|log ?out|sign ?out|unsubscribe|deactivate|pay|purchase|buy now|checkout|place order|transfer|close account)\b/i;
 
 const TOOLS = [
-	{ name: 'click', description: 'Click an element by its ref from the latest observation.', parameters: { type: 'object', properties: { ref: { type: 'string' } }, required: ['ref'] } },
-	{ name: 'type', description: 'Type text into a field (replaces its value). Set submit=true to press Enter afterwards. Submissions are blocked from reaching the server; you will see whether the page tried to submit and how it reacted.', parameters: { type: 'object', properties: { ref: { type: 'string' }, text: { type: 'string' }, submit: { type: 'boolean' } }, required: ['ref', 'text'] } },
-	{ name: 'select', description: 'Choose an option in a <select> by its visible label.', parameters: { type: 'object', properties: { ref: { type: 'string' }, option: { type: 'string' } }, required: ['ref', 'option'] } },
-	{ name: 'press', description: 'Press a keyboard key (Tab, Enter, Escape, ArrowDown…).', parameters: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] } },
-	{ name: 'navigate', description: 'Open a URL on the site under test.', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
+	{ name: 'click', description: 'Press an element by its ref from the latest observation or screenshot marks (a tap on touch devices).', parameters: { type: 'object', properties: { ref: { type: 'string' }, expect: { type: 'string', description: 'What you expect to happen, in one short sentence. QASE shows it next to the RESULT so you can check it.' } }, required: ['ref', 'expect'] } },
+	{ name: 'type', description: 'Type text into a field (replaces its value). Set submit=true to press Enter afterwards. Submissions are blocked from reaching the server; you will see whether the page tried to submit and how it reacted.', parameters: { type: 'object', properties: { ref: { type: 'string' }, text: { type: 'string' }, submit: { type: 'boolean' }, expect: { type: 'string', description: 'What you expect to happen, in one short sentence. QASE shows it next to the RESULT so you can check it.' } }, required: ['ref', 'text', 'expect'] } },
+	{ name: 'select', description: 'Choose an option in a <select> by its visible label.', parameters: { type: 'object', properties: { ref: { type: 'string' }, option: { type: 'string' }, expect: { type: 'string', description: 'What you expect to happen, in one short sentence. QASE shows it next to the RESULT so you can check it.' } }, required: ['ref', 'option'] } },
+	{ name: 'press', description: 'Press a keyboard key (Tab, Enter, Escape, ArrowDown…).', parameters: { type: 'object', properties: { key: { type: 'string' }, expect: { type: 'string', description: 'What you expect to happen, in one short sentence. QASE shows it next to the RESULT so you can check it.' } }, required: ['key'] } },
+	{ name: 'navigate', description: 'Open a URL on the site under test.', parameters: { type: 'object', properties: { url: { type: 'string' }, expect: { type: 'string', description: 'What you expect to happen, in one short sentence. QASE shows it next to the RESULT so you can check it.' } }, required: ['url'] } },
 	{ name: 'scroll', description: 'Scroll the page.', parameters: { type: 'object', properties: { direction: { type: 'string', enum: ['down', 'up', 'top', 'bottom'] } }, required: ['direction'] } },
 	{ name: 'back', description: 'Go back in history.', parameters: { type: 'object', properties: {} } },
-	{ name: 'look', description: 'Take a screenshot of the current viewport to inspect the visual state.', parameters: { type: 'object', properties: {} } },
+	{ name: 'look', description: 'Take a fresh screenshot of the viewport (with control marks). A screenshot already arrives after every action, so use this only when the page may have changed by itself (loading, animation, timers).', parameters: { type: 'object', properties: {} } },
 	{ name: 'report_issue', description: 'Report one confirmed defect you observed. Only report what you saw happen, with exact steps.', parameters: { type: 'object', properties: {
 		title: { type: 'string' }, severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
 		category: { type: 'string', enum: ['functional', 'navigation', 'forms', 'layout', 'visual', 'animation', 'responsive', 'accessibility', 'content', 'security', 'performance'] },
@@ -44,16 +45,58 @@ Rules:
 - Never try to sign in with guessed credentials, attack the site, or perform destructive actions. If you are signed in, stay signed in (do not click sign out).
 - Report each defect once with report_issue, with exact reproducible steps. Do not report things you did not observe. Do not report missing features or style opinions.
 - Explore systematically, like a new user learning the product: open each section from the navigation (sidebars and icon rails count: buttons with labels such as "Projects" or "Settings"), then its sub-features (tabs, menus, filters, toggles, settings panes, item details, empty states). Check every result.
-- Each step, choose an element from the observation by its ref and act. Elements marked (covered) are behind a pop-up: close the pop-up first (QASE already closes tours and banners it recognises).
-- Use look at most once per screen, when visual state matters; then act on what you saw. Never call look twice in a row.
+- After every action you get: the RESULT (what changed on the page), a fresh observation (controls with refs, visible text) and a screenshot on which every control is outlined in red with its ref tag above it (set-of-marks). Use the screenshot to see what really happened and to find controls, above all icon buttons with no label: read the red tag of the box you mean and use that ref. Never guess a ref from its number or position in the list.
+- Reason before every action, in one or two short sentences in your reply: what you see now, which control you will use and why, what you expect. Put that expectation in the action's expect argument.
+- Then check the result against your expectation before doing anything else. If it matches, move on. If it does not, work out why: a defect (report it with what you expected and what happened), the wrong element (pick the right one on the screenshot), or a state you misread (look again). Never move on from a surprise without explaining it.
+- One action per turn when it can change the screen. Once the screen changes, QASE skips the rest of that turn's actions, because they were planned for the old screen.
+- Elements marked (covered) are behind a pop-up: close the pop-up first (QASE already closes tours and banners it recognises).
 - If an action fails, try another way (a different element, scrolling it into view, keyboard) instead of repeating it.
 - Finish only when the journey goal is covered; summarise what you exercised and what you could not reach.`;
+
+/**
+ * An element's OWN label: aria-label, else its text without the text of
+ * controls nested inside it (a chat row's hover Reply/Delete buttons belong to
+ * those buttons, so the row is not mistaken for a destructive action).
+ */
+export async function elementLabel(locator) {
+	return locator.evaluate(element => {
+		if (element.getAttribute('aria-label')) return element.getAttribute('aria-label').trim().slice(0, 60);
+		const nested = 'a[href],button,input,select,textarea,[role=button],[role=link],[role=menuitem],[role=tab]';
+		let own = '';
+		if (element.querySelector(nested)) {
+			const clone = element.cloneNode(true);
+			for (const child of clone.querySelectorAll(nested)) child.remove();
+			own = clone.textContent;
+		}
+		return String(own || element.innerText || element.value || element.placeholder || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+	}, undefined, { timeout: 1500 }).catch(() => '');
+}
 
 /** Tags interactive elements and returns a compact observation. */
 export async function observe(page, log) {
 	const snapshot = await page.evaluate(() => {
-		let ref = 0;
+		// Refs are stable: an element keeps its ref across observations, so a ref the
+		// model read earlier still names the same element (or reports it is gone),
+		// never a different control that happens to take its number.
+		let next = window.__qaseNextRef ?? 0;
+		const used = new Set();
+		let count = 0;
 		const items = [];
+		const nameOf = element => {
+			const labelled = (element.getAttribute('aria-labelledby') ?? '').split(/\s+/).filter(Boolean).map(id => document.getElementById(id)?.innerText ?? '').join(' ');
+			const svgTitle = element.querySelector?.('svg title')?.textContent ?? '';
+			const img = element.querySelector?.('img[alt]')?.getAttribute('alt') ?? '';
+			const tooltip = element.getAttribute('data-tooltip') || element.getAttribute('data-tip') || element.getAttribute('data-title') || element.getAttribute('data-original-title') || '';
+			const fieldLabel = element.labels?.[0]?.innerText ?? '';
+			// A row or card that contains its own buttons is named by its own text.
+			let own = '';
+			if (!element.getAttribute('aria-label') && element.querySelector('a[href],button,input,select,textarea,[role=button],[role=link],[role=menuitem]')) {
+				const clone = element.cloneNode(true);
+				for (const child of clone.querySelectorAll('a[href],button,input,select,textarea,[role=button],[role=link],[role=menuitem]')) child.remove();
+				own = clone.textContent;
+			}
+			return String(element.getAttribute('aria-label') || labelled || own.trim() || element.innerText || element.value || fieldLabel || element.placeholder || element.title || element.alt || svgTitle || img || tooltip || '').replace(/\s+/g, ' ').trim().slice(0, 70);
+		};
 		// Controls that were not in the previous observation are marked NEW and listed first,
 		// so features revealed by the last action are never cut off by the list limit.
 		const previous = window.__qasePrevKeys ? new Set(window.__qasePrevKeys) : undefined;
@@ -62,10 +105,12 @@ export async function observe(page, log) {
 			const r = element.getBoundingClientRect();
 			const s = getComputedStyle(element);
 			if (r.width < 2 || r.height < 2 || s.visibility === 'hidden' || s.display === 'none' || Number(s.opacity) < 0.05) continue;
-			if (ref >= 500) break;
-			const id = `e${ref++}`;
-			element.setAttribute('data-qase-ref', id);
-			const name = String(element.getAttribute('aria-label') || element.innerText || element.value || element.placeholder || element.title || element.alt || '').replace(/\s+/g, ' ').trim().slice(0, 70);
+			if (count++ >= 500) break;
+			let id = element.getAttribute('data-qase-ref');
+			// A cloned node can carry another element's ref: give it its own.
+			if (!id || used.has(id)) { id = `e${next++}`; element.setAttribute('data-qase-ref', id); }
+			used.add(id);
+			const name = nameOf(element);
 			const inView = r.bottom > 0 && r.top < innerHeight;
 			const cx = Math.min(innerWidth - 1, Math.max(0, r.left + r.width / 2)); const cy = Math.min(innerHeight - 1, Math.max(0, r.top + Math.min(r.height / 2, 20)));
 			const hit = inView ? document.elementFromPoint(cx, cy) : null;
@@ -73,10 +118,13 @@ export async function observe(page, log) {
 			const key = `${element.tagName}:${name}`;
 			const fresh = Boolean(previous) && !previous.has(key);
 			seenKeys.push(key);
-			items.push({ rank: (fresh ? 0 : 10) + (covered ? 4 : 0) + (inView ? 0 : 2), line: `${fresh ? 'NEW ' : ''}${id} ${element.tagName.toLowerCase()}${element.type && element.tagName === 'INPUT' ? `[${element.type}]` : ''}${element.getAttribute('role') ? `(${element.getAttribute('role')})` : ''} "${name}"${element.tagName === 'A' ? ` → ${element.getAttribute('href')?.slice(0, 80)}` : ''}${element.disabled ? ' [disabled]' : ''}${element.getAttribute('aria-expanded') ? ` [expanded=${element.getAttribute('aria-expanded')}]` : ''}${element.checked ? ' [checked]' : ''}${'value' in element && element.value && element.tagName !== 'BUTTON' ? ` value="${String(element.value).slice(0, 40)}"` : ''}${inView ? '' : ' (off-screen)'}${covered ? ' (covered)' : ''}` });
+			// Unnamed icon controls get their place on screen, to match the marks on the screenshot.
+			const where = !name && inView ? ` [no label · icon at x${Math.round(cx)},y${Math.round(cy)} · see its mark on the screenshot]` : '';
+			items.push({ rank: (fresh ? 0 : 10) + (covered ? 4 : 0) + (inView ? 0 : 2), line: `${fresh ? 'NEW ' : ''}${id} ${element.tagName.toLowerCase()}${element.type && element.tagName === 'INPUT' ? `[${element.type}]` : ''}${element.getAttribute('role') ? `(${element.getAttribute('role')})` : ''} "${name}"${where}${element.tagName === 'A' ? ` → ${element.getAttribute('href')?.slice(0, 80)}` : ''}${element.disabled ? ' [disabled]' : ''}${element.getAttribute('aria-expanded') ? ` [expanded=${element.getAttribute('aria-expanded')}]` : ''}${element.checked ? ' [checked]' : ''}${'value' in element && element.value && element.tagName !== 'BUTTON' ? ` value="${String(element.value).slice(0, 40)}"` : ''}${inView ? '' : ' (off-screen)'}${covered ? ' (covered)' : ''}` });
 		}
 		const text = (document.body?.innerText ?? '').replace(/\n{2,}/g, '\n').slice(0, 2500);
 		window.__qasePrevKeys = seenKeys;
+		window.__qaseNextRef = next;
 		const ranked = items.map((item, index) => ({ ...item, index })).sort((a, b) => a.rank - b.rank || a.index - b.index);
 		const shown = ranked.slice(0, 140).sort((a, b) => a.rank - b.rank || a.index - b.index).map(item => item.line);
 		if (ranked.length > 140) shown.push(`(${ranked.length - 140} more controls further down or covered — scroll to reach them)`);
@@ -91,6 +139,8 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 	const out = [];
 	const summary = { steps: 0, finished: false, summary: '', visited: new Set(), loopWarnings: 0, loopStopped: false, trail: [] };
 	let consecutiveLooks = 0;
+	let lastRef; let lastLabel = '';
+	const settleQuietly = () => browser.settle?.(page, { quietMs: 400 }).catch(() => {});
 	let actionsSinceLook = 99;
 	let urlAtLook = '';
 	// Loop detection: the same action on the same element and page, repeated, means the
@@ -127,30 +177,40 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 				continue;
 			}
 			let screenshot;
+			let acted = false;
+			let screenChanged = false;
 			for (const call of reply.toolCalls) {
-				summary.steps++;
 				let args = {};
 				try { args = JSON.parse(call.function?.arguments || '{}'); } catch { /* invalid arguments become an error result */ }
 				const name = call.function?.name;
+				// Actions planned for a screen that has since changed would act on stale
+				// assumptions (and refs): every tool call still gets an answer, but they do not run.
+				if (screenChanged && name !== 'report_issue' && name !== 'finish') {
+					messages.push({ role: 'tool', tool_call_id: call.id, content: 'Skipped: the screen changed after your previous action in this turn. Look at the new observation and screenshot, then decide again.' });
+					continue;
+				}
+				summary.steps++;
 				let result;
 				try {
 					result = await runTool(name, args);
 				} catch (error) {
 					result = `Error: ${String(error.message).split('\n')[0].slice(0, 200)}`;
 				}
-				if (result?.image) { screenshot = result.image; result = 'Screenshot attached below.'; }
-				// Visual grounding: a new screen (URL or dialog) is shown to the model automatically.
-				else if (!screenshot && models.visionAvailable() && /^RESULT: (URL changed|.*Dialog opened)/m.test(String(result))) {
-					await browser.hideCursor?.(page);
-					screenshot = await page.screenshot({ type: 'jpeg', quality: 55 }).catch(() => undefined);
-					if (screenshot) { result = `${result}\n(A screenshot of the new screen is attached below.)`; actionsSinceLook = 0; urlAtLook = page.url(); }
+				const acting = ACTIONS.has(name);
+				if (result?.image) { screenshot = result.image; result = 'Screenshot (with control marks) attached below.'; }
+				else if (acting) {
+					acted = true;
+					const text = String(result);
+					if (/^RESULT: (?!nothing visible changed)/m.test(text)) screenChanged = true;
+					// Reasoning loop: the model's own expectation, next to what happened.
+					if (args.expect) result = `You expected: ${String(args.expect).slice(0, 200)}\n${text}\nCheck: does the RESULT and the screenshot match what you expected? If not, explain why before your next action.`;
 				}
 				consecutiveLooks = name === 'look' ? consecutiveLooks + 1 : 0;
 				if (name !== 'look') actionsSinceLook++;
 				// Reviewable trail: what the agent did and the first line of what it saw.
-				summary.trail.push(`${summary.steps}. ${name}${args.ref ? ` ${args.ref}` : ''}${args.url ? ` ${args.url}` : ''}${args.text ? ` "${String(args.text).slice(0, 40)}"` : ''}${args.key ? ` ${args.key}` : ''}${name === 'report_issue' ? ` "${String(args.title ?? '').slice(0, 80)}"` : ''}${name === 'finish' ? ` "${String(args.summary ?? '').slice(0, 160)}"` : ''} → ${(String(result).split('\n').find(line => line.startsWith('RESULT:')) ?? String(result).split('\n').find(line => line && !line.startsWith('('))) ?.slice(0, 160) ?? ''} @ ${page.url().replace(/^https?:\/\/[^/]+/, '')}`);
+				summary.trail.push(`${summary.steps}. ${name}${args.ref ? ` ${lastLabel && lastRef === args.ref ? `"${lastLabel}" (${args.ref})` : args.ref}` : ''}${args.url ? ` ${args.url}` : ''}${args.text ? ` "${String(args.text).slice(0, 40)}"` : ''}${args.key ? ` ${args.key}` : ''}${name === 'report_issue' ? ` "${String(args.title ?? '').slice(0, 80)}"` : ''}${name === 'finish' ? ` "${String(args.summary ?? '').slice(0, 160)}"` : ''}${args.expect ? ` — expecting ${String(args.expect).slice(0, 90)}` : ''} → ${(String(result).split('\n').find(line => line.startsWith('RESULT:')) ?? String(result).split('\n').find(line => line && !line.startsWith('('))) ?.slice(0, 160) ?? ''} @ ${page.url().replace(/^https?:\/\/[^/]+/, '')}`);
 				messages.push({ role: 'tool', tool_call_id: call.id, content: String(result).slice(0, 6000) });
-				onStep({ name, args, url: page.url(), line: summary.trail.at(-1) });
+				onStep({ name, args, url: page.url(), line: summary.trail.at(-1), thought: String(reply.text ?? '').trim().slice(0, 400) });
 				if (name === 'finish') { summary.finished = true; summary.summary = String(args.summary ?? '').slice(0, 2000); break; }
 				const loop = detectLoop(name, args, page.url());
 				if (loop) {
@@ -160,7 +220,13 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 				}
 			}
 			if (summary.finished || summary.loopStopped) break;
-			if (screenshot) messages.push({ role: 'user', content: [{ type: 'text', text: 'Screenshot of the current viewport:' }, { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${screenshot.toString('base64')}` } }] });
+			// Vision after every action: the model sees what its action did, with each
+			// control's ref drawn on the screenshot, before it decides the next step.
+			if (!screenshot && acted && models.visionAvailable()) {
+				screenshot = await (browser.markedScreenshot ? browser.markedScreenshot(page) : page.screenshot({ type: 'jpeg', quality: 55 })).catch(() => undefined);
+				if (screenshot) { actionsSinceLook = 0; urlAtLook = page.url(); }
+			}
+			if (screenshot) messages.push({ role: 'user', content: [{ type: 'text', text: 'Screenshot of the current viewport after your last action. Red boxes are the controls; the red tag above each box is its ref.' }, { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${screenshot.toString('base64')}` } }] });
 		}
 	} finally {
 		await page.close().catch(() => {});
@@ -181,7 +247,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 
 	async function runTool(name, args) {
 		const locate = ref => page.locator(`[data-qase-ref="${String(ref).replace(/"/g, '')}"]`).first();
-		const describeRef = async ref => (await locate(ref).evaluate(element => (element.getAttribute('aria-label') || element.innerText || element.value || element.placeholder || '').trim().slice(0, 60), undefined, { timeout: 1500 }).catch(() => '')) || ref;
+		const describeRef = async ref => (await elementLabel(locate(ref))) || ref;
 		const blockedBefore = blockedWrites();
 		const offsiteBefore = offsiteBlocked();
 		const acting = ['click', 'type', 'select', 'press', 'back', 'navigate'].includes(name);
@@ -221,6 +287,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 		switch (name) {
 			case 'click': {
 				const label = await describeRef(args.ref);
+				lastRef = args.ref; lastLabel = label === args.ref ? '' : String(label).slice(0, 50);
 				if (DESTRUCTIVE.test(label)) return `Refused: "${label}" looks destructive. Choose another action.`;
 				trail.push(`Click "${label}"`);
 				exercised.add(String(label).slice(0, 60));
@@ -238,6 +305,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 			}
 			case 'type': {
 				const label = await describeRef(args.ref);
+				lastRef = args.ref; lastLabel = label === args.ref ? '' : String(label).slice(0, 50);
 				trail.push(`Type "${String(args.text).slice(0, 60)}" into "${label}"${args.submit ? ' and press Enter' : ''}`);
 				await browser.pointAt?.(page, locate(args.ref), `Type "${String(args.text ?? '').slice(0, 24)}"`);
 				await browser.interact(async () => {
@@ -276,11 +344,12 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 				return after();
 			case 'look':
 				if (!models.visionAvailable()) return 'Screenshots are not available for this model; rely on the observation text.';
-				// One screenshot per screen state: after 2+ actions or a URL change. Otherwise act.
-				if (consecutiveLooks >= 1 || (actionsSinceLook < 2 && urlAtLook === page.url())) return `You looked at this screen ${consecutiveLooks ? 'just now' : `${actionsSinceLook} action(s) ago`}; nothing major changed since. Act on the observation instead (use the RESULT lines to judge each action):\n${await observe(page, log)}`;
+				// Two looks in a row with nothing in between show the same screen twice.
+				if (consecutiveLooks >= 2) return `You already have a screenshot of this screen. Act on it:\n${await observe(page, log)}`;
 				actionsSinceLook = 0; urlAtLook = page.url();
-				await browser.hideCursor?.(page);
-				return { image: await page.screenshot({ type: 'jpeg', quality: 60 }) };
+				await settleQuietly();
+				await observe(page, log); // refresh refs so the marks match the current screen
+				return { image: await (browser.markedScreenshot ? browser.markedScreenshot(page, { quality: 60 }) : page.screenshot({ type: 'jpeg', quality: 60 })) };
 			case 'report_issue': {
 				if (!args.title || !args.actual) return 'Rejected: title and actual are required.';
 				await browser.hideCursor?.(page);

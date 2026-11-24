@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "releaseId": "qase-2026-11-24-device-matrix-r9",
+  "releaseId": "qase-2026-11-24-agent-vision-r10",
   "files": [
     {
       "path": ".dockerignore",
@@ -88,7 +88,7 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "e2c37e0da6ecf38ba408782924836b029e93c2e44c93f914e91090497e49a130"
+      "sha256": "bb10ae21579a4ff8d5a524d82057e0889917217afb29d4703e06e41e29b1aad8"
     },
     {
       "path": "docs/ARCHITECTURE.md",
@@ -680,7 +680,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "ddc27044823703d3aac080922e188f4deb10fa4723fd8c541405fa39df426cbc"
+      "sha256": "462b2c7cae8c42c7be71d98b18d973daf01ba9d2856234b8497401d3b2b85325"
     },
     {
       "path": "public/renderHealth.js",
@@ -2160,7 +2160,7 @@
     },
     {
       "path": "server/qa/adaptive.integration.test.js",
-      "sha256": "ee7709b0c06583663ec6b90a828b5eaf6570881982a6b77409341de436cb5eb1"
+      "sha256": "212b0043be2cf78847145022d067fa0509518f61ea1e11f8049590a727fd7933"
     },
     {
       "path": "server/qa/adaptive.test.js",
@@ -2172,7 +2172,7 @@
     },
     {
       "path": "server/qa/browser.js",
-      "sha256": "276bf6376df91cacd05f8e4be506d983e3ad3ae80d48898054c8540be05defe7"
+      "sha256": "02edaa4a4e45947393c98e0999380f1b84a74dfdd43b88dded7b52f395f57dca"
     },
     {
       "path": "server/qa/browser.test.js",
@@ -2216,7 +2216,7 @@
     },
     {
       "path": "server/qa/engine.js",
-      "sha256": "a76671cbf641fc4c424c7624c758783b23211fe130226612d733c90d335e2eba"
+      "sha256": "0dc72cdc6a96d6a7a8868fb63c900d7024450e9068867d4163c2b460a1595d1d"
     },
     {
       "path": "server/qa/executors.js",
@@ -2224,7 +2224,7 @@
     },
     {
       "path": "server/qa/explorer.js",
-      "sha256": "ac898ed5f8e8e28fb25886a91ae110741e56660d5a487ddcd82482c382933606"
+      "sha256": "f1a6a5cfa4052aab9ec5cd3330b14357a2a3751b8a5452bffa728c0c79c5427c"
     },
     {
       "path": "server/qa/findings.js",
@@ -2236,7 +2236,7 @@
     },
     {
       "path": "server/qa/fixtureWorkspace.js",
-      "sha256": "edc710e22c117ab549c96f498ede00ab4d3be97340c92497e79458a50d7fdcb5"
+      "sha256": "137198a3ad35a591c7e1e2c80a7204803671ceae8fd98b9ed80e13893666aa0b"
     },
     {
       "path": "server/qa/index.js",
@@ -2492,7 +2492,7 @@
     },
     {
       "path": "server/sqa/tools.js",
-      "sha256": "abb5f97bb319713e4b675a104c0b58af828382c2d93ce99865d56237f1db48f0"
+      "sha256": "d7a115334e8bacfd518bae353dd26ae03ceca61ceb3a83ea2e934de8983022b7"
     },
     {
       "path": "server/stageAgent.js",

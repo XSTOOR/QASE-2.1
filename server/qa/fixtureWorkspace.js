@@ -147,6 +147,25 @@ export async function workspaceHandler(request, response, path, url) {
 <button type="button" id="dead">Live chat</button></main>
 <script>q1.onclick = () => { const open = a1.hidden; a1.hidden = !open; q1.setAttribute('aria-expanded', String(open)); }; q2.onclick = () => { a2.style.display = a2.style.display === 'none' ? 'block' : 'none'; };</script></body></html>`);
 			return true;
+		case '/workspace/inbox':
+			// A chat inbox like studio's: each row's centre holds a hover "Remove"
+			// action, and the rail is icon buttons with no accessible name.
+			html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Inbox</title><style>
+body{margin:0;font:14px sans-serif;display:flex}nav{width:48px;border-right:1px solid #ccc;display:flex;flex-direction:column;gap:8px;padding:8px}nav button{width:32px;height:32px}
+main{flex:1;padding:12px}.row{position:relative;display:block;width:420px;height:56px;border:1px solid #ddd;margin:6px 0;padding:6px;cursor:pointer;box-sizing:border-box}
+.row .rm{position:absolute;left:170px;top:14px;width:80px;height:28px}#panel{margin-top:16px}</style></head><body>
+<nav><button type="button" id="rail-settings"><svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/></svg></button><button type="button" id="rail-help"><svg width="16" height="16" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12"/></svg></button></nav>
+<main><h1>Inbox</h1>
+<div class="row" role="button" tabindex="0" data-name="Asha Rao">Asha Rao · Nov 3<button type="button" class="rm">Remove</button></div>
+<div class="row" role="button" tabindex="0" data-name="Ben Ortiz">Ben Ortiz · Oct 9<button type="button" class="rm">Remove</button></div>
+<div id="panel"></div></main>
+<script>
+for (const row of document.querySelectorAll('.row')) row.addEventListener('click', event => { if (event.target.closest('.rm')) return; panel.textContent = 'Conversation with ' + row.dataset.name + ' is open.'; });
+for (const rm of document.querySelectorAll('.rm')) rm.onclick = () => { rm.closest('.row').remove(); panel.textContent = 'Conversation removed.'; };
+document.getElementById('rail-settings').onclick = () => { panel.textContent = 'Workspace settings panel is open.'; };
+document.getElementById('rail-help').onclick = () => { panel.textContent = 'Help centre is open.'; };
+</script></body></html>`);
+			return true;
 		case '/workspace/busy':
 			html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Busy</title></head><body><main><h1>Directory</h1>
 <button type="button" id="ws" style="position:fixed;right:24px;bottom:24px">Workspace</button>

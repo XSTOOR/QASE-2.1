@@ -6,7 +6,7 @@
  * agent's structured output and write it into session.sqa; the host — not the
  * model — computes scores and the verdict from what was recorded.
  */
-import { observe } from '../qa/explorer.js';
+import { observe, elementLabel } from '../qa/explorer.js';
 import { EVIDENCE_KINDS, PRODUCT_CATEGORIES } from './catalog.js';
 
 const DESTRUCTIVE = /\b(delete|remove|destroy|erase|log ?out|sign ?out|unsubscribe|deactivate|pay|purchase|buy now|checkout|place order|transfer|close account|submit order)\b/i;
@@ -43,7 +43,7 @@ export function browsingTools({ browser, profile, state, onVisit = () => {}, pre
 		tool(`${prefix}_click`, 'Click an element by its ref from the latest observation. Destructive actions (delete, pay, sign out…) are refused; form submissions are blocked by the host.',
 			{ ref: { type: 'string' } }, ['ref'], async ({ ref }) => {
 				await ensure();
-				const label = await locate(ref).evaluate(element => (element.getAttribute('aria-label') || element.innerText || element.value || '').trim().slice(0, 60)).catch(() => '');
+				const label = await elementLabel(locate(ref));
 				if (DESTRUCTIVE.test(label)) return { success: false, error: `Refused: "${label}" looks destructive.` };
 				await browser.interact(() => (browser.activate ? browser.activate(locate(ref), { timeout: 5000 }) : locate(ref).click({ timeout: 5000 })));
 				return after();

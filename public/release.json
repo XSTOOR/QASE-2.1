@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-11-24-device-matrix-r9",
+  "releaseId": "qase-2026-11-24-agent-vision-r10",
   "uiVersion": "20261124-1",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Push-SQA: every device and browser combination runs as selected in QA, SQA and Founder: the engine follows the browser (all iPhone/iPad browsers on WebKit), the device user agent, viewport, touch and landscape are applied, unrunnable combinations are refused before a run, the picker marks engines not installed, and observed runtime identity is checked and reported."
+  "source": "Push-SQA: the QA agent sees a marked screenshot after every action, states and checks an expectation for each step, presses the point an element really owns (not a nested Delete at its centre), keeps stable element refs, re-plans when the screen changes, and logs its reasoning per step."
 }

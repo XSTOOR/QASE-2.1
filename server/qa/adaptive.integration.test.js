@@ -375,3 +375,45 @@ test('explorer: revealed answer text and expanded state count as a change (no fa
 		assert.match(results[2], /RESULT: nothing visible changed/, 'a control that really does nothing is still reported as such');
 	} finally { await browser.close(); await lab.close(); }
 });
+
+test('explorer: sees every action, presses what it means, and re-plans when the screen changes', { timeout: 120_000 }, async () => {
+	const lab = await startQaLab();
+	const { createQaBrowser } = await import('./browser.js');
+	const { explore } = await import('./explorer.js');
+	const browser = await createQaBrowser({ session: { id: 'x', targetUrl: `${lab.url}workspace/inbox`, engine: 'chromium', device: 'desktop' }, env: ENV });
+	const tools = [];
+	const observations = [];
+	let images = 0;
+	let step = 0;
+	const models = {
+		reasonerAvailable: () => true, visionAvailable: () => true, jevAvailable: () => false, state: { reasoner: {}, jev: {} },
+		async chat(messages) {
+			images = messages.filter(message => Array.isArray(message.content) && message.content.some(part => part.type === 'image_url')).length || images;
+			const answered = [];
+			for (let i = messages.length - 1; i >= 0 && messages[i].role !== 'assistant'; i--) if (messages[i].role === 'tool') answered.unshift(messages[i].content);
+			tools.push(...answered);
+			const observation = [...messages].reverse().find(message => typeof message.content === 'string' && /Interactive elements:/.test(message.content))?.content ?? '';
+			observations.push(observation);
+			const ref = pattern => new RegExp(`(e\\d+) div\\(button\\) "${pattern}`).exec(observation)?.[1];
+			const icon = /(e\d+) button "" \[no label · icon at x\d+,y\d+/.exec(observation)?.[1];
+			step++;
+			const call = (...calls) => ({ text: 'I see the inbox; I will act and check the result.', toolCalls: calls.map(([name, args], i) => ({ id: `c${step}-${i}`, type: 'function', function: { name, arguments: JSON.stringify(args) } })) });
+			if (step === 1) return call(['click', { ref: ref('Asha Rao'), expect: 'Asha Rao\'s conversation opens' }]);
+			// Two actions planned at once: the second must not run once the screen changed.
+			if (step === 2) return call(['click', { ref: icon, expect: 'a settings panel opens' }], ['click', { ref: ref('Ben Ortiz'), expect: 'Ben Ortiz\'s conversation opens' }]);
+			return call(['finish', { summary: 'done' }]);
+		}
+	};
+	try {
+		await explore({ browser, profile: { name: 'desktop', label: 'Desktop', viewport: { width: 1280, height: 800 } }, startUrl: `${lab.url}workspace/inbox`, models, maxSteps: 6, deadline: Date.now() + 60_000, blockedWrites: () => 0, save: async () => undefined });
+		const [first, second, skipped] = tools;
+		assert.match(first, /You expected: Asha Rao's conversation opens/);
+		assert.match(first, /Appeared: .*Conversation with Asha Rao is open/, 'the row itself was pressed, not the Remove button at its centre');
+		assert.doesNotMatch(first, /Conversation removed/);
+		assert.match(second, /Workspace settings panel is open/, 'an unlabeled icon is reachable by its ref and position');
+		assert.match(skipped, /^Skipped: the screen changed/, 'actions planned for the old screen do not run');
+		assert.ok(images >= 1, 'a screenshot follows the actions');
+		const ashaRefs = observations.map(text => /(e\d+) div\(button\) "Asha Rao/.exec(text)?.[1]).filter(Boolean);
+		assert.ok(ashaRefs.length >= 2 && new Set(ashaRefs).size === 1, `refs are stable across observations (${ashaRefs.join(', ')})`);
+	} finally { await browser.close(); await lab.close(); }
+});
