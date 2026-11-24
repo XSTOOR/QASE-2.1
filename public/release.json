@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-11-24-agent-vision-r10",
+  "releaseId": "qase-2026-11-24-dom-animation-r11",
   "uiVersion": "20261124-1",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Push-SQA: the QA agent sees a marked screenshot after every action, states and checks an expectation for each step, presses the point an element really owns (not a nested Delete at its centre), keeps stable element refs, re-plans when the screen changes, and logs its reasoning per step."
+  "source": "Push-SQA: QA adds DOM integrity testing (nesting, id references, hidden focusable content, roles, DOM size, idle DOM churn, DOM leaks and invalid DOM after interactions) and idle-animation testing (infinite animations off-screen, animation loops while nothing moves); 149 categories."
 }

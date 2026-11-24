@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "releaseId": "qase-2026-11-24-agent-vision-r10",
+  "releaseId": "qase-2026-11-24-dom-animation-r11",
   "files": [
     {
       "path": ".dockerignore",
@@ -88,7 +88,7 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "bb10ae21579a4ff8d5a524d82057e0889917217afb29d4703e06e41e29b1aad8"
+      "sha256": "9bcdcdee6a3a1cba1351ab4fabe80c19fa7d46ff7a36fd0ae1f77f7dc75206a8"
     },
     {
       "path": "docs/ARCHITECTURE.md",
@@ -176,7 +176,7 @@
     },
     {
       "path": "docs/QA-ENGINE.md",
-      "sha256": "09654043b566cfb3a2ec7260b6b1fe4fbf4b740e74a41d34b5a5a7b0ea268cef"
+      "sha256": "5b6284b62b237979852bdf1cb54bb5102aefa5fed25b409ae84f28311ec92b10"
     },
     {
       "path": "docs/smtp-password-reset-setup.md",
@@ -588,7 +588,7 @@
     },
     {
       "path": "public/qaEvidenceView.js",
-      "sha256": "651f22f134c790bd16575e9debc0a71a8e306b1770f2da8c76ab129dc399bed7"
+      "sha256": "f114b58412d0273dc4b01eea3a5c2839a76314a90b6c56f9839202dc38c4ff16"
     },
     {
       "path": "public/qaExecutionView.js",
@@ -680,7 +680,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "462b2c7cae8c42c7be71d98b18d973daf01ba9d2856234b8497401d3b2b85325"
+      "sha256": "b8f35080e87dcb54ef7be2decc77ae5f9e777c932ef21f5f11cb03b9a58819b7"
     },
     {
       "path": "public/renderHealth.js",
@@ -2160,11 +2160,11 @@
     },
     {
       "path": "server/qa/adaptive.integration.test.js",
-      "sha256": "212b0043be2cf78847145022d067fa0509518f61ea1e11f8049590a727fd7933"
+      "sha256": "1b55affbe4947d832e97f2ff7b2d680873227a46a782ca70cb9539bc348a30b7"
     },
     {
       "path": "server/qa/adaptive.test.js",
-      "sha256": "76165d67dc1518a5af09c6a19d0029eaea1e32827a54a658a1047551b8ce8851"
+      "sha256": "132b76a2a6229df613af596cd27bb348838d2f193b96f59cc238da4b24e42694"
     },
     {
       "path": "server/qa/appGraph.js",
@@ -2180,7 +2180,7 @@
     },
     {
       "path": "server/qa/capabilities.js",
-      "sha256": "9a1ee59afca2dedabdc9f5e39a7834d6d8436ab882a394a0914af64f4dfb27ae"
+      "sha256": "52d5feb991d4114bf0f0f3e298fde71ed65a42bbe3d8e9f76fba57df7d5935b3"
     },
     {
       "path": "server/qa/completionGate.js",
@@ -2191,20 +2191,24 @@
       "sha256": "b1477899900cc40522e67e47712d6160fa29dc7b16bbdc6430de32f61f86acb7"
     },
     {
+      "path": "server/qa/detectors/dom.js",
+      "sha256": "26f47ce2a413901faa17dabd60efcd4000f4e2dea21a054c43abca33fb532338"
+    },
+    {
       "path": "server/qa/detectors/forms.js",
       "sha256": "a43b50cf6a5c46ba1ee316328a035a2136d28e5e19bb1b0905eb828732fffab9"
     },
     {
       "path": "server/qa/detectors/interactions.js",
-      "sha256": "4969e92a0347badfdc9876d75cb738665637e6b58c4b022d2c6bf41763c5a580"
+      "sha256": "e6ed00886968b2eecca2191817c1743db1898de27ed3d2dbf710ae1c5661b6f2"
     },
     {
       "path": "server/qa/detectors/page.js",
-      "sha256": "f00f4a3934c590cdb427d92d5805ae07be568235469fdb38c0e6de10a9f098b7"
+      "sha256": "c37f24070d4d828328a4fdef5ceb72918eed3d0169910eafbd6821d303df49be"
     },
     {
       "path": "server/qa/detectors/pageAudit.js",
-      "sha256": "750a16e573c8c70895eef7c8b0e9a706240c20ead442d9954a0e14475165afe4"
+      "sha256": "3834cc66378c9e253f5822042ed6a3c39b3dc8b4ee21766d4eba53bc7c01d4e5"
     },
     {
       "path": "server/qa/detectors/security.js",
@@ -2216,7 +2220,7 @@
     },
     {
       "path": "server/qa/engine.js",
-      "sha256": "0dc72cdc6a96d6a7a8868fb63c900d7024450e9068867d4163c2b460a1595d1d"
+      "sha256": "409e83490c560fafed8baf4c1efb4f5077e038b3d6e24059f1a57de9bb9e9c6a"
     },
     {
       "path": "server/qa/executors.js",
@@ -2224,11 +2228,11 @@
     },
     {
       "path": "server/qa/explorer.js",
-      "sha256": "f1a6a5cfa4052aab9ec5cd3330b14357a2a3751b8a5452bffa728c0c79c5427c"
+      "sha256": "f4173df81d7c615b7211c4a378748bdcd88c5aa68270a1aea71f68b6d01f18ff"
     },
     {
       "path": "server/qa/findings.js",
-      "sha256": "f9e9bdbd2c80706d622f752526ae7497d749e16aa66c98a616dabbddc1e0f6c1"
+      "sha256": "003847793018935be5028202fd5a4f3210ec0612ea6bb4a7667b1e96f4bc9c24"
     },
     {
       "path": "server/qa/fixtureSite.js",
@@ -2236,7 +2240,7 @@
     },
     {
       "path": "server/qa/fixtureWorkspace.js",
-      "sha256": "137198a3ad35a591c7e1e2c80a7204803671ceae8fd98b9ed80e13893666aa0b"
+      "sha256": "4a06b7c8709f5259d4a163e8888c4b5efb35f66b18f724fb959d708c50c93d06"
     },
     {
       "path": "server/qa/index.js",
@@ -2252,7 +2256,7 @@
     },
     {
       "path": "server/qa/planner.js",
-      "sha256": "171052ac7b1ebfae92692062b7087964f57928c0c738af659895a4d7aa2374e7"
+      "sha256": "8563fb24204b24f0a86a66aee89f92ab1a6adf2615ca856274d05483f9e7621b"
     },
     {
       "path": "server/qa/qa.test.js",
@@ -2260,7 +2264,7 @@
     },
     {
       "path": "server/qa/report.js",
-      "sha256": "d9e8d114182f80af5b432ad2ba6df7e09f8d3f03e7454e619fa17cdfe9fd89e2"
+      "sha256": "8793b2ead01486e6cab59ced9f62613de902e98daba99a7a528afce919705184"
     },
     {
       "path": "server/qa/router.js",

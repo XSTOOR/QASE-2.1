@@ -364,6 +364,89 @@ export function pageAudit(options = {}) {
 	if (duplicateIds.length) add({ kind: 'duplicate_ids', severity: 'low', confidence: 0.9, title: `${duplicateIds.length} duplicate element id${duplicateIds.length === 1 ? '' : 's'}`,
 		actual: `Repeated ids: ${duplicateIds.slice(0, 8).join(', ')}. Labels, aria references and scripts may target the wrong element.`, expected: 'Element ids are unique.', selector: `#${CSS.escape(duplicateIds[0])}`, key: 'duplicate_ids' });
 
+	// ---------- DOM structure ----------
+	// What the browser built from the markup: invalid nesting, references that
+	// point nowhere, focusable content hidden from assistive technology, roles
+	// that do not exist, and a DOM too large or deep to stay responsive.
+	const INTERACTIVE = 'a[href],button,input:not([type=hidden]),select,textarea,[role=button],[role=link],[role=checkbox],[role=switch],[role=tab],[role=menuitem]';
+	const nested = [];
+	for (const outer of document.querySelectorAll('a[href],button,[role=button],[role=link]')) {
+		if (nested.length >= 8 || !visible(outer)) continue;
+		const inner = [...outer.querySelectorAll(INTERACTIVE)].find(visible);
+		if (inner) nested.push({ outer, inner });
+	}
+	if (nested.length) add({ kind: 'invalid_nesting', severity: 'medium', confidence: 0.85,
+		title: `${nested.length} interactive element${nested.length === 1 ? ' is' : 's are'} nested inside another`,
+		actual: `A control contains another control, so one click or tap can trigger both and screen readers announce them wrongly: ${nested.slice(0, 4).map(item => `${item.inner.tagName.toLowerCase()} "${label(item.inner).slice(0, 24)}" inside ${item.outer.tagName.toLowerCase()} "${label(item.outer).slice(0, 24)}"`).join('; ')}.`,
+		expected: 'Links and buttons never contain other links, buttons or fields (HTML content model).', selector: cssPath(nested[0].inner), rect: toPage(nested[0].inner.getBoundingClientRect()),
+		examples: nested.map(item => cssPath(item.inner)), key: 'invalid_nesting' });
+	const formInForm = [...document.querySelectorAll('form form')];
+	if (formInForm.length) add({ kind: 'form_in_form', severity: 'medium', confidence: 0.9, title: 'A form is nested inside another form',
+		actual: `${formInForm.length} nested form${formInForm.length === 1 ? '' : 's'} (${cssPath(formInForm[0])}); browsers submit the outer form, so the inner one's submit button sends the wrong data.`,
+		expected: 'Forms are never nested.', selector: cssPath(formInForm[0]), key: 'form_in_form' });
+	const orphanItems = [...document.querySelectorAll('li')].filter(item => !item.parentElement?.matches('ul,ol,menu') && !item.parentElement?.closest('[role=list],[role=listbox],[role=menu],[role=tree]'));
+	if (orphanItems.length) add({ kind: 'orphan_list_item', severity: 'low', confidence: 0.8, title: `${orphanItems.length} list item${orphanItems.length === 1 ? ' is' : 's are'} outside a list`,
+		actual: `<li> elements whose parent is not <ul>, <ol> or <menu>: ${orphanItems.slice(0, 4).map(cssPath).join('; ')}. Screen readers do not announce them as a list.`,
+		expected: 'List items sit directly inside a list element.', selector: cssPath(orphanItems[0]), key: 'orphan_list_item' });
+	const brokenRefs = [];
+	for (const attribute of ['aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-owns', 'aria-activedescendant', 'aria-errormessage', 'aria-details']) {
+		for (const element of document.querySelectorAll(`[${attribute}]`)) {
+			if (brokenRefs.length >= 12) break;
+			// aria-controls on a closed toggle may point at a panel that is created when it opens.
+			if (attribute === 'aria-controls' && element.getAttribute('aria-expanded') === 'false') continue;
+			const missing = element.getAttribute(attribute).split(/\s+/).filter(id => id && !document.getElementById(id));
+			if (missing.length && visible(element)) brokenRefs.push({ element, attribute, missing });
+		}
+	}
+	for (const labelElement of document.querySelectorAll('label[for]')) {
+		if (brokenRefs.length >= 12) break;
+		const id = labelElement.getAttribute('for');
+		if (id && !document.getElementById(id) && visible(labelElement)) brokenRefs.push({ element: labelElement, attribute: 'for', missing: [id] });
+	}
+	if (brokenRefs.length) add({ kind: 'broken_aria_reference', severity: brokenRefs.some(item => ['aria-labelledby', 'for'].includes(item.attribute)) ? 'medium' : 'low', confidence: 0.85,
+		title: `${brokenRefs.length} element reference${brokenRefs.length === 1 ? ' points' : 's point'} to an id that does not exist`,
+		actual: `Broken references: ${brokenRefs.slice(0, 5).map(item => `${item.attribute}="${item.missing.join(' ')}" on ${cssPath(item.element)}`).join('; ')}. Names, descriptions and relationships built from them are lost.`,
+		expected: 'Every aria-labelledby, aria-describedby, aria-controls and label for= refers to an element on the page.', selector: cssPath(brokenRefs[0].element),
+		examples: brokenRefs.map(item => cssPath(item.element)), key: 'broken_aria_reference' });
+	const hiddenFocusable = [];
+	for (const container of document.querySelectorAll('[aria-hidden="true"]')) {
+		if (hiddenFocusable.length >= 6 || container.closest('[inert]')) continue;
+		for (const element of container.querySelectorAll('a[href],button,input:not([type=hidden]),select,textarea,[tabindex]')) {
+			if (element.matches('[tabindex="-1"],[disabled]') || element.closest('[inert]') || !visible(element)) continue;
+			hiddenFocusable.push(element);
+			break;
+		}
+	}
+	if (hiddenFocusable.length) add({ kind: 'aria_hidden_focusable', severity: 'medium', confidence: 0.85,
+		title: `${hiddenFocusable.length} focusable control${hiddenFocusable.length === 1 ? ' is' : 's are'} inside aria-hidden content`,
+		actual: `Keyboard users can Tab to these, but screen readers are told they do not exist: ${hiddenFocusable.slice(0, 4).map(element => `${cssPath(element)} "${label(element).slice(0, 24)}"`).join('; ')}.`,
+		expected: 'Content hidden with aria-hidden="true" is not focusable (use inert, or tabindex="-1").', selector: cssPath(hiddenFocusable[0]), examples: hiddenFocusable.map(cssPath), key: 'aria_hidden_focusable' });
+	const ROLES = new Set('alert alertdialog application article banner blockquote button caption cell checkbox code columnheader combobox complementary contentinfo definition deletion dialog directory document emphasis feed figure form generic grid gridcell group heading img image insertion link list listbox listitem log main mark marquee math menu menubar menuitem menuitemcheckbox menuitemradio meter navigation none note option paragraph presentation progressbar radio radiogroup region row rowgroup rowheader scrollbar search searchbox separator slider spinbutton status strong subscript superscript switch tab table tablist tabpanel term textbox time timer toolbar tooltip tree treegrid treeitem doc-abstract doc-acknowledgments doc-afterword doc-appendix doc-backlink doc-biblioentry doc-bibliography doc-biblioref doc-chapter doc-colophon doc-conclusion doc-cover doc-credit doc-credits doc-dedication doc-endnote doc-endnotes doc-epigraph doc-epilogue doc-errata doc-example doc-footnote doc-foreword doc-glossary doc-glossref doc-index doc-introduction doc-noteref doc-notice doc-pagebreak doc-pagelist doc-part doc-preface doc-prologue doc-pullquote doc-qna doc-subtitle doc-tip doc-toc graphics-document graphics-object graphics-symbol'.split(' '));
+	const badRoles = [...document.querySelectorAll('[role]')].filter(element => {
+		const value = element.getAttribute('role').trim().toLowerCase();
+		return value && !value.split(/\s+/).some(role => ROLES.has(role));
+	});
+	if (badRoles.length) add({ kind: 'invalid_role', severity: 'low', confidence: 0.9,
+		title: `${badRoles.length} element${badRoles.length === 1 ? ' has' : 's have'} an ARIA role that does not exist`,
+		actual: `Unknown roles: ${[...new Set(badRoles.map(element => element.getAttribute('role')))].slice(0, 6).join(', ')} (e.g. ${cssPath(badRoles[0])}). Assistive technology ignores them.`,
+		expected: 'role values are valid WAI-ARIA roles.', selector: cssPath(badRoles[0]), key: 'invalid_role' });
+	let nodeCount = 0, maxDepth = 0, widest = { count: 0, element: null };
+	const domWalker = document.createTreeWalker(document.body ?? doc, NodeFilter.SHOW_ELEMENT);
+	for (let node = domWalker.currentNode; node && nodeCount < 60000; node = domWalker.nextNode()) {
+		nodeCount++;
+		if (node.children.length > widest.count) widest = { count: node.children.length, element: node };
+		if (nodeCount % 7 === 0 || !node.firstElementChild) {
+			let depth = 0;
+			for (let parent = node; parent && depth < 400; parent = parent.parentElement) depth++;
+			if (depth > maxDepth) maxDepth = depth;
+		}
+	}
+	if (nodeCount > 3000 || maxDepth > 40 || widest.count > 200) add({ kind: 'excessive_dom', severity: nodeCount > 8000 || maxDepth > 60 ? 'medium' : 'low', confidence: 0.85,
+		title: `Very large DOM: ${nodeCount} elements, ${maxDepth} levels deep`,
+		actual: `The page builds ${nodeCount} elements (nesting depth ${maxDepth}; the widest parent ${cssPath(widest.element)} has ${widest.count} children). Large DOMs slow every style recalculation, layout and interaction, most on phones.`,
+		expected: 'Fewer than about 1,500–3,000 elements, depth under 32, and no parent with more than 60 children (virtualize long lists).',
+		selector: cssPath(widest.element), key: 'excessive_dom', siteWide: false });
+
 	// ---------- Contrast ----------
 	const parseColor = value => {
 		const match = String(value).match(/rgba?\(([^)]+)\)/);
@@ -447,6 +530,8 @@ export function pageAudit(options = {}) {
 		scrollHeight: doc.scrollHeight,
 		textElements: textByParent.size,
 		controls: controls.length,
+		domNodes: nodeCount,
+		domDepth: maxDepth,
 		forms: document.forms.length,
 		images: images.length,
 		loadMs: navigation ? Math.round(navigation.loadEventEnd || navigation.domContentLoadedEventEnd) : undefined,
@@ -473,7 +558,9 @@ export function pageAudit(options = {}) {
  */
 export const OBSERVER_SCRIPT = `(() => {
   if (window.__qase) return;
-  const state = window.__qase = { cls: 0, lcp: 0, longTasks: [], shiftSources: [], frames: [], animations: [] };
+  const state = window.__qase = { cls: 0, lcp: 0, longTasks: [], shiftSources: [], frames: [], animations: [], raf: 0 };
+  // Counts animation-frame requests so an idle page that keeps a JS animation loop running is visible.
+  try { const raf = window.requestAnimationFrame.bind(window); window.requestAnimationFrame = callback => { state.raf++; return raf(callback); }; } catch {}
   const describe = node => {
     if (!node || node.nodeType !== 1) return '';
     let text = node.tagName.toLowerCase();

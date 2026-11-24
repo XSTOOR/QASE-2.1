@@ -14,7 +14,7 @@
  *   execute   run scenarios by priority; every scenario is checkpointed; the
  *             plan is revised whenever execution adds pages, features or roles
  *   triage    merge, verify with JEV, escalate uncertain verdicts to the reasoner
- *   publish   capability coverage (140 categories), completion gate, report
+ *   publish   capability coverage (149 categories), completion gate, report
  *
  * Models: the reasoner (planning, exploration, visual review, report writing)
  * and JEV (verification) are called through the router, which logs every
@@ -34,6 +34,7 @@ import { createQaModels, qaModelSettings } from './models.js';
 import { candidate, severityRank } from './findings.js';
 import { auditPage } from './detectors/page.js';
 import { testInteractions, testHoverMenus, testReducedMotion } from './detectors/interactions.js';
+import { testIdle } from './detectors/dom.js';
 import { testForms } from './detectors/forms.js';
 import { auditOrigin, auditPageSecurity, probeInjection, probeRedirects, discoverAuthRoutes } from './detectors/security.js';
 import { createFrontier, checkLinks, normalizeUrl } from './crawl.js';
@@ -67,7 +68,8 @@ const DEFAULT_FIX = {
 	accessibility: 'Fix the semantics (roles, names, labels, focus handling) and verify with a screen reader and keyboard.',
 	content: 'Correct the content or the data binding that renders it.',
 	security: 'Fix the weakness on the server side and add a regression test for it.',
-	performance: 'Profile the page, remove the bottleneck and re-measure.'
+	performance: 'Profile the page, remove the bottleneck and re-measure.',
+	dom: 'Fix the markup or component that builds this part of the DOM (nesting, ids, references, what is created and removed), then re-check it with the DOM inspector.'
 };
 
 const STAGES = [
@@ -651,6 +653,27 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			finally { await page.close().catch(() => {}); }
 			return { tested: 1, evidence: [`Hovered the navigation on ${pathOf(url)}.`] };
 		},
+		async dom_idle(scenario, deadline) {
+			let tested = 0;
+			const evidence = [];
+			for (const url of scenario.targets) {
+				if (Date.now() >= deadline || stopped()) break;
+				await progress(`Watching ${pathOf(url)} while idle (DOM changes and animations)`);
+				const { page } = await openPage(url);
+				try {
+					await browser.settle(page, { quietMs: 800 }).catch(() => {});
+					await browser.hideCursor?.(page);
+					const result = await testIdle(page, { url, viewport: primary.name });
+					addCandidates(result.candidates);
+					if (result.measured) {
+						tested++;
+						const m = result.measured;
+						evidence.push(`${pathOf(url)}: ${m.mutations} DOM changes in ${m.seconds} s idle, ${m.infinite.length} infinite animation(s) (${m.infinite.filter(item => !item.visible).length} hidden), ${m.rafCalls} animation-frame requests.`);
+					}
+				} finally { await page.close().catch(() => {}); }
+			}
+			return { tested, evidence };
+		},
 		async reduced_motion(scenario) {
 			const url = scenario.targets[0];
 			const { page } = await openPage(url, { reducedMotion: 'reduce' });
@@ -1091,7 +1114,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			published.push(finding);
 			try { await runStore.commit(session, 'finding', { finding }); } catch (error) { console.warn('[qa-engine] finding commit failed:', error?.message); }
 		}
-		// Capability coverage (140 categories) and the completion gate, both deterministic.
+		// Capability coverage (149 categories) and the completion gate, both deterministic.
 		const unitRan = { observe: Boolean(state.observation), page_audit: pages.size > 0, signin: Boolean(state.signedIn) };
 		const coverageRows = capabilityCoverage({ graph: model.graph, units: unitOutcomes(plan, unitRan), findings: published, dismissed: result.dismissed, signedIn: Boolean(state.signedIn), viewportsTested: state.coverage.viewportNames });
 		state.capabilitySummary = { total: CAPABILITY_COUNT, ...summarizeCoverage(coverageRows) };

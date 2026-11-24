@@ -9,7 +9,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
-export const CATEGORIES = ['functional', 'navigation', 'forms', 'layout', 'visual', 'animation', 'responsive', 'accessibility', 'performance', 'console', 'network', 'content', 'security', 'seo'];
+export const CATEGORIES = ['functional', 'navigation', 'forms', 'layout', 'visual', 'animation', 'responsive', 'accessibility', 'performance', 'console', 'network', 'content', 'security', 'seo', 'dom'];
 
 const text = (value, max = 2000) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 

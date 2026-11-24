@@ -393,7 +393,7 @@ function scenarioCard(create, session, { live } = {}) {
 	return card;
 }
 
-/** 140 categories as one stacked bar, plus the completion gate. */
+/** Every category as one stacked bar, plus the completion gate. */
 function coverageCard(create, session) {
 	const state = session.hybrid ?? {};
 	const summary = state.capabilities ?? state.capabilitySummary ?? session.report?.qaEngine?.capabilitySummary;

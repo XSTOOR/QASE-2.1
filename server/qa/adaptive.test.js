@@ -26,9 +26,9 @@ function sampleGraph({ signedIn = false } = {}) {
 	return model;
 }
 
-test('the registry has exactly 140 unique categories, each fully specified', () => {
-	assert.equal(CAPABILITY_COUNT, 140);
-	assert.equal(new Set(CAPABILITIES.map(item => item.id)).size, 140);
+test('the registry has exactly 149 unique categories, each fully specified', () => {
+	assert.equal(CAPABILITY_COUNT, 149);
+	assert.equal(new Set(CAPABILITIES.map(item => item.id)).size, 149);
 	for (const item of CAPABILITIES) {
 		for (const field of ['id', 'name', 'group', 'applies', 'access', 'tools', 'strategy', 'safety', 'evidence', 'pass', 'fail', 'recovery', 'support']) assert.ok(item[field] !== undefined && item[field] !== '', `${item.id} lacks ${field}`);
 		assert.ok(['executed', 'partial', 'unsupported'].includes(item.support));
@@ -44,7 +44,7 @@ test('coverage never marks a category passed unless its executor ran', () => {
 	revisePlan(plan, scenariosFromGraph({ graph: model, start: 'https://app.test/', signedIn: false, options: OPTIONS }));
 	closeOutPlan(plan, 'budget ended');
 	const rows = capabilityCoverage({ graph: model.graph, units: unitOutcomes(plan), findings: [], signedIn: false, viewportsTested: [] });
-	assert.equal(rows.length, 140);
+	assert.equal(rows.length, 149);
 	assert.ok(rows.every(row => COVERAGE_STATES.includes(row.state)));
 	assert.equal(rows.filter(row => row.state === 'passed').length, 0, 'nothing ran, so nothing passed');
 	assert.ok(rows.filter(row => row.state === 'not_executed').every(row => row.reason));

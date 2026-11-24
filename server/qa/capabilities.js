@@ -22,7 +22,8 @@ const GROUPS = {
 	security: { tools: ['header/cookie audit', 'non-destructive probes', 'guarded fetch'], evidence: ['request and response excerpt', 'header values'], recovery: 'Probes are read-only and idempotent; a timeout is inconclusive, never a pass.' },
 	network: { tools: ['network emulation', 'request log', 'WebSocket observer'], evidence: ['request list', 'emulated condition', 'page state'], recovery: 'Restore the network and reload.' },
 	state: { tools: ['history navigation', 'reload', 'storage inspection'], evidence: ['state before/after', 'storage keys (never values that look secret)'], recovery: 'Start from a fresh load of the page.' },
-	content: { tools: ['DOM metadata audit', 'manifest fetch'], evidence: ['meta tags', 'manifest', 'robots/sitemap response'], recovery: 'Read-only; refetch once.' }
+	content: { tools: ['DOM metadata audit', 'manifest fetch'], evidence: ['meta tags', 'manifest', 'robots/sitemap response'], recovery: 'Read-only; refetch once.' },
+	dom: { tools: ['DOM structure audit', 'MutationObserver', 'Web Animations API', 'interaction runner'], evidence: ['element selector', 'element counts', 'mutation counts', 'reference that does not resolve'], recovery: 'Re-measure on a fresh load after the page settles.' }
 };
 
 const SAFETY = { read: 'read-only', probe: 'non-destructive probe', write: 'writes data — needs owner authorization', destructive: 'destructive — never run against production without authorization', human: 'needs a person (security control)' };
@@ -186,6 +187,16 @@ const TABLE = [
 	['storage_usage', 'Browser storage usage', 'state', ['storage'], ['storage.'], { pass: 'Storage is used without errors.', fail: 'Storage access throws errors.' }],
 	['data_integrity', 'Saved-data integrity', 'state', [], [], { safety: 'write', support: 'unsupported', prerequisite: 'Write authorization to save and re-read test data.' }],
 
+	// DOM integrity and idle behaviour (141–149)
+	['dom_nesting', 'Valid element nesting', 'dom', ['page_audit'], ['page.invalid_nesting', 'page.form_in_form', 'page.orphan_list_item'], { pass: 'No control inside another control, no nested forms, list items inside lists.', fail: 'Controls or forms are nested, or list items sit outside a list.' }],
+	['dom_references', 'ID references resolve', 'dom', ['page_audit'], ['page.broken_aria_reference'], { pass: 'Every aria-labelledby, aria-describedby, aria-controls and label for= points to an element on the page.', fail: 'A reference points to an id that does not exist.' }],
+	['dom_hidden_focus', 'Hidden content is not focusable', 'dom', ['page_audit'], ['page.aria_hidden_focusable'], { pass: 'Nothing inside aria-hidden content can take keyboard focus.', fail: 'Keyboard focus reaches content hidden from screen readers.' }],
+	['dom_roles', 'Valid ARIA roles', 'dom', ['page_audit'], ['page.invalid_role'], { pass: 'Every role attribute is a real WAI-ARIA role.', fail: 'An element uses a role that does not exist.' }],
+	['dom_size', 'DOM size and depth', 'dom', ['page_audit'], ['page.excessive_dom'], { pass: 'Under 3,000 elements, depth under 40, no parent with more than 200 children.', fail: 'The DOM is large or deep enough to slow every interaction.' }],
+	['dom_idle_stability', 'DOM stays still when idle', 'dom', ['dom_idle'], ['page.idle_dom_churn'], { pass: 'An untouched page makes fewer than 40 DOM changes a second.', fail: 'The page keeps rewriting its DOM with nobody using it.' }],
+	['dom_leaks', 'No DOM leaks from repeated use', 'dom', ['interactions'], ['motion.dom_leak'], { applies: 'menus', pass: 'Opening and closing a control returns the page to the same element count.', fail: 'Each open and close adds elements that are never removed.' }],
+	['dom_after_interaction', 'DOM stays valid after interactions', 'dom', ['interactions'], ['motion.dom_invalid_after_open'], { applies: 'menus', pass: 'Opened menus and dialogs keep ids unique and references resolvable.', fail: 'Opening a control creates duplicate ids or references to missing elements.' }],
+	['idle_animations', 'Animations stop when not visible', 'motion', ['dom_idle'], ['page.offscreen_animation', 'page.idle_animation_loop'], { pass: 'No infinite animation runs on hidden or off-screen elements, and no animation loop runs while nothing moves.', fail: 'Animations keep running where nobody can see them.' }],
 	// Content, SEO, PWA, i18n, platform (135–140)
 	['seo_meta', 'Title and meta description', 'content', ['seo'], ['page.missing_title', 'seo.'], { pass: 'Every page has a unique title and a description.', fail: 'Titles or descriptions are missing or duplicated.' }],
 	['seo_indexing', 'Robots, canonical and sitemap', 'content', ['seo'], ['seo.robots_', 'seo.canonical_', 'seo.sitemap_'], { pass: 'robots.txt/sitemap are consistent and no page is accidentally noindex.', fail: 'Indexing is blocked by mistake.' }],

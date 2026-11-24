@@ -131,7 +131,7 @@ test('adaptive run: observes, signs in (two steps), maps, plans, replans, re-aut
 		assert.ok(qa.routing.decisions.some(item => item.modality === 'image+text'), 'image calls are logged with their modality');
 
 		// Coverage, gate and report.
-		assert.equal(qa.capabilityMatrix.length, 140);
+		assert.equal(qa.capabilityMatrix.length, 149);
 		assert.ok(!qa.capabilityMatrix.some(row => row.state === 'passed' && row.support === 'unsupported'));
 		assert.equal(qa.capabilityMatrix.find(row => row.id === 'authorization').state, 'failed');
 		assert.equal(qa.capabilityMatrix.find(row => row.id === 'pagination').state, 'failed');
@@ -415,5 +415,43 @@ test('explorer: sees every action, presses what it means, and re-plans when the 
 		assert.ok(images >= 1, 'a screenshot follows the actions');
 		const ashaRefs = observations.map(text => /(e\d+) div\(button\) "Asha Rao/.exec(text)?.[1]).filter(Boolean);
 		assert.ok(ashaRefs.length >= 2 && new Set(ashaRefs).size === 1, `refs are stable across observations (${ashaRefs.join(', ')})`);
+	} finally { await browser.close(); await lab.close(); }
+});
+
+test('DOM and idle-animation checks find seeded defects and stay quiet on a clean page', { timeout: 120_000 }, async () => {
+	const lab = await startQaLab();
+	const { createQaBrowser } = await import('./browser.js');
+	const { auditPage } = await import('./detectors/page.js');
+	const { testIdle } = await import('./detectors/dom.js');
+	const { testInteractions } = await import('./detectors/interactions.js');
+	const browser = await createQaBrowser({ session: { id: 'dom', targetUrl: `${lab.url}workspace/dom`, engine: 'chromium', device: 'desktop' }, env: ENV });
+	const profile = { name: 'desktop', label: 'Desktop', viewport: { width: 1280, height: 800 } };
+	const detectors = list => new Set(list.map(item => item.detector));
+	try {
+		const url = `${lab.url}workspace/dom`;
+		let { page, log } = await browser.openPage(profile);
+		await browser.goto(page, url, log);
+		const audit = detectors((await auditPage(page, { url, viewport: 'desktop', log, save: async () => undefined })).candidates);
+		for (const id of ['page.invalid_nesting', 'page.broken_aria_reference', 'page.aria_hidden_focusable', 'page.invalid_role', 'page.orphan_list_item']) assert.ok(audit.has(id), `${id} found (${[...audit].join(', ')})`);
+		const idle = await testIdle(page, { url, viewport: 'desktop', ms: 2000 });
+		const idleIds = detectors(idle.candidates);
+		assert.ok(idleIds.has('page.idle_dom_churn'), `idle churn found (${idle.measured.mutations} changes)`);
+		assert.ok(idleIds.has('page.offscreen_animation'), 'off-screen infinite animation found');
+		const reload = async () => { await browser.goto(page, url, log, { quietMs: 400 }).catch(() => {}); };
+		const interactions = await testInteractions(page, { url, viewport: 'desktop', browser, reload, save: async () => undefined, limit: 4, deadline: Date.now() + 60_000 });
+		const leak = interactions.candidates.find(item => item.detector === 'motion.dom_leak');
+		assert.ok(leak, `DOM leak found (${interactions.candidates.map(item => item.detector).join(', ')})`);
+		assert.match(leak.actual, /Element count after each close: \d+ → \d+ → \d+ → \d+/);
+		assert.equal(leak.category, 'dom');
+		await page.close();
+
+		// A clean page: none of the new checks may fire.
+		const clean = `${lab.url}workspace/static`;
+		({ page, log } = await browser.openPage(profile));
+		await browser.goto(page, clean, log);
+		const quiet = [...(await auditPage(page, { url: clean, viewport: 'desktop', log, save: async () => undefined })).candidates, ...(await testIdle(page, { url: clean, viewport: 'desktop', ms: 1500 })).candidates]
+			.filter(item => /invalid_nesting|broken_aria_reference|aria_hidden_focusable|invalid_role|orphan_list_item|excessive_dom|idle_dom_churn|offscreen_animation|idle_animation_loop/.test(item.detector));
+		assert.deepEqual(quiet.map(item => item.detector), [], 'no false DOM findings on a clean page');
+		await page.close();
 	} finally { await browser.close(); await lab.close(); }
 });

@@ -31,7 +31,7 @@ application specific: what gets tested follows from what it finds.
 | `plan` | Scenarios = graph × capability registry (`planner.js`), plus user journeys the reasoner proposes from the graph summary; a deterministic journey when the reasoner fails | `planner.js`, `capabilities.js` |
 | `execute` | Scenarios run by priority (access control and core flows first, visual review last). Each scenario is checkpointed. After every scenario the plan is re-derived from the graph; new pages, features, roles or sessions add scenarios and record a **revision** | `engine.js`, `executors.js`, detectors |
 | `triage` | Merge duplicates, verify with JEV, **escalate** JEV verdicts between 0.35 and 0.65 to the reasoner, grade severity | `triage.js`, `router.js` |
-| `publish` | Capability coverage for all 140 categories, the **completion gate**, findings with fix guidance, the 25-section report | `capabilities.js`, `completionGate.js`, `report.js` |
+| `publish` | Capability coverage for all 149 categories (including DOM integrity and idle animations), the **completion gate**, findings with fix guidance, the 25-section report | `capabilities.js`, `completionGate.js`, `report.js` |
 
 Stages share the remaining budget (`STAGE_SHARE`); scenarios share the
 execute budget (journeys and visual review get larger slices). Time spent
@@ -50,7 +50,7 @@ and roles. `session.hybrid.plan` holds scenarios
 and every revision with its trigger. Pages reached only by a journey join the
 graph unaudited and get a `page_audit` scenario in the next revision.
 
-### Capability registry (140 categories)
+### Capability registry (149 categories)
 
 `capabilities.js` lists every category with applicability (a graph feature),
 access (public / signed-in), executor units, safety class, evidence,
@@ -60,6 +60,16 @@ states are `passed`, `failed`, `blocked`, `inconclusive`, `not_applicable`,
 `unsupported` and `not_executed`. A category is `passed` only when one of
 its executors actually ran; writes, destructive tests, load tests, payments,
 MFA/CAPTCHA and SSO are `unsupported` until the owner authorizes them.
+
+DOM integrity (`dom` group) is checked three ways: the page audit inspects
+the built DOM (controls nested in controls, nested forms, list items outside
+lists, aria/label references to missing ids, focusable content inside
+`aria-hidden`, unknown roles, DOM size and depth); the `dom_idle` unit leaves
+a page untouched and records DOM churn, infinite animations on hidden or
+off-screen elements and animation-frame loops while nothing moves
+(`detectors/dom.js`); and the interaction runner snapshots the DOM around
+each menu or dialog (new duplicate ids or dangling references when it opens)
+and opens and closes it three more times to catch DOM leaks.
 
 ### Completion gate
 

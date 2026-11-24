@@ -4,6 +4,7 @@
  * wording (summary) and sharper fix guidance, and both are optional.
  */
 import { SEVERITIES, severityRank } from './findings.js';
+import { CAPABILITY_COUNT } from './capabilities.js';
 
 export function verdictFor({ findings, loaded, coverageGaps }) {
 	if (!loaded) return 'blocked';
@@ -86,7 +87,7 @@ export function buildReport({ session, findings, dismissed, coverage, limitation
 
 const STATE_LABEL = { passed: 'Passed', failed: 'Failed', blocked: 'Blocked', inconclusive: 'Inconclusive', not_applicable: 'Not applicable', unsupported: 'Unsupported', not_executed: 'Not executed' };
 const pathOf = url => { try { const parsed = new URL(url); return `${parsed.pathname}${parsed.search}` || '/'; } catch { return url; } };
-const GROUP_LABEL = { functional: 'Functional', auth: 'Authentication & authorization', layout: 'Layout & visual', motion: 'Motion & interaction', a11y: 'Accessibility', performance: 'Performance', security: 'Security', network: 'Network & API', state: 'State & data', content: 'Content, SEO & platform' };
+const GROUP_LABEL = { functional: 'Functional', auth: 'Authentication & authorization', layout: 'Layout & visual', motion: 'Motion, animation & DOM', a11y: 'Accessibility', performance: 'Performance', security: 'Security', network: 'Network & API', state: 'State & data', content: 'Content, SEO & platform' };
 
 /**
  * The extended (25-section) report for the adaptive engine. Every section is
@@ -111,14 +112,19 @@ export function adaptiveReport({ session, findings, dismissed, coverage, limitat
 		section('auth', '6. Authentication', [graph.auth.detected ? `Sign-in detected (${[graph.auth.passwordForm ? 'password form' : '', graph.auth.identifierStep ? 'two-step' : '', graph.auth.loginLinks?.length ? 'sign-in link' : '', graph.auth.sso?.length ? `SSO: ${graph.auth.sso.join(', ')}` : ''].filter(Boolean).join(', ') || 'entry point'}).` : 'No authentication detected.', signedIn ? `Signed in and verified: ${graph.auth.verifiedBy ?? 'session check'}${graph.auth.steps?.length ? `; steps: ${graph.auth.steps.join(' → ')}` : ''}.` : graph.auth.blockedReason ? `Not signed in: ${graph.auth.blockedReason}` : '', graph.auth.reauthentications ? `Session expired and was re-authenticated ${graph.auth.reauthentications} time(s).` : '', ...authEvents.slice(0, 12).map(event => `${new Date(event.ts).toISOString().slice(11, 19)} ${event.kind}${event.url ? ` at ${event.url}` : ''}${event.ok !== undefined ? ` → ${event.ok ? 'ok' : 'failed'}` : ''}${event.steps ? ` (${event.steps.join(' → ')})` : ''}`), 'Credentials were read from the run vault only; they never appear in prompts, logs, screenshots or this report.']),
 		section('plan', '7. Test plan and revisions', [`${plan.scenarios.length} scenarios in ${plan.revisions.length} revision(s).`, ...plan.revisions.map(item => `Revision ${item.revision} — ${item.trigger}: +${item.added.length}`)]),
 		section('scenarios', '8. Scenario results', scenarios.map(item => `${STATE_LABEL[item.state] ?? item.state} · ${item.title}${item.reason ? ` — ${item.reason}` : ''}`)),
-		section('capabilities', '9. Capability matrix (140 categories)', [`${Object.entries(counts).map(([state, n]) => `${STATE_LABEL[state]} ${n}`).join(' · ')}`]),
+		section('capabilities', `9. Capability matrix (${CAPABILITY_COUNT} categories)`, [`${Object.entries(counts).map(([state, n]) => `${STATE_LABEL[state]} ${n}`).join(' · ')}`]),
 		section('severity', '10. Findings by severity', SEVERITIES.map(severity => `${severity}: ${findings.filter(item => item.severity === severity).length}`)),
 		section('findings', '11. Findings', findings.slice(0, 40).map(findingLine)),
 		section('evidence', '12. Evidence index', findings.slice(0, 40).map(item => `${item.title}: ${item.artifactId ? `screenshot ${item.artifactId}; ` : ''}${(item.steps ?? []).length} step(s); ${String(item.evidence ?? '').split('\n')[0].slice(0, 160)}`)),
-		...['functional', 'layout', 'motion', 'a11y', 'performance', 'security'].map((group, index) => section(group, `${13 + index}. ${GROUP_LABEL[group]}`, [
-			`${coverageRows.filter(row => row.group === group && row.state === 'passed').length} passed, ${coverageRows.filter(row => row.group === group && row.state === 'failed').length} failed of ${coverageRows.filter(row => row.group === group).length} categories.`,
-			...byGroup(group).slice(0, 12).map(findingLine)
-		])),
+		// DOM integrity is reported with motion and interaction: both come from watching the page change.
+		...['functional', 'layout', 'motion', 'a11y', 'performance', 'security'].map((group, index) => {
+			const groups = group === 'motion' ? ['motion', 'dom'] : [group];
+			const rows = coverageRows.filter(row => groups.includes(row.group));
+			return section(group, `${13 + index}. ${GROUP_LABEL[group]}`, [
+				`${rows.filter(row => row.state === 'passed').length} passed, ${rows.filter(row => row.state === 'failed').length} failed of ${rows.length} categories.`,
+				...[...new Set(groups.flatMap(byGroup))].slice(0, 12).map(findingLine)
+			]);
+		}),
 		section('responsive', '19. Responsive coverage', (coverage.viewports ?? []).map(viewport => `${viewport}: tested`)),
 		section('pages', '20. Coverage by page', pageRows.slice(0, 40).map(row => `${row.url}: ${row.findings} finding(s), discovered by ${row.discoveredBy}`)),
 		section('roles', '21. Coverage by role', graph.roles.map(role => `${role}: ${role === 'public' ? 'public pages crawled signed out' : role === 'signed-in' ? (signedIn ? 'signed-in area crawled and tested' : 'not tested') : 'restriction observed'}`)),

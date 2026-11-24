@@ -12,7 +12,8 @@ const CATEGORY = {
 	distorted_image: 'visual', image_alt_missing: 'accessibility', control_no_name: 'accessibility', field_no_label: 'accessibility',
 	missing_lang: 'accessibility', zoom_disabled: 'accessibility', viewport_meta_missing: 'responsive', duplicate_ids: 'accessibility',
 	low_contrast: 'accessibility', broken_text: 'content', placeholder_copy: 'content', blank_page: 'functional', missing_title: 'seo',
-	missing_h1: 'seo', broken_anchor: 'navigation', hidden_content: 'animation'
+	missing_h1: 'seo', broken_anchor: 'navigation', hidden_content: 'animation',
+	invalid_nesting: 'dom', form_in_form: 'dom', orphan_list_item: 'dom', broken_aria_reference: 'dom', aria_hidden_focusable: 'dom', invalid_role: 'dom', excessive_dom: 'dom'
 };
 
 /** Developer-facing fix guidance used in fix prompts. */
@@ -50,7 +51,14 @@ export const FIX_GUIDANCE = {
 	layout_shift: 'Reserve space for late-loading content (width/height on images, min-height on banners, font-display strategies) so the layout does not jump.',
 	heavy_page: 'Compress images (WebP/AVIF), lazy-load below-the-fold media and split JavaScript bundles.',
 	long_tasks: 'Break up long JavaScript tasks (code splitting, web workers, deferring non-critical work) so the main thread stays responsive.',
-	mixed_content: 'Load every resource over HTTPS.'
+	mixed_content: 'Load every resource over HTTPS.',
+	invalid_nesting: 'Do not put links, buttons or fields inside other links or buttons. Make the outer element a non-interactive container (div/li with an onClick on a dedicated inner control), or move the inner control beside it.',
+	form_in_form: 'Remove the nested <form>; use one form, or the form= attribute on controls that belong to another form.',
+	orphan_list_item: 'Wrap <li> elements in <ul>, <ol> or <menu>, or use a different element when it is not a list.',
+	broken_aria_reference: 'Point aria-labelledby/aria-describedby/aria-controls and label for= at ids that exist (generate ids per component instance and keep them in sync), or remove the reference.',
+	aria_hidden_focusable: 'Make hidden content non-focusable: use the inert attribute on the hidden container, or tabindex="-1" on its controls, or stop hiding it with aria-hidden.',
+	invalid_role: 'Use a valid WAI-ARIA role (or the native element that has it), or remove the role attribute.',
+	excessive_dom: 'Reduce the DOM: virtualize long lists and tables, render hidden tabs and menus on demand, and remove wrapper elements that add no structure.'
 };
 
 async function highlight(page, rect, label) {

@@ -12,11 +12,11 @@ import { UNTRUSTED_CONTENT_RULE } from '../untrustedContent.js';
 import { CAPABILITIES, applicability } from './capabilities.js';
 
 export const SCENARIO_STATES = ['pending', 'running', 'passed', 'failed', 'blocked', 'inconclusive', 'not_applicable', 'unsupported', 'not_executed'];
-const MULTI_PAGE = new Set(['viewports', 'keyboard', 'history', 'persistence', 'hover', 'reduced_motion', 'dark_mode', 'injection', 'performance', 'offline', 'slow_network', 'memory', 'storage', 'seo', 'i18n', 'permissions', 'authz', 'roles']);
+const MULTI_PAGE = new Set(['dom_idle', 'viewports', 'keyboard', 'history', 'persistence', 'hover', 'reduced_motion', 'dark_mode', 'injection', 'performance', 'offline', 'slow_network', 'memory', 'storage', 'seo', 'i18n', 'permissions', 'authz', 'roles']);
 export const TERMINAL = new Set(SCENARIO_STATES.filter(state => !['pending', 'running'].includes(state)));
 
 const UNIT_TITLES = {
-	page_audit: 'Page audit',
+	page_audit: 'Page audit', dom_idle: 'DOM stability and idle animations',
 	viewports: 'Responsive layout on other viewports', interactions: 'Menus, toggles, dialogs and their animations', hover: 'Hover submenus',
 	reduced_motion: 'Reduced-motion preference', forms: 'Form validation (never submitted)', security_origin: 'Headers, cookies, CORS and exposed files',
 	injection: 'XSS and SQL-error probes', redirects: 'Open-redirect probes', links: 'Link check', explore: 'User journey', visual: 'AI visual review',
@@ -27,7 +27,7 @@ const UNIT_TITLES = {
 };
 
 // Lower is earlier. Authorization and core flows first, broad review last.
-const PRIORITY = { authz: 1, roles: 1, explore: 2, search: 2, forms: 2, interactions: 3, viewports: 3, keyboard: 3, injection: 3, security_origin: 3, persistence: 4, history: 4, redirects: 4, links: 4, performance: 4, offline: 5, slow_network: 5, storage: 5, seo: 5, pwa: 5, i18n: 5, media: 4, permissions: 5, websocket: 4, hover: 4, reduced_motion: 4, dark_mode: 5, memory: 6, visual: 7 };
+const PRIORITY = { authz: 1, roles: 1, explore: 2, search: 2, forms: 2, interactions: 3, viewports: 3, keyboard: 3, injection: 3, security_origin: 3, persistence: 4, history: 4, redirects: 4, links: 4, performance: 4, offline: 5, slow_network: 5, storage: 5, seo: 5, pwa: 5, i18n: 5, media: 4, permissions: 5, websocket: 4, hover: 4, reduced_motion: 4, dom_idle: 4, dark_mode: 5, memory: 6, visual: 7 };
 
 /**
  * The scenario contract: why it exists (the observed feature), what it does, what
@@ -82,6 +82,7 @@ export function scenariosFromGraph({ graph: model, start, signedInUrl, signedIn,
 	add('persistence', [signedIn && signedInUrl ? signedInUrl : ranked[0]]);
 	add('hover', [ranked[0]]);
 	add('reduced_motion', [signedInUrl ?? ranked[0]]);
+	add('dom_idle', [...new Set([signedInUrl, ...key].filter(Boolean))].slice(0, 3));
 	add('dark_mode', key.slice(0, 2));
 	add('security_origin', []);
 	add('injection', ranked.filter(url => new URL(url).search || (graph.pages[url]?.features?.search ?? 0) > 0 || (graph.pages[url]?.features?.forms ?? 0) > 0).slice(0, 6).concat(start).filter((url, index, list) => list.indexOf(url) === index).slice(0, 6));

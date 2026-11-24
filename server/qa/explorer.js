@@ -28,7 +28,7 @@ const TOOLS = [
 	{ name: 'look', description: 'Take a fresh screenshot of the viewport (with control marks). A screenshot already arrives after every action, so use this only when the page may have changed by itself (loading, animation, timers).', parameters: { type: 'object', properties: {} } },
 	{ name: 'report_issue', description: 'Report one confirmed defect you observed. Only report what you saw happen, with exact steps.', parameters: { type: 'object', properties: {
 		title: { type: 'string' }, severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
-		category: { type: 'string', enum: ['functional', 'navigation', 'forms', 'layout', 'visual', 'animation', 'responsive', 'accessibility', 'content', 'security', 'performance'] },
+		category: { type: 'string', enum: ['functional', 'navigation', 'forms', 'layout', 'visual', 'animation', 'dom', 'responsive', 'accessibility', 'content', 'security', 'performance'] },
 		steps: { type: 'array', items: { type: 'string' } }, expected: { type: 'string' }, actual: { type: 'string' }, evidence: { type: 'string' }
 	}, required: ['title', 'severity', 'category', 'steps', 'expected', 'actual'] } },
 	{ name: 'finish', description: 'Stop exploring and summarize what you tested.', parameters: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] } }

@@ -14,6 +14,7 @@
  * is reduced when the user asks for it.
  */
 import { candidate } from '../findings.js';
+import { domHealth, DOM_FIX } from './dom.js';
 
 // Sign-in-with buttons hand off to another site; QASE blocks that navigation, so
 // their spinner/loading state is a harness artifact, not an animation to grade.
@@ -219,9 +220,11 @@ export async function testInteractions(page, { url, viewport, browser, reload, s
 	const out = [];
 	const filmstrips = [];
 	let tested = 0;
+	let leakChecks = 0;
 	let triggers = await findTriggers(page, limit);
 	for (let index = 0; index < triggers.length && Date.now() < deadline; index++) {
 		const trigger = triggers[index];
+		const healthBefore = await domHealth(page);
 		const armed = await arm(page, trigger.id);
 		if (!armed) continue;
 		const frames = [];
@@ -355,8 +358,43 @@ export async function testInteractions(page, { url, viewport, browser, reload, s
 					actual: `After pressing Escape the ${result.modal ? 'dialog' : 'menu'} ${result.regionSelector} is still open.`, expected: 'Escape closes menus and dialogs.' });
 			}
 		}
+		// DOM integrity while open: opening must not create duplicate ids or references to nothing.
+		const healthOpen = result.region ? await domHealth(page) : undefined;
+		if (healthBefore && healthOpen) {
+			const newDuplicates = healthOpen.duplicateIds.filter(id => !healthBefore.duplicateIds.includes(id));
+			const newBroken = healthOpen.brokenRefs.filter(ref => !healthBefore.brokenRefs.includes(ref));
+			if (newDuplicates.length || newBroken.length) add('dom_invalid_after_open', { category: 'dom', severity: newBroken.length ? 'medium' : 'low', confidence: 0.8,
+				title: `Opening "${trigger.label}" leaves the DOM invalid`,
+				actual: `After the panel opened: ${[newDuplicates.length ? `duplicate ids ${newDuplicates.slice(0, 5).join(', ')}` : '', newBroken.length ? `references to missing elements ${newBroken.slice(0, 5).join(', ')}` : ''].filter(Boolean).join('; ')}.`,
+				expected: 'Opened content has unique ids and its ARIA references resolve.', fix: DOM_FIX.dom_invalid_after_open });
+		}
 		// Restore the base state only when the control left something changed.
 		const stillOpen = result.region && await regionVisible(page, result.regionSelector);
+		// DOM leak: open and close the same control a few more times; a correct
+		// component returns to the same element count every time it closes.
+		if (result.region && !stillOpen && leakChecks < 2 && Date.now() < deadline - 8000) {
+			leakChecks++;
+			const locator = page.locator(`[data-qase-trigger="${trigger.id}"]`).first();
+			const counts = [(await domHealth(page))?.nodes];
+			for (let cycle = 0; cycle < 3; cycle++) {
+				const opened = await browser.interact(async () => { await locator.click({ timeout: 3000 }); await page.waitForTimeout(450); }).then(() => true, () => false);
+				if (!opened) break;
+				await page.keyboard.press('Escape').catch(() => {});
+				await page.waitForTimeout(450);
+				if (await regionVisible(page, result.regionSelector)) await browser.interact(() => locator.click({ timeout: 3000 })).catch(() => {});
+				await page.waitForTimeout(300);
+				counts.push((await domHealth(page))?.nodes);
+			}
+			const valid = counts.every(Number.isFinite) && counts.length === 4;
+			const steps = valid ? counts.slice(1).map((count, index) => count - counts[index]) : [];
+			if (valid && steps.every(step => step >= 10) && counts[3] - counts[0] >= 45) {
+				add('dom_leak', { category: 'dom', severity: counts[3] - counts[0] >= 300 ? 'medium' : 'low', confidence: 0.75,
+					title: `"${trigger.label}" adds elements every time it is opened and closed (DOM leak)`,
+					actual: `Element count after each close: ${counts.join(' → ')} (+${steps.join(', +')}). Closing does not remove what opening created, so the page grows and slows the longer it is used.`,
+					expected: 'Opening and closing a control returns the page to the same number of elements.', fix: DOM_FIX.dom_leak,
+					steps: [...base.steps, 'Close it (Escape)', 'Repeat open and close 3 times', 'Compare document.getElementsByTagName("*").length after each close'] });
+			}
+		}
 		if (stillOpen || result.mutations > 20 || result.position === 'fixed') {
 			await reload();
 			triggers = await findTriggers(page, limit);

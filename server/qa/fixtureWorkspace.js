@@ -147,6 +147,34 @@ export async function workspaceHandler(request, response, path, url) {
 <button type="button" id="dead">Live chat</button></main>
 <script>q1.onclick = () => { const open = a1.hidden; a1.hidden = !open; q1.setAttribute('aria-expanded', String(open)); }; q2.onclick = () => { a2.style.display = a2.style.display === 'none' ? 'block' : 'none'; };</script></body></html>`);
 			return true;
+		case '/workspace/dom':
+			// Seeded DOM and idle-animation defects (each one is a real-world pattern).
+			html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>DOM lab</title><style>
+@keyframes pulse{50%{opacity:.4}}.pulse{animation:pulse 1s linear infinite}#ghost{position:absolute;left:-9999px;width:40px;height:40px}
+#menu-panel{border:1px solid #999;padding:8px;margin:6px 0}</style></head><body><main><h1>DOM lab</h1>
+<a href="#card">Card link <button type="button">Inner action</button></a>
+<p id="described" aria-labelledby="missing-heading">Profile summary</p>
+<label for="no-such-field">Nickname</label><input id="real-field" aria-label="Real field">
+<div aria-hidden="true"><button type="button">Hidden but focusable</button></div>
+<div role="cardd">Unknown role</div>
+<div class="wrap"><li>Orphan item</li></div>
+<span id="ticker">0</span>
+<div id="ghost" class="pulse"></div>
+<button type="button" id="menu" aria-expanded="false">Options</button>
+</main>
+<script>
+let n = 0; setInterval(() => { ticker.textContent = String(++n); ticker.dataset.n = String(n); }, 10);
+menu.onclick = () => {
+	const open = menu.getAttribute('aria-expanded') === 'true';
+	if (open) { for (const p of document.querySelectorAll('.menu-panel')) p.style.display = 'none'; menu.setAttribute('aria-expanded', 'false'); return; }
+	// Leak: a new panel (with the same id) is appended on every open; closing only hides it.
+	const panel = document.createElement('div'); panel.className = 'menu-panel'; panel.id = 'menu-panel'; panel.setAttribute('role', 'menu');
+	panel.innerHTML = Array.from({ length: 6 }, (_, i) => '<div role="menuitem" tabindex="-1"><span>Choice ' + i + '</span> <em>detail</em></div>').join('');
+	menu.after(panel); menu.setAttribute('aria-expanded', 'true');
+};
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && menu.getAttribute('aria-expanded') === 'true') menu.click(); });
+</script></body></html>`);
+			return true;
 		case '/workspace/inbox':
 			// A chat inbox like studio's: each row's centre holds a hover "Remove"
 			// action, and the rail is icon buttons with no accessible name.

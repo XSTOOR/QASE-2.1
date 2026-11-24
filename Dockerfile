@@ -32,7 +32,7 @@ COPY --from=verified-source --chown=node:node /source/integrations ./integration
 RUN mkdir -p /app/.qase /app/evidence \
     && chown -R node:node /app/.qase /app/evidence
 
-ARG QASE_RELEASE_ID=qase-2026-11-24-agent-vision-r10
+ARG QASE_RELEASE_ID=qase-2026-11-24-dom-animation-r11
 ARG QASE_SOURCE_REVISION=unknown
 LABEL org.opencontainers.image.title="QASE" \
       org.opencontainers.image.version=$QASE_RELEASE_ID \
