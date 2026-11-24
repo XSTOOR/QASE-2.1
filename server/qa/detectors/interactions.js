@@ -394,6 +394,10 @@ export async function testInteractions(page, { url, viewport, browser, reload, s
 					expected: 'Opening and closing a control returns the page to the same number of elements.', fix: DOM_FIX.dom_leak,
 					steps: [...base.steps, 'Close it (Escape)', 'Repeat open and close 3 times', 'Compare document.getElementsByTagName("*").length after each close'] });
 			}
+			// The repeated opening changed the page: start the next control from a clean load.
+			await reload();
+			triggers = await findTriggers(page, limit);
+			continue;
 		}
 		if (stillOpen || result.mutations > 20 || result.position === 'fixed') {
 			await reload();

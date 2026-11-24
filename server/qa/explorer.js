@@ -163,10 +163,13 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 		];
 		while (summary.steps < maxSteps && Date.now() < deadline && models.reasonerAvailable()) {
 			signal?.throwIfAborted();
-			// Keep the context small: older observations are trimmed.
-			for (let i = 2; i < messages.length - 8; i++) {
-				if (messages[i].role === 'tool' && messages[i].content.length > 300) messages[i] = { ...messages[i], content: `${messages[i].content.slice(0, 200)}\n[older observation trimmed]` };
-				if (messages[i].role === 'user' && Array.isArray(messages[i].content)) messages[i] = { role: 'user', content: '[older screenshot trimmed]' };
+			// Keep the context small: older observations are trimmed, and only the latest
+			// screenshot is sent (older ones describe screens that no longer exist).
+			let latestImage = -1;
+			for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'user' && Array.isArray(messages[i].content)) { latestImage = i; break; }
+			for (let i = 2; i < messages.length; i++) {
+				if (i < messages.length - 8 && messages[i].role === 'tool' && messages[i].content.length > 300) messages[i] = { ...messages[i], content: `${messages[i].content.slice(0, 200)}\n[older observation trimmed]` };
+				if (i !== latestImage && messages[i].role === 'user' && Array.isArray(messages[i].content)) messages[i] = { role: 'user', content: '[older screenshot trimmed]' };
 			}
 			const reply = await models.chat(messages, { tools: TOOLS, maxTokens: 2048, signal, purpose: 'exploration' });
 			if (!reply) break;

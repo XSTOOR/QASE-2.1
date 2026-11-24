@@ -1,6 +1,6 @@
 {
-  "releaseId": "qase-2026-11-24-dom-animation-r11",
+  "releaseId": "qase-2026-11-24-faster-agent-r12",
   "uiVersion": "20261124-1",
   "productionOrigin": "https://qase.drytis.com",
-  "source": "Push-SQA: QA adds DOM integrity testing (nesting, id references, hidden focusable content, roles, DOM size, idle DOM churn, DOM leaks and invalid DOM after interactions) and idle-animation testing (infinite animations off-screen, animation loops while nothing moves); 149 categories."
+  "source": "Push-SQA: faster QA agent: after an in-page action it waits for the page to react (requests it started, DOM stillness) instead of network idle, sends only the latest screenshot to the model, measures each press once, and shortens the cursor pause; full page loads keep the careful wait."
 }

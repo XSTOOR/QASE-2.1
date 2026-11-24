@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "releaseId": "qase-2026-11-24-dom-animation-r11",
+  "releaseId": "qase-2026-11-24-faster-agent-r12",
   "files": [
     {
       "path": ".dockerignore",
@@ -88,7 +88,7 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "9bcdcdee6a3a1cba1351ab4fabe80c19fa7d46ff7a36fd0ae1f77f7dc75206a8"
+      "sha256": "f896f368204d1fe85562c9fdd1c4d5e07cf176502c77e16ff1e34cef2353f4f3"
     },
     {
       "path": "docs/ARCHITECTURE.md",
@@ -680,7 +680,7 @@
     },
     {
       "path": "public/release.json",
-      "sha256": "b8f35080e87dcb54ef7be2decc77ae5f9e777c932ef21f5f11cb03b9a58819b7"
+      "sha256": "a7e7bae0f1ae19b243f3fa2d17475b5b119b54546d28207811ca82528207c6fb"
     },
     {
       "path": "public/renderHealth.js",
@@ -2172,7 +2172,7 @@
     },
     {
       "path": "server/qa/browser.js",
-      "sha256": "02edaa4a4e45947393c98e0999380f1b84a74dfdd43b88dded7b52f395f57dca"
+      "sha256": "5e550ad203ed1d5fba2ccfc83cceb734b87b0baae4c4df47d9c445157ae5fdce"
     },
     {
       "path": "server/qa/browser.test.js",
@@ -2200,7 +2200,7 @@
     },
     {
       "path": "server/qa/detectors/interactions.js",
-      "sha256": "e6ed00886968b2eecca2191817c1743db1898de27ed3d2dbf710ae1c5661b6f2"
+      "sha256": "4df17515a5a094045d14648dc8eef8fbb0a636440d8c2f75f626c7f107a5bb56"
     },
     {
       "path": "server/qa/detectors/page.js",
@@ -2228,7 +2228,7 @@
     },
     {
       "path": "server/qa/explorer.js",
-      "sha256": "f4173df81d7c615b7211c4a378748bdcd88c5aa68270a1aea71f68b6d01f18ff"
+      "sha256": "2c19ab3a7dcba7b36e1690a320f98d24a926076718510e9dc888ad27af089d75"
     },
     {
       "path": "server/qa/findings.js",

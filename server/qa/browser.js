@@ -183,6 +183,9 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	let storageState;
 	let sessionSnapshot; // { origin, items } — sessionStorage is per tab and never part of storageState
 	const contextKeys = new WeakMap();
+	const pageRequests = new WeakMap(); // page → Map(request → start time)
+	const settledUrls = new WeakMap(); // page → URL of the document last settled
+	const recentAims = new Map(); // locator → { aim, at }: pointAt and the press share one measurement
 	const touchContexts = new WeakSet(); // contexts emulating a touch screen
 	let activePage;
 	let frameTimer;
@@ -267,6 +270,12 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 		const ctx = await context(profile, options);
 		const page = await ctx.newPage();
 		const log = { console: [], pageErrors: [], failedRequests: [], responses: [], dialogs: [], websockets: [], mainResponse: undefined };
+		// Requests in flight, for settle(): an action is done when what it started has finished.
+		const inflight = new Map();
+		pageRequests.set(page, inflight);
+		page.on('request', request => { if (inflight.size < 500) inflight.set(request, Date.now()); });
+		page.on('requestfinished', request => inflight.delete(request));
+		page.on('requestfailed', request => inflight.delete(request));
 		const push = (list, item) => { if (list.length < MAX_EVENTS) list.push(item); };
 		page.on('console', message => {
 			if (['error', 'warning'].includes(message.type())) push(log.console, { type: message.type(), text: message.text().slice(0, 1000), location: message.location()?.url, ts: Date.now() });
@@ -309,7 +318,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 			if (log) log.navigationError = String(error.message).split('\n')[0].slice(0, 300);
 			throw error;
 		}
-		await settle(page, quietMs ? { quietMs } : undefined);
+		await settle(page, { ...(quietMs ? { quietMs } : {}), load: true });
 		if (log && response) {
 			let headers = {};
 			try { headers = await response.allHeaders(); } catch { /* headers unavailable */ }
@@ -319,12 +328,49 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	}
 
 	/** Waits briefly for network quiet and fonts/images, never failing. */
-	async function settle(page, { quietMs = 2500 } = {}) {
+	/**
+	 * Waits until the page has reacted: no request started by the action is still
+	 * pending and the DOM has been still for a moment. Long-lived connections
+	 * (polling, streams, analytics beacons older than 2 s) do not count, so a
+	 * busy app settles as soon as it is visibly done instead of waiting out the
+	 * cap; the cap (quietMs + 1 s) still bounds pages that never go still.
+	 */
+	async function settle(page, { quietMs = 2500, load = false } = {}) {
 		await page.waitForLoadState('load', { timeout: 15000 }).catch(() => {});
-		// Sites with analytics or long-polling never reach network idle; the wait is capped.
-		await page.waitForLoadState('networkidle', { timeout: quietMs + 1000 }).catch(() => {});
+		// A fresh document (a navigation, or an action that changed the URL) keeps the
+		// careful wait: scripts often finish wiring the page after the load event.
+		const url = page.url();
+		if (load || settledUrls.get(page) !== url) {
+			await page.waitForLoadState('networkidle', { timeout: quietMs + 1000 }).catch(() => {});
+			await page.evaluate(() => document.fonts?.ready?.then(() => true)).catch(() => {});
+			await page.waitForTimeout(300).catch(() => {});
+			settledUrls.set(page, page.url());
+			return;
+		}
+		const started = Date.now();
+		const cap = started + quietMs + 1000;
+		const inflight = pageRequests.get(page);
+		await page.evaluate(() => {
+			if (window.__qaseMutationWatch) return;
+			window.__qaseMutationWatch = true;
+			window.__qaseLastMutation = performance.now();
+			new MutationObserver(list => {
+				for (const record of list) {
+					const node = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+					if (node?.closest?.('[id^="__qase"]')) continue;
+					window.__qaseLastMutation = performance.now();
+					return;
+				}
+			}).observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+		}).catch(() => {});
+		while (Date.now() < cap && !page.isClosed()) {
+			const now = Date.now();
+			const pending = inflight ? [...inflight.values()].some(at => now - at < 2000) : false;
+			const still = await page.evaluate(() => performance.now() - (window.__qaseLastMutation ?? 0)).catch(() => 1000);
+			if (!pending && still >= 450 && now - started >= 200) break;
+			await page.waitForTimeout(100).catch(() => {});
+		}
 		await page.evaluate(() => document.fonts?.ready?.then(() => true)).catch(() => {});
-		await page.waitForTimeout(300).catch(() => {});
 	}
 
 	/** Runs `work` with non-GET requests blocked (unless writes are authorized). */
@@ -342,7 +388,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 			const x = Math.round(box.x + (box.width ?? 0) / 2);
 			const y = Math.round(box.y + (aim ? 0 : Math.min((box.height ?? 0) / 2, 24)));
 			await page.evaluate(([px, py, text]) => window.__qaseCursor?.(px, py, text, false), [x, y, String(label ?? '').slice(0, 60)]);
-			await page.waitForTimeout(420);
+			await page.waitForTimeout(240);
 			if (click) await page.evaluate(([px, py, text]) => window.__qaseCursor?.(px, py, text, true), [x, y, String(label ?? '').slice(0, 60)]);
 		} catch { /* the cursor is cosmetic */ }
 	}
@@ -413,6 +459,16 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	 * (Playwright's own checks then decide).
 	 */
 	async function aimPoint(locator) {
+		const key = String(locator);
+		const cached = recentAims.get(key);
+		if (cached && Date.now() - cached.at < 1500) return cached.aim;
+		const aim = await measureAim(locator);
+		recentAims.clear();
+		if (aim) recentAims.set(key, { aim, at: Date.now() });
+		return aim;
+	}
+
+	async function measureAim(locator) {
 		try {
 			await locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
 			return await locator.evaluate(element => {
