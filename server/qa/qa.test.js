@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createQaModels, parseModelJson, qaModelSettings } from './models.js';
+import { journeyCallBudget } from './planner.js';
 import { candidate, mergeCandidates } from './findings.js';
 import { triage, HARNESS_NOTE } from './triage.js';
 import { describeCandidates } from './engine.js';
@@ -13,6 +14,20 @@ const settings = (overrides = {}) => {
 	return { reasoner: { ...base.reasoner, ...overrides.reasoner }, jev: { ...base.jev, ...overrides.jev } };
 };
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+test('small budgets fund a journey while leaving calls for later stages', async () => {
+	assert.deepEqual(journeyCallBudget(12, 2, 1), { allocation: 9, reserve: 1 });
+	assert.deepEqual(journeyCallBudget(12, 2, 2), { allocation: 4, reserve: 1 });
+	assert.deepEqual(journeyCallBudget(12, 11, 1), { allocation: 0, reserve: 1 });
+	assert.equal(journeyCallBudget(1, 0, 1).allocation, 1);
+	assert.equal(journeyCallBudget(300, 5, 1).reserve, 25);
+	const models = createQaModels({ settings: settings({reasoner:{maxCalls:12}}), fetchImpl: async () => json({}, 503) });
+	await models.chat([], {callLimit:1});
+	assert.equal(models.state.reasoner.calls, 1, 'a retry cannot spend the next stage’s call');
+	await models.chat([], {callLimit:1});
+	assert.equal(models.state.reasoner.calls, 1);
+	assert.equal(models.reasonerAvailable(), true);
+});
 
 test('parseModelJson reads fenced, bare and embedded JSON', () => {
 	assert.deepEqual(parseModelJson('```json\n{"a":1}\n```'), { a: 1 });
@@ -118,6 +133,23 @@ test('report lists coverage, limitations and model usage', () => {
 	assert.deepEqual(report.notCovered, ['Exploration skipped']);
 	assert.ok(report.covered.some(line => line.includes('3 pages')));
 	assert.equal(report.qaEngine.models.reasoner.used, false);
+});
+
+test('a planned save stays a report gap until its own validated form has a receipt', () => {
+	const scenario = {saveTarget:{path:'/notes',form:1},state:'passed'};
+	const session = {targetUrl:'https://app.test/',hybrid:{plan:{scenarios:[scenario]}}};
+	const args = {session, models:createQaModels({settings:qaModelSettings({}, {})}), findings:[], dismissed:[], limitations:[],
+		coverage:{pages:1,viewports:['desktop']}, loaded:true, triageStats:{}};
+	const other = {path:'/other',form:1,validation:'Required',submitted:true,receipt:{heading:'Note saved'}};
+	for (const outcomes of [[],[other],[{...other,path:'/notes',receipt:undefined}]]) {
+		scenario.formOutcomes = outcomes;
+		const report = buildReport(args);
+		assert.equal(report.verdict,'partial');
+		assert.match(report.qaEngine.formSaveGaps[0],/Planned save on \/notes/);
+		assert.ok(report.notCovered.includes(report.qaEngine.formSaveGaps[0]));
+	}
+	scenario.formOutcomes = [{...other,path:'/notes'}];
+	assert.equal(buildReport(args).verdict,'pass');
 });
 
 test('fix prompts include element, viewports and the suggested fix', () => {

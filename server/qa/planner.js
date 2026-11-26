@@ -108,11 +108,23 @@ export function scenariosFromGraph({ graph: model, start, signedInUrl, signedIn,
 }
 
 /** Ask the reasoner which journeys matter for this application (optional). */
-export async function proposeJourneys({ models, model, focus, signal, max = 3 }) {
+export function authorizedSaveJourney(model, allowWrites) {
+	if (allowWrites !== true) return undefined;
+	const entry = Object.entries(model.graph.pages).find(([, page]) => page.features?.recordForm > 0 && !page.login && !page.features.checkout && (page.status ?? 200) < 400);
+	if (!entry) return undefined;
+	const [start, page] = entry;
+	const url = new URL(start);
+	const path = url.pathname + (url.hash.startsWith('#/') ? url.hash.split('?')[0] : '');
+	const form = page.features.recordForm;
+	return { start, goal: `On ${path}, test the record creation form (form ${form}). Submit it empty, observe validation, then correct it with ordinary synthetic test data. Submit once and verify its receipt. Finish this journey before exploring other pages.`,
+		saveTarget: { path, form }, priority: 1, origin: 'graph' };
+}
+
+export async function proposeJourneys({ models, model, focus, signal, max = 3, reservedSave }) {
 	if (!models.reasonerAvailable()) return { journeys: [], source: 'none' };
 	const result = await models.json([
 		{ role: 'system', content: 'You plan exploratory QA for a web application you have just observed. Together, your journeys must cover EVERY feature area listed (each screen and each panel/tab/dialog reached by clicking): give each area its own journey that opens it, exercises its sub-features (tabs, menus, buttons, filters, settings, empty and error states) and checks the results. Journeys are read-only (writes are blocked) and achievable in about 20 browser actions; say in the goal which controls to use to get there (e.g. click "Projects" in the sidebar). Do not plan journeys about the sign-in page when the session is signed in. Journeys run in one desktop browser window: do not plan viewport/mobile/resize journeys (responsive layout, accessibility audits, security headers and performance are covered by separate automated checks); spend journeys on behaviour inside the app, going into sub-features (tabs inside panels, list items, settings sections). Answer JSON only: {"journeys":[{"goal":"…","start":"/path","why":"…","priority":1}]} ' + UNTRUSTED_CONTENT_RULE },
-		{ role: 'user', content: `${model.summary(40)}${focus ? `\nOwner's focus: ${focus}` : ''}\nPropose up to ${max} journeys covering every feature area, most important first.` }
+		{ role: 'user', content: `${model.summary(40)}${focus ? `\nOwner's focus: ${focus}` : ''}${reservedSave ? `\nA separate authorized journey handles one record save on ${reservedSave.path}. Leave that form to that journey.` : ''}\nPropose up to ${max} journeys covering every feature area, most important first.` }
 	], { maxTokens: 1500, signal, purpose: 'planning' }).catch(() => undefined);
 	const journeys = (Array.isArray(result?.journeys) ? result.journeys : [])
 		.filter(item => typeof item?.goal === 'string' && item.goal.trim())
@@ -164,6 +176,10 @@ export function revisePlan(plan, derived, { trigger, journeys = [] } = {}) {
 		const id = `explore:${journey.goal.slice(0, 60)}`;
 		if (known.has(id) || plan.scenarios.some(item => item.id === id)) continue;
 		plan.scenarios.push({ id, unit: 'explore', title: `Journey — ${journey.goal}`, goal: journey.goal, feature: journey.why ?? journey.goal, objective: journey.goal, expected: ['Each step of the journey behaves as a user would expect'], evidenceRequired: ['step trail with what each action changed', 'screenshots of new screens'], completion: 'The model reached the goal, or its step/time budget ended (recorded)', start: journey.start, why: journey.why, targets: [], capabilities: capabilitiesFor('explore'), priority: journey.priority ?? 2, sideEffects: false, state: 'pending', origin: journey.origin ?? 'reasoner', revision });
+		if (journey.saveTarget) Object.assign(plan.scenarios.at(-1), {
+			saveTarget: journey.saveTarget, sideEffects: true,
+			completion: 'Validation, corrected submission and a verified receipt from the planned form.'
+		});
 		added.push(id);
 	}
 	if (!added.length) return undefined;
@@ -219,6 +235,15 @@ export function unitOutcomes(plan, extra = {}) {
 	}
 	for (const [unit, ran] of Object.entries(extra)) if (ran) bump(unit, 'executed');
 	return units;
+}
+
+/** Share the available calls across journeys while leaving a tenth of the total
+ * (up to 25 calls) for verification and reporting. Retries count as calls. */
+export function journeyCallBudget(total, used, pendingJourneys) {
+	const reserve = Math.min(25, Math.floor(total / 10));
+	const available = total - used - reserve;
+	const allocation = available > 0 ? Math.max(1, Math.floor(available / Math.max(1, pendingJourneys))) : 0;
+	return { reserve, allocation };
 }
 
 export function planSummary(plan) {

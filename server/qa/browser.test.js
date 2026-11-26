@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createQaBrowser, VIEWPORTS } from './browser.js';
+import { checkMobileMenu } from './detectors/mobileMenu.js';
 
 async function site() {
 	const received = [];
@@ -29,6 +30,28 @@ async function site() {
 
 const ENV = { ...process.env, NODE_ENV: 'test', QASE_BROWSER_ALLOWED_PRIVATE_HOSTS: '127.0.0.1' };
 
+test('a verified menu transition survives blocked background writes on open and close', async () => {
+	const target = await site();
+	const browser = await createQaBrowser({ session: { targetUrl: target.url, engine: 'chromium' }, env: ENV });
+	try {
+		const { page, log } = await browser.openPage(VIEWPORTS.mobile);
+		await browser.goto(page, target.url, log);
+		await page.setContent('<meta name="viewport" content="width=device-width"><button type="button" aria-controls="drawer">Menu</button><nav id="drawer" hidden><a href="/a">About</a></nav>');
+		await page.evaluate(() => {
+			document.querySelector('button').onclick = () => {
+				const nav = document.querySelector('nav');
+				nav.hidden = !nav.hidden;
+				fetch('/background', { method: 'POST' }).catch(() => {});
+			};
+		});
+		const result = await checkMobileMenu(page, { browser, save: async () => undefined });
+		assert.equal(result.status, 'passed', result.detail);
+		assert.match(result.detail, /0 → 1 → 0/);
+		assert.equal(browser.blocked(page).write_blocked, 2);
+		assert.ok(!target.received.some(request => request.method === 'POST'));
+	} finally { await browser.close(); await target.close(); }
+});
+
 test('interaction never sends writes, but GraphQL queries and page loads still work', { timeout: 60_000 }, async () => {
 	const target = await site();
 	const blocked = [];
@@ -47,6 +70,9 @@ test('interaction never sends writes, but GraphQL queries and page loads still w
 		assert.deepEqual(writes.map(request => request.url), ['/graphql'], 'only the read-only GraphQL query reached the server');
 		assert.ok(blocked.some(event => event.kind === 'write_blocked' && event.url.endsWith('/api/save')));
 		assert.ok(blocked.some(event => event.kind === 'write_blocked' && event.url.endsWith('/submit')));
+		assert.ok(browser.blocked(page).write_blocked >= 1);
+		const other = await browser.openPage(VIEWPORTS.mobile);
+		assert.equal(browser.blocked(other.page).write_blocked ?? 0, 0, 'a different page inherits no blocked writes');
 	} finally { await browser.close(); await target.close(); }
 });
 

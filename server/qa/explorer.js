@@ -11,6 +11,7 @@
  */
 import { UNTRUSTED_CONTENT_RULE } from '../untrustedContent.js';
 import { candidate } from './findings.js';
+import { formOutcomeObserver } from './formOutcome.js';
 import { dismissOverlays, openOverlays } from './overlays.js';
 import { screenSignature, appeared, toggled } from './uiCrawl.js';
 
@@ -19,7 +20,7 @@ const DESTRUCTIVE = /\b(delete|remove|destroy|erase|log ?out|sign ?out|unsubscri
 
 const TOOLS = [
 	{ name: 'click', description: 'Press an element by its ref from the latest observation or screenshot marks (a tap on touch devices).', parameters: { type: 'object', properties: { ref: { type: 'string' }, expect: { type: 'string', description: 'What you expect to happen, in one short sentence. QASE shows it next to the RESULT so you can check it.' } }, required: ['ref', 'expect'] } },
-	{ name: 'type', description: 'Type text into a field (replaces its value). Set submit=true to press Enter afterwards. Submissions are blocked from reaching the server; you will see whether the page tried to submit and how it reacted.', parameters: { type: 'object', properties: { ref: { type: 'string' }, text: { type: 'string' }, submit: { type: 'boolean' }, expect: { type: 'string', description: 'What you expect to happen, in one short sentence. QASE shows it next to the RESULT so you can check it.' } }, required: ['ref', 'text', 'expect'] } },
+	{ name: 'type', description: 'Type text into a field (replaces its value). Set submit=true to press Enter afterwards. Follow the write permission for this journey.', parameters: { type: 'object', properties: { ref: { type: 'string' }, text: { type: 'string' }, submit: { type: 'boolean' }, expect: { type: 'string', description: 'What you expect to happen, in one short sentence. QASE shows it next to the RESULT so you can check it.' } }, required: ['ref', 'text', 'expect'] } },
 	{ name: 'select', description: 'Choose an option in a <select> by its visible label.', parameters: { type: 'object', properties: { ref: { type: 'string' }, option: { type: 'string' }, expect: { type: 'string', description: 'What you expect to happen, in one short sentence. QASE shows it next to the RESULT so you can check it.' } }, required: ['ref', 'option'] } },
 	{ name: 'press', description: 'Press a keyboard key (Tab, Enter, Escape, ArrowDown…).', parameters: { type: 'object', properties: { key: { type: 'string' }, expect: { type: 'string', description: 'What you expect to happen, in one short sentence. QASE shows it next to the RESULT so you can check it.' } }, required: ['key'] } },
 	{ name: 'navigate', description: 'Open a URL on the site under test.', parameters: { type: 'object', properties: { url: { type: 'string' }, expect: { type: 'string', description: 'What you expect to happen, in one short sentence. QASE shows it next to the RESULT so you can check it.' } }, required: ['url'] } },
@@ -34,13 +35,13 @@ const TOOLS = [
 	{ name: 'finish', description: 'Stop exploring and summarize what you tested.', parameters: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] } }
 ].map(tool => ({ type: 'function', function: tool }));
 
-const SYSTEM = `You are QASE, a senior QA engineer testing a live website in a real browser.
+const systemPrompt = saveTarget => `You are QASE, a senior QA engineer testing a live website in a real browser.
 Goal: find REAL defects a user would hit — broken flows, wrong results, dead ends, error states, confusing or inconsistent behaviour, missing feedback, broken search/filter/sort, pagination, cart or counters that do not update, wrong totals, links to wrong places, UI that breaks after an interaction, visual glitches after state changes.
 Automated detectors already cover static layout, contrast, headers, console errors and simple toggles; focus on behaviour and user journeys.
 Rules:
 - Work like a tester: pick a realistic journey, execute it step by step, check every result against what a user would expect.
 - Try edge cases: empty input, very long input, special characters (e.g. Ünïcödé, 😀, <b>x</b>), zero/negative numbers, rapid repeated clicks, back/forward navigation, reload mid-flow.
-- Submissions are blocked by the test harness so no data is written, and navigations to other websites (Sign in with Google/GitHub, SSO, payment providers) are blocked too. A blocked request is NOT a defect, and neither is what the page shows because of it: "Failed to fetch", a generic network error, a spinner that never ends, a button stuck in a loading state. Judge only behaviour that does not depend on the blocked request: client-side validation, labels, feedback before submitting, layout, navigation within the site.
+- ${saveTarget ? `The owner authorized one synthetic record in the planned record creation form. First submit it empty, correct the required input with a clearly marked QASE test value, then submit once and inspect the receipt. Do not repeat a write with an uncertain outcome. Do not change accounts, send messages, buy items or modify existing records.` : "This journey is read-only. Do not perform writes."} Navigations to other websites (Sign in with Google/GitHub, SSO, payment providers) are blocked too. A blocked request is NOT a defect, and neither is what the page shows because of it: "Failed to fetch", a generic network error, a spinner that never ends, a button stuck in a loading state. After a blocked request, judge only independent behaviour: client-side validation, labels, feedback before submitting, layout, navigation within the site.
 - When a tool result says a request was blocked, do not report the page's reaction to it.
 - Never try to sign in with guessed credentials, attack the site, or perform destructive actions. If you are signed in, stay signed in (do not click sign out).
 - Report each defect once with report_issue, with exact reproducible steps. Do not report things you did not observe. Do not report missing features or style opinions.
@@ -72,14 +73,42 @@ export async function elementLabel(locator) {
 	}, undefined, { timeout: 1500 }).catch(() => '');
 }
 
+const observations = new WeakMap();
+const nextPageRef = new WeakMap();
+
+// Snapshot only menus associated with the clicked control. Other content on
+// the page may change independently (e.g. rotating headlines).
+function visibleMenuItems(control) {
+	const panels = new Set((control.getAttribute('aria-controls') || '').split(/\s+/)
+		.filter(Boolean).map(id => document.getElementById(id)).filter(Boolean));
+	const item = control.closest('li');
+	if (item) for (const panel of item.querySelectorAll(':scope > ul, :scope > [role=menu]')) panels.add(panel);
+	const labels = [];
+	for (const panel of panels) {
+		for (const el of panel.querySelectorAll('a[href], button, [role=menuitem]')) {
+			if (el === control || !el.getClientRects().length || el.closest('[hidden], [aria-hidden=true]')) continue;
+			if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;
+			const label = (el.getAttribute('aria-label') || el.innerText || '').trim().slice(0, 80);
+			if (label) labels.push(label);
+		}
+	}
+	return labels;
+}
+
 /** Tags interactive elements and returns a compact observation. */
 export async function observe(page, log) {
-	const snapshot = await page.evaluate(() => {
+	const previousHandle = observations.get(page);
+	await previousHandle?.dispose().catch(() => {});
+	observations.delete(page);
+	const firstRef = nextPageRef.get(page) ?? 0;
+	nextPageRef.set(page, firstRef + 500);
+	const handle = await page.evaluateHandle(first => {
 		// Refs are stable: an element keeps its ref across observations, so a ref the
 		// model read earlier still names the same element (or reports it is gone),
 		// never a different control that happens to take its number.
-		let next = window.__qaseNextRef ?? 0;
-		const used = new Set();
+		let next = first;
+		const identities = window.__qaseElementRefs ??= new WeakMap();
+		const controls = new Map();
 		let count = 0;
 		const items = [];
 		const nameOf = element => {
@@ -106,11 +135,15 @@ export async function observe(page, log) {
 			const s = getComputedStyle(element);
 			if (r.width < 2 || r.height < 2 || s.visibility === 'hidden' || s.display === 'none' || Number(s.opacity) < 0.05) continue;
 			if (count++ >= 500) break;
-			let id = element.getAttribute('data-qase-ref');
-			// A cloned node can carry another element's ref: give it its own.
-			if (!id || used.has(id)) { id = `e${next++}`; element.setAttribute('data-qase-ref', id); }
-			used.add(id);
+			let id = identities.get(element);
+			if (!id) { id = `e${next++}`; identities.set(element, id); }
+			if (element.getAttribute('data-qase-ref') !== id) element.setAttribute('data-qase-ref', id);
 			const name = nameOf(element);
+			const landmark = element.closest('nav,header,footer,main,aside,form,[role=navigation]');
+			const region = landmark && landmark.localName !== 'main' ? ` [in ${(landmark.getAttribute('aria-label') || landmark.localName).slice(0, 50)}]` : '';
+			const identity = () => JSON.stringify([nameOf(element), element.getAttribute('role'), element.getAttribute('href'), element.type]);
+			const observedIdentity = identity();
+			controls.set(id, () => element.isConnected && identity() === observedIdentity && element.closest('nav,header,footer,main,aside,form,[role=navigation]') === landmark ? element : null);
 			const inView = r.bottom > 0 && r.top < innerHeight;
 			const cx = Math.min(innerWidth - 1, Math.max(0, r.left + r.width / 2)); const cy = Math.min(innerHeight - 1, Math.max(0, r.top + Math.min(r.height / 2, 20)));
 			const hit = inView ? document.elementFromPoint(cx, cy) : null;
@@ -119,27 +152,31 @@ export async function observe(page, log) {
 			const fresh = Boolean(previous) && !previous.has(key);
 			seenKeys.push(key);
 			// Unnamed icon controls get their place on screen, to match the marks on the screenshot.
-			const where = !name && inView ? ` [no label · icon at x${Math.round(cx)},y${Math.round(cy)} · see its mark on the screenshot]` : '';
+			const where = !name && inView ? ` [no label · icon at x${Math.round(cx)},y${Math.round(cy)} · see its mark on the screenshot]${region}` : region;
 			items.push({ rank: (fresh ? 0 : 10) + (covered ? 4 : 0) + (inView ? 0 : 2), line: `${fresh ? 'NEW ' : ''}${id} ${element.tagName.toLowerCase()}${element.type && element.tagName === 'INPUT' ? `[${element.type}]` : ''}${element.getAttribute('role') ? `(${element.getAttribute('role')})` : ''} "${name}"${where}${element.tagName === 'A' ? ` → ${element.getAttribute('href')?.slice(0, 80)}` : ''}${element.disabled ? ' [disabled]' : ''}${element.getAttribute('aria-expanded') ? ` [expanded=${element.getAttribute('aria-expanded')}]` : ''}${element.checked ? ' [checked]' : ''}${'value' in element && element.value && element.tagName !== 'BUTTON' ? ` value="${String(element.value).slice(0, 40)}"` : ''}${inView ? '' : ' (off-screen)'}${covered ? ' (covered)' : ''}` });
 		}
 		const text = (document.body?.innerText ?? '').replace(/\n{2,}/g, '\n').slice(0, 2500);
 		window.__qasePrevKeys = seenKeys;
-		window.__qaseNextRef = next;
 		const ranked = items.map((item, index) => ({ ...item, index })).sort((a, b) => a.rank - b.rank || a.index - b.index);
 		const shown = ranked.slice(0, 140).sort((a, b) => a.rank - b.rank || a.index - b.index).map(item => item.line);
 		if (ranked.length > 140) shown.push(`(${ranked.length - 140} more controls further down or covered — scroll to reach them)`);
-		return { url: location.href, title: document.title, items: shown, text, scroll: `${Math.round(scrollY)}/${document.documentElement.scrollHeight - innerHeight}` };
-	}).catch(() => ({ url: page.url(), title: '', items: [], text: '(page could not be read)' }));
+		return { controls, summary: { url: location.href, title: document.title, items: shown, text, scroll: `${Math.round(scrollY)}/${document.documentElement.scrollHeight - innerHeight}` } };
+	}, firstRef).catch(() => undefined);
+	if (handle) observations.set(page, handle);
+	const snapshot = await handle?.evaluate(state => state.summary).catch(() => undefined)
+		?? { url: page.url(), title: '', items: [], text: '(page could not be read)' };
 	const overlays = (await openOverlays(page)).filter(item => item.modal);
 	const errors = [...(log.pageErrors ?? []).slice(-3).map(error => `JS error: ${error.message}`), ...(log.console ?? []).filter(item => item.type === 'error').slice(-3).map(item => `console: ${item.text}`)];
 	return `URL: ${snapshot.url}\nTitle: ${snapshot.title}\nScroll: ${snapshot.scroll}\n${overlays.length ? `Open pop-up(s): ${overlays.map(item => `"${item.text.slice(0, 80)}"${item.close ? ` (close with "${item.close}")` : ''}`).join('; ')}\n` : ''}${errors.length ? `Recent errors:\n${errors.join('\n')}\n` : ''}Interactive elements:\n${snapshot.items.join('\n')}\n\nVisible text:\n${snapshot.text}`;
 }
 
-export async function explore({ browser, profile, startUrl, models, knownIssues = [], maxSteps = 30, deadline, signal, blockedWrites, save, onStep = () => {}, focus, goal, signedIn = false, pages = [], untested = [], exercised = new Set() }) {
+export async function explore({ browser, profile, startUrl, models, knownIssues = [], maxSteps = 30, callLimit = Infinity, observeForms = false, saveTarget, deadline, signal, blockedWrites, save, onStep = () => {}, focus, goal, signedIn = false, pages = [], untested = [], exercised = new Set() }) {
 	const out = [];
 	const summary = { steps: 0, finished: false, summary: '', visited: new Set(), loopWarnings: 0, loopStopped: false, trail: [] };
 	let consecutiveLooks = 0;
 	let lastRef; let lastLabel = '';
+	let clickReceipt;
+	let clickStep;
 	const settleQuietly = () => browser.settle?.(page, { quietMs: 400 }).catch(() => {});
 	let actionsSinceLook = 99;
 	let urlAtLook = '';
@@ -150,18 +187,26 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 	let lastUrl;
 	if (!models.reasonerAvailable()) return { candidates: out, summary: { ...summary, skipped: 'reasoner unavailable' } };
 	const { page, log } = await browser.openPage(profile);
+	const forms = observeForms ? formOutcomeObserver(page, save, saveTarget) : undefined;
+	if (forms) summary.formOutcomes = forms.outcomes;
 	browser.setActivePage(page);
 	const trail = [];
 	// Requests QASE refused at each step: issues observed right after a refusal are harness side-effects.
 	const refusals = [];
 	const offsiteBlocked = () => browser.blocked?.().offsite_navigation ?? 0;
 	try {
+		await page.exposeBinding('__qaseReceiveClick', ({ frame }, step, receipt) => {
+			if (frame === page.mainFrame() && clickStep && step === clickStep && !clickReceipt && typeof receipt?.matched === 'boolean') {
+				clickReceipt = { matched: receipt.matched, tag: String(receipt.tag).slice(0, 30), ref: String(receipt.ref || '').slice(0, 30) };
+			}
+		});
 		await browser.goto(page, startUrl, log).catch(() => {});
+		const SYSTEM = systemPrompt(saveTarget);
 		const messages = [
 			{ role: 'system', content: `${SYSTEM}\n${UNTRUSTED_CONTENT_RULE}` },
-			{ role: 'user', content: `Site under test: ${startUrl}\nViewport: ${profile.label}\nSession: ${signedIn ? 'signed in with the owner\'s test account (read-only: writes are still blocked)' : 'not signed in'}\n${goal ? `Journey to test now (from the test plan): ${goal}\n` : ''}${untested.length ? `Feature areas mapped but not yet exercised in this run (cover the ones that belong to this journey):\n${untested.slice(0, 25).map(item => `- ${item}`).join('\n')}\n` : ''}${focus ? `Owner's focus: ${focus}\n` : ''}${pages.length ? `Pages already found by the crawler: ${pages.slice(0, 25).join(', ')}\n` : ''}Already reported by automated checks (do not repeat): ${knownIssues.slice(0, 40).join('; ') || 'none'}\n\nCurrent page:\n${await observe(page, log)}` }
+			{ role: 'user', content: `Site under test: ${startUrl}\nViewport: ${profile.label}\nSession: ${signedIn ? 'signed in with the owner\'s test account' : 'not signed in'}\n${goal ? `Journey to test now (from the test plan): ${goal}\n` : ''}${untested.length ? `Feature areas mapped but not yet exercised in this run (cover the ones that belong to this journey):\n${untested.slice(0, 25).map(item => `- ${item}`).join('\n')}\n` : ''}${focus ? `Owner's focus: ${focus}\n` : ''}${pages.length ? `Pages already found by the crawler: ${pages.slice(0, 25).join(', ')}\n` : ''}Already reported by automated checks (do not repeat): ${knownIssues.slice(0, 40).join('; ') || 'none'}\n\nCurrent page:\n${await observe(page, log)}` }
 		];
-		while (summary.steps < maxSteps && Date.now() < deadline && models.reasonerAvailable()) {
+		while (summary.steps < maxSteps && Date.now() < deadline && models.reasonerAvailable() && (models.state?.reasoner?.calls ?? 0) < callLimit) {
 			signal?.throwIfAborted();
 			// Keep the context small: older observations are trimmed, and only the latest
 			// screenshot is sent (older ones describe screens that no longer exist).
@@ -171,7 +216,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 				if (i < messages.length - 8 && messages[i].role === 'tool' && messages[i].content.length > 300) messages[i] = { ...messages[i], content: `${messages[i].content.slice(0, 200)}\n[older observation trimmed]` };
 				if (i !== latestImage && messages[i].role === 'user' && Array.isArray(messages[i].content)) messages[i] = { role: 'user', content: '[older screenshot trimmed]' };
 			}
-			const reply = await models.chat(messages, { tools: TOOLS, maxTokens: 2048, signal, purpose: 'exploration' });
+			const reply = await models.chat(messages, { tools: TOOLS, maxTokens: 2048, signal, purpose: 'exploration', callLimit });
 			if (!reply) break;
 			messages.push({ role: 'assistant', content: reply.text || null, ...(reply.toolCalls.length ? { tool_calls: reply.toolCalls } : {}) });
 			if (!reply.toolCalls.length) {
@@ -193,9 +238,11 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 					continue;
 				}
 				summary.steps++;
+				clickStep = undefined;
+				clickReceipt = undefined;
 				let result;
 				try {
-					result = await runTool(name, args);
+					result = await dispatch(name, args);
 				} catch (error) {
 					result = `Error: ${String(error.message).split('\n')[0].slice(0, 200)}`;
 				}
@@ -206,14 +253,24 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 					const text = String(result);
 					if (/^RESULT: (?!nothing visible changed)/m.test(text)) screenChanged = true;
 					// Reasoning loop: the model's own expectation, next to what happened.
-					if (args.expect) result = `You expected: ${String(args.expect).slice(0, 200)}\n${text}\nCheck: does the RESULT and the screenshot match what you expected? If not, explain why before your next action.`;
+					if (args.expect && text.startsWith('RESULT:')) result = `You expected: ${String(args.expect).slice(0, 200)}\n${text}\nCheck: does the RESULT and the screenshot match what you expected? If not, explain why before your next action.`;
 				}
 				consecutiveLooks = name === 'look' ? consecutiveLooks + 1 : 0;
 				if (name !== 'look') actionsSinceLook++;
 				// Reviewable trail: what the agent did and the first line of what it saw.
 				summary.trail.push(`${summary.steps}. ${name}${args.ref ? ` ${lastLabel && lastRef === args.ref ? `"${lastLabel}" (${args.ref})` : args.ref}` : ''}${args.url ? ` ${args.url}` : ''}${args.text ? ` "${String(args.text).slice(0, 40)}"` : ''}${args.key ? ` ${args.key}` : ''}${name === 'report_issue' ? ` "${String(args.title ?? '').slice(0, 80)}"` : ''}${name === 'finish' ? ` "${String(args.summary ?? '').slice(0, 160)}"` : ''}${args.expect ? ` — expecting ${String(args.expect).slice(0, 90)}` : ''} → ${(String(result).split('\n').find(line => line.startsWith('RESULT:')) ?? String(result).split('\n').find(line => line && !line.startsWith('('))) ?.slice(0, 160) ?? ''} @ ${page.url().replace(/^https?:\/\/[^/]+/, '')}`);
 				messages.push({ role: 'tool', tool_call_id: call.id, content: String(result).slice(0, 6000) });
+				if (name === 'click') {
+					const receiver = clickReceipt ? `${clickReceipt.tag} ${clickReceipt.ref || '(unmarked)'}` : 'unverified';
+					summary.trail[summary.trail.length - 1] += ` · click recipient: ${receiver}`;
+				}
 				onStep({ name, args, url: page.url(), line: summary.trail.at(-1), thought: String(reply.text ?? '').trim().slice(0, 400) });
+				if (saveTarget && forms?.outcomes.some(outcome => outcome.attempted)) {
+					summary.saveAttempted = true;
+					summary.finished = forms.outcomes.some(outcome => outcome.receipt);
+					summary.summary = summary.finished ? 'The corrected submission produced a verified receipt.' : 'The corrected submission was attempted. Its receipt could not be verified.';
+					break;
+				}
 				if (name === 'finish') { summary.finished = true; summary.summary = String(args.summary ?? '').slice(0, 2000); break; }
 				const loop = detectLoop(name, args, page.url());
 				if (loop) {
@@ -222,7 +279,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 					messages.push({ role: 'user', content: `Loop detected: ${loop}. Do not repeat it. Choose a different feature or page${goal ? ' that serves the goal' : ''}, or call finish if the goal is covered.` });
 				}
 			}
-			if (summary.finished || summary.loopStopped) break;
+			if (summary.finished || summary.loopStopped || summary.saveAttempted) break;
 			// Vision after every action: the model sees what its action did, with each
 			// control's ref drawn on the screenshot, before it decides the next step.
 			if (!screenshot && acted && models.visionAvailable()) {
@@ -248,9 +305,51 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 		return undefined;
 	}
 
-	async function runTool(name, args) {
-		const locate = ref => page.locator(`[data-qase-ref="${String(ref).replace(/"/g, '')}"]`).first();
-		const describeRef = async ref => (await elementLabel(locate(ref))) || ref;
+	async function dispatch(name, args) {
+		if (forms && name === 'press' && args.key === 'Enter') {
+			const focused = await page.evaluateHandle(() => document.activeElement);
+			try { return await forms.observe(focused, () => runTool(name, args)); }
+			finally { await focused.dispose().catch(() => {}); }
+		}
+		if (!['click', 'type', 'select'].includes(name)) return runTool(name, args);
+		const handle = await observations.get(page)?.evaluateHandle((state, ref) => state.controls.get(ref)?.() ?? null, args.ref).catch(() => undefined);
+		const popupUrls = [];
+		const recordPopup = popup => popupUrls.push(popup.url());
+		try {
+			const element = handle?.asElement();
+			if (!element) return `Element ${args.ref} no longer exists or changed since observation. Choose again:\n${await observe(page, log)}`;
+			if (name === 'click') page.on('popup', recordPopup);
+			const perform = () => runTool(name, args, element, popupUrls);
+			return forms && (name === 'click' || name === 'type' && args.submit) ? await forms.observe(element, perform) : await perform();
+		} finally {
+			if (name === 'click') page.off('popup', recordPopup);
+			await handle?.dispose().catch(() => {});
+		}
+	}
+
+	// Listen before activating the pinned element. A browser event can arrive
+	// even when Playwright subsequently times out waiting for navigation.
+	async function pressObserved(element, timeout) {
+		clickStep = crypto.randomUUID();
+		const cleanup = await element.evaluateHandle((expected, step) => {
+			const listener = event => {
+				if (!event.isTrusted) return;
+				const control = event.composedPath().find(node => node instanceof Element && node.matches('button,a[href],input,select,textarea,summary,[data-qase-ref],[role=button],[role=link]')) ?? event.target;
+				void window.__qaseReceiveClick(step, { matched: control === expected, tag: control.localName, ref: control.getAttribute('data-qase-ref') });
+			};
+			window.addEventListener('click', listener, true);
+			return () => window.removeEventListener('click', listener, true);
+		}, clickStep);
+		try {
+			await browser.interact(() => browser.activate ? browser.activate(element, { timeout }, page) : element.click({ timeout }));
+		} finally {
+			await cleanup.evaluate(remove => remove()).catch(() => {});
+			await cleanup.dispose().catch(() => {});
+		}
+	}
+
+	async function runTool(name, args, element, popupUrls) {
+		const describeRef = async () => (await elementLabel(element)) || args.ref;
 		const blockedBefore = blockedWrites();
 		const offsiteBefore = offsiteBlocked();
 		const acting = ['click', 'type', 'select', 'press', 'back', 'navigate'].includes(name);
@@ -283,43 +382,67 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 			}
 			return `${change ? `${change}\n` : ''}${notes ? `${notes}\n` : ''}${await observe(page, log)}`;
 		};
-		// Refs come from the latest observation; an app re-render can remove them.
-		if (args.ref && ['click', 'type', 'select'].includes(name) && !await locate(args.ref).count().catch(() => 0)) {
-			return `Element ${args.ref} no longer exists (the page re-rendered). Use refs from this fresh observation:\n${await observe(page, log)}`;
-		}
 		switch (name) {
 			case 'click': {
 				const label = await describeRef(args.ref);
+				const destination = await element.evaluate(el => el.matches('a[href]') && /^https?:$/.test(el.protocol) && el.href !== location.href ? el.href : null);
 				lastRef = args.ref; lastLabel = label === args.ref ? '' : String(label).slice(0, 50);
 				if (DESTRUCTIVE.test(label)) return `Refused: "${label}" looks destructive. Choose another action.`;
 				trail.push(`Click "${label}"`);
-				exercised.add(String(label).slice(0, 60));
-				await locate(args.ref).scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
-				await browser.pointAt?.(page, locate(args.ref), `Click "${label}"`);
+				await element.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+				const menuBefore = destination ? await element.evaluate(visibleMenuItems).catch(() => null) : null;
+				const startedAt = Date.now();
+				await browser.pointAt?.(page, element, `Click "${label}"`);
 				try {
-					await browser.interact(() => (browser.activate ? browser.activate(locate(args.ref), { timeout: 5000 }) : locate(args.ref).click({ timeout: 5000 })));
+					try {
+						await pressObserved(element, 5000);
+					} catch (error) {
+						// Retry only a verified interception after clearing its overlay.
+						if (clickReceipt || !/intercepts pointer/.test(error.message)) throw error;
+						const cleared = await dismissOverlays(page, { includeToasts: true }).catch(() => []);
+						if (!cleared.length) throw error;
+						await pressObserved(element, 4000);
+					}
 				} catch (error) {
-					// Usually a pop-up or another element is in the way: clear it and retry once.
-					const cleared = await dismissOverlays(page, { includeToasts: true }).catch(() => []);
-					try { await browser.interact(() => (browser.activate ? browser.activate(locate(args.ref), { timeout: 4000 }) : locate(args.ref).click({ timeout: 4000 }))); }
-					catch { return `Click on "${label}" failed (${/intercepts pointer|not visible|outside of the viewport/.test(error.message) ? 'another element covers it or it is off-screen' : String(error.message).split('\n')[0].slice(0, 120)}). Try a different element, scroll, or close what covers it.\n${await observe(page, log)}`; }
+					if (clickReceipt) return `Click on "${label}" was received but its outcome is uncertain. Review this state before acting again.\n${await observe(page, log)}`;
+					return `Click on "${label}" failed (${/intercepts pointer|not visible|outside of the viewport/.test(error.message) ? 'another element covers it or it is off-screen' : String(error.message).split('\n')[0].slice(0, 120)}). Choose again from this observation.\n${await observe(page, log)}`;
 				}
-				return after();
+				const result = await after();
+				if (!clickReceipt?.matched) return `Click recipient for "${label}" ${clickReceipt ? 'differed from the intended control' : 'could not be verified'}.\n${result}`;
+				const blockedDestination = destination && offsiteBlocked() > offsiteBefore && browser.recentBlocked?.(startedAt).some(event => event.kind === 'offsite_navigation' && event.url.split('#')[0] === destination.split('#')[0]);
+				if (blockedDestination) return `RESULT: Navigation blocked by this run's site scope: ${destination}. The destination was not tested.\n${result}`;
+				if (popupUrls.length) {
+					if (destination && popupUrls.includes(destination) && browser.inScope(destination)) {
+						exercised.add(String(label).slice(0, 60));
+						return `RESULT: Link opened the expected new tab at ${destination}. Its content was not tested.\n${result}`;
+					}
+					return `RESULT: A new tab opened. Its destination was not verified for this control.\n${result}`;
+				}
+				if (destination && page.url() !== destination) {
+					if (menuBefore && page.url() === beforeScreen?.url) {
+						const menuAfter = await element.evaluate(visibleMenuItems).catch(() => []);
+						const revealed = menuAfter.filter(item => !menuBefore.includes(item));
+						if (revealed.length) return `RESULT: Submenu opened for "${label}": ${revealed.slice(0, 5).join(', ')}. The link destination was not visited.\n${result}`;
+					}
+					return `RESULT: Link destination unverified in this tab. Expected ${destination}, observed ${page.url()}.\n${result}`;
+				}
+				if (blockedWrites() === blockedBefore && offsiteBlocked() === offsiteBefore && /^RESULT: URL /.test(result)) exercised.add(String(label).slice(0, 60));
+				return result;
 			}
 			case 'type': {
 				const label = await describeRef(args.ref);
 				lastRef = args.ref; lastLabel = label === args.ref ? '' : String(label).slice(0, 50);
 				trail.push(`Type "${String(args.text).slice(0, 60)}" into "${label}"${args.submit ? ' and press Enter' : ''}`);
-				await browser.pointAt?.(page, locate(args.ref), `Type "${String(args.text ?? '').slice(0, 24)}"`);
+				await browser.pointAt?.(page, element, `Type "${String(args.text ?? '').slice(0, 24)}"`);
 				await browser.interact(async () => {
-					await locate(args.ref).fill(String(args.text ?? '').slice(0, 2000), { timeout: 5000 });
-					if (args.submit) await locate(args.ref).press('Enter');
+					await element.fill(String(args.text ?? '').slice(0, 2000), { timeout: 5000 });
+					if (args.submit) await element.press('Enter');
 				});
 				return after();
 			}
 			case 'select': {
 				trail.push(`Select "${args.option}" in "${await describeRef(args.ref)}"`);
-				await browser.interact(() => locate(args.ref).selectOption({ label: String(args.option) }, { timeout: 5000 }));
+				await browser.interact(() => element.selectOption({ label: String(args.option) }, { timeout: 5000 }));
 				return after();
 			}
 			case 'press':

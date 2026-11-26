@@ -5,6 +5,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { runQaEngine } from './engine.js';
 import { startQaLab } from './fixtureSite.js';
 import { qaModelSettings } from './models.js';
@@ -30,6 +31,32 @@ function harness(targetUrl) {
 }
 
 const json = body => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+
+test('engine commits the entry result before requesting the second page', async t => {
+	let entrySaved = false;
+	const visits = [];
+	const server = http.createServer((req, res) => {
+		if (req.url === '/solutions/') visits.push({ entrySaved });
+		res.setHeader('Content-Type', 'text/html');
+		res.end(req.url === '/' ? '<meta name="viewport" content="width=device-width"><title>Home</title><h1>Home</h1><nav><a href="/solutions/">Solutions</a></nav><button aria-controls="drawer" onclick="drawer.hidden=!drawer.hidden">Menu</button><nav id="drawer" hidden><a href="/help">Help</a></nav>' : '<title>Solutions</title><h1>Solutions</h1>');
+	});
+	await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+	t.after(() => server.close());
+	const { session, runStore, artifactStore } = harness('http://127.0.0.1:' + server.address().port + '/');
+	const controller = new AbortController();
+	runStore.commit = async (_, type, payload) => {
+		if (type !== 'hybrid.state') return;
+		const review = payload.hybrid.pageReview;
+		if (payload.checkpoint && review?.pages.length === 1 && !review.journey) entrySaved = true;
+		if (review?.mobileMenu?.status === 'passed' || payload.hybrid.phase === 'discover') controller.abort();
+	};
+	await runQaEngine({ session, runStore, record: {}, signal: controller.signal, env: ENV, settings: qaModelSettings({}, {}), artifactStore });
+	assert.equal(session.hybrid.pageReview.journey.status, 'passed');
+	assert.equal(session.hybrid.pageReview.mobileMenu.status, 'passed');
+	assert.equal(session.hybrid.pageReview.mobileMenu.evidence.length, 3);
+	assert.deepEqual(visits, [{ entrySaved: true }]);
+	assert.deepEqual(session.hybrid.pageReview.pages.map(p => p.path), ['/', '/solutions/']);
+});
 
 /** A scripted reasoner + JEV at the HTTP boundary. */
 function simulatedModels() {

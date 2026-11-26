@@ -162,8 +162,8 @@ export function createQaModels({ settings = qaModelSettings(), state = {}, fetch
 		visionAvailable: () => reasonerAvailable() && settings.reasoner.vision && state.reasoner.visionOk !== false,
 
 		/** One chat completion: { message, text, toolCalls } or undefined. */
-		async chat(messages, { tools, maxTokens = 4096, temperature = 0.2, signal, purpose = 'chat' } = {}) {
-			for (let attempt = 0; attempt < 3 && reasonerAvailable(); attempt++) {
+		async chat(messages, { tools, maxTokens = 4096, temperature = 0.2, signal, purpose = 'chat', callLimit = Infinity } = {}) {
+			for (let attempt = 0; attempt < 3 && reasonerAvailable() && state.reasoner.calls < callLimit; attempt++) {
 				signal?.throwIfAborted();
 				state.reasoner.calls++;
 				try {
@@ -185,7 +185,7 @@ export function createQaModels({ settings = qaModelSettings(), state = {}, fetch
 				} catch (error) {
 					if (signal?.aborted) throw signal.reason;
 					recordFailure('reasoner', error, purpose, attempt);
-					if (!retryable(error)) return undefined;
+					if (!retryable(error) || state.reasoner.calls >= callLimit || !reasonerAvailable() || attempt === 2) return undefined;
 					await sleep(1500 * 2 ** attempt, signal);
 				}
 			}

@@ -7,13 +7,29 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CAPABILITIES, CAPABILITY_COUNT, capabilityCoverage, COVERAGE_STATES } from './capabilities.js';
 import { createAppGraph } from './appGraph.js';
-import { createPlan, scenariosFromGraph, revisePlan, nextScenario, recoverInterrupted, closeOutPlan, unitOutcomes } from './planner.js';
+import { createPlan, scenariosFromGraph, revisePlan, nextScenario, recoverInterrupted, closeOutPlan, unitOutcomes, authorizedSaveJourney } from './planner.js';
 import { evaluateCompletion } from './completionGate.js';
 import { createRouter } from './router.js';
 import { triage } from './triage.js';
 import { candidate } from './findings.js';
 
 const OPTIONS = { secondaryPages: 4, interactionPages: 3 };
+
+test('only authorized creation forms plan a save; an interrupted save is not replayed', () => {
+	const model = createAppGraph();
+	model.addPage('https://app.test/notes',{status:200,features:{forms:1}});
+	assert.equal(authorizedSaveJourney(model,true), undefined);
+	model.addPage('https://app.test/notes',{features:{recordForm:2}});
+	assert.equal(authorizedSaveJourney(model,false), undefined);
+	const plan = createPlan();
+	revisePlan(plan, [], {journeys:[authorizedSaveJourney(model,true)]});
+	const [journey] = plan.scenarios;
+	assert.deepEqual(journey.saveTarget,{path:'/notes',form:2});
+	assert.equal(journey.sideEffects,true);
+	journey.state = 'running';
+	recoverInterrupted(plan);
+	assert.equal(journey.state,'inconclusive');
+});
 
 function sampleGraph({ signedIn = false } = {}) {
 	const model = createAppGraph();

@@ -9,6 +9,7 @@
  *   blocked  — the target could not be tested at all (unreachable, or auth required and unavailable with nothing public)
  */
 import { TERMINAL } from './planner.js';
+import { plannedSaveGap } from './formOutcome.js';
 
 export function evaluateCompletion({ state, plan, graph, coverageRows = [], findings = [], triaged = false, stopped = false }) {
 	const checks = [];
@@ -37,6 +38,11 @@ export function evaluateCompletion({ state, plan, graph, coverageRows = [], find
 	check('triage_ran', triaged, triaged ? 'Candidates were merged, verified and graded.' : 'Triage did not run.');
 	check('not_stopped', !stopped, stopped ? 'The owner stopped the run.' : 'The run was not stopped.', 'advisory');
 
+	const saves = scenarios.filter(scenario => scenario.saveTarget);
+	if (saves.length) {
+		const gaps = saves.map(plannedSaveGap).filter(Boolean);
+		check('planned_saves_verified', !gaps.length, gaps.join(' ') || 'Every planned save has a verified receipt.');
+	}
 	const failed = checks.filter(item => !item.ok && item.severity === 'required');
 	let status = failed.length ? 'partial' : 'complete';
 	if (!state.loaded || (!pages && !state.loaded)) status = 'blocked';

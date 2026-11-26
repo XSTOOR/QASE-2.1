@@ -5,6 +5,7 @@
  */
 import { SEVERITIES, severityRank } from './findings.js';
 import { CAPABILITY_COUNT } from './capabilities.js';
+import { plannedSaveGap } from './formOutcome.js';
 
 export function verdictFor({ findings, loaded, coverageGaps }) {
 	if (!loaded) return 'blocked';
@@ -47,7 +48,8 @@ export async function refineWithReasoner({ models, target, findings, coverage, l
 export function buildReport({ session, findings, dismissed, coverage, limitations, models, triageStats, loaded, refined = {}, runtime, adaptive }) {
 	const sorted = [...findings].sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
 	// The completion gate overrides a clean verdict: an incomplete run is never a "pass".
-	const coverageGaps = limitations.some(item => item.affectsCoverage) || (adaptive && adaptive.gate.status !== 'complete');
+	const formSaveGaps = (session.hybrid?.plan?.scenarios ?? []).map(plannedSaveGap).filter(Boolean);
+	const coverageGaps = formSaveGaps.length > 0 || limitations.some(item => item.affectsCoverage) || (adaptive && adaptive.gate.status !== 'complete');
 	const verdict = adaptive?.gate.status === 'blocked' ? 'blocked' : verdictFor({ findings: sorted, loaded, coverageGaps });
 	const covered = [
 		`${coverage.pages} page${coverage.pages === 1 ? '' : 's'} crawled and audited (${coverage.viewports.join(', ')})`,
@@ -65,7 +67,7 @@ export function buildReport({ session, findings, dismissed, coverage, limitation
 		verdict,
 		summary: refined.summary || deterministicSummary({ target: session.targetUrl, findings: sorted, coverage, verdict }),
 		covered,
-		notCovered: limitations.map(item => item.message),
+		notCovered: [...new Set([...limitations.map(item => item.message), ...formSaveGaps])],
 		recommendations: refined.recommendations?.length ? refined.recommendations : sorted.slice(0, 6).map(item => `[${item.severity}] ${item.title}`),
 		targetUrl: session.targetUrl,
 		findings: sorted.length,
@@ -73,6 +75,9 @@ export function buildReport({ session, findings, dismissed, coverage, limitation
 		runtimeIdentity: runtime,
 		qaEngine: {
 			version: 2,
+			formOutcomes: (session.hybrid?.plan?.scenarios ?? []).flatMap(item => item.formOutcomes ?? []),
+			formSaveGaps,
+			formValidation: session.hybrid?.pageReview?.formValidation ?? [],
 			coverage,
 			models: {
 				reasoner: { model: models.state.reasoner.model, used: models.state.reasoner.calls > 0, calls: models.state.reasoner.calls, failures: models.state.reasoner.failures, tokens: models.state.reasoner.inputTokens + models.state.reasoner.outputTokens, enabled: models.state.reasoner.enabled, lastError: models.state.reasoner.lastError },
@@ -96,7 +101,7 @@ const GROUP_LABEL = { functional: 'Functional', auth: 'Authentication & authoriz
 export function adaptiveReport({ session, findings, dismissed, coverage, limitations, models, triageStats, verdict, adaptive, recommendations }) {
 	const { gate, plan, graph, observation, coverageRows, routing, routingSummary, authEvents = [], signedIn, blocked } = adaptive;
 	const counts = Object.fromEntries(Object.keys(STATE_LABEL).map(state => [state, coverageRows.filter(row => row.state === state).length]));
-	const scenarios = plan.scenarios.map(item => ({ id: item.id, title: item.title, unit: item.unit, state: item.state, reason: item.reason, origin: item.origin, revision: item.revision, tested: item.tested ?? 0, findings: item.findings ?? 0, evidence: item.evidence ?? [] }));
+	const scenarios = plan.scenarios.map(item => ({ id: item.id, title: item.title, unit: item.unit, state: item.state, reason: item.reason, ...(item.saveTarget ? { saveTarget: item.saveTarget, sideEffects: true } : {}), origin: item.origin, revision: item.revision, tested: item.tested ?? 0, findings: item.findings ?? 0, evidence: item.evidence ?? [] }));
 	const byGroup = group => findings.filter(item => coverageRows.some(row => row.group === group && row.findingIds?.includes(item.id)));
 	const findingLine = item => `[${item.severity}] ${item.title} — ${pathOf(item.url)}`;
 	const pageRows = Object.entries(graph.pages).slice(0, 80).map(([url, page]) => ({ url: pathOf(url), title: page.heading || page.title || '', auth: page.auth ?? 'public', status: page.status ?? 200, discoveredBy: page.discoveredBy, findings: findings.filter(item => item.url === url).length, features: Object.entries(page.features ?? {}).filter(([key, value]) => typeof value === 'number' && value > 0 && !['links', 'controls', 'headings'].includes(key)).map(([key]) => key) }));

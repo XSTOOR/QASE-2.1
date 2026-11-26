@@ -29,6 +29,8 @@ import { checkRuntimeIdentity, runtimeName } from '../runRuntime.js';
 import { randomUUID } from 'node:crypto';
 import { createArtifactStore } from '../artifactStore.js';
 import { redact } from '../secrets.js';
+import { reviewFirstPages, reviewUrl } from './pageReview.js';
+import { checkMobileMenu } from './detectors/mobileMenu.js';
 import { createQaBrowser, primaryProfile, VIEWPORTS } from './browser.js';
 import { createQaModels, qaModelSettings } from './models.js';
 import { candidate, severityRank } from './findings.js';
@@ -45,7 +47,8 @@ import { signIn, hasLoginForm, detectAuth, isSignInPage } from './signin.js';
 import { accountQuestion, waitForAccount } from './accountQuestion.js';
 import { buildReport, refineWithReasoner } from './report.js';
 import { createAppGraph, observeFeatures } from './appGraph.js';
-import { createPlan, scenariosFromGraph, proposeJourneys, fallbackJourney, revisePlan, nextScenario, recoverInterrupted, closeOutPlan, unitOutcomes, planSummary } from './planner.js';
+import { createPlan, scenariosFromGraph, proposeJourneys, authorizedSaveJourney, fallbackJourney, revisePlan, nextScenario, recoverInterrupted, closeOutPlan, unitOutcomes, planSummary, journeyCallBudget } from './planner.js';
+import { plannedSaveGap } from './formOutcome.js';
 import { capabilityCoverage, summarizeCoverage, CAPABILITY_COUNT } from './capabilities.js';
 import { createRouter, ESCALATION_BAND } from './router.js';
 import { evaluateCompletion } from './completionGate.js';
@@ -136,12 +139,14 @@ export function publicQaState(session) {
 		version: state.version, architecture: state.architecture, engine: state.engine, status: state.status, phase: state.phase,
 		phases: STAGES.map(([id, text]) => ({ id, label: text, status: state.phases?.[id]?.status ?? 'pending', detail: state.phases?.[id]?.detail, startedAt: state.phases?.[id]?.startedAt, endedAt: state.phases?.[id]?.endedAt })),
 		coverage: state.coverage, limitations: state.limitations, models: state.models,
+		pageReview: redact(session.id, state.pageReview),
+		formOutcomes: plan.scenarios.flatMap(item => item.formOutcomes ?? []),
 		candidates: state.candidates?.length ?? 0, startedAt: state.startedAt, updatedAt: state.updatedAt,
 		signedIn: Boolean(state.signedIn), awaitingCredentials: Boolean(state.awaitingCredentials), loginWall: Boolean(state.loginWall || state.coverage?.loginForm || state.graph?.auth?.detected),
 		plan: {
 			summary: planSummary(plan),
 			revisions: (plan.revisions ?? []).slice(-12).map(item => ({ revision: item.revision, trigger: item.trigger, added: item.added.length, ts: item.ts })),
-			scenarios: (plan.scenarios ?? []).slice(0, 120).map(item => ({ id: item.id, unit: item.unit, title: item.title, state: item.state, reason: item.reason, priority: item.priority, origin: item.origin, revision: item.revision, findings: item.findings ?? 0, candidates: item.candidates ?? 0 }))
+			scenarios: (plan.scenarios ?? []).slice(0, 120).map(item => ({ id: item.id, unit: item.unit, title: item.title, state: item.state, reason: item.reason, ...(item.saveTarget ? { saveTarget: item.saveTarget, sideEffects: true } : {}), priority: item.priority, origin: item.origin, revision: item.revision, findings: item.findings ?? 0, candidates: item.candidates ?? 0 }))
 		},
 		graph: state.graph ? { pages: Object.keys(state.graph.pages ?? {}).length, protected: Object.values(state.graph.pages ?? {}).filter(page => page.auth === 'protected').length, features: Object.fromEntries(Object.entries(state.graph.features ?? {}).filter(([, n]) => n > 0)), roles: state.graph.roles, auth: state.graph.auth ? { detected: state.graph.auth.detected, signedIn: state.graph.auth.signedIn, identifierStep: state.graph.auth.identifierStep, reauthentications: state.graph.auth.reauthentications ?? 0, blockedReason: state.graph.auth.blockedReason } : undefined } : undefined,
 		capabilities: state.capabilitySummary, gate: state.gate ? { status: state.gate.status, failed: state.gate.failed } : undefined,
@@ -205,12 +210,15 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 	const recovered = recoverInterrupted(plan);
 
 	// checkpoint=true marks a durable checkpoint (stage and scenario boundaries).
-	const persist = async ({ checkpoint = false } = {}) => {
+	const persist = async ({ checkpoint = false, required = false } = {}) => {
 		state.updatedAt = Date.now();
 		state.elapsedMs = elapsedBefore + (Date.now() - started) - pausedMs;
 		state.routing = router?.state();
 		try { await runStore.commit(session, 'hybrid.state', { hybrid: publicQaState(session), ...(checkpoint ? { checkpoint: true } : {}) }); }
-		catch (error) { console.warn('[qa-engine] checkpoint failed:', error?.message); }
+		catch (error) {
+			if (required) throw Object.assign(new Error('Could not save the page review checkpoint', { cause: error }), { pageCheckpointFailed: true });
+			console.warn('[qa-engine] checkpoint failed:', error?.message);
+		}
 	};
 	/** Posts an agent message to the conversation. `id` makes the message idempotent across a resume. */
 	const say = async (text, { kind = 'qa-step', id } = {}) => {
@@ -334,6 +342,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 	let filmstrips = [];
 	const links = new Map(Object.entries(state.links ?? {}));
 	let mainResponse;
+	let entryPage;
 	let cookies = [];
 	let loaded = Boolean(state.loaded);
 	const host = (() => { try { return new URL(session.targetUrl).host; } catch { return session.targetUrl; } })();
@@ -683,12 +692,22 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		},
 		async forms(scenario) {
 			let tested = 0;
+			const required = [];
 			for (const url of scenario.targets) {
 				await progress(`Testing the form on ${pathOf(url)}`);
 				const { page, log } = await openPage(url);
 				browser.setActivePage(page);
 				try {
 					const result = await testForms(page, { url, viewport: primary.name, browser, blocked: () => blocked.writes, reload: () => browser.goto(page, url, log, { quietMs: 800 }).catch(() => {}), save });
+					required.push(...result.requiredChecks);
+					if (state.pageReview && result.requiredChecks.length) {
+						const checks = state.pageReview.formValidation ??= [];
+						for (const check of result.requiredChecks) {
+							const existing = checks.findIndex(item => item.path === check.path && item.form === check.form);
+							if (existing >= 0) checks[existing] = check;
+							else if (checks.length < 40) checks.push(check);
+						}
+					}
 					addCandidates(result.candidates);
 					state.coverage.forms += result.tested;
 					tested += result.tested;
@@ -698,7 +717,9 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 					for (const upload of uploads.filter(item => !item.accept)) addCandidates([candidate({ detector: 'forms.upload_no_type_limit', category: 'forms', severity: 'low', confidence: 0.55, url, viewport: primary.name, title: `File input "${upload.name}" accepts any file type`, actual: 'The file input has no accept attribute, so users get no guidance and any file can be chosen.', expected: 'Upload inputs declare the accepted types (and the server enforces them).', steps: [`Open ${url}`, `Inspect the "${upload.name}" file input`], data: { key: `${url}|${upload.name}`, harness: 'QASE did not upload a file; server-side type checks were not tested.' } })]);
 				} finally { await page.close().catch(() => {}); }
 			}
-			return { tested, evidence: [`${tested} form(s) on ${scenario.targets.map(pathOf).join(', ')} tested with empty and malformed input (nothing submitted).`], notApplicable: tested ? undefined : 'No testable form fields.' };
+			const gaps = required.filter(check => check.status === 'inconclusive').length;
+			return { tested, evidence: [`Checked ${tested} form(s) on ${scenario.targets.map(pathOf).join(', ')}.`, ...required.map(check => `${check.path} · Form ${check.form} · ${check.status}: ${check.detail}`)],
+				inconclusive: gaps ? `Required-field feedback could not be verified for ${gaps} form(s).` : undefined, notApplicable: tested ? undefined : 'No testable form fields.' };
 		},
 		async security_origin(scenario, deadline) {
 			await progress('Checking headers, cookies and exposed files');
@@ -734,11 +755,12 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		},
 		async explore(scenario, deadline) {
 			// Keep enough reasoning calls for visual review, verification and the report.
-			const reserve = 25;
 			const left = settings.reasoner.maxCalls - baseModels.state.reasoner.calls;
-			if (baseModels.state.reasoner.enabled && left <= reserve) {
+			const pendingJourneys = plan.scenarios.filter(item => item.unit === 'explore' && item.state === 'pending').length + 1;
+			const { reserve, allocation } = journeyCallBudget(settings.reasoner.maxCalls, baseModels.state.reasoner.calls, pendingJourneys);
+			if (baseModels.state.reasoner.enabled && !allocation) {
 				limitation('execute', `AI journey "${scenario.goal}" was not run: the reasoning-model call budget is nearly used (${baseModels.state.reasoner.calls}/${settings.reasoner.maxCalls}; raise QASE_QA_REASONER_CALLS for deeper runs).`, true);
-				return { tested: 0, inconclusive: `Reasoning-model call budget reached (${baseModels.state.reasoner.calls}/${settings.reasoner.maxCalls}).` };
+				return { tested: 0, inconclusive: `No exploration calls remain (${left} remaining, ${reserve} reserved for later stages).` };
 			}
 			const choice = router.decide('exploration');
 			if (choice.model !== 'reasoner') {
@@ -746,10 +768,9 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 				return { tested: 0, inconclusive: 'The reasoning model was unavailable for this journey.' };
 			}
 			const startUrl = scenario.start ? new URL(scenario.start, state.signedInUrl ?? session.targetUrl).href : state.signedInUrl ?? session.targetUrl;
-			const pendingJourneys = plan.scenarios.filter(item => item.unit === 'explore' && item.state === 'pending').length + 1;
-			const stepBudget = Math.max(8, Math.min(options.exploreSteps, Math.floor((left - reserve) / pendingJourneys)));
-			const result = await explore({ browser, profile: primary, startUrl: browser.inScope(startUrl) ? startUrl : session.targetUrl, models, knownIssues: state.candidates.map(item => item.title).slice(0, 40), maxSteps: stepBudget, deadline, signal,
-				blockedWrites: () => blocked.writes, save, signedIn: Boolean(state.signedIn), pages: pageList().map(pathOf), goal: scenario.goal,
+			const callLimit = baseModels.state.reasoner.calls + allocation;
+			const result = await explore({ browser, profile: primary, startUrl: browser.inScope(startUrl) ? startUrl : session.targetUrl, models, knownIssues: state.candidates.map(item => item.title).slice(0, 40), maxSteps: options.exploreSteps, callLimit, observeForms: state.allowWrites === true, deadline, signal,
+				blockedWrites: () => blocked.writes, save, saveTarget: state.allowWrites === true ? scenario.saveTarget : undefined, signedIn: Boolean(state.signedIn), pages: pageList().map(pathOf), goal: scenario.goal,
 				exercised, untested: untestedAreas(),
 				focus: session.testCaseSnapshot?.title ?? session.messages?.find(message => message.role === 'user')?.text?.slice(0, 500),
 				onStep: step => {
@@ -769,10 +790,11 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			exploreSummaries.push(result.summary.summary);
 			// The step-by-step trail is kept so a run can be reviewed (and the agent improved) afterwards.
 			scenario.trail = (result.summary.trail ?? []).slice(-60).map(step => redact(session.id, step));
+			if (result.summary.formOutcomes?.length) scenario.formOutcomes = redact(session.id, result.summary.formOutcomes);
 			state.exercised = [...exercised].filter(Boolean).slice(-300);
 			state.coverage.explorationSummary = exploreSummaries.filter(Boolean).join(' ').slice(0, 1500);
-			const evidence = [`${result.summary.steps} step(s); ${result.summary.finished ? 'the model finished the journey' : 'stopped by its step/time limit'}${result.summary.loopWarnings ? `; ${result.summary.loopWarnings} loop warning(s)${result.summary.loopStopped ? ', ended for looping' : ''}` : ''}.`];
-			if (result.summary.summary) evidence.push(`Model summary (not used as completion evidence): ${result.summary.summary.slice(0, 300)}`);
+			const evidence = [`${result.summary.steps} step(s); ${result.summary.saveAttempted ? result.summary.summary : result.summary.finished ? 'the model finished the journey' : 'stopped by its step/time limit'}${result.summary.loopWarnings ? `; ${result.summary.loopWarnings} loop warning(s)${result.summary.loopStopped ? ', ended for looping' : ''}` : ''}.`];
+			if (result.summary.summary && !result.summary.saveAttempted) evidence.push(`Model summary (not used as completion evidence): ${result.summary.summary.slice(0, 300)}`);
 			if (!result.summary.steps) return { tested: 0, evidence, inconclusive: baseModels.reasonerAvailable() ? 'The journey ran out of time before its first step.' : `The reasoning model was unavailable (${baseModels.state.reasoner.lastError ?? `call budget ${baseModels.state.reasoner.calls}/${settings.reasoner.maxCalls} reached`}).` };
 			return { tested: result.summary.steps, evidence };
 		},
@@ -806,8 +828,8 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		scenario.activityId = activityId;
 		const before = state.candidates.length;
 		await syncTodos();
-		await persist({ checkpoint: true });
 		try {
+			await persist({ checkpoint: true, required: Boolean(scenario.saveTarget) });
 			const unit = units[scenario.unit];
 			if (!unit) { scenario.state = 'unsupported'; scenario.reason = `No executor for "${scenario.unit}".`; return; }
 			const result = await unit(scenario, deadline) ?? {};
@@ -815,6 +837,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			scenario.evidence = (result.evidence ?? []).slice(0, 12).map(text => redact(session.id, String(text).slice(0, 400)));
 			const added = state.candidates.length - before;
 			scenario.candidates = added;
+			scenario.evidenceGap = result.inconclusive || undefined;
 			if (stopped()) { scenario.state = added || scenario.tested ? (added ? 'failed' : 'passed') : 'not_executed'; scenario.reason = scenario.state === 'not_executed' ? 'Stopped by the owner.' : undefined; }
 			else if (result.notApplicable && !added) { scenario.state = 'not_applicable'; scenario.reason = result.notApplicable; }
 			else if (result.inconclusive && !added) { scenario.state = 'inconclusive'; scenario.reason = result.inconclusive; }
@@ -904,14 +927,15 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 					model.setAuth({ detected: Boolean(state.loginWall || auth.loginLinks.length || auth.sso.length || session.qaAuth?.authorized), passwordForm: passwordWall, identifierStep: auth.identifierStep, loginLinks: auth.loginLinks, sso: auth.sso, challenge: auth.challenge, loginUrl: state.loginUrl });
 					model.addPage(finalUrl, { status: mainResponse?.status, title: features.title, heading: features.heading, features, login: state.loginWall, discoveredBy: 'observe', depth: 0, audited: false, auth: 'public' });
 					state.observation = {
-						at: Date.now(), url: finalUrl, status: mainResponse?.status, title: features.title, heading: features.heading,
+						at: Date.now(), url: reviewUrl(page.url()) ?? finalUrl, status: mainResponse?.status, title: features.title, heading: features.heading,
 						features: Object.fromEntries(Object.entries(features).filter(([key, value]) => typeof value === 'number' && value > 0 && !['links', 'controls', 'headings'].includes(key))),
 						links: features.links, controls: features.controls, auth: { passwordForm: passwordWall, identifierStep: auth.identifierStep, loginLinks: auth.loginLinks.map(pathOf), sso: auth.sso, challenge: auth.challenge },
 						ariaLines: aria ? aria.split('\n').length : 0, ariaExcerpt: aria ? redact(session.id, aria.slice(0, 1200)) : undefined,
 						console: log.console.length, pageErrors: log.pageErrors.length, failedRequests: log.failedRequests.length, requests: log.responses.length, screenshot: artifactId
 					};
-					await page.close();
 					loaded = Boolean(mainResponse) && mainResponse.status < 500;
+					if (loaded) entryPage = page;
+					else await page.close();
 					break;
 				} catch (error) { lastError = error; await new Promise(resolve => setTimeout(resolve, 2000 * attempt)); }
 			}
@@ -927,6 +951,42 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		});
 		mainResponse ??= state.mainResponse;
 		if (!loaded) throw Object.assign(new Error('target_unreachable'), { expected: true });
+		if (state.observation && (!state.phases.discover || state.pageReview)) {
+			await reviewFirstPages({
+				state, browser, observation: state.observation, entryPage, save, stopped,
+				reopen: async () => (await openPage(session.targetUrl, { anonymous: true, noReauth: true })).page,
+				allowNext: options.maxPages > 1 && !state.loginWall && !session.qaAuth?.authorized && Date.now() < stageDeadline('discover'),
+				checkpoint: () => persist({ checkpoint: true, required: true })
+			});
+			const review = state.pageReview;
+			if (review.mobileMenu?.status === 'running') {
+				Object.assign(review.mobileMenu, { status: 'inconclusive', detail: 'Run interrupted during the menu check. The action was not replayed.' });
+				await persist({ checkpoint: true, required: true });
+			} else if (!review.mobileMenu && !stopped() && !state.loginWall && !session.qaAuth?.authorized && browser.inScope(state.observation.url) && state.observation.status >= 200 && state.observation.status < 400 && Date.now() < budgetEnd()) {
+				const profile = primary.isMobile ? primary : VIEWPORTS.mobile;
+				review.mobileMenu = { name: 'Mobile navigation menu', status: 'running', viewport: profile.label };
+				await persist({ checkpoint: true, required: true });
+				let menuPage;
+				try {
+					const opened = await openPage(state.observation.url, { profile, anonymous: true, isolated: true, noReauth: true });
+					menuPage = opened.page;
+					const sameEntry = reviewUrl(menuPage.url()) === reviewUrl(state.observation.url);
+					const ok = opened.log.mainResponse?.status >= 200 && opened.log.mainResponse.status < 400;
+					const result = sameEntry && ok ? await checkMobileMenu(menuPage, { browser, save, stopped })
+						: { status: 'inconclusive', detail: 'The mobile viewport could not load the same entry page.' };
+					Object.assign(review.mobileMenu, result);
+					if (result.status === 'failed') addCandidates([candidate({
+						detector: 'navigation.mobile_menu', category: 'navigation', title: 'Mobile menu does not open or close its navigation links',
+						url: state.observation.url, viewport: profile.label, expected: result.expected, actual: result.detail,
+						steps: ['Open the entry page in the mobile viewport', 'Open “' + result.control + '” and check its links', 'If links appeared, close the menu and check them again'],
+						confidence: 0.9, artifactId: result.evidence.at(-1)?.artifactId
+					})]);
+				} catch {
+					Object.assign(review.mobileMenu, { status: 'inconclusive', detail: 'The browser could not open the mobile menu check.' });
+				} finally { await menuPage?.close().catch(() => {}); }
+				await persist({ checkpoint: true, required: true });
+			}
+		} else await entryPage?.close();
 
 		// Stage B. Authenticate when sign-in exists (or an account was supplied). Re-done on resume:
 		// browser sessions are not persisted.
@@ -988,9 +1048,11 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			const derived = scenariosFromGraph({ graph: model, start: session.targetUrl, signedInUrl: state.signedInUrl, signedIn: Boolean(state.signedIn), options });
 			const choice = router.decide('planning');
 			let journeys = [];
-			if (choice.model === 'reasoner') {
-				const proposal = await proposeJourneys({ models, model, focus: session.testCaseSnapshot?.title ?? session.messages?.find(message => message.role === 'user')?.text?.slice(0, 500), signal, max: options.journeys });
-				journeys = proposal.journeys.map(item => ({ ...item, origin: 'reasoner' }));
+			const saveJourney = authorizedSaveJourney(model, state.allowWrites);
+			if (saveJourney) journeys.push(saveJourney);
+			if (choice.model === 'reasoner' && journeys.length < options.journeys) {
+				const proposal = await proposeJourneys({ models, model, focus: session.testCaseSnapshot?.title ?? session.messages?.find(message => message.role === 'user')?.text?.slice(0, 500), signal, max: options.journeys - journeys.length, reservedSave: saveJourney?.saveTarget });
+				journeys.push(...proposal.journeys.map(item => ({ ...item, origin: 'reasoner' })));
 			}
 			if (!journeys.length && baseModels.reasonerAvailable()) journeys = [{ ...fallbackJourney(model), origin: 'deterministic' }];
 			if (!journeys.length) {
@@ -1051,6 +1113,13 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 	// Triage and publish always run, even after a stop or failure.
 	if (stopped()) limitation(state.phase, 'Stopped by the user before the plan finished; the report covers the work completed until then.', true);
 	closeOutPlan(plan, stopped() ? 'Stopped by the owner before this scenario ran.' : !loaded ? 'The target could not be loaded.' : 'The run time budget ended before this scenario ran.');
+	for (const scenario of plan.scenarios) {
+		const gap = plannedSaveGap(scenario);
+		if (!gap) continue;
+		scenario.evidenceGap = gap;
+		if (scenario.state === 'passed') { scenario.state = 'inconclusive'; scenario.reason = gap; }
+		limitation('forms', gap, true);
+	}
 	const notRun = plan.scenarios.filter(item => item.state === 'not_executed');
 	if (notRun.length && loaded) limitation('execute', `${plural(notRun.length, 'planned scenario')} did not run (${notRun.slice(0, 4).map(item => item.title).join('; ')}${notRun.length > 4 ? '…' : ''}).`, true);
 	for (const [id] of STAGES) if ((!state.phases[id] || ['pending', 'running'].includes(state.phases[id].status)) && !['triage', 'publish'].includes(id)) state.phases[id] = { status: 'skipped', detail: stopped() ? 'Stopped by user' : 'Not reached' };
@@ -1086,7 +1155,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 	for (const scenario of plan.scenarios) {
 		if (scenario.state !== 'failed') continue;
 		scenario.findings = confirmedBy.get(scenario.id) ?? 0;
-		if (!scenario.findings) { scenario.state = 'passed'; scenario.reason = `${plural(scenario.candidates ?? 0, 'possible issue')} dismissed by verification.`; }
+		if (!scenario.findings) { scenario.state = scenario.evidenceGap ? 'inconclusive' : 'passed'; scenario.reason = scenario.evidenceGap || `${plural(scenario.candidates ?? 0, 'possible issue')} dismissed by verification.`; }
 		else scenario.reason = `${plural(scenario.findings, 'confirmed finding')}.`;
 	}
 	const verifier = result.stats.verifiedBy?.includes('jev') ? 'JEV' : result.stats.verifiedBy?.includes('reasoner') ? 'The reasoning model' : '';

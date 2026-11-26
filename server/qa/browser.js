@@ -194,9 +194,17 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	// Every refusal is counted so detectors and the explorer can tell harness
 	// side-effects (a blocked write or sign-in redirect) from real site defects.
 	const blockedCounts = { write_blocked: 0, offsite_navigation: 0, policy: 0 };
+	const blockedByPage = new WeakMap();
 	const recentBlocked = [];
-	const noteBlocked = event => {
+	const noteBlocked = (event, request) => {
 		blockedCounts[event.kind] = (blockedCounts[event.kind] ?? 0) + 1;
+		try {
+			const page = request.frame().page();
+			const counts = blockedByPage.get(page) ?? {};
+			counts[event.kind] = (counts[event.kind] ?? 0) + 1;
+			if (event.navigation) counts.navigation = (counts.navigation ?? 0) + 1;
+			blockedByPage.set(page, counts);
+		} catch { /* Early navigations may have no frame. Global counts still apply. */ }
 		recentBlocked.push({ ...event, ts: Date.now() });
 		if (recentBlocked.length > 50) recentBlocked.shift();
 		onBlocked?.(event);
@@ -243,15 +251,15 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 				// the current page (with its state) instead of showing a browser error page.
 				const refuse = () => topLevel ? route.fulfill({ status: 204, body: '' }) : route.abort('blockedbyclient');
 				if (topLevel && !originAllowed(request.url(), origins)) {
-					noteBlocked({ kind: 'offsite_navigation', url: request.url(), method: request.method() });
+					noteBlocked({ kind: 'offsite_navigation', url: request.url(), method: request.method(), navigation: true }, request);
 					return await refuse();
 				}
 				if (!await policyAllows(request.url(), false)) {
-					noteBlocked({ kind: 'policy', url: request.url(), method: request.method() });
+					noteBlocked({ kind: 'policy', url: request.url(), method: request.method(), navigation: topLevel }, request);
 					return await refuse();
 				}
 				if (!allowWrites && Date.now() > writesAllowedUntil && !SAFE_METHODS.has(request.method()) && (interacting > 0 || request.isNavigationRequest()) && !isGraphQlQuery(request)) {
-					noteBlocked({ kind: 'write_blocked', url: request.url(), method: request.method(), navigation: request.isNavigationRequest() });
+					noteBlocked({ kind: 'write_blocked', url: request.url(), method: request.method(), navigation: request.isNavigationRequest() }, request);
 					return await refuse();
 				}
 				return await route.continue();
@@ -439,9 +447,9 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	 * Presses a control the way the device's user would: a tap (touch events,
 	 * then the click) on a touch screen, a mouse click elsewhere.
 	 */
-	async function activate(locator, options = {}) {
+	async function activate(locator, options = {}, page) {
 		let touch = false;
-		try { touch = touchContexts.has(locator.page().context()); } catch { /* detached locator */ }
+		try { touch = touchContexts.has((page ?? locator.page()).context()); } catch { /* detached locator */ }
 		// Press where the element itself is hit, not its geometric centre: the centre of a
 		// list row or card is often a nested control (Reply, Delete, a menu) — a wrong click.
 		const aim = options.position ? undefined : await aimPoint(locator);
@@ -459,7 +467,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	 * (Playwright's own checks then decide).
 	 */
 	async function aimPoint(locator) {
-		const key = String(locator);
+		const key = locator;
 		const cached = recentAims.get(key);
 		if (cached && Date.now() - cached.at < 1500) return cached.aim;
 		const aim = await measureAim(locator);
@@ -618,7 +626,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 		startFrames, stopFrames,
 		getLastFrame: () => lastFrame,
 		/** Counts of refused requests by kind, and the most recent refusals. */
-		blocked: () => ({ ...blockedCounts }),
+		blocked: page => ({ ...(page ? blockedByPage.get(page) : blockedCounts) }),
 		recentBlocked: (sinceTs = 0) => recentBlocked.filter(event => event.ts >= sinceTs),
 		setActivePage: page => { activePage = page; },
 		close

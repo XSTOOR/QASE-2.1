@@ -6,6 +6,8 @@ import { candidate } from './findings.js';
 const SKIP_PATH = /\/(log-?out|sign-?out|delete|remove|unsubscribe|destroy|cancel)(\/|$|\?)/i;
 const SKIP_EXTENSION = /\.(pdf|zip|gz|tar|rar|7z|dmg|exe|msi|apk|jpe?g|png|gif|webp|avif|svg|ico|mp4|webm|mov|mp3|wav|woff2?|ttf|css|js|json|xml|txt|csv|xlsx?|docx?|pptx?)$/i;
 
+export const crawlablePath = (pathname, url = pathname) => !SKIP_PATH.test(url) && !SKIP_EXTENSION.test(pathname);
+
 export function normalizeUrl(href, base) {
 	try {
 		const url = new URL(href, base);
@@ -27,7 +29,7 @@ export function createFrontier({ start, inScope, maxPages }) {
 	const queue = [];
 	const add = (href, from) => {
 		const url = normalizeUrl(href, from ?? start);
-		if (!url || queued.has(url) || !inScope(url) || SKIP_PATH.test(url) || SKIP_EXTENSION.test(new URL(url).pathname)) return false;
+		if (!url || queued.has(url) || !inScope(url) || !crawlablePath(new URL(url).pathname, url)) return false;
 		const key = pattern(url);
 		if ((patterns.get(key) ?? 0) >= 2) return false;
 		patterns.set(key, (patterns.get(key) ?? 0) + 1);

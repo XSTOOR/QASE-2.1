@@ -25,6 +25,103 @@ function browserLabel(session) {
 		[engineLabel, facts?.browserVersion].filter(Boolean).join(' ')];
 }
 
+function appendFormOutcomes(root, create, session) {
+	const outcomes = session.report?.qaEngine?.formOutcomes ?? session.hybrid?.formOutcomes ?? [];
+	const checks = session.report?.qaEngine?.formValidation ?? session.hybrid?.pageReview?.formValidation ?? [];
+	const gaps = session.report?.qaEngine?.formSaveGaps ?? [];
+	if (!outcomes.length && !checks.length && !gaps.length) return;
+	const card = create('section', 'qe-card');
+	card.append(create('h3', '', 'Form outcomes'));
+	for (const gap of gaps) card.append(create('p', 'qe-notice', 'Coverage gap · ' + gap));
+	const screenshot = (row, id, label) => {
+		if (!id) return;
+		const link = create('a', 'qe-link', label);
+		link.href = `/api/sessions/${encodeURIComponent(session.id)}/artifacts/${encodeURIComponent(id)}`;
+		link.target = '_blank';
+		link.rel = 'noopener';
+		row.append(link);
+	};
+	for (const outcome of outcomes) {
+		const item = create('section', 'qe-details');
+		const validated = outcome.validation && outcome.submitted && outcome.receipt;
+		const label = validated ? 'Submission confirmed' : outcome.postStatus >= 400 ? 'Submission rejected' : outcome.submitted ? 'Submitted · confirmation unverified' : 'Validation observed · submission unverified';
+		item.append(create('h4', '', `${outcome.path} · Form ${outcome.form} · ${label}`));
+		const check = checks.find(entry => entry.path === outcome.path && entry.form === outcome.form && entry.status === 'passed' && entry.detail?.includes(outcome.validation));
+		const fieldLabel = check?.field ? `Empty required field (${check.field})` : 'Empty required field';
+		item.append(create('p', '', `${fieldLabel}: “${outcome.validation}”`));
+		if (outcome.submitted) item.append(create('p', '', 'The browser submitted the corrected field to the form endpoint.' + (outcome.postStatus ? ' HTTP ' + outcome.postStatus + '.' : '')));
+		if (validated) item.append(create('p', '', `Receipt: “${outcome.receipt.heading}” · HTTP ${outcome.receipt.status} · ${outcome.receipt.path}`));
+		if (validated && outcome.receipt.kind === 'in-page') item.append(create('p', '', 'Server reference matched the visible receipt: ' + outcome.receipt.reference));
+		screenshot(item, check?.artifactId, 'View validation screenshot');
+		screenshot(item, outcome.artifactId, 'View receipt screenshot');
+		card.append(item);
+	}
+	for (const check of checks) {
+		if (check.status === 'passed' && outcomes.some(entry => entry.path === check.path && entry.form === check.form && check.detail?.includes(entry.validation))) continue;
+		const row = create('p', '', [check.path, 'Form ' + check.form, 'Required-field check: ' + check.status, check.field, check.detail].filter(Boolean).join(' · '));
+		screenshot(row, check.artifactId, 'View validation screenshot');
+		card.append(row);
+	}
+	if (!outcomes.length) {
+		card.append(create('p', '', 'A successful submission receipt was not verified in this report.'));
+		// Older runs have action observations but no structured form receipts.
+		// Show the recorded change without deriving a pass from model commentary.
+		if (!session.report?.qaEngine?.formOutcomes && !session.hybrid?.formOutcomes?.length) {
+			const observations = (session.activities ?? []).filter(item => /^qa_explore_(?:type|press|click)$/.test(item.toolName))
+				.map(item => String(item.summary ?? '').split('\n')[0])
+				.filter(text => /^RESULT: URL changed to .*\. Appeared: (?:record|project|item|form|request) (?:saved|created|submitted)\b/i.test(text));
+			for (const text of [...new Set(observations)].slice(0, 3)) card.append(create('p', '', 'Recorded browser action · ' + text));
+		}
+	}
+	root.append(card);
+}
+
+function appendPageResults(root, create, session, { includeValidation = true } = {}) {
+	const review = session.hybrid?.pageReview;
+	if (!review?.pages?.length) return;
+	const card = create('section', 'qe-card');
+	card.append(create('h3', '', 'Page results'));
+	const screenshotLink = (label, artifactId) => {
+		const link = create('a', 'qe-link', label);
+		link.href = '/api/sessions/' + encodeURIComponent(session.id) + '/artifacts/' + encodeURIComponent(artifactId);
+		link.target = '_blank';
+		link.rel = 'noopener';
+		return link;
+	};
+	for (const page of review.pages) {
+		const section = create('section', 'qe-details');
+		section.append(create('h4', '', page.path));
+		for (const check of page.checks) section.append(create('p', '', `${check.name} · ${check.status} · ${check.detail}`));
+		if (page.screenshot) section.append(screenshotLink('View screenshot', page.screenshot));
+		card.append(section);
+	}
+	const journey = review.journey;
+	if (journey) {
+		card.append(create('p', '', [journey.control ? 'Click “' + journey.control + '”' : 'Navigation', journey.status, journey.detail, journey.expected && 'Expected ' + journey.expected, journey.actual && 'Observed ' + journey.actual].filter(Boolean).join(' · ')));
+	}
+	const menu = review.mobileMenu;
+	if (menu) {
+		const section = create('section', 'qe-details');
+		section.append(create('h4', '', 'Mobile navigation menu · ' + (menu.status === 'not_applicable' ? 'Not applicable' : menu.status)));
+		section.append(create('p', '', [review.pages[0].path, menu.viewport, menu.control].filter(Boolean).join(' · ')));
+		if (menu.expected) section.append(create('p', '', 'Expected · ' + menu.expected));
+		if (menu.detail) section.append(create('p', '', 'Observed · ' + menu.detail));
+		for (const item of menu.evidence ?? []) section.append(screenshotLink(item.label, item.artifactId));
+		card.append(section);
+	}
+	if (includeValidation && review.formValidation?.length) {
+		const section = create('section', 'qe-details');
+		section.append(create('h4', '', 'Required-field validation'));
+		for (const check of review.formValidation) {
+			const row = create('p', '', [check.path, 'Form ' + check.form, check.status, check.field, check.detail].filter(Boolean).join(' · '));
+			if (check.artifactId) row.append(' ', screenshotLink('View validation screenshot', check.artifactId));
+			section.append(row);
+		}
+		card.append(section);
+	}
+	root.append(card);
+}
+
 function present(root, session, evidence, { live, error, retry, onFinding, onFindings, onActivity }) {
 	const doc = root.ownerDocument;
 	const create = (tag, className, text) => {
@@ -89,6 +186,7 @@ function present(root, session, evidence, { live, error, retry, onFinding, onFin
 	metric(coverage.securityChecks, 'security checks');
 	if (coverage.exploration) metric(coverage.exploration, 'AI exploration steps');
 	workspace.append(metrics);
+	appendPageResults(workspace, create, session, { includeValidation: false });
 
 
 	// Coverage and the dynamic plan replace the old fixed phase list.
@@ -110,6 +208,7 @@ function present(root, session, evidence, { live, error, retry, onFinding, onFin
 	workspace.append(phases);
 
 	// Findings grouped by severity.
+	appendFormOutcomes(workspace, create, session);
 	const findingCard = create('section', 'qe-card');
 	const findingHead = create('div', 'qe-section-head');
 	findingHead.append(create('h3', '', `Findings (${findings.length})`));
@@ -311,6 +410,7 @@ function presentPlan(root, session, { error, retry, onFindings }) {
 	stat(coverage.securityChecks, 'Security checks');
 	if (!findings.length && state.candidates) stat(state.candidates, 'To verify');
 	plan.append(stats);
+	appendPageResults(plan, create, session);
 
 	// Every step, in order.
 	const card = create('section', 'qp-card');
@@ -429,7 +529,7 @@ export function createQaEvidenceWorkspace({ api, plan, report, ...actions }) {
 
 	function render() {
 		if (!session) return;
-		const snapshot = JSON.stringify([session.id, session.status, session.statusDetail, session.report?.ts, session.findings?.length, session.hybrid?.phases, session.hybrid?.coverage, session.hybrid?.plan?.summary, (session.hybrid?.plan?.scenarios ?? []).map(item => item.state[0]).join(''), session.hybrid?.capabilities, session.hybrid?.gate, session.hybrid?.limitations, session.hybrid?.signedIn, session.hybrid?.candidates, evidence?.dismissed?.length, error]);
+		const snapshot = JSON.stringify([session.id, session.status, session.statusDetail, session.report?.ts, session.findings?.length, session.hybrid?.phases, session.hybrid?.coverage, session.hybrid?.pageReview, session.hybrid?.formOutcomes, session.hybrid?.plan?.summary, (session.hybrid?.plan?.scenarios ?? []).map(item => item.state[0]).join(''), session.hybrid?.capabilities, session.hybrid?.gate, session.hybrid?.limitations, session.hybrid?.signedIn, session.hybrid?.candidates, evidence?.dismissed?.length, error]);
 		if (snapshot === signature) return;
 		signature = snapshot;
 		const options = { ...actions, error, retry: () => schedule(0) };

@@ -22,6 +22,14 @@ export async function observeFeatures(page) {
 		const links = [...document.querySelectorAll('a[href]')];
 		const sameOrigin = links.filter(a => { try { return new URL(a.href).origin === location.origin; } catch { return false; } });
 		const params = [...new URLSearchParams(location.search).keys()];
+		const recordForm = [...document.forms].find(form => {
+			if (form.method !== 'post' || !URL.canParse(form.action) || new URL(form.action).origin !== location.origin ||
+				form.querySelector('input[type=password],input[type=file],[autocomplete^="cc-"]')) return false;
+			if (![...form.querySelectorAll('input[required],textarea[required]')].some(field => field.name && visible(field))) return false;
+			return [...form.querySelectorAll('button:not([type]),button[type=submit],input[type=submit]')].some(button =>
+				visible(button) && !button.disabled && !button.matches('[formaction],[formmethod],[formtarget]') &&
+				/^(?:add|create|save) (?:a |new )?(?:note|record|project|entry|item)$/i.test((button.innerText || button.value || '').trim()));
+		});
 		return {
 			navigation: count('nav, [role=navigation], header a') > 0 ? 1 : 0,
 			search: count('input[type=search], [role=search] input, input[name=q], input[name*=search i], input[placeholder*=search i]'),
@@ -30,6 +38,7 @@ export async function observeFeatures(page) {
 			pagination: count('[aria-label*=pagination i] a, .pagination a, a[rel=next], nav a[href*="page="]'),
 			table: count('table'),
 			forms: count('form'),
+			recordForm: recordForm ? [...document.forms].indexOf(recordForm) + 1 : 0,
 			upload: count('input[type=file]'),
 			dates: count('input[type=date], input[type=datetime-local]'),
 			media: count('video, audio'),
