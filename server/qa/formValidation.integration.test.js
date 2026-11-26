@@ -7,6 +7,7 @@ test('custom required-field validation in Chromium', async t => {
 	const browser = await chromium.launch();
 	t.after(() => browser.close());
 	const variants = {
+		'native required': 'passed',
 		'linked error': 'passed', 'delayed error': 'passed', 'field wrapper': 'passed', 'cancelled click': 'passed',
 		'missing error': 'failed', 'transparent error': 'failed', 'other form alert': 'inconclusive',
 		'unchanged hint': 'inconclusive', 'prefilled': 'inconclusive', 'attempted submission': 'failed',
@@ -25,6 +26,11 @@ test('custom required-field validation in Chromium', async t => {
 				await page.goto(url);
 				await page.evaluate(kind => {
 					const form = document.forms[0], field = form.elements[0], error = document.getElementById('err');
+					if (kind === 'native required') {
+						form.noValidate = false;
+						field.required = true;
+						return;
+					}
 					if (['client-side acceptance', 'neutral notification', 'old success notification'].includes(kind)) {
 						error.setAttribute('role', 'alert');
 						if (kind === 'old success notification') error.textContent = 'Saved successfully';
@@ -61,7 +67,7 @@ test('custom required-field validation in Chromium', async t => {
 			assert.equal(check.status, expected, variant + ': ' + check.detail);
 			if (expected === 'passed') {
 				assert.equal(check.field, 'Name');
-				assert.match(check.detail, /Enter your name/);
+				assert.match(check.detail, variant === 'native required' ? /fill out this field/i : /Enter your name/);
 				assert.equal(check.artifactId, 'form-evidence');
 				assert.equal(candidates.length, 0);
 			}

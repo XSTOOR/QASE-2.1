@@ -127,7 +127,9 @@ export function formOutcomeObserver(page, save, target) {
 					f.removeEventListener('invalid', onInvalid, true);
 					f.removeEventListener('submit', onSubmit, true);
 					if (invalid && !invalid.defaultPrevented && document.activeElement === invalid.target) {
-						return { name: invalid.target.name, message: invalid.target.validationMessage };
+						const field = invalid.target;
+						const label = field.labels?.[0]?.innerText || field.getAttribute('aria-label') || field.placeholder || field.name;
+						return { name: field.name, label: label.trim().slice(0, 60), message: field.validationMessage };
 					}
 				};
 			}, {token: await bound ? activeStep : null, field: same ? pending.field : undefined}).catch(() => undefined);
@@ -139,7 +141,7 @@ export function formOutcomeObserver(page, save, target) {
 				if (invalid?.message && outcomes.length < 20) {
 					if (!same || pending.field !== invalid.name) {
 						await pending?.form.dispose().catch(() => {});
-						const outcome = { path: meta.path, form: meta.form, validation: invalid.message.slice(0, 180) };
+						const outcome = { path: meta.path, form: meta.form, field: invalid.label, validation: invalid.message.slice(0, 180) };
 						outcomes.push(outcome);
 						pending = { form, field: invalid.name, outcome };
 					}

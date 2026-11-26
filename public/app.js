@@ -8097,8 +8097,16 @@ function activateDetailTab(tab, moveFocus = false) {
 	if (moveFocus) tab.focus();
 }
 
+function selectDetailTab(tab, moveFocus = false) {
+	if (tab === el.reportTab && isQaEvidenceRun(state.session) && state.session.status === 'done' && pageRouter.current().name === 'run') {
+		void pageRouter.navigate({ name: 'results', runId: state.sessionId });
+		return;
+	}
+	activateDetailTab(tab, moveFocus);
+}
+
 for (const tab of detailTabs) {
-	tab.onclick = () => activateDetailTab(tab);
+	tab.onclick = () => selectDetailTab(tab);
 	tab.onkeydown = event => {
 		const availableTabs = detailTabs.filter(candidate => !candidate.hidden);
 		const index = availableTabs.indexOf(tab);
@@ -8109,7 +8117,7 @@ for (const tab of detailTabs) {
 		else if (event.key === 'End') next = availableTabs.length - 1;
 		else return;
 		event.preventDefault();
-		activateDetailTab(availableTabs[next], true);
+		selectDetailTab(availableTabs[next], true);
 	};
 }
 

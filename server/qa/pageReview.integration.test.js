@@ -76,6 +76,19 @@ test('page checkpoints, dashboard refresh and recovery', async t => {
 		assert.equal(await panel.getByText(/Name · The form blocked the action and showed “Enter your name.”/).count(), 1);
 	}
 
+	// Different required fields commonly produce identical native validation messages.
+	const validation = 'Please fill out this field.';
+	visible.formOutcomes = [{ path: '/notes', form: 1, field: 'Note title', validation }];
+	visible.pageReview.formValidation = ['Note title', 'Description'].map(field => ({
+		path: '/notes', form: 1, field, status: 'passed', detail: validation, artifactId: field === 'Note title' ? 'title-error' : 'description-error'
+	}));
+	await tab.reload();
+	const outcome = tab.locator('#report section.qe-details').filter({ hasText: 'Validation observed · submission unverified' });
+	await outcome.getByText('Empty required field (Note title): “' + validation + '”').waitFor();
+	assert.equal(await outcome.getByRole('link', { name: 'View validation screenshot' }).getAttribute('href'), '/api/sessions/test/artifacts/title-error');
+	const otherField = tab.locator('#report p').filter({ hasText: 'Required-field check: passed · Description' });
+	assert.equal(await otherField.getByRole('link').getAttribute('href'), '/api/sessions/test/artifacts/description-error');
+
 	for (const [snapshot, expected] of [[last, 'passed'], [pending, 'inconclusive']]) {
 		const restored = structuredClone(snapshot);
 		await reviewFirstPages({ ...options, state: restored, reopen: () => assert.fail('should not replay a click') });

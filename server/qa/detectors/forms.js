@@ -101,6 +101,7 @@ function watchRequiredFields(form, required) {
 		form.removeEventListener('click', onClick, true);
 		const nativeField = invalid?.target;
 		const nativeMessage = nativeField && nativeField === document.activeElement && !invalid.defaultPrevented && nativeField.validationMessage;
+		const field = nativeMessage ? fields.find(entry => entry.field === nativeField)?.label : undefined;
 		const cancelled = Boolean(submit?.defaultPrevented || click?.defaultPrevented || invalid);
 		const rejected = [];
 		for (const entry of fields) {
@@ -111,13 +112,13 @@ function watchRequiredFields(form, required) {
 			if (message || marked) rejected.push({ field: entry.label, message, missingLinkedError: marked && Boolean(entry.field.getAttribute('aria-errormessage')?.trim()) && !visible.length });
 		}
 		const success = notices().find(text => !initialNotices.has(text) && /^(?:(?:form|record|changes|details)\s+)?(?:successfully\s+(?:saved|submitted)|(?:saved|submitted)(?:\s+successfully)?)[.!]?$/i.test(text));
-		return { submitted: Boolean(submit), emptyRequired: fields.length, missingAtSubmit, success, cancelled, rejected, message: nativeMessage ? nativeMessage.slice(0, 140) : '' };
+		return { submitted: Boolean(submit), emptyRequired: fields.length, missingAtSubmit, success, cancelled, rejected, field, message: nativeMessage ? nativeMessage.slice(0, 140) : '' };
 	};
 }
 
 function requiredVerdict(observed, empty) {
 	const quiet = !empty.attempted && !empty.actionRequested && !empty.writeRequested;
-	if (observed?.message && quiet && !observed.submitted) return { status: 'passed', detail: 'The browser focused the empty required field and reported “' + observed.message + '”. No submission was observed.' };
+	if (observed?.message && quiet && !observed.submitted) return { status: 'passed', field: observed.field, detail: 'The browser focused the empty required field and reported “' + observed.message + '”. No submission was observed.' };
 	if (observed?.missingAtSubmit && empty.actionRequested) return { status: 'failed', detector: 'forms.no_validation', detail: 'The form attempted submission with a required field empty.' };
 	if (observed?.missingAtSubmit && observed.success) return { status: 'failed', detector: 'forms.no_validation', detail: 'The form reported “' + observed.success + '” after submission with a required field empty.' };
 	if (observed?.cancelled && quiet && observed.rejected.length) {

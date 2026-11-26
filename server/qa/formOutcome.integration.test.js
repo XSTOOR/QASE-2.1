@@ -47,6 +47,7 @@ test('form receipt requires a corrected submission and fresh, successful browser
 			}
 			await clickObserved(observer, submit);
 			const [outcome] = observer.outcomes;
+			assert.equal(outcome.field, 'Note title');
 			assert.equal(Boolean(outcome.receipt), variant === 'matching');
 			if (variant === 'matching') {
 				assert.equal(site.records.length, 1);

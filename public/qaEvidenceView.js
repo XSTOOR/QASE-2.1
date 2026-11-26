@@ -41,13 +41,15 @@ function appendFormOutcomes(root, create, session) {
 		link.rel = 'noopener';
 		row.append(link);
 	};
+	const displayedChecks = new Set();
 	for (const outcome of outcomes) {
 		const item = create('section', 'qe-details');
 		const validated = outcome.validation && outcome.submitted && outcome.receipt;
 		const label = validated ? 'Submission confirmed' : outcome.postStatus >= 400 ? 'Submission rejected' : outcome.submitted ? 'Submitted · confirmation unverified' : 'Validation observed · submission unverified';
 		item.append(create('h4', '', `${outcome.path} · Form ${outcome.form} · ${label}`));
-		const check = checks.find(entry => entry.path === outcome.path && entry.form === outcome.form && entry.status === 'passed' && entry.detail?.includes(outcome.validation));
-		const fieldLabel = check?.field ? `Empty required field (${check.field})` : 'Empty required field';
+		const check = checks.find(entry => entry.path === outcome.path && entry.form === outcome.form && entry.field === outcome.field && entry.status === 'passed' && entry.detail?.includes(outcome.validation));
+		if (check) displayedChecks.add(check);
+		const fieldLabel = outcome.field ? `Empty required field (${outcome.field})` : 'Empty required field';
 		item.append(create('p', '', `${fieldLabel}: “${outcome.validation}”`));
 		if (outcome.submitted) item.append(create('p', '', 'The browser submitted the corrected field to the form endpoint.' + (outcome.postStatus ? ' HTTP ' + outcome.postStatus + '.' : '')));
 		if (validated) item.append(create('p', '', `Receipt: “${outcome.receipt.heading}” · HTTP ${outcome.receipt.status} · ${outcome.receipt.path}`));
@@ -57,7 +59,7 @@ function appendFormOutcomes(root, create, session) {
 		card.append(item);
 	}
 	for (const check of checks) {
-		if (check.status === 'passed' && outcomes.some(entry => entry.path === check.path && entry.form === check.form && check.detail?.includes(entry.validation))) continue;
+		if (displayedChecks.has(check)) continue;
 		const row = create('p', '', [check.path, 'Form ' + check.form, 'Required-field check: ' + check.status, check.field, check.detail].filter(Boolean).join(' · '));
 		screenshot(row, check.artifactId, 'View validation screenshot');
 		card.append(row);
