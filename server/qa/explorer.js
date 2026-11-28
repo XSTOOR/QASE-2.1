@@ -1,5 +1,5 @@
 /**
- * AI exploration: the reasoning model drives the browser through a small,
+ * AI exploration: the reasoner proposes steps and JEV selects browser actions from a small,
  * safe tool set to test real user flows and report functional problems that
  * rule-based detectors cannot judge (wrong results, broken flows, confusing
  * states, logic errors).
@@ -9,6 +9,7 @@
  * are refused here. Bounded by steps and time; a model failure ends only this
  * phase, never the run.
  */
+import { isJourneyAction, selectJourneyAction } from './journeyAction.js';
 import { UNTRUSTED_CONTENT_RULE } from '../untrustedContent.js';
 import { candidate } from './findings.js';
 import { formOutcomeObserver } from './formOutcome.js';
@@ -49,7 +50,7 @@ Rules:
 - After every action you get: the RESULT (what changed on the page), a fresh observation (controls with refs, visible text) and a screenshot on which every control is outlined in red with its ref tag above it (set-of-marks). Use the screenshot to see what really happened and to find controls, above all icon buttons with no label: read the red tag of the box you mean and use that ref. Never guess a ref from its number or position in the list.
 - Reason before every action, in one or two short sentences in your reply: what you see now, which control you will use and why, what you expect. Put that expectation in the action's expect argument.
 - Then check the result against your expectation before doing anything else. If it matches, move on. If it does not, work out why: a defect (report it with what you expected and what happened), the wrong element (pick the right one on the screenshot), or a state you misread (look again). Never move on from a surprise without explaining it.
-- One action per turn when it can change the screen. Once the screen changes, QASE skips the rest of that turn's actions, because they were planned for the old screen.
+- For each browser turn propose the next step for the planned journey. When two different actions could both advance it, propose them as alternatives for JEV. JEV selects at most one for execution. Never batch dependent steps or combine browser proposals with findings or finish. Once the screen changes, QASE skips the rest of that turn's actions, because they were planned for the old screen.
 - Elements marked (covered) are behind a pop-up: close the pop-up first (QASE already closes tours and banners it recognises).
 - If an action fails, try another way (a different element, scrolling it into view, keyboard) instead of repeating it.
 - Finish only when the journey goal is covered; summarise what you exercised and what you could not reach.`;
@@ -174,6 +175,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 	const out = [];
 	const summary = { steps: 0, finished: false, summary: '', visited: new Set(), loopWarnings: 0, loopStopped: false, trail: [] };
 	let consecutiveLooks = 0;
+	let replans = 0;
 	let lastRef; let lastLabel = '';
 	let clickReceipt;
 	let clickStep;
@@ -224,10 +226,31 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 				summary.steps++;
 				continue;
 			}
+			let selection;
+			if (reply.toolCalls.some(isJourneyAction)) {
+				selection = await selectJourneyAction({models,calls:reply.toolCalls,goal:goal ?? focus,signal,deadline,
+					describe: ref => observations.get(page)?.evaluate((state,id) => {
+						const el = state.controls.get(id)?.();
+						if (!el) return undefined;
+						return {kind:el.localName,label:el.getAttribute('aria-label') || el.labels?.[0]?.innerText || (['button','a','summary'].includes(el.localName) ? el.innerText : '')};
+					},ref).catch(() => undefined)});
+				if (selection.blocked) { summary.actionGap = selection.blocked; break; }
+				if (selection.replan) {
+					for (const call of reply.toolCalls) messages.push({role:'tool',tool_call_id:call.id,content:'No action taken. JEV requested a revised step.'});
+					if (++replans >= 2) { summary.actionGap = 'JEV requested a different step twice. No further action was taken.'; break; }
+					messages.push({role:'user',content:'Plan a different step from this fresh observation:\n' + await observe(page, log)});
+					continue;
+				}
+				replans = 0;
+			}
 			let screenshot;
 			let acted = false;
 			let screenChanged = false;
 			for (const call of reply.toolCalls) {
+				if (selection && selection.call !== call) {
+					messages.push({role:'tool',tool_call_id:call.id,content:'Skipped. A different browser action was selected for this turn.'});
+					continue;
+				}
 				let args = {};
 				try { args = JSON.parse(call.function?.arguments || '{}'); } catch { /* invalid arguments become an error result */ }
 				const name = call.function?.name;
@@ -264,7 +287,8 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 					const receiver = clickReceipt ? `${clickReceipt.tag} ${clickReceipt.ref || '(unmarked)'}` : 'unverified';
 					summary.trail[summary.trail.length - 1] += ` · click recipient: ${receiver}`;
 				}
-				onStep({ name, args, url: page.url(), line: summary.trail.at(-1), thought: String(reply.text ?? '').trim().slice(0, 400) });
+				if (selection) summary.trail[summary.trail.length - 1] += ' · selected by JEV';
+				onStep({ name, args, selectedBy:selection ? 'JEV' : undefined, url: page.url(), line: summary.trail.at(-1), thought: String(reply.text ?? '').trim().slice(0, 400) });
 				if (saveTarget && forms?.outcomes.some(outcome => outcome.attempted)) {
 					summary.saveAttempted = true;
 					summary.finished = forms.outcomes.some(outcome => outcome.receipt);
@@ -288,6 +312,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 			}
 			if (screenshot) messages.push({ role: 'user', content: [{ type: 'text', text: 'Screenshot of the current viewport after your last action. Red boxes are the controls; the red tag above each box is its ref.' }, { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${screenshot.toString('base64')}` } }] });
 		}
+		if (replans && !summary.finished && !summary.actionGap) summary.actionGap = 'The planner did not produce an executable revised action before the journey ended.';
 	} finally {
 		await page.close().catch(() => {});
 	}

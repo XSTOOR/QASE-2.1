@@ -233,7 +233,8 @@ test('explorer: sees what each action changed, recovers from stale refs, and get
 	const toolResults = [];
 	let step = 0;
 	const models = {
-		reasonerAvailable: () => true, visionAvailable: () => false, jevAvailable: () => false, state: { reasoner: {}, jev: {} },
+		reasonerAvailable: () => true, visionAvailable: () => false, jevAvailable: () => true, state: { reasoner: {}, jev: {} },
+		async decide() { return { next: { type: 'choice', choice: 'step0' } }; },
 		async chat(messages) {
 			prompts.push(messages[1].content);
 			const last = messages.at(-1);
@@ -327,7 +328,8 @@ test('explorer: a toast covering a control is cleared, and newly revealed contro
 	const results = [];
 	let step = 0;
 	const models = {
-		reasonerAvailable: () => true, visionAvailable: () => false, jevAvailable: () => false, state: { reasoner: {}, jev: {} },
+		reasonerAvailable: () => true, visionAvailable: () => false, jevAvailable: () => true, state: { reasoner: {}, jev: {} },
+		async decide() { return { next: { type: 'choice', choice: 'step0' } }; },
 		async chat(messages) {
 			const last = messages.at(-1);
 			if (last.role === 'tool') results.push(last.content);
@@ -355,7 +357,8 @@ test('explorer: revealed answer text and expanded state count as a change (no fa
 	const results = [];
 	let step = 0;
 	const models = {
-		reasonerAvailable: () => true, visionAvailable: () => false, jevAvailable: () => false, state: { reasoner: {}, jev: {} },
+		reasonerAvailable: () => true, visionAvailable: () => false, jevAvailable: () => true, state: { reasoner: {}, jev: {} },
+		async decide() { return { next: { type: 'choice', choice: 'step0' } }; },
 		async chat(messages) {
 			const last = messages.at(-1);
 			if (last.role === 'tool') results.push(last.content);
@@ -387,7 +390,8 @@ test('explorer: sees every action, presses what it means, and re-plans when the 
 	let images = 0;
 	let step = 0;
 	const models = {
-		reasonerAvailable: () => true, visionAvailable: () => true, jevAvailable: () => false, state: { reasoner: {}, jev: {} },
+		reasonerAvailable: () => true, visionAvailable: () => true, jevAvailable: () => true, state: { reasoner: {}, jev: {} },
+		async decide() { return { next: { type: 'choice', choice: 'step0' } }; },
 		async chat(messages) {
 			images = messages.filter(message => Array.isArray(message.content) && message.content.some(part => part.type === 'image_url')).length || images;
 			const answered = [];
@@ -412,7 +416,7 @@ test('explorer: sees every action, presses what it means, and re-plans when the 
 		assert.match(first, /Appeared: .*Conversation with Asha Rao is open/, 'the row itself was pressed, not the Remove button at its centre');
 		assert.doesNotMatch(first, /Conversation removed/);
 		assert.match(second, /Workspace settings panel is open/, 'an unlabeled icon is reachable by its ref and position');
-		assert.match(skipped, /^Skipped: the screen changed/, 'actions planned for the old screen do not run');
+		assert.match(skipped, /^Skipped\. A different browser action was selected/, 'only the selected action runs');
 		assert.ok(images >= 1, 'a screenshot follows the actions');
 		const ashaRefs = observations.map(text => /(e\d+) div\(button\) "Asha Rao/.exec(text)?.[1]).filter(Boolean);
 		assert.ok(ashaRefs.length >= 2 && new Set(ashaRefs).size === 1, `refs are stable across observations (${ashaRefs.join(', ')})`);

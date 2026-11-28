@@ -4,6 +4,59 @@ import { chromium } from 'playwright';
 import http from 'node:http';
 import { createQaBrowser, VIEWPORTS } from './browser.js';
 import { explore } from './explorer.js';
+import { createQaModels, qaModelSettings } from './models.js';
+import { createRouter } from './router.js';
+
+test('JEV chooses which proposed click reaches the browser', async t => {
+	const chromiumBrowser = await chromium.launch();
+	t.after(() => chromiumBrowser.close());
+	for (const choice of ['step1', 'unknown']) {
+		await t.test(choice, async () => {
+			const page = await chromiumBrowser.newPage();
+			const received = [];
+			const startUrl = 'http://qa.test/';
+			await page.exposeFunction('recordClick', label => received.push(label));
+			await page.route(startUrl, route => route.fulfill({ contentType: 'text/html', body:
+				'<button onclick="recordClick(this.textContent)">Home</button><button onclick="recordClick(this.textContent)">Help</button>'
+			}));
+			const browser = {
+				openPage: async () => ({ page, log: {} }),
+				setActivePage() {},
+				goto: (target, url) => target.goto(url),
+				interact: action => action(),
+				settle: async () => {}
+			};
+			let payload;
+			const model = createQaModels({
+				settings: qaModelSettings({ QASE_API_KEY: 'fixture-key' }, {}),
+				fetchImpl: async (_url, request) => {
+					payload = JSON.parse(request.body);
+					return Response.json({ model: 'jev-1.13', answers: { next: { type: 'choice', choice } } });
+				}
+			});
+			const router = createRouter({ models: model });
+			const models = { ...router.models, visionAvailable: () => false, async chat(messages) {
+				const toolCalls = ['Home', 'Help'].map(label => {
+					const ref = new RegExp('(e[0-9]+) button "' + label + '"').exec(messages[1].content)[1];
+					return { id: label, function: { name: 'click', arguments: JSON.stringify({ ref, expect: 'Open ' + label }) } };
+				});
+				return { toolCalls };
+			} };
+			const { summary } = await explore({ browser, profile: VIEWPORTS.desktop, startUrl, models,
+				goal: 'Open Help for fixture-private-marker', blockedWrites: () => 0, maxSteps: 1, deadline: Date.now() + 30000 });
+			assert.match(payload.questions.next.criteria.step1, /help/);
+			assert.doesNotMatch(JSON.stringify(payload), /fixture-private-marker|qa\.test/);
+			if (choice === 'step1') {
+				assert.deepEqual(received, ['Help']);
+				assert.match(summary.trail[0], /selected by JEV/);
+				assert.equal(router.state().decisions.at(-1).task, 'action');
+			} else {
+				assert.deepEqual(received, []);
+				assert.match(summary.actionGap, /valid action decision/);
+			}
+		});
+	}
+});
 
 // Drive the real explorer with a fixed intent. The page's event listener is an
 // independent witness of which control actually received the browser click.
@@ -43,6 +96,7 @@ for (const variant of ['working', 'copied', 'replaced', 'covered', 'wrong destin
 		};
 		let step = 0;
 		const models = {
+		jevAvailable: () => true, decide: async () => ({next:{type:'choice',choice:'step0'}}),
 			reasonerAvailable: () => true, visionAvailable: () => false,
 			async chat(messages) {
 				const evidence = messages.at(-1).content;
@@ -123,7 +177,8 @@ test('navigation evidence from the browser runtime', async t => {
 	})) {
 		await t.test(variant, async () => {
 			const exercised = new Set();
-			const models = { reasonerAvailable: () => true, visionAvailable: () => false, async chat(messages) {
+			const models = {
+		jevAvailable: () => true, decide: async () => ({next:{type:'choice',choice:'step0'}}), reasonerAvailable: () => true, visionAvailable: () => false, async chat(messages) {
 				const ref = /\b(e\d+) a "Solutions"/.exec(messages[1].content)[1];
 				return { toolCalls: [{ id: 'open', function: { name: 'click', arguments: JSON.stringify({ ref, expect: 'Open Solutions' }) } }] };
 			} };

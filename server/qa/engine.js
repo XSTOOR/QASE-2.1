@@ -811,7 +811,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 					const [action, outcome] = String(step.line ?? step.name).replace(/^\d+\.\s*/, '').split(' → ');
 					// The step shows what it pressed, what it expected, what happened, and its reasoning.
 					const detail = [(outcome ?? '').replace(/ @ .*$/, ''), step.thought ? `Reasoning: ${step.thought}` : ''].filter(Boolean).join('\n');
-					void activityLog.note(`AI tester · ${action.slice(0, 180)}`, redact(session.id, detail), { type: 'agent_step', toolName: `qa_explore_${step.name}`, scenarioId: scenario.id, status: /failed|no longer exists|Refused/.test(outcome ?? '') ? 'failed' : 'done' });
+					void activityLog.note(`${step.selectedBy ?? 'AI tester'} · ${action.slice(0, 180)}`, redact(session.id, detail), { type: 'agent_step', toolName: `qa_explore_${step.name}`, scenarioId: scenario.id, status: /failed|no longer exists|Refused/.test(outcome ?? '') ? 'failed' : 'done' });
 				} });
 			addCandidates(result.candidates);
 			// Pages the journey reached that the crawl never saw join the graph (and get audited).
@@ -826,6 +826,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			state.exercised = [...exercised].filter(Boolean).slice(-300);
 			state.coverage.explorationSummary = exploreSummaries.filter(Boolean).join(' ').slice(0, 1500);
 			const evidence = [`${result.summary.steps} step(s); ${result.summary.saveAttempted ? result.summary.summary : result.summary.finished ? 'the model finished the journey' : 'stopped by its step/time limit'}${result.summary.loopWarnings ? `; ${result.summary.loopWarnings} loop warning(s)${result.summary.loopStopped ? ', ended for looping' : ''}` : ''}.`];
+			if (result.summary.actionGap) return {tested:result.summary.steps, evidence:[...scenario.trail, result.summary.actionGap], inconclusive:result.summary.actionGap};
 			if (result.summary.summary && !result.summary.saveAttempted) evidence.push(`Model summary (not used as completion evidence): ${result.summary.summary.slice(0, 300)}`);
 			if (!result.summary.steps) return { tested: 0, evidence, inconclusive: baseModels.reasonerAvailable() ? 'The journey ran out of time before its first step.' : `The reasoning model was unavailable (${baseModels.state.reasoner.lastError ?? `call budget ${baseModels.state.reasoner.calls}/${settings.reasoner.maxCalls} reached`}).` };
 			return { tested: result.summary.steps, evidence };

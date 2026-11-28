@@ -11,7 +11,7 @@
 
 export const ROUTES = {
 	planning: { prefer: 'reasoner', fallback: 'deterministic', why: 'Needs open-ended reasoning over the application graph.' },
-	exploration: { prefer: 'reasoner', fallback: 'deterministic', why: 'Multi-step tool use in a live browser.' },
+	exploration: { prefer: 'reasoner', fallback: 'deterministic', why: 'Propose functional steps for the journey.' },
 	investigation: { prefer: 'reasoner', fallback: 'deterministic', why: 'Diagnosing an unexpected observation needs reasoning.' },
 	vision: { prefer: 'reasoner', fallback: 'deterministic', why: 'Screenshots need a multimodal model.' },
 	report: { prefer: 'reasoner', fallback: 'deterministic', why: 'Writing the conclusion and fix guidance.' },
@@ -83,8 +83,13 @@ export function createRouter({ models, log: saved }) {
 		async decide(context, questions, options = {}) {
 			const before = snapshot();
 			const result = await models.decide(context, questions, options);
-			const cost = account('verification', before);
-			record({ task: 'verification', model: result ? 'jev' : 'none', reason: ROUTES.verification.why, outcome: result ? `answered ${Object.keys(questions).length} questions` : `failed: ${models.state.jev.lastError ?? 'unavailable'}`, tokens: cost.tokens });
+			const action = options.purpose === 'action';
+			const task = action ? 'action' : 'verification';
+			const answered = action ? result?.next?.type === 'choice' && Object.hasOwn(questions.next.criteria,result.next.choice) : !!result;
+			const cost = account(task, before);
+			record({task,model:answered ? 'jev' : 'none',modelId:models.jevModel,
+				reason:action ? 'Choose the next browser action for the planned journey.' : ROUTES.verification.why,
+				outcome:answered ? action ? result.next.choice : 'answered ' + Object.keys(questions).length + ' questions' : 'No valid decision',tokens:cost.tokens});
 			return result;
 		}
 	};
