@@ -109,14 +109,14 @@ async function resolveEnvironmentForRun(services, environmentId) {
  * when no case is given (back-compat). When a case IS given, the environment
  * (if any) must be assigned to the case. Returns the case for snapshotting.
  */
-async function resolveTestCaseForRun(services, testCaseId, environmentId) {
+async function resolveTestCaseForRun(services, testCaseId, environmentId, execution) {
 	if (testCaseId === undefined || testCaseId === null || testCaseId === '') return undefined;
 	if (typeof testCaseId !== 'string') {
 		throw new PublicInputError('testCaseId must be a string.', 422);
 	}
 	const { TestCaseValidationError } = await import('./testCaseService.js');
 	try {
-		return await services.testCases.resolveForRun(testCaseId, environmentId);
+		return await services.testCases.resolveForRun(testCaseId, environmentId, execution);
 	} catch (error) {
 		if (error instanceof TestCaseValidationError) {
 			throw new PublicInputError(error.message, 422);
@@ -711,12 +711,14 @@ export function createApplication(options = {}) {
 	function startTurn(session, turnOptions) {
 		let turn;
 		try {
-			turn = Promise.resolve(services.agent.runTurn(
-				session,
-				turnOptions,
-				services.runs,
-				services.deviceRuntime
-			));
+			const start = () => services.agent.runTurn(session, turnOptions, services.runs, services.deviceRuntime);
+			const approved = session.testCaseSnapshot?.generation;
+			turn = approved ? services.testCases.get(session.testCaseId).then(current => {
+				if (!current || current.generation?.version !== approved.version || current.generation.reviewStatus !== 'Ready for Execution' || current.generation.stale) {
+					throw new Error('The test case changed after launch. Review it and start a new run.');
+				}
+				return start();
+			}) : Promise.resolve(start());
 		} catch (error) {
 			turn = Promise.reject(error);
 		}
@@ -1068,6 +1070,10 @@ export function createApplication(options = {}) {
 				// findings, and reports behave identically for matrix items.
 				startSession: async (matrixRun, item) => {
 					const environment = await resolveEnvironmentForRun(services, item.environmentId);
+					const caseId = item.testCaseId ?? matrixRun.items?.[0]?.testCaseId;
+					const matrixCase = caseId ? await services.testCases.get(caseId) : undefined;
+					if (caseId && !matrixCase) throw new Error('The selected test case is no longer available.');
+					if (matrixCase?.generation && (matrixCase.generation.reviewStatus !== 'Ready for Execution' || matrixCase.generation.stale || matrixCase.generation.requiresWrite)) throw new Error('The selected case needs a current approval for read-only matrix execution.');
 					const session = await services.runs.create(
 						`${matrixRun.title} — ${item.device} · ${item.browser} ${item.browserVersion}`,
 						{
@@ -1076,7 +1082,8 @@ export function createApplication(options = {}) {
 							ownerUserId: matrixRun.ownerUserId ?? undefined,
 							environmentId: environment.envId,
 							environmentSnapshot: environment,
-							testCaseId: item.testCaseId ?? matrixRun.items?.[0]?.testCaseId ?? undefined,
+							testCaseId: caseId ?? undefined,
+							...(matrixCase?.generation ? {testCaseSnapshot:matrixCase, qaExecutionMode:'hybrid'} : {}),
 							selectedTests: matrixRun.selectedTests ?? undefined,
 							securityAuthorization: matrixRun.securityAuthorization ?? undefined,
 							scopeSelection: matrixRun.scopeSelection ?? undefined,
@@ -1258,7 +1265,7 @@ export function createApplication(options = {}) {
 						selectedTests,
 						securityAuthorization,
 						scopeSelection
-					}, { ownerUserId: request.auth?.userId ?? null });
+					}, { ownerUserId: request.auth?.userId ?? null, role:request.auth?.role });
 					const started = orchestrator.start(record.id);
 					if (!started.ok) {
 						return { status: 409, body: { error: started.error } };
@@ -1907,7 +1914,7 @@ export function createApplication(options = {}) {
 			const environment = await resolveEnvironmentForRun(services, request.body?.environmentId);
 			// The engine follows the selected browser (Safari → WebKit, Firefox →
 			// Gecko); an unrunnable selection fails here, before a run exists.
-			const testCase = await resolveTestCaseForRun(services, request.body?.testCaseId, environment?.envId);
+			const testCase = await resolveTestCaseForRun(services, request.body?.testCaseId, environment?.envId, {role:request.auth?.role, allowWrites:request.body?.allowTestWrites === true});
 			const engine = await preflightQaRuntime({ environment, engine: request.body?.engine ?? 'chromium' });
 			const cohort = cohortFor(request.auth?.role).cohort;
 			const scopeSelection = normalizeQaScopeSelection(request.body?.scopeSelection);

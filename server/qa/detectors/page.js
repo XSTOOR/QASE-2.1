@@ -79,7 +79,10 @@ async function highlight(page, rect, label) {
 		const y = Math.max(0, rect.y - Math.round(viewport.height / 3));
 		await page.evaluate(top => window.scrollTo(0, top), y);
 		await page.waitForTimeout(120);
-		return await page.screenshot({ type: 'jpeg', quality: 70, timeout: 5000 });
+		// Surrounding fields are visible in a viewport capture even when a
+		// different control is the subject of the finding.
+		const fields = page.locator('input:not([type=button],[type=submit],[type=reset],[type=image],[type=checkbox],[type=radio],[type=hidden]), textarea, select, [contenteditable]:not([contenteditable=false])');
+		return await page.screenshot({ type: 'jpeg', quality: 70, timeout: 5000, mask: [fields, page.locator('iframe,frame')] });
 	} catch {
 		return undefined;
 	} finally {
@@ -223,34 +226,9 @@ export async function auditPage(page, { url, viewport, touch = false, log, save,
 		}));
 	}
 
-	// ---------- Console, page errors and network ----------
-	const origin = new URL(url).origin;
-	const pageErrors = log?.pageErrors ?? [];
-	for (const error of pageErrors.slice(0, 5)) out.push(candidate({ detector: 'page.page_error', category: 'console', severity: 'high', confidence: 0.9,
-		title: `Uncaught JavaScript error: ${error.message.slice(0, 120)}`, url, viewport, actual: error.message,
-		expected: 'The page runs without uncaught exceptions.', evidence: error.stack, steps: [`Open ${url}`, 'Open the browser console'],
-		fix: FIX_GUIDANCE.page_error, data: { key: error.message.slice(0, 120) } }));
-	// "Failed to load resource" duplicates the failed-request findings below.
-	const consoleErrors = (log?.console ?? []).filter(item => item.type === 'error' && !/favicon/i.test(item.text) && !/net::ERR_BLOCKED_BY_CLIENT|Failed to load resource/i.test(item.text));
-	const distinct = [...new Map(consoleErrors.map(item => [item.text.replace(/\d+/g, '#').slice(0, 160), item])).values()];
-	for (const error of distinct.slice(0, 4)) out.push(candidate({ detector: 'page.console_error', category: 'console', severity: /failed to load resource/i.test(error.text) ? 'low' : 'medium', confidence: 0.75,
-		title: `Console error: ${error.text.slice(0, 120)}`, url, viewport, actual: error.text, expected: 'The page logs no errors.',
-		evidence: error.location ? `Source: ${error.location}` : undefined, steps: [`Open ${url}`, 'Open the browser console'], fix: FIX_GUIDANCE.console_error,
-		data: { key: error.text.replace(/\d+/g, '#').slice(0, 160) } }));
-	const failures = [];
-	for (const response of log?.responses ?? []) {
-		if (response.status >= 400 && response.status !== 401 && !/favicon\.ico/.test(response.url) && response.resourceType !== 'document') failures.push({ url: response.url, detail: `HTTP ${response.status}`, status: response.status, type: response.resourceType });
-	}
-	for (const failed of log?.failedRequests ?? []) if (!/favicon/.test(failed.url)) failures.push({ url: failed.url, detail: failed.failure, type: failed.resourceType });
-	for (const failure of [...new Map(failures.map(item => [item.url.split('?')[0], item])).values()].slice(0, 6)) {
-		const sameOrigin = failure.url.startsWith(origin);
-		const api = ['xhr', 'fetch'].includes(failure.type);
-		out.push(candidate({ detector: 'page.failed_request', category: 'network', severity: sameOrigin && (api || failure.status >= 500) ? 'high' : sameOrigin ? 'medium' : 'low', confidence: 0.85,
-			title: `${api ? 'API request' : failure.type ?? 'Request'} fails: ${failure.url.replace(origin, '').slice(0, 100) || failure.url.slice(0, 100)}`,
-			url, viewport, actual: `${failure.url} → ${failure.detail}`, expected: 'Every request the page depends on succeeds.',
-			steps: [`Open ${url}`, 'Open the Network panel'], fix: FIX_GUIDANCE.failed_request, data: { key: failure.url.split('?')[0], siteWide: !sameOrigin } }));
-	}
-	if (log?.mainResponse && log.mainResponse.status >= 400) out.push(candidate({ detector: 'page.http_error_page', category: 'functional', severity: log.mainResponse.status >= 500 ? 'critical' : 'high', confidence: 0.95,
+	// Console and resource failures are observations. The run's runtime monitor
+	// produces candidates only for a breached expectation with supporting events.
+	if (log?.mainResponse && !log.mainResponse.statusContract && log.mainResponse.status >= 400) out.push(candidate({ detector: 'page.http_error_page', category: 'functional', severity: log.mainResponse.status >= 500 ? 'critical' : 'high', confidence: 0.95,
 		title: `Page returns HTTP ${log.mainResponse.status}`, url, viewport, actual: `${url} responded with HTTP ${log.mainResponse.status}.`, expected: 'The page loads successfully.',
 		steps: [`Open ${url}`], fix: FIX_GUIDANCE.http_error_page, data: { key: String(log.mainResponse.status) } }));
 

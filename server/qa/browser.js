@@ -14,6 +14,7 @@
  *
  * It also streams JPEG frames to the dashboard's live view.
  */
+import { createRuntimeDiagnostics } from './runtimeDiagnostics.js';
 import { chromium } from 'playwright';
 import { resolveEngine } from '../browserEngines.js';
 import { contextOptionsFor } from '../deviceProfiles.js';
@@ -144,7 +145,7 @@ export function runtimePlan(session, dependencies) {
 	return resolveRunRuntime({ environment: session.environmentSnapshot, engine: session.engine ?? 'chromium', permissionScenario: session.permissionScenario }, dependencies);
 }
 
-export async function createQaBrowser({ session, allowWrites = false, publishFrame, onBlocked, env = process.env, headless = env.QASE_HEADLESS !== 'false' } = {}) {
+export async function createQaBrowser({ session, allowWrites = false, publishFrame, onBlocked, diagnostics = createRuntimeDiagnostics({ session }), env = process.env, headless = env.QASE_HEADLESS !== 'false' } = {}) {
 	// One plan for every mode: the engine follows the selected browser, an
 	// unrunnable selection is refused, a branded binary or device farm is used
 	// when available (server/runRuntime.js).
@@ -163,6 +164,8 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 			browser = await engine.type.launch({ headless, ...engine.launch });
 		}
 	} else browser = await engine.type.launch({ headless, ...engine.launch });
+	let closing = false;
+	browser.once('disconnected', () => { if (!closing) diagnostics.issue('Browser disconnected'); });
 	const origins = allowedOrigins(session.targetUrl, env);
 	const showCursor = env.QASE_AGENT_CURSOR !== 'false';
 	// The existing browser policy keeps private-network (SSRF) protection and
@@ -183,6 +186,11 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	let storageState;
 	let sessionSnapshot; // { origin, items } — sessionStorage is per tab and never part of storageState
 	const contextKeys = new WeakMap();
+	const chromeSessions = new WeakMap();
+	function chromeSession(page) {
+		if (!chromeSessions.has(page)) chromeSessions.set(page, page.context().newCDPSession(page));
+		return chromeSessions.get(page);
+	}
 	const pageRequests = new WeakMap(); // page → Map(request → start time)
 	const settledUrls = new WeakMap(); // page → URL of the document last settled
 	const recentAims = new Map(); // locator → { aim, at }: pointAt and the press share one measurement
@@ -197,6 +205,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	const blockedByPage = new WeakMap();
 	const recentBlocked = [];
 	const noteBlocked = (event, request) => {
+		diagnostics.markBlocked(request);
 		blockedCounts[event.kind] = (blockedCounts[event.kind] ?? 0) + 1;
 		try {
 			const page = request.frame().page();
@@ -281,34 +290,23 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 		// Requests in flight, for settle(): an action is done when what it started has finished.
 		const inflight = new Map();
 		pageRequests.set(page, inflight);
-		page.on('request', request => { if (inflight.size < 500) inflight.set(request, Date.now()); });
-		page.on('requestfinished', request => inflight.delete(request));
-		page.on('requestfailed', request => inflight.delete(request));
+		log.runtime = diagnostics.attach(page, log, inflight);
+		if (diagnostics.enabled && engine.id === 'chromium') {
+			try { await log.runtime.useCDP(await chromeSession(page)); }
+			catch { diagnostics.issue('Chrome session unavailable; Playwright monitoring continued'); }
+		}
 		const push = (list, item) => { if (list.length < MAX_EVENTS) list.push(item); };
-		page.on('console', message => {
-			if (['error', 'warning'].includes(message.type())) push(log.console, { type: message.type(), text: message.text().slice(0, 1000), location: message.location()?.url, ts: Date.now() });
-		});
-		page.on('pageerror', error => push(log.pageErrors, { message: String(error?.message ?? error).slice(0, 1000), stack: String(error?.stack ?? '').slice(0, 2000), ts: Date.now() }));
-		page.on('requestfailed', request => {
-			const failure = request.failure()?.errorText ?? 'failed';
-			if (failure.includes('ERR_BLOCKED_BY_CLIENT') || failure.includes('NS_ERROR_ABORT') || /blocked/i.test(failure)) return;
-			push(log.failedRequests, { url: request.url(), method: request.method(), resourceType: request.resourceType(), failure, ts: Date.now() });
-		});
-		page.on('response', response => {
-			const request = response.request();
-			push(log.responses, { url: response.url(), status: response.status(), method: request.method(), resourceType: request.resourceType(), ts: Date.now() });
-		});
 		page.on('dialog', dialog => {
-			push(log.dialogs, { type: dialog.type(), message: dialog.message().slice(0, 500), ts: Date.now() });
+			push(log.dialogs, { type: dialog.type(), message: diagnostics.policy.message(dialog.message()), ts: Date.now() });
 			dialog.dismiss().catch(() => {});
 		});
 		page.on('popup', popup => popup.close().catch(() => {}));
 		page.on('websocket', socket => {
-			const entry = { url: socket.url().slice(0, 300), frames: 0, errors: [], closedAt: undefined, openedAt: Date.now() };
+			const entry = { url: diagnostics.policy.url(socket.url()), frames: 0, errors: [], closedAt: undefined, openedAt: Date.now() };
 			push(log.websockets, entry);
 			socket.on('framereceived', () => { entry.frames++; });
 			socket.on('framesent', () => { entry.frames++; });
-			socket.on('socketerror', error => { if (entry.errors.length < 5) entry.errors.push(String(error).slice(0, 200)); });
+			socket.on('socketerror', error => { if (entry.errors.length < 5) entry.errors.push(diagnostics.policy.message(error)); });
 			socket.on('close', () => { entry.closedAt = Date.now(); });
 		});
 		activePage = page;
@@ -329,8 +327,12 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 		await settle(page, { ...(quietMs ? { quietMs } : {}), load: true });
 		if (log && response) {
 			let headers = {};
-			try { headers = await response.allHeaders(); } catch { /* headers unavailable */ }
-			log.mainResponse = { url: response.url(), status: response.status(), headers };
+			try {
+				const allowed = ['content-security-policy', 'strict-transport-security', 'x-frame-options', 'x-content-type-options', 'referrer-policy', 'server', 'x-powered-by', 'x-aspnet-version'];
+				const received = response.headers();
+				for (const name of allowed) if (received[name]) headers[name] = received[name].replace(/'nonce-[^']+'/gi, "'nonce-[redacted]'");
+			} catch { /* headers unavailable */ }
+			log.mainResponse = { url: response.url(), status: response.status(), headers, statusContract: log.runtime?.hasStatusContract(response.request()) };
 		}
 		return response;
 	}
@@ -447,6 +449,10 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	 * Presses a control the way the device's user would: a tap (touch events,
 	 * then the click) on a touch screen, a mouse click elsewhere.
 	 */
+	function observeAction(page, element, name, run) {
+		return diagnostics.action(page, { name, element, run, executed: () => true });
+	}
+
 	async function activate(locator, options = {}, page) {
 		let touch = false;
 		try { touch = touchContexts.has((page ?? locator.page()).context()); } catch { /* detached locator */ }
@@ -454,9 +460,12 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 		// list row or card is often a nested control (Reply, Delete, a menu) — a wrong click.
 		const aim = options.position ? undefined : await aimPoint(locator);
 		const pressOptions = aim ? { ...options, position: aim.position } : options;
-		if (!touch) return locator.click(pressOptions);
-		const { button, clickCount, delay, ...tapOptions } = pressOptions;
-		return locator.tap(tapOptions);
+		const perform = () => {
+			if (!touch) return locator.click(pressOptions);
+			const { button, clickCount, delay, ...tapOptions } = pressOptions;
+			return locator.tap(tapOptions);
+		};
+		return observeAction(page ?? locator.page?.(), locator, 'click', perform);
 	}
 
 	/**
@@ -565,6 +574,8 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 	}
 
 	async function close() {
+		closing = true;
+		await diagnostics.flush();
 		stopFrames();
 		for (const ctx of contexts.values()) await ctx.close().catch(() => {});
 		contexts.clear();
@@ -621,7 +632,7 @@ export async function createQaBrowser({ session, allowWrites = false, publishFra
 			if (!await policyAllows(String(url), false)) throw new Error(`Blocked by browser safety policy: ${new URL(String(url)).origin}`);
 			return fetchImpl(url, init);
 		},
-		context, openPage, goto, settle, interact, activate, aimPoint, markedScreenshot, permitWritesFor, useSignedInState,
+		chromeSession, observeAction, context, openPage, goto, settle, interact, activate, aimPoint, markedScreenshot, permitWritesFor, useSignedInState,
 		signedIn: () => Boolean(storageState),
 		startFrames, stopFrames,
 		getLastFrame: () => lastFrame,

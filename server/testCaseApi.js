@@ -31,6 +31,7 @@ export function createTestCaseRoutes({ testCases, runs, autogen, onError }) {
 				delete body.source;
 				delete body.sourceRunId;
 				delete body.sourceUrl;
+				delete body.generation;
 				const record = await testCases.create(body);
 				response.status(201).json(record);
 			} catch (error) {
@@ -77,6 +78,32 @@ export function createTestCaseRoutes({ testCases, runs, autogen, onError }) {
 			}
 		});
 
+		app.get('/api/test-cases/:caseNumber/evidence', async (request,response) => {
+			try {
+				const record = await testCases.get(request.params.caseNumber);
+				if (!record?.generation) return response.status(404).json({error:'No source inspection for this case.'});
+				const session = await runs?.get?.(record.sourceRunId);
+				if (session?.ownerUserId && session.ownerUserId !== request.auth?.userId && !['owner','admin'].includes(request.auth?.role)) return response.status(403).json({error:'Run access required.'});
+				const snapshot = session?.report?.qaEngine?.domCaseEvidence?.pages?.find(p => p.snapshotId === record.generation.snapshotId && p.url === record.sourceUrl);
+				const element = snapshot?.elements.find(e => e.fingerprint === record.generation.element.fingerprint);
+				if (!element) return response.status(404).json({error:'The original inspection is unavailable.'});
+				response.set('Cache-Control','no-store');
+				response.json({runId:session.id, snapshotId:snapshot.snapshotId, url:snapshot.url, observedAt:snapshot.observedAt, element,
+					related:snapshot.elements.filter(e => record.generation.related.includes(e.fingerprint))});
+			} catch (error) { onError(request,response,error); }
+		});
+
+		app.post('/api/test-cases/:caseNumber/review', async (request, response) => {
+			if (!['owner','admin'].includes(request.auth?.role)) return response.status(403).json({error:'Project reviewer permission required.'});
+			try {
+				const record = await testCases.review(request.params.caseNumber, request.body ?? {}, request.auth);
+				response.json(record);
+			} catch (error) {
+				if (error.code === 'QASE_TESTCASE_INVALID') return response.status(422).json({error:error.message});
+				onError(request,response,error);
+			}
+		});
+
 		app.delete('/api/test-cases/:caseNumber', async (request, response) => {
 			try {
 				const record = await testCases.remove(request.params.caseNumber);
@@ -108,6 +135,7 @@ export function createTestCaseRoutes({ testCases, runs, autogen, onError }) {
 					response.status(404).json({ error: 'Unknown run.' });
 					return;
 				}
+				if (session.ownerUserId && session.ownerUserId !== request.auth?.userId && !['owner','admin'].includes(request.auth?.role)) return response.status(403).json({error:'Run access required.'});
 				if (!session.report) {
 					response.status(409).json({ error: 'This run has no published report yet.' });
 					return;
@@ -117,7 +145,7 @@ export function createTestCaseRoutes({ testCases, runs, autogen, onError }) {
 					created: result.created,
 					count: result.created.length,
 					skipped: result.skipped ?? null,
-					path: result.path ?? null
+					path: result.path ?? null, status: result.status, issues: result.issues, duplicates: result.duplicates
 				});
 			} catch (error) {
 				if (error?.code === 'QASE_TESTCASE_INVALID') {

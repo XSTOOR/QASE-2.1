@@ -79,6 +79,7 @@ export function normalizeTestCaseInput(input = {}) {
 		// Provenance: 'manual' (default) vs 'auto' (agent-generated from a run).
 		// The public API can only create manual records; the autogen engine sets
 		// these through testCases.create with source passed explicitly.
+		...(input.source === 'auto' && input.generation ? {generation: input.generation} : {}),
 		source: input.source === 'auto' ? 'auto' : 'manual',
 		sourceRunId: typeof input.sourceRunId === 'string' ? input.sourceRunId.slice(0, 128) : null,
 		sourceUrl: typeof input.sourceUrl === 'string' ? input.sourceUrl.slice(0, 2048) : null
@@ -105,6 +106,7 @@ function rowToTestCase(row) {
 		expected: row.expected ?? null,
 		tags: row.tags ?? [],
 		environmentIds: row.environment_ids ?? row.environmentIds ?? [],
+		...(row.generation ? { generation: row.generation } : {}),
 		source: row.source ?? 'manual',
 		sourceRunId: row.source_run_id ?? row.sourceRunId ?? null,
 		sourceUrl: row.source_url ?? row.sourceUrl ?? null,
@@ -142,16 +144,16 @@ export function createLocalTestCaseBackend(options = {}) {
 
 	function loadFromDisk() {
 		if (loaded) return;
-		loaded = true;
 		try {
 			const raw = fs.readFileSync(stateFile, 'utf8');
 			const parsed = JSON.parse(raw);
 			for (const record of Array.isArray(parsed) ? parsed : []) {
 				if (record?.caseNumber) byCaseNumber.set(record.caseNumber, record);
 			}
-		} catch {
-			/* first boot — empty file */
+		} catch (error) {
+			if (error.code !== 'ENOENT') throw error;
 		}
+		loaded = true;
 	}
 
 	function persistNow() {
@@ -160,8 +162,10 @@ export function createLocalTestCaseBackend(options = {}) {
 			const tmp = `${stateFile}.tmp-${process.pid}-${randomUUID()}`;
 			fs.writeFileSync(tmp, JSON.stringify([...byCaseNumber.values()], undefined, '\t'), { mode: 0o600 });
 			fs.renameSync(tmp, stateFile);
-		} catch {
-			/* dashboard stays usable even if the write fails */
+		} catch (error) {
+			loaded = false;
+			byCaseNumber.clear();
+			throw error;
 		}
 	}
 
@@ -189,6 +193,7 @@ export function createLocalTestCaseBackend(options = {}) {
 		},
 		async create(_tenant, input) {
 			loadFromDisk();
+			if (input.generation && [...byCaseNumber.values()].some(r => !r.deleted && r.generation?.key === input.generation.key)) throw new TestCaseConflictError(input.title);
 			const record = {
 				id: randomUUID(),
 				caseNumber: nextCaseNumber(byCaseNumber),
@@ -205,6 +210,8 @@ export function createLocalTestCaseBackend(options = {}) {
 			loadFromDisk();
 			const record = byCaseNumber.get(String(caseNumber));
 			if (!record || record.deleted) return null;
+			if (patch.previousVersion !== undefined && record.generation?.version !== patch.previousVersion) throw new TestCaseValidationError('The case changed. Refresh and review the latest version.');
+			if (patch.generation) record.generation = patch.generation;
 			if (patch.title !== undefined || patch.description !== undefined
 				|| patch.expected !== undefined || patch.steps !== undefined || patch.tags !== undefined) {
 				const merged = normalizeTestCaseInput({
@@ -213,6 +220,7 @@ export function createLocalTestCaseBackend(options = {}) {
 					expected: patch.expected !== undefined ? patch.expected : record.expected,
 					steps: patch.steps !== undefined ? patch.steps : record.steps,
 					tags: patch.tags !== undefined ? patch.tags : record.tags,
+					source: record.source, sourceRunId: record.sourceRunId, sourceUrl: record.sourceUrl,
 					environmentIds: record.environmentIds
 				});
 				Object.assign(record, merged);
@@ -263,6 +271,23 @@ export function createTestCaseService(backend, options = {}) {
 			await assertEnvironmentsAssignable(environmentsService, normalized.environmentIds);
 			return rowToTestCase(await backend.create(withTenant(), normalized));
 		},
+		async markOutdated(record) {
+			const g = record.generation;
+			return backend.update(withTenant(), record.caseNumber, {previousVersion:g.version, generation:{...g, stale:true, version:g.version+1}});
+		},
+		async review(caseNumber, { decision, version }, actor) {
+			if (!['owner','admin'].includes(actor?.role)) throw new TestCaseValidationError('An authorized project reviewer is required.');
+			const c = rowToTestCase(await backend.get(withTenant(), caseNumber));
+			if (!c?.generation || c.generation.version !== version) throw new TestCaseValidationError('Refresh the case before review.');
+			if (!['approve','reject'].includes(decision)) throw new TestCaseValidationError('Invalid review decision.');
+			if (decision === 'approve' && (c.generation.stale || !c.expected?.trim() || !c.steps?.length)) throw new TestCaseValidationError('A current selector, steps and explicit expected result are required.');
+			const g = {...c.generation, version:version+1, reviewStatus:decision === 'approve' ? 'Ready for Execution' : 'Rejected',
+				reviewedBy: actor.userId ?? actor.actorUserId, reviewedAt:new Date().toISOString(), decision:decision === 'approve' ? 'Approved' : 'Rejected' };
+			if (decision === 'approve' && (g.specification || g.original.expected !== c.expected || JSON.stringify(g.original.steps) !== JSON.stringify(c.steps) ||
+				g.original.testData !== g.testData || ['Review disclosure behavior','Clarify button outcome'].includes(g.objective))) g.reviewStatus = 'Approved';
+			if (decision === 'approve' && ['Unknown','AI-Inferred','User Provided'].includes(g.expectationSource)) { g.expectationSource = 'Confirmed Requirement'; g.confidence = 'high'; }
+			return rowToTestCase(await backend.update(withTenant(), caseNumber, {previousVersion:version,generation:g}));
+		},
 		async update(caseNumber, patch = {}) {
 			const existing = await backend.get(withTenant(), caseNumber);
 			if (!existing) return null;
@@ -277,6 +302,15 @@ export function createTestCaseService(backend, options = {}) {
 			// Normalize content patches so invalid values (e.g. empty title) fail
 			// with 422 instead of reaching a DB CHECK as a 500.
 			const normalizedPatch = { ...patch };
+			delete normalizedPatch.generation;
+			delete normalizedPatch.previousVersion;
+			if (existing.generation) {
+				if (patch.version !== existing.generation.version) throw new TestCaseValidationError('Refresh the generated case before editing.');
+				if (patch.testData !== undefined && (typeof patch.testData !== 'string' || patch.testData.length > 500)) throw new TestCaseValidationError('Synthetic test data must be at most 500 characters.');
+				normalizedPatch.previousVersion = patch.version;
+				normalizedPatch.generation = {...existing.generation, reviewStatus:'Modified', decision:null, version:patch.version+1,
+					testData:patch.testData ?? existing.generation.testData, expectationSource:patch.expected !== undefined && patch.expected !== existing.expected ? 'User Provided' : existing.generation.expectationSource};
+			}
 			if (patch.title !== undefined || patch.description !== undefined
 				|| patch.expected !== undefined || patch.steps !== undefined || patch.tags !== undefined) {
 				const merged = normalizeTestCaseInput({
@@ -301,9 +335,14 @@ export function createTestCaseService(backend, options = {}) {
 		 * Validate a run start against a case: case exists, not deleted, and the
 		 * environment is assigned to it. Returns the case record for snapshotting.
 		 */
-		async resolveForRun(caseNumber, environmentId) {
+		async resolveForRun(caseNumber, environmentId, execution = {}) {
 			const record = rowToTestCase(await backend.get(withTenant(), caseNumber));
 			if (!record) throw new TestCaseValidationError(`Unknown test case "${caseNumber}".`);
+			if (record.generation && (record.generation.reviewStatus !== 'Ready for Execution' || record.generation.stale)) throw new TestCaseValidationError('This generated case needs current evidence and reviewer approval before execution.');
+			if (record.generation) {
+				if (!['owner','admin','developer'].includes(execution.role)) throw new TestCaseValidationError('Project execution permission is required for a generated case.');
+				if (record.generation.requiresWrite && (!execution.allowWrites || !environmentId)) throw new TestCaseValidationError('Select a test environment and explicitly enable test writes for this case.');
+			}
 			if (environmentId && !record.environmentIds.includes(environmentId)) {
 				throw new TestCaseValidationError(
 					`Environment "${environmentId}" is not assigned to ${record.caseNumber}.`

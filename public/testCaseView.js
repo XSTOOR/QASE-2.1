@@ -116,6 +116,30 @@ export function createTestCaseView({ api, toast, fail, elements, onStartRun, onQ
 			titleMain.append(' ', autoPill);
 		}
 		title.append(titleMain);
+		const gen = testCase.generation;
+		if (gen) {
+			const info = document.createElement('details');
+			const summary = document.createElement('summary');
+			summary.textContent = [gen.reviewStatus, gen.expectationSource, gen.stale ? 'Source changed' : ''].filter(Boolean).join(' · ');
+			const body = document.createElement('div');
+			for (const line of [testCase.sourceUrl, gen.element.css, gen.element.xpath, 'Snapshot ' + gen.snapshotId, ...testCase.steps,
+				testCase.expected || 'Expected result unresolved', 'Test data · ' + (gen.testData || 'None'), gen.confidence + ' confidence · ' + gen.priority + ' priority',
+				gen.reviewStatus === 'Approved' ? 'Manual execution required for the reviewed procedure.' : '', gen.specification ? 'Source test specification · ' + gen.specification : '',
+				gen.method + (gen.model ? ' · ' + gen.model : ''), gen.duplicates.kind + ' ' + gen.duplicates.matches.join(', '), ...gen.preconditions].filter(Boolean)) {
+				const p = document.createElement('div'); p.textContent = line; body.append(p);
+			}
+			const source = document.createElement('button');
+			source.type = 'button'; source.textContent = 'View source inspection';
+			source.addEventListener('click', async () => {
+				try {
+					const evidence = await api('/test-cases/' + testCase.caseNumber + '/evidence');
+					const pre = document.createElement('pre'); pre.textContent = JSON.stringify(evidence,null,2);
+					source.replaceWith(pre);
+				} catch (error) { fail(error); }
+			});
+			body.append(source);
+			info.append(summary,body); title.append(info);
+		}
 		const desc = (testCase.description ?? '').trim();
 		if (desc) {
 			const descLine = document.createElement('div');
@@ -156,10 +180,12 @@ export function createTestCaseView({ api, toast, fail, elements, onStartRun, onQ
 		runBtn.type = 'button';
 		runBtn.className = 'btn btn-primary btn-sm tc-run';
 		runBtn.textContent = 'Run';
+		runBtn.disabled = !!gen && (gen.reviewStatus !== 'Ready for Execution' || gen.stale);
 		runBtn.title = (testCase.environmentIds ?? []).length > 1
 			? 'Choose where to run this test'
 			: 'Start a QA run against this case';
 		runBtn.addEventListener('click', () => {
+			if (gen) dialog.close();
 			if (workflow?.oneClickRun) workflow.oneClickRun(testCase);
 			else onStartRun?.(testCase);
 		});
@@ -175,6 +201,16 @@ export function createTestCaseView({ api, toast, fail, elements, onStartRun, onQ
 			deleteBtn.addEventListener('click', () => void removeCase(testCase));
 
 		actions.append(runBtn, ' ', editBtn, ' ', deleteBtn);
+		if (gen && !gen.stale) for (const decision of ['approve','reject']) {
+			const button = document.createElement('button'); button.type = 'button'; button.className = 'btn btn-ghost btn-sm';
+			button.textContent = decision === 'approve' ? 'Approve for execution' : 'Reject';
+			button.disabled = decision === 'approve' ? !testCase.expected || ['Approved','Ready for Execution'].includes(gen.reviewStatus) : gen.reviewStatus === 'Rejected';
+			button.onclick = async () => { try {
+				await api('/test-cases/' + testCase.caseNumber + '/review', {method:'POST',body:JSON.stringify({decision,version:gen.version})});
+				await refresh();
+			} catch (error) { fail(error); } };
+			actions.append(button);
+		}
 		if (testCase.source === 'auto' && testCase.sourceRunId && onOpenRun) {
 			const viewRunBtn = document.createElement('button');
 			viewRunBtn.type = 'button';
@@ -211,6 +247,12 @@ function relativeDate(iso) {
 
 	function openEditor(testCase = null) {
 		state.editing = testCase;
+		form?.querySelector?.('[data-dom-case-data]')?.remove();
+		if (testCase?.generation && form) {
+			const label = document.createElement('label'); label.dataset.domCaseData = '1'; label.textContent = 'Synthetic test data';
+			const input = document.createElement('input'); input.name = 'domTestData'; input.maxLength = 500; input.value = testCase.generation.testData ?? '';
+			label.append(input); form.insertBefore(label, form.firstChild);
+		}
 		if (formTitle) formTitle.value = testCase?.title ?? '';
 		if (formDescription) formDescription.value = testCase?.description ?? '';
 		if (formExpected) formExpected.value = testCase?.expected ?? '';
@@ -238,6 +280,8 @@ function relativeDate(iso) {
 		submitBtn.textContent = 'Saving…';
 		try {
 			if (state.editing) {
+				Object.assign(payload, environmentPatch(state.editing.environmentIds, deviceList.ids));
+				if (state.editing.generation) Object.assign(payload, {version:state.editing.generation.version,testData:form.elements.domTestData.value});
 				await api(`/test-cases/${state.editing.caseNumber}`, { method: 'PATCH', body: JSON.stringify(payload) });
 				toast(`${state.editing.caseNumber} updated.`);
 			} else {

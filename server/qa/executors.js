@@ -186,7 +186,7 @@ async function slowNetwork(ctx, scenario) {
 	}
 	if (ctx.browser.engine === 'chromium' && timeLeft(ctx)) {
 		await withPage(ctx, 'about:blank', { isolated: true }, async page => {
-			const cdp = await page.context().newCDPSession(page);
+			const cdp = await ctx.browser.chromeSession(page);
 			await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 400, downloadThroughput: 64 * 1024, uploadThroughput: 32 * 1024 });
 			const started = Date.now();
 			await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
@@ -247,7 +247,7 @@ async function memory(ctx, scenario) {
 	const candidates = [];
 	const evidence = [];
 	await withPage(ctx, url, {}, async (page, log) => {
-		const cdp = await page.context().newCDPSession(page);
+		const cdp = await ctx.browser.chromeSession(page);
 		const sample = async () => { await cdp.send('HeapProfiler.collectGarbage').catch(() => {}); return (await cdp.send('Runtime.getHeapUsage').catch(() => ({ usedSize: 0 }))).usedSize; };
 		const samples = [await sample()];
 		const toggles = await page.locator('[aria-expanded], details > summary').count().catch(() => 0);

@@ -4247,7 +4247,12 @@ function renderReport() {
 					body: JSON.stringify({ runId: state.sessionId })
 				});
 				const count = Number(result?.count ?? 0);
-				if (count > 0) {
+				if (result.status === 'Failed' || result.status === 'Partially Completed') {
+					toast(count + ' cases created · ' + (result.issues?.[0] || result.status));
+					if (count) testCaseView?.refresh?.();
+				} else if (result.skipped === 'no-supported-dom-evidence') {
+					toast('No supported DOM evidence for test generation.');
+				} else if (count > 0) {
 					toast(`${count} test case${count === 1 ? '' : 's'} generated from this run.`, 'good');
 					testCaseView?.refresh?.();
 				} else if (result?.skipped === 'already-generated') {
@@ -7130,8 +7135,8 @@ const deviceMatrix = $('device-matrix') ? createDeviceMatrixView({
 openDeviceMatrixButton?.addEventListener('click', () => deviceMatrix?.open());
 
 /* ── Test cases (Phase 4) ───────────────────────────────────────── */
-function startRunForTestCase(testCase) {
-	openQaStart();
+async function startRunForTestCase(testCase) {
+	await openQaStart();
 	// DX Phase 3: assigned-env prefill goes through the ONE picker's data, not
 	// a disabled select. If the current selection isn't assigned to the case,
 	// switch to the first assigned environment (still one source of truth).
@@ -7150,6 +7155,7 @@ function startRunForTestCase(testCase) {
 	}
 	qaUi._testCaseId = testCase.caseNumber;
 	qaUi._testCaseSnapshot = testCase;
+	if (testCase.generation) { qaUi.targetUrl.value = testCase.sourceUrl; syncQaSubmitState(); }
 	el.composerInput.placeholder = `Run ${testCase.caseNumber} — ${testCase.title}`;
 }
 
@@ -7174,6 +7180,7 @@ const workflow = {
 	platformsOf,
 	caseEnvLines,
 	oneClickRun(testCase) {
+		if (testCase.generation) return startRunForTestCase(testCase);
 		const assigned = testCase.environmentIds ?? [];
 		if (!assigned.length) {
 			// Zero assigned environments → current device emulation with a note.

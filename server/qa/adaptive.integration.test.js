@@ -110,7 +110,8 @@ test('adaptive run: observes, signs in (two steps), maps, plans, replans, re-aut
 
 		// Seeded defects across the workspace.
 		const detectors = new Set(session.findings.map(item => item.detector));
-		for (const expected of ['authz.protected_page_public', 'search.pagination_error', 'security.reflected_xss', 'page.failed_request', 'forms.no_validation']) assert.ok(detectors.has(expected), `found ${expected}`);
+		for (const expected of ['authz.protected_page_public', 'search.pagination_error', 'security.reflected_xss', 'forms.no_validation']) assert.ok(detectors.has(expected), `found ${expected}`);
+		assert.ok(qa.runtimeDiagnostics.events.some(event => event.status === 500 && event.resourceType === 'fetch'), 'records failed API observations');
 		assert.ok(session.findings.some(item => item.detector === 'authz.protected_page_public' && item.url.endsWith('/workspace/app/reports')));
 		assert.ok(!session.findings.some(item => item.detector === 'state.session_lost'), 'ordinary expiry is not reported as a persistence bug');
 		for (const finding of session.findings) assert.ok(finding.actual && (finding.steps?.length || finding.evidence), `${finding.title} has evidence`);
@@ -202,7 +203,7 @@ test('a button-navigated app behind a welcome tour is walked screen by screen, t
 	const lab = await startQaLab();
 	try {
 		const { session, runStore, artifactStore } = harness(`${lab.url}workspace/rail/`);
-		await runQaEngine({ session, runStore, record: {}, env: { ...ENV, QASE_QA_MAX_MINUTES: '8', QASE_QA_MAX_PAGES: '6' }, settings: qaModelSettings({}, {}), artifactStore });
+		await runQaEngine({ session, runStore, record: {}, env: { ...ENV, QASE_QA_RUNTIME_DIAGNOSTICS: JSON.stringify({ publicPaths: ['/workspace/rail/meeting'], maxEvents: 5000 }), QASE_QA_MAX_MINUTES: '8', QASE_QA_MAX_PAGES: '6' }, settings: qaModelSettings({}, {}), artifactStore });
 		const graph = session.hybrid.graph;
 		const paths = Object.keys(graph.pages).map(url => new URL(url).pathname);
 		for (const path of ['/workspace/rail/projects', '/workspace/rail/meeting', '/workspace/rail/about', '/workspace/rail/projects/42']) assert.ok(paths.includes(path), `reached ${path} by clicking (got ${paths.join(', ')})`);
@@ -215,7 +216,7 @@ test('a button-navigated app behind a welcome tour is walked screen by screen, t
 		assert.ok(!graph.views.some(view => /Welcome to Rail/.test(view.heading)), 'a returning tour is not mistaken for a feature');
 		assert.ok(session.hybrid.overlaysDismissed?.some(item => /Welcome to Rail/.test(item) && /Skip/.test(item)), 'the tour was closed with Skip');
 		assert.ok(session.hybrid.graph.transitions.some(item => /click "Projects"/.test(item.via)));
-		assert.ok(session.hybrid.candidates.some(item => item.detector === 'page.failed_request' && item.url.includes('/workspace/rail/meeting')), 'the failing API on a click-only screen was found');
+		assert.ok(session.report.qaEngine.runtimeDiagnostics.events.some(event => event.resourceType === 'fetch' && event.status === 500 && event.pageUrl.endsWith('/workspace/rail/meeting')), 'the failing API on a click-only screen was recorded');
 		// In place: Back restores the screen; page loads are rare.
 		assert.ok(session.hybrid.uiWalk.backs >= 3, `went back with history (${JSON.stringify(session.hybrid.uiWalk)})`);
 		assert.ok(session.hybrid.uiWalk.reloads <= 2, `reloads stay rare (${JSON.stringify(session.hybrid.uiWalk)})`);

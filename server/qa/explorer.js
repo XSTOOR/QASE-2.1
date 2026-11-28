@@ -242,7 +242,7 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 				clickReceipt = undefined;
 				let result;
 				try {
-					result = await dispatch(name, args);
+					result = await dispatch(name, args, call.id);
 				} catch (error) {
 					result = `Error: ${String(error.message).split('\n')[0].slice(0, 200)}`;
 				}
@@ -305,13 +305,17 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 		return undefined;
 	}
 
-	async function dispatch(name, args) {
+	async function dispatch(name, args, stepId) {
+		const monitored = (element, run) => ACTIONS.has(name) && log?.runtime ? log.runtime.action({
+			stepId, name, ref: args.ref, element, run,
+			executed: result => name === 'click' ? clickReceipt?.matched === true : /^RESULT:/m.test(String(result)) && !/^Refused/.test(String(result))
+		}) : run();
 		if (forms && name === 'press' && args.key === 'Enter') {
 			const focused = await page.evaluateHandle(() => document.activeElement);
-			try { return await forms.observe(focused, () => runTool(name, args)); }
+			try { return await monitored(focused, () => forms.observe(focused, () => runTool(name, args))); }
 			finally { await focused.dispose().catch(() => {}); }
 		}
-		if (!['click', 'type', 'select'].includes(name)) return runTool(name, args);
+		if (!['click', 'type', 'select'].includes(name)) return monitored(undefined, () => runTool(name, args));
 		const handle = await observations.get(page)?.evaluateHandle((state, ref) => state.controls.get(ref)?.() ?? null, args.ref).catch(() => undefined);
 		const popupUrls = [];
 		const recordPopup = popup => popupUrls.push(popup.url());
@@ -320,7 +324,14 @@ export async function explore({ browser, profile, startUrl, models, knownIssues 
 			if (!element) return `Element ${args.ref} no longer exists or changed since observation. Choose again:\n${await observe(page, log)}`;
 			if (name === 'click') page.on('popup', recordPopup);
 			const perform = () => runTool(name, args, element, popupUrls);
-			return forms && (name === 'click' || name === 'type' && args.submit) ? await forms.observe(element, perform) : await perform();
+			const observeForm = async () => {
+				const previous = forms.outcomes.at(-1)?.artifactId;
+				const result = await forms.observe(element, perform);
+				const receipt = forms.outcomes.at(-1)?.artifactId;
+				if (receipt && receipt !== previous) log?.runtime?.receipt(receipt);
+				return result;
+			};
+			return await monitored(element, () => forms && (name === 'click' || name === 'type' && args.submit) ? observeForm() : perform());
 		} finally {
 			if (name === 'click') page.off('popup', recordPopup);
 			await handle?.dispose().catch(() => {});

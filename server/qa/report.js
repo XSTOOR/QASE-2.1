@@ -77,6 +77,8 @@ export function buildReport({ session, findings, dismissed, coverage, limitation
 			version: 2,
 			formOutcomes: (session.hybrid?.plan?.scenarios ?? []).flatMap(item => item.formOutcomes ?? []),
 			formSaveGaps,
+			runtimeDiagnostics: session.hybrid?.runtimeDiagnostics,
+			domCaseEvidence: session.hybrid?.domCaseEvidence,
 			formValidation: session.hybrid?.pageReview?.formValidation ?? [],
 			coverage,
 			models: {
@@ -108,6 +110,13 @@ export function adaptiveReport({ session, findings, dismissed, coverage, limitat
 	const reasoner = models.state.reasoner; const jev = models.state.jev;
 	const tokens = { reasoner: { calls: reasoner.calls, input: reasoner.inputTokens, output: reasoner.outputTokens }, jev: { calls: jev.calls, input: jev.inputTokens, output: jev.outputTokens }, byTask: routing.tokens, total: reasoner.inputTokens + reasoner.outputTokens + jev.inputTokens + jev.outputTokens };
 	const section = (id, title, items) => ({ id, title, items: items.filter(item => item !== undefined && item !== '').map(item => typeof item === 'string' ? item.slice(0, 600) : item) });
+	const diagnostics = session.hybrid?.runtimeDiagnostics;
+	const runtimeIndex = diagnostics ? [
+		'Runtime monitoring ' + diagnostics.status + ' · ' + diagnostics.events.length + ' retained events',
+		...diagnostics.events.filter(event => event.reason || event.performance).slice(-10).map(event =>
+			[event.classification, event.method, event.url, event.status, event.reason,
+				event.performance && (event.durationMs ?? event.observedMs) + ' ms', event.id].filter(Boolean).join(' · '))
+	] : [];
 	const sections = [
 		section('summary', '1. Executive summary', [`Verdict: ${verdict}. Completion gate: ${gate.status}.`, `${findings.length} confirmed finding(s); ${counts.passed} of ${coverageRows.length} categories passed, ${counts.failed} failed.`]),
 		section('gate', '2. Completion gate', gate.checks.map(check => `${check.ok ? '✓' : '✗'} ${check.id}: ${check.detail}`)),
@@ -120,7 +129,7 @@ export function adaptiveReport({ session, findings, dismissed, coverage, limitat
 		section('capabilities', `9. Capability matrix (${CAPABILITY_COUNT} categories)`, [`${Object.entries(counts).map(([state, n]) => `${STATE_LABEL[state]} ${n}`).join(' · ')}`]),
 		section('severity', '10. Findings by severity', SEVERITIES.map(severity => `${severity}: ${findings.filter(item => item.severity === severity).length}`)),
 		section('findings', '11. Findings', findings.slice(0, 40).map(findingLine)),
-		section('evidence', '12. Evidence index', findings.slice(0, 40).map(item => `${item.title}: ${item.artifactId ? `screenshot ${item.artifactId}; ` : ''}${(item.steps ?? []).length} step(s); ${String(item.evidence ?? '').split('\n')[0].slice(0, 160)}`)),
+		section('evidence', '12. Evidence index', [...runtimeIndex, ...findings.slice(0, 40).map(item => `${item.title}: ${item.artifactId ? `screenshot ${item.artifactId}; ` : ''}${(item.steps ?? []).length} step(s); ${String(item.evidence ?? '').split('\n')[0].slice(0, 160)}`)]),
 		// DOM integrity is reported with motion and interaction: both come from watching the page change.
 		...['functional', 'layout', 'motion', 'a11y', 'performance', 'security'].map((group, index) => {
 			const groups = group === 'motion' ? ['motion', 'dom'] : [group];

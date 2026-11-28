@@ -299,7 +299,7 @@ export function createMatrixService(backend, { environments, runs, testCases } =
 	 * against the live services exactly as POST /api/sessions does, then stores
 	 * honest per-item states. Execution is started separately (start).
 	 */
-	async function create(input, { defaultsUsed = false, ownerUserId = null } = {}) {
+	async function create(input, { defaultsUsed = false, ownerUserId = null, role } = {}) {
 		requireServices();
 		const testCaseId = String(input?.testCaseId ?? '').trim();
 		// #15043 (B1): QA-start runs carry no test case — the shared workflow
@@ -350,8 +350,9 @@ export function createMatrixService(backend, { environments, runs, testCases } =
 		// #15043 (B1): QA-start runs (no testCaseId) skip the case lookup —
 		// the workflow is the kickoff text travelling on the run record.
 		const testCase = testCaseId
-			? await testCases.resolveForRun(testCaseId, null)
+			? await testCases.resolveForRun(testCaseId, null, {role})
 			: { caseNumber: null, title: 'QA run' };
+		if (testCase.generation && targetUrl !== testCase.sourceUrl) throw new MatrixValidationError('Use the reviewed case source URL.');
 		let items;
 		if (configurationEnvIds) {
 			// Launcher mode: pin each item to the EXACT requested configuration.

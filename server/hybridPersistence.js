@@ -12,7 +12,12 @@ export function hybridStorage(session) {
   if (session.qaExecutionMode !== 'hybrid') return null;
   if (session.mode !== 'qa') throw new TypeError('QA engine state is QA-only.');
   let state = session.hybrid || null;
-  let serialized = JSON.stringify({ version: 1, executionMode: 'hybrid', state });
+  const envelope = {
+    version: 1, executionMode: 'hybrid',
+    ...(session.testCaseSnapshot?.generation ? {reviewedCase:session.testCaseSnapshot} : {}),
+    ...(session.domCaseGeneration ? {domCaseGeneration:session.domCaseGeneration} : {})
+  };
+  let serialized = JSON.stringify({ ...envelope, state });
   if (Buffer.byteLength(serialized) > MAX_BYTES && state?.version === 2) {
     // Candidates are working data; the published findings and report are durable elsewhere.
     state = {
@@ -22,7 +27,7 @@ export function hybridStorage(session) {
       plan: state.plan ? { ...state.plan, scenarios: (state.plan.scenarios ?? []).map(item => ({ ...item, evidence: (item.evidence ?? []).slice(0, 3) })) } : undefined,
       routing: state.routing ? { ...state.routing, decisions: (state.routing.decisions ?? []).slice(-80) } : undefined
     };
-    serialized = JSON.stringify({ version: 1, executionMode: 'hybrid', state });
+    serialized = JSON.stringify({ ...envelope, state });
   }
   if (Buffer.byteLength(serialized) > MAX_BYTES) throw new TypeError('QA engine state exceeds its durable storage budget.');
   return serialized;
@@ -32,8 +37,18 @@ export function hydrateHybrid(session, stored) {
   if (!stored) return;
   if (session.mode !== 'qa' || stored.version !== 1 || stored.executionMode !== 'hybrid' || (stored.state && ![1, 2].includes(stored.state.version))) throw new TypeError('Unsupported QA engine state.');
   session.qaExecutionMode = 'hybrid';
+  if (stored.reviewedCase) session.testCaseSnapshot = structuredClone(stored.reviewedCase);
+  if (stored.domCaseGeneration) session.domCaseGeneration = structuredClone(stored.domCaseGeneration);
   if (!stored.state) return;
   session.hybrid = structuredClone(stored.state);
+  // The report table stores the common report fields. Restore the DOM evidence
+  // from its existing checkpoint so a reloaded report uses the same inspection.
+  if (session.report && (stored.state.domCaseEvidence || stored.state.domCaseExecution)) {
+    session.report.qaEngine = { ...session.report.qaEngine, version:2,
+      domCaseEvidence:session.hybrid.domCaseEvidence, domCaseExecution:session.hybrid.domCaseExecution,
+      formOutcomes:(session.hybrid.plan?.scenarios ?? []).flatMap(s => s.formOutcomes ?? [])
+    };
+  }
   for (const finding of session.findings || []) {
     const details = stored.state.findingDetails?.[finding.id];
     if (details) Object.assign(finding, structuredClone(details));

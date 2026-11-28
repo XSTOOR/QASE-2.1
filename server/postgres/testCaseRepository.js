@@ -24,6 +24,22 @@ export function createPostgresTestCaseRepository(pool, { tenantContext } = {}) {
 		await client.query("SELECT set_config('qase.project_id', $1, true)", [resolved.projectId]);
 	}
 
+	async function transaction(tenant, work) {
+		const client = await pool.connect();
+		try {
+			await client.query('BEGIN');
+			await withTenant(client, tenant);
+			const result = await work(client);
+			await client.query('COMMIT');
+			return result;
+		} catch (error) {
+			await client.query('ROLLBACK').catch(() => {});
+			throw error;
+		} finally {
+			client.release();
+		}
+	}
+
 	/** Next TC-XXXX number inside the tenant. */
 	async function nextCaseNumber(client, tenant) {
 		const result = await client.query(
@@ -42,9 +58,7 @@ export function createPostgresTestCaseRepository(pool, { tenantContext } = {}) {
 	return {
 		async list(tenant, filters = {}) {
 			const resolved = requireTenant(tenant ?? tenantContext);
-			const client = await pool.connect();
-			try {
-				await withTenant(client, resolved);
+			return transaction(resolved, async client => {
 				const clauses = ['deleted = false'];
 				const params = [resolved.organizationId, resolved.projectId];
 				if (filters.search) {
@@ -74,64 +88,48 @@ export function createPostgresTestCaseRepository(pool, { tenantContext } = {}) {
 					params
 				);
 				return result.rows;
-			} finally {
-				client.release();
-			}
+			});
 		},
 		async get(tenant, caseNumber) {
 			const resolved = requireTenant(tenant ?? tenantContext);
-			const client = await pool.connect();
-			try {
-				await withTenant(client, resolved);
+			return transaction(resolved, async client => {
 				const result = await client.query(
 					'SELECT * FROM test_cases WHERE organization_id = $1 AND project_id = $2 AND case_number = $3 AND deleted = false',
 					[resolved.organizationId, resolved.projectId, String(caseNumber)]
 				);
 				return result.rows[0] ?? null;
-			} finally {
-				client.release();
-			}
+			});
 		},
 		async create(tenant, input) {
 			const resolved = requireTenant(tenant ?? tenantContext);
-			const client = await pool.connect();
-			try {
-				await client.query('BEGIN');
-				await withTenant(client, resolved);
+			return transaction(resolved, async client => {
+				await client.query('SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))', [resolved.organizationId, resolved.projectId]);
 				const caseNumber = await nextCaseNumber(client, resolved);
 				const params = [randomUUID(), resolved.organizationId, resolved.projectId, caseNumber,
 					input.title, input.description ?? null,
 					JSON.stringify(input.steps ?? []), input.expected ?? null,
 					input.tags ?? [], input.environmentIds ?? [],
 					input.source === 'auto' ? 'auto' : 'manual',
-					input.sourceRunId ?? null, input.sourceUrl ?? null];
+					input.sourceRunId ?? null, input.sourceUrl ?? null, input.generation ? JSON.stringify(input.generation) : null];
 				const result = await client.query(
-					`INSERT INTO test_cases (id, organization_id, project_id, case_number, title, description, steps, expected, tags, environment_ids, source, source_run_id, source_url)
+					`INSERT INTO test_cases (id, organization_id, project_id, case_number, title, description, steps, expected, tags, environment_ids, source, source_run_id, source_url, generation)
 					 VALUES (${params.map((_, i) => `$${i + 1}`).join(', ')})
 					 RETURNING *`,
 					params
 				);
-				await client.query('COMMIT');
 				return result.rows[0];
-			} catch (error) {
-				await client.query('ROLLBACK').catch(() => {});
-				throw error;
-			} finally {
-				client.release();
-			}
+			});
 		},
 		async update(tenant, caseNumber, patch) {
 			const resolved = requireTenant(tenant ?? tenantContext);
-			const client = await pool.connect();
-			try {
-				await client.query('BEGIN');
-				await withTenant(client, resolved);
+			return transaction(resolved, async client => {
 				const assignments = [];
 				const params = [resolved.organizationId, resolved.projectId, String(caseNumber)];
 				const push = (column, value) => {
 					params.push(value);
 					assignments.push(`${column} = $${params.length}`);
 				};
+				if (patch.generation) push('generation', JSON.stringify(patch.generation));
 				if (patch.title !== undefined) push('title', patch.title);
 				if (patch.description !== undefined) push('description', patch.description);
 				if (patch.expected !== undefined) push('expected', patch.expected);
@@ -152,26 +150,24 @@ export function createPostgresTestCaseRepository(pool, { tenantContext } = {}) {
 					)`);
 				}
 				push('updated_at', new Date());
+				let versionClause = '';
+				if (patch.previousVersion !== undefined) {
+					params.push(patch.previousVersion);
+					versionClause = " AND (generation->>'version')::int = $" + params.length;
+				}
 				const result = await client.query(
 					`UPDATE test_cases SET ${assignments.join(', ')}
-					 WHERE organization_id = $1 AND project_id = $2 AND case_number = $3 AND deleted = false
+					 WHERE organization_id = $1 AND project_id = $2 AND case_number = $3 AND deleted = false${versionClause}
 					 RETURNING *`,
 					params
 				);
-				await client.query('COMMIT');
+				if (patch.previousVersion !== undefined && !result.rows.length) throw Object.assign(new Error('Case changed during review. Refresh the case.'), {code:'QASE_TESTCASE_INVALID'});
 				return result.rows[0] ?? null;
-			} catch (error) {
-				await client.query('ROLLBACK').catch(() => {});
-				throw error;
-			} finally {
-				client.release();
-			}
+			});
 		},
 		async remove(tenant, caseNumber) {
 			const resolved = requireTenant(tenant ?? tenantContext);
-			const client = await pool.connect();
-			try {
-				await withTenant(client, resolved);
+			return transaction(resolved, async client => {
 				const result = await client.query(
 					`UPDATE test_cases SET deleted = true, updated_at = CURRENT_TIMESTAMP
 					 WHERE organization_id = $1 AND project_id = $2 AND case_number = $3 AND deleted = false
@@ -179,9 +175,7 @@ export function createPostgresTestCaseRepository(pool, { tenantContext } = {}) {
 					[resolved.organizationId, resolved.projectId, String(caseNumber)]
 				);
 				return result.rows[0] ?? null;
-			} finally {
-				client.release();
-			}
+			});
 		}
 	};
 }

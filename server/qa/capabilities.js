@@ -172,7 +172,7 @@ const TABLE = [
 	['tls', 'TLS configuration', 'security', ['security_origin'], ['security.hsts_missing'], { support: 'partial', note: 'HTTPS enforcement is checked; cipher suites and certificate chain need a TLS scanner.', pass: 'The site is served over HTTPS.', fail: 'The site is served over plain HTTP.' }],
 
 	// Network and API (123–129)
-	['api_errors', 'API errors', 'network', ['page_audit'], ['page.failed_request', 'page.console_error', 'page.page_error'], { pass: 'API calls made by pages succeed.', fail: 'An API call fails while the page loads.' }],
+	['api_errors', 'API errors', 'network', ['page_audit'], ['runtime.api_response_defect', 'runtime.verified_network_defect', 'runtime.ui_and_network_mismatch', 'runtime.verified_runtime_defect', 'page.failed_request', 'page.console_error', 'page.page_error'], { pass: 'API calls made by pages succeed.', fail: 'An API call fails while the page loads.' }],
 	['offline', 'Offline behaviour', 'network', ['offline'], ['network.offline_'], { pass: 'Going offline shows a message or cached content, never a broken page with JS errors.', fail: 'Offline use throws errors or blanks the page.' }],
 	['slow_network', 'Slow network', 'network', ['slow_network'], ['network.'], { pass: 'The page becomes usable on a slow connection within the time budget.', fail: 'The page never becomes usable.' }],
 	['websockets', 'WebSocket connections', 'network', ['websocket'], ['network.websocket_'], { applies: 'websocket', pass: 'Sockets connect and stay open without errors.', fail: 'A socket errors or closes immediately.' }],
@@ -256,18 +256,30 @@ const matches = (detector, patterns) => patterns.some(pattern => pattern.endsWit
  * verified findings. Never "passed" unless an executor for it actually ran.
  *   units: Map unitKind → { executed, errored, notExecuted, reasons[] }
  */
-export function capabilityCoverage({ graph, units, findings = [], dismissed = [], signedIn = false, viewportsTested = [] }) {
+export function capabilityCoverage({ graph, units, diagnostics, findings = [], dismissed = [], signedIn = false, viewportsTested = [] }) {
 	return CAPABILITIES.map(capability => {
 		const row = { number: capability.number, id: capability.id, name: capability.name, group: capability.group, support: capability.support, safety: capability.safety };
 		const fail = findings.filter(item => matches(item.detector, capability.detectors) && unitMatchesViewport(capability, item, viewportsTested));
 		// Applicability first: "unsupported" means the app has it and QASE cannot run it here.
 		const applies = applicability(capability, graph);
 		if (!applies.applicable) return { ...row, state: 'not_applicable', reason: applies.reason };
+		if (capability.id === 'api_contracts' && diagnostics?.responseContractIds?.length) {
+			const violations = findings.filter(item => item.detector === 'runtime.api_response_defect');
+			if (violations.length) return { ...row, support: 'partial', state: 'failed', findings: violations.length, findingIds: violations.map(item => item.id), reason: 'A response violated an approved endpoint contract.' };
+			const complete = diagnostics.status === 'Completed' && diagnostics.responseContractIds.every(id => diagnostics.checkedResponses.includes(id));
+			return { ...row, support: 'partial', state: complete ? 'passed' : 'inconclusive', reason: complete ? 'Observed responses met the configured endpoint expectations.' : 'Some approved response checks lack complete evidence.' };
+		}
 		if (capability.support === 'unsupported') return { ...row, state: 'unsupported', reason: capability.prerequisite };
 		if (capability.access === 'signed_in' && !signedIn) return { ...row, state: 'blocked', reason: graph?.auth?.blockedReason ?? 'Needs a signed-in session; no verified session was available.' };
 		const outcomes = capability.units.map(kind => units.get(kind)).filter(Boolean);
 		const executed = outcomes.some(item => item.executed > 0);
 		if (fail.length) return { ...row, state: 'failed', findings: fail.length, findingIds: fail.slice(0, 10).map(item => item.id), reason: capability.fail, note: capability.note };
+		if (diagnostics && ['failed_requests','api_errors'].includes(capability.id)) {
+			const events = diagnostics.events.filter(e => e.type === 'network' && (capability.id === 'failed_requests' || ['fetch','xhr'].includes(e.resourceType)));
+			if (diagnostics.status !== 'Completed' || events.some(e => e.classification === 'Inconclusive' || e.state === 'pending'))
+				return { ...row, state: 'inconclusive', reason: 'The runtime history contains incomplete coverage or an unexplained request.' };
+			if (!events.length) return { ...row, state: 'not_executed', reason: 'No applicable requests were observed.' };
+		}
 		if (!executed && capability.group === 'auth' && graph?.auth?.detected && !graph.auth.signedIn && graph.auth.blockedReason) return { ...row, state: 'blocked', reason: graph.auth.blockedReason };
 		if (!executed) {
 			const errored = outcomes.some(item => item.errored > 0);

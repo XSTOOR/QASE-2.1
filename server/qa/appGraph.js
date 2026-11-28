@@ -11,11 +11,12 @@
  *   history      observations that changed the model (they trigger replanning)
  */
 
+import { inspectCaseControls } from './domCaseEvidence.js';
 import { routeTemplate } from './uiCrawl.js';
 
 /** DOM features of the open page; runs in the browser. */
-export async function observeFeatures(page) {
-	return page.evaluate(() => {
+export async function observeFeatures(page, casePaths) {
+	const features = await page.evaluate(() => {
 		const visible = element => { const r = element.getBoundingClientRect(); const s = getComputedStyle(element); return r.width > 1 && r.height > 1 && s.visibility !== 'hidden' && s.display !== 'none'; };
 		const count = selector => [...document.querySelectorAll(selector)].filter(visible).length;
 		const text = (document.body?.innerText ?? '').slice(0, 20000);
@@ -61,6 +62,8 @@ export async function observeFeatures(page) {
 			controls: count('button, a[href], input, select, textarea, [role=button]')
 		};
 	}).catch(() => ({}));
+	if (casePaths) features.caseInspection = await inspectCaseControls(page, casePaths).catch(() => ({ unavailable: 'DOM inspection failed.' }));
+	return features;
 }
 
 const FEATURE_KEYS = ['navigation', 'search', 'filter', 'sort', 'pagination', 'table', 'forms', 'upload', 'dates', 'media', 'menus', 'dialogs', 'accordion', 'carousel', 'tabs', 'draggable', 'checkout', 'external_links', 'third_party', 'manifest', 'i18n', 'restricted', 'websocket', 'protected'];

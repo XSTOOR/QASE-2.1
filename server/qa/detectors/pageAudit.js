@@ -38,8 +38,25 @@ export function pageAudit(options = {}) {
 		}
 		return parts.join(' > ');
 	};
-	const label = element => String(element?.getAttribute?.('aria-label') || element?.innerText || element?.value || element?.alt || element?.title || element?.getAttribute?.('placeholder') || '')
-		.replace(/\s+/g, ' ').trim().slice(0, 80);
+	// Editable content and option text can contain customer data even when read
+	// through a wrapping label. Use only caption text outside those controls.
+	const caption = node => {
+		if (!node || node.isContentEditable || node.closest('textarea,select,option')) return '';
+		if (node.querySelector('textarea,select,[contenteditable]')) {
+			return [...node.childNodes].filter(child => child.nodeType === Node.TEXT_NODE).map(child => child.textContent).join(' ').trim();
+		}
+		return node.innerText?.trim() || '';
+	};
+	const label = element => {
+		if (!element) return '';
+		const referenced = (element.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+			.map(id => caption(document.getElementById(id))).filter(Boolean).join(' ');
+		const explicit = referenced || element.getAttribute('aria-label') || caption(element.labels?.[0]);
+		const buttonCaption = element.matches('input[type=submit],input[type=button],input[type=reset]') ? element.value : '';
+		const fieldType = element.matches('input') ? element.type + ' input' : element.matches('select,textarea') ? element.localName : '';
+		return String(explicit || buttonCaption || caption(element) || element.alt || element.title || fieldType || '')
+			.replace(/\s+/g, ' ').trim().slice(0, 80);
+	};
 	const style = element => getComputedStyle(element);
 	const visible = element => {
 		if (!element || element.nodeType !== 1) return false;

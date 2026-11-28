@@ -31,7 +31,7 @@ export function createMatrixRoutes({ matrix, orchestrator, bugs, onError, events
 		});
 		app.post('/api/matrix-runs', async (request, response) => {
 			try {
-				const record = await matrix.create(request.body, { ownerUserId: request.auth?.userId ?? null });
+				const record = await matrix.create(request.body, { ownerUserId: request.auth?.userId ?? null, role:request.auth?.role });
 				if (request.body?.start !== false && orchestrator) {
 					const started = orchestrator.start(record.id);
 					if (!started.ok) {

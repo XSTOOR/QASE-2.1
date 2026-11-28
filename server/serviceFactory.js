@@ -42,15 +42,30 @@ function attachTestCaseAutogen({ services, environment, getConfig }) {
 	const configProvider = getConfig ?? readModelConfig;
 	// Reusable engine for the API surface ("Generate from run"); the same
 	// settings and config resolution the bus trigger uses.
+	const generating = new Map();
 	services.testCaseAutogen = {
 		async generateForRun(session) {
+			if (generating.has(session.id)) return generating.get(session.id);
+			if (session.domCaseGeneration?.status === 'Completed') return { created: [], skipped: 'already-generated', path: 'dom', status: 'Skipped' };
 			const engine = createTestCaseAutogen({
+				environment,
 				testCases: services.testCases,
 				settings: autogenSettingsFromEnv(environment),
 				config: configProvider(),
 				logger: (line) => console.log(line)
 			});
-			return engine.generateForSession(session);
+			const job = engine.generateForSession(session).catch(error => {
+				if (!session.report?.qaEngine?.domCaseEvidence) throw error;
+				return {created:[],duplicates:[],path:'dom',status:'Failed',issues:['Generation could not read or update the case store.']};
+			}).then(async result => {
+				if (result.path === 'dom') {
+					session.domCaseGeneration = { status: result.status, issues: result.issues, duplicates: result.duplicates, created: [...new Set([...(session.domCaseGeneration?.created ?? []),...result.created.map(c => c.caseNumber)])], at: Date.now() };
+					await services.runs.commit(session, 'test_cases.generated', { generation: session.domCaseGeneration });
+				}
+				return result;
+			}).finally(() => generating.delete(session.id));
+			generating.set(session.id, job);
+			return job;
 		}
 	};
 	services.runs.subscribeGlobal(async (sessionId, event) => {

@@ -31,6 +31,8 @@ import { createArtifactStore } from '../artifactStore.js';
 import { redact } from '../secrets.js';
 import { reviewFirstPages, reviewUrl } from './pageReview.js';
 import { checkMobileMenu } from './detectors/mobileMenu.js';
+import { createTenantContext } from '../tenancy.js';
+import { createRuntimeDiagnostics } from './runtimeDiagnostics.js';
 import { createQaBrowser, primaryProfile, VIEWPORTS } from './browser.js';
 import { createQaModels, qaModelSettings } from './models.js';
 import { candidate, severityRank } from './findings.js';
@@ -49,6 +51,7 @@ import { buildReport, refineWithReasoner } from './report.js';
 import { createAppGraph, observeFeatures } from './appGraph.js';
 import { createPlan, scenariosFromGraph, proposeJourneys, authorizedSaveJourney, fallbackJourney, revisePlan, nextScenario, recoverInterrupted, closeOutPlan, unitOutcomes, planSummary, journeyCallBudget } from './planner.js';
 import { plannedSaveGap } from './formOutcome.js';
+import { replayDomCase } from './domCaseReplay.js';
 import { capabilityCoverage, summarizeCoverage, CAPABILITY_COUNT } from './capabilities.js';
 import { createRouter, ESCALATION_BAND } from './router.js';
 import { evaluateCompletion } from './completionGate.js';
@@ -140,6 +143,7 @@ export function publicQaState(session) {
 		phases: STAGES.map(([id, text]) => ({ id, label: text, status: state.phases?.[id]?.status ?? 'pending', detail: state.phases?.[id]?.detail, startedAt: state.phases?.[id]?.startedAt, endedAt: state.phases?.[id]?.endedAt })),
 		coverage: state.coverage, limitations: state.limitations, models: state.models,
 		pageReview: redact(session.id, state.pageReview),
+		domCaseExecution: state.domCaseExecution,
 		formOutcomes: plan.scenarios.flatMap(item => item.formOutcomes ?? []),
 		candidates: state.candidates?.length ?? 0, startedAt: state.startedAt, updatedAt: state.updatedAt,
 		signedIn: Boolean(state.signedIn), awaitingCredentials: Boolean(state.awaitingCredentials), loginWall: Boolean(state.loginWall || state.coverage?.loginForm || state.graph?.auth?.detected),
@@ -216,6 +220,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		state.routing = router?.state();
 		try { await runStore.commit(session, 'hybrid.state', { hybrid: publicQaState(session), ...(checkpoint ? { checkpoint: true } : {}) }); }
 		catch (error) {
+			if (state.runtimeDiagnostics && !state.runtimeDiagnostics.issues.includes('Checkpoint storage failed')) state.runtimeDiagnostics.issues.push('Checkpoint storage failed');
 			if (required) throw Object.assign(new Error('Could not save the page review checkpoint', { cause: error }), { pageCheckpointFailed: true });
 			console.warn('[qa-engine] checkpoint failed:', error?.message);
 		}
@@ -285,6 +290,33 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 	const addCandidates = items => {
 		for (const item of items ?? []) if (state.candidates.length < 1500) state.candidates.push(redact(session.id, currentScenario ? { ...item, scenarioId: currentScenario } : item));
 	};
+
+	const diagnostics = createRuntimeDiagnostics({ session, projectId: createTenantContext(env).projectId, rawConfig: env.QASE_QA_RUNTIME_DIAGNOSTICS, history: state.runtimeDiagnostics,
+		context: () => ({ scenarioId: currentScenario, stepId: currentScenario ? plan.scenarios.find(s => s.id === currentScenario)?.activityId : currentActivity }),
+		onCandidate: item => { if (state.candidates.length < 1500) state.candidates.push(redact(session.id, item)); }
+	});
+	state.runtimeDiagnostics = diagnostics.state;
+	state.domCaseEvidence ??= { pages: [], gaps: [], projectId:createTenantContext(env).projectId };
+	const casePaths = String(env.QASE_AUTOGEN_PUBLIC_PATHS ?? '').split(',').map(p => p.trim()).filter(p => /^\/[\w./-]+$/.test(p));
+	async function inspectFeatures(page) {
+		const evidence = state.domCaseEvidence;
+		const enabled = !/^(false|off|0|no)$/i.test(env.QASE_AUTOGEN_TESTCASES ?? '');
+		const collect = enabled && (evidence.pages.length < 8 || evidence.pages.some(p => p.url === page.url()));
+		const data = await observeFeatures(page, collect ? casePaths : undefined);
+		const snapshot = data.caseInspection;
+		delete data.caseInspection;
+		if (snapshot?.url) {
+			const index = evidence.pages.findIndex(p => p.url === snapshot.url);
+			const pages = evidence.pages.filter((_,i) => i !== index);
+			if (Buffer.byteLength(JSON.stringify([...pages,snapshot])) <= 512_000) {
+				if (index < 0) evidence.pages.push(snapshot);
+				else evidence.pages[index] = snapshot;
+			} else if (!evidence.gaps.includes('DOM evidence storage limit reached.')) evidence.gaps.push('DOM evidence storage limit reached.');
+		}
+		const gap = snapshot?.unavailable || (!collect && enabled ? 'Page collection limit reached.' : null);
+		if (gap && !evidence.gaps.includes(gap)) evidence.gaps.push(gap);
+		return data;
+	}
 
 	let browser;
 	let fetchImpl = probeFetch;
@@ -509,9 +541,9 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			if (finalUrl !== url && model.hasTemplate(finalUrl) && !model.page(finalUrl)) { if (!model.page(url)) model.addTransition(url, finalUrl, 'redirect'); return 'skip'; }
 			const status = log.mainResponse?.status ?? 200;
 			if (status >= 400) {
-				if (status >= 500) addCandidates([candidate({ detector: 'page.http_error_page', category: 'functional', severity: 'critical', confidence: 0.95, title: `Page returns HTTP ${status}`, url: finalUrl, viewport: primary.name,
+				if (status >= 500 && !log.mainResponse?.statusContract) addCandidates([candidate({ detector: 'page.http_error_page', category: 'functional', severity: 'critical', confidence: 0.95, title: `Page returns HTTP ${status}`, url: finalUrl, viewport: primary.name,
 					actual: `${finalUrl} responded with HTTP ${status}.`, expected: 'The page loads successfully.', steps: [`Open ${finalUrl}`], fix: 'Fix the server error for this route and serve a helpful error page.', data: { key: String(status) } })]);
-				const features = await observeFeatures(page);
+				const features = await inspectFeatures(page);
 				model.addPage(finalUrl, { status, title: features.title, heading: features.heading, discoveredBy, depth, audited: true, features: { restricted: [401, 403].includes(status) ? 1 : features.restricted } });
 				return 'skip';
 			}
@@ -521,7 +553,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 			state.coverage.securityChecks += 7;
 			const login = await hasLoginForm(page) || (await detectAuth(page)).identifierStep;
 			if (login) { state.coverage.loginForm = true; state.loginUrl ??= finalUrl; model.setAuth({ detected: true }); }
-			const features = await observeFeatures(page);
+			const features = await inspectFeatures(page);
 			const added = model.addPage(finalUrl, { status, title: features.title, heading: features.heading, features, login, discoveredBy, depth, audited: true, auth: model.page(finalUrl)?.auth === 'protected' ? 'protected' : discoveredBy === 'signed-in' ? 'signed-in' : 'public' });
 			if (log.websockets?.length) model.websocket(finalUrl);
 			if (added.length) state.discoveries = [...(state.discoveries ?? []), ...added.map(feature => `${feature} on ${pathOf(finalUrl)}`)].slice(-40);
@@ -861,10 +893,13 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		}
 	}
 
+	const writeOrigins = String(env.QASE_DOM_CASE_WRITE_ORIGINS ?? '').split(',').map(s => s.trim());
+	const reviewedCase = session.testCaseSnapshot?.generation ? session.testCaseSnapshot : undefined;
+	const allowWrites = state.allowWrites === true && (!reviewedCase || reviewedCase.generation.requiresWrite && writeOrigins.includes(new URL(reviewedCase.sourceUrl).origin));
 	try {
 		await runStore.setStatus(session, 'running', 'Testing the site');
 		browser = await createQaBrowser({
-			session, allowWrites: state.allowWrites === true, env,
+			session, allowWrites, env, diagnostics,
 			publishFrame: frame => { try { runStore.publish?.(session, 'frame', { frame }); } catch { /* live view is best effort */ } },
 			onBlocked: event => {
 				if (event.kind === 'write_blocked') blocked.writes++;
@@ -882,6 +917,48 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		if (!runtimeIdentity.ok) limitation('observe', runtimeIdentity.note);
 		if (session.runtimeFacts.brandedBinary?.fallbackUsed) limitation('observe', `The installed ${session.environmentSnapshot?.browser ?? 'browser'} failed to start (${session.runtimeFacts.brandedBinary.error}); the run used the bundled ${browser.engine} engine instead.`);
 		state.coverage.engine = `${browser.engine} ${browser.version}`;
+		if (reviewedCase) {
+			const g = reviewedCase.generation;
+			let result = state.domCaseExecution;
+			if (result?.status === 'running') result = {status:'inconclusive', detail:'Execution was interrupted. The previous action was not repeated.'};
+			if (!result) {
+				state.domCaseExecution = {status:'running',caseNumber:reviewedCase.caseNumber,version:g.version};
+				await persist({checkpoint:true, required:true});
+				try {
+					if (new URL(session.targetUrl).href !== reviewedCase.sourceUrl) {
+						result = {status:'inconclusive',detail:'The run target differs from the reviewed source URL.'};
+					} else {
+						const {page, log} = await browser.openPage(primary);
+						await browser.goto(page, reviewedCase.sourceUrl, log);
+						result = await browser.interact(() => replayDomCase({page,record:reviewedCase,allowWrites:state.allowWrites,
+							writeOrigins,allowedPaths:casePaths,save}));
+					}
+				} catch {
+					result = {status:'inconclusive',detail:'The browser could not complete the reviewed action.'};
+				}
+			}
+			state.domCaseExecution = {...result,caseNumber:reviewedCase.caseNumber,version:g.version,snapshotId:g.snapshotId,sourceRunId:reviewedCase.sourceRunId};
+			await diagnostics.flush();
+			const failed = result.status === 'failed';
+			const summary = reviewedCase.caseNumber + ' · ' + reviewedCase.title + ' · ' + result.status + '. ' + result.detail;
+			if (failed && !session.findings?.some(f => f.detector === 'reviewed_case')) {
+				const finding = {id:randomUUID(),ts:Date.now(),title:reviewedCase.title,severity:'medium',category:'functional',url:reviewedCase.sourceUrl,
+					steps:reviewedCase.steps,expected:reviewedCase.expected,actual:result.detail,evidence:g.snapshotId,status:'open',detector:'reviewed_case',selector:g.element.css};
+				session.findings = [...(session.findings ?? []), finding];
+				await runStore.commit(session,'finding',{finding});
+			}
+			const complete = ['passed','failed'].includes(result.status);
+			const report = {ts:Date.now(),verdict:failed ? 'fail' : complete ? 'pass' : 'partial',summary,targetUrl:reviewedCase.sourceUrl,
+				covered:complete ? [reviewedCase.title] : [],notCovered:complete ? [] : [result.detail],recommendations:[],findings:session.findings?.length ?? 0,
+				qaEngine:{version:2,domCaseExecution:state.domCaseExecution,runtimeDiagnostics:diagnostics.snapshot()}};
+			session.report = report;
+			state.status = 'done';
+			await persist({checkpoint:true,required:true});
+			await runStore.commit(session,'report',{report});
+			await say(summary,{kind:'qa-report',id:'qa-case-' + session.id});
+			await runStore.setStatus(session,'done');
+			return;
+		}
 		// Vision self-check: prove the reasoning model reads images before relying on screenshots.
 		if (baseModels.reasonerAvailable() && baseModels.state.reasoner.visionOk === undefined && settings.reasoner.vision) {
 			const [fixedDigit, fixedColour] = String(env.QASE_QA_VISION_PROBE ?? '').split(':'); // tests only
@@ -914,7 +991,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 					mainResponse = log.mainResponse;
 					cookies = await page.context().cookies();
 					const finalUrl = normalizeUrl(page.url(), session.targetUrl) ?? session.targetUrl;
-					const features = await observeFeatures(page);
+					const features = await inspectFeatures(page);
 					const auth = await detectAuth(page);
 					const passwordWall = await hasLoginForm(page);
 					const aria = await page.locator('body').ariaSnapshot({ timeout: 5000 }).catch(() => '');
@@ -1110,6 +1187,10 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		await browser?.close().catch(() => {});
 	}
 
+	await diagnostics.flush();
+	state.runtimeDiagnostics = diagnostics.snapshot();
+	if (state.runtimeDiagnostics.status !== 'Completed') limitation('observe', 'Runtime diagnostics: ' + state.runtimeDiagnostics.status + '. ' + (state.runtimeDiagnostics.reason || state.runtimeDiagnostics.issues.join('. ') || (state.runtimeDiagnostics.dropped ? 'Event retention limit reached.' : state.runtimeDiagnostics.unobservedContracts?.length ? 'Some configured contracts were not exercised.' : 'No browser page was observed.')), true);
+
 	// Triage and publish always run, even after a stop or failure.
 	if (stopped()) limitation(state.phase, 'Stopped by the user before the plan finished; the report covers the work completed until then.', true);
 	closeOutPlan(plan, stopped() ? 'Stopped by the owner before this scenario ran.' : !loaded ? 'The target could not be loaded.' : 'The run time budget ended before this scenario ran.');
@@ -1185,7 +1266,7 @@ export async function runQaEngine({ session, runStore, record, signal, fetchImpl
 		}
 		// Capability coverage (149 categories) and the completion gate, both deterministic.
 		const unitRan = { observe: Boolean(state.observation), page_audit: pages.size > 0, signin: Boolean(state.signedIn) };
-		const coverageRows = capabilityCoverage({ graph: model.graph, units: unitOutcomes(plan, unitRan), findings: published, dismissed: result.dismissed, signedIn: Boolean(state.signedIn), viewportsTested: state.coverage.viewportNames });
+		const coverageRows = capabilityCoverage({ graph: model.graph, diagnostics: state.runtimeDiagnostics, units: unitOutcomes(plan, unitRan), findings: published, dismissed: result.dismissed, signedIn: Boolean(state.signedIn), viewportsTested: state.coverage.viewportNames });
 		state.capabilitySummary = { total: CAPABILITY_COUNT, ...summarizeCoverage(coverageRows) };
 		const gate = evaluateCompletion({ state, plan, graph: model.graph, coverageRows, findings: published, triaged, stopped: stopped() });
 		state.gate = gate;

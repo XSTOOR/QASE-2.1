@@ -19,6 +19,9 @@
  * Generation is best-effort: it must never fail a run or throw into the bus.
  */
 
+import { generateDomCases } from './domCaseGenerator.js';
+import { createQaModels, qaModelSettings } from './qa/models.js';
+
 const DEFAULT_MAX_CASES = 5;
 const DEFAULT_LLM_TIMEOUT_MS = 30_000;
 const TITLE_MAX = 300;
@@ -50,7 +53,7 @@ export function autogenSettingsFromEnv(environment = process.env) {
 	const llmTimeoutMs = Number.isFinite(timeoutRaw) && timeoutRaw > 0
 		? Math.min(120_000, Math.floor(timeoutRaw))
 		: DEFAULT_LLM_TIMEOUT_MS;
-	return { enabled, maxCases, fromCases, llmTimeoutMs };
+	return { enabled, maxCases, fromCases, llmTimeoutMs, ...(environment.QASE_AUTOGEN_DOM_BATCH_SIZE ? { domBatchSize: Math.max(1, Math.min(32, Number(environment.QASE_AUTOGEN_DOM_BATCH_SIZE) || 16)) } : {}) };
 }
 
 function clampText(value, max) {
@@ -286,6 +289,7 @@ export function buildFallbackCases(context, maxCases) {
 export function createTestCaseAutogen({
 	testCases,
 	config,
+	environment = process.env,
 	fetchImpl = fetch,
 	settings = autogenSettingsFromEnv(),
 	logger = () => {},
@@ -314,6 +318,22 @@ export function createTestCaseAutogen({
 			return { created: [], skipped: 'from-test-case' };
 		}
 
+		if (session.report.qaEngine?.domCaseEvidence) {
+			const modelSettings = qaModelSettings(environment, config ?? {});
+			// A stored provider credential belongs to its configured endpoint. A dedicated
+			// QA gateway overrides that connection only when its own key is supplied.
+			if (!environment.QASE_REASONER_API_KEY && config?.baseUrl) {
+				const configured = String(config.baseUrl).replace(/\/+$/, '');
+				if (environment.QASE_REASONER_BASE_URL && modelSettings.reasoner.baseUrl !== configured ||
+					['jev','bedrock'].includes(config.provider)) modelSettings.reasoner.enabled = false;
+				else {
+					modelSettings.reasoner.baseUrl = configured;
+					modelSettings.reasoner.model = environment.QASE_REASONER_MODEL || config.model || modelSettings.reasoner.model;
+				}
+			} else if (!environment.QASE_REASONER_API_KEY && ['jev','bedrock'].includes(config?.provider)) modelSettings.reasoner.enabled = false;
+			const models = createQaModels({settings:modelSettings, state:session.hybrid?.models ?? {}, fetchImpl});
+			return generateDomCases({ session, testCases, settings, models });
+		}
 		const context = buildGenerationContext(session);
 		const hasMaterial = context.todos.length > 0 || context.findings.length > 0 || context.verdict;
 		if (!hasMaterial) return { created: [], skipped: 'empty-run' };

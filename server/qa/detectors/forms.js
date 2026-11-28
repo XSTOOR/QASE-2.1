@@ -159,8 +159,10 @@ export async function testForms(page, { url, viewport, browser, blocked, reload,
 			page.on('request', track);
 			try { await browser.interact(async () => {
 				const button = page.locator(`[data-qase-form="${form.index}"] button:not([type=button]):not([type=reset]), [data-qase-form="${form.index}"] input[type=submit]`).first();
-				if (form.hasSubmit && await button.count()) await button.click({ timeout: 8000 }).catch(() => {});
-				else await page.locator(`[data-qase-field="${form.fields[0].id}"]`).press('Enter', { timeout: 8000 }).catch(() => {});
+				const click = form.hasSubmit && await button.count();
+				const control = click ? button : page.locator(`[data-qase-field="${form.fields[0].id}"]`);
+				const submit = () => click ? control.click({ timeout: 8000 }) : control.press('Enter', { timeout: 8000 });
+				await (browser.observeAction ? browser.observeAction(page, control, click ? 'click' : 'press', submit) : submit()).catch(() => {});
 				// Wait for a (blocked) submission or a navigation, bounded; slow machines need more than a fixed delay.
 				for (let waited = 0; waited < 3000 && blocked() === before && page.url() === startUrl; waited += 150) await page.waitForTimeout(150);
 				await page.waitForTimeout(300);
